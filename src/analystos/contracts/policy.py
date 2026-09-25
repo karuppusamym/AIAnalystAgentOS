@@ -55,6 +55,9 @@ class WorkspacePolicyDoc(BaseModel):
     # Where knowledge comes from (P4-K09, spec v3 §6.6): the workspace's own packs, imported OKF/Atlas
     # bundles, and Atlas `get_knowledge_context` over an allowlisted MCP server. Data, never authority.
     context_providers: list[ContextProviderConfig] = Field(default_factory=lambda: [ContextProviderConfig(kind="local")])
+    # P4-K03: publication refuses a KPI that is not an approved metric of the workspace semantic model.
+    # False here keeps workspaces created before the semantic layer working; create_workspace sets True.
+    require_approved_metrics: bool = False
 
 
 class DataScope(BaseModel):

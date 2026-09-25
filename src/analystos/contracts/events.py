@@ -12,7 +12,10 @@ EVENT_TYPES = {
     "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
     "mcp.server.refreshed", "mcp.tool_called", "agent.action", "verified_query.promoted", "verified_query.updated",
-    "hypothesis_registry.updated", "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
+    "hypothesis_registry.updated",
+    "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
+    "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
+    "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

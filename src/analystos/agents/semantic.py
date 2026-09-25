@@ -1,4 +1,7 @@
-"""Semantic Model Agent (§13.12, §24): KPI definitions, each validated by execution (SEM-002/003/005)."""
+"""Semantic Model Agent (§13.12, §24): KPI definitions, each validated by execution (SEM-002/003/005).
+
+Approved metrics of the workspace semantic model (P4-K03) are the stable definitions and are used first;
+every other validated KPI becomes a proposal there, awaiting a person's approval."""
 from __future__ import annotations
 
 import sqlglot
@@ -99,13 +102,34 @@ def admission_clash(name: str, norm: str, seen: dict[str, str], names: set[str])
     return None
 
 
+def approved_workspace_metrics(ctx: RunContext, columns: set[str], dialect: str) -> list[MetricDef]:
+    """The workspace semantic model's approved KPIs that apply to this dataset (unqualified columns it
+    has): they are the stable definitions and come before anything carried forward or proposed."""
+    from analystos.semantic.service import approved_metrics, to_metricdef
+
+    with session_scope() as s:
+        rows = list(approved_metrics(s, ctx.workspace.id).values())
+    out = []
+    for row in rows:
+        m = to_metricdef(row)
+        try:
+            qualified = any(c.table for c in sqlglot.parse_one(m.sql_expression, read=dialect).find_all(exp.Column))
+        except sqlglot.errors.ParseError:
+            continue
+        if not qualified and _valid_expression(m.sql_expression, columns, dialect) is None:
+            out.append(m)
+    return out
+
+
 def define_metrics(ctx: RunContext) -> dict:
     ds, content = dataset_def(ctx.run.id)
     dialect = content.get("dialect", "postgres")
     columns = {c["name"] for c in ds.columns}
-    # Recurring analysis keeps KPI definitions stable: previous validated metrics come first, so
-    # equivalent proposals de-duplicate onto the existing names and deltas compare like with like.
-    candidates = previous_metrics(ctx) + default_metrics(ds)
+    # KPI definitions stay stable: approved workspace metrics first, then the previous run's validated
+    # metrics, so equivalent proposals de-duplicate onto the existing names and deltas compare like with like.
+    approved = approved_workspace_metrics(ctx, columns, dialect)
+    candidates = approved + previous_metrics(ctx) + default_metrics(ds)
+    origin = ["approved"] * len(approved) + ["carried"] * (len(candidates) - len(approved))
     payload = compile_for(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
                                                      "existing": [m.name for m in candidates]})
     data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2", payload) \
@@ -113,12 +137,13 @@ def define_metrics(ctx: RunContext) -> dict:
     for m in (data or {}).get("metrics", []) if isinstance(data, dict) else []:
         try:
             candidates.append(MetricDef.model_validate({**m, "status": "proposed"}))
+            origin.append("model")
         except Exception:
             continue
     run_sql = ctx.run_sql(content.get("source_id"))
-    accepted, seen, rejected = [], {}, []
+    accepted, seen, rejected, clashing = [], {}, [], []
     names: set[str] = set()
-    for m in candidates:
+    for m, source in zip(candidates, origin, strict=True):
         problem = _valid_expression(m.sql_expression, columns, dialect)
         norm = _normalize(m.sql_expression, dialect)
         if problem:
@@ -127,6 +152,8 @@ def define_metrics(ctx: RunContext) -> dict:
         clash = admission_clash(m.name, norm, seen, names)
         if clash:
             rejected.append({"metric": m.name, "reason": clash})
+            if source == "model":  # SEM-005: flagged in the semantic model's conflicts, not silently dropped
+                clashing.append(m)
             continue
         try:
             r = run_sql(f"SELECT {m.sql_expression} AS v FROM ({ds.sql}) d", purpose=f"metric.validate.{m.name}")
@@ -140,7 +167,7 @@ def define_metrics(ctx: RunContext) -> dict:
         seen[norm] = m.name
         names.add(m.name)
         m.validation = {"value": value, "query_id": r.query_id, "validated_by": "execution"}
-        m.status = "validated"
+        m.status = "approved" if source == "approved" else "validated"
         m.dimensions = m.dimensions or [c["name"] for c in ds.columns if c.get("semantic_type") in ("categorical",)][:8]
         accepted.append(m)
     accepted = accepted[:10]
@@ -151,11 +178,29 @@ def define_metrics(ctx: RunContext) -> dict:
                                                                              "time_column": ds.time_column, "rejected": rejected},
                                   creator_agent=ctx.agent.id)
         link(s, ctx.workspace.id, ("semantic_model", model_art.id), "models", ("dataset", content["artifact_id"]), run_id=ctx.run.id)
+        from analystos.semantic import service as semantic
+
+        semantic.save_model(s, ctx.workspace.id, actor=f"agent:{ctx.agent.id}", origin=f"agent:{ctx.agent.id}",
+                            datasets=[semantic.dataset_from_def(ds)], run_id=ctx.run.id)
+        proposed = []
         for m in accepted:
             art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="metric", name=m.name,
                                 content=m.model_dump(), creator_agent=ctx.agent.id, status="validated")
             link(s, ctx.workspace.id, ("metric", art.id), "defined_on", ("dataset", content["artifact_id"]), run_id=ctx.run.id)
             ctx.event("metric.created", {"name": m.name, "display_name": m.display_name, "value": m.validation.get("value")})
+            if m.status != "approved":  # a validated KPI becomes a proposal; only a person makes it a stable definition
+                row, created = semantic.propose_metric(
+                    s, ctx.workspace.id, semantic.from_metricdef(m, dataset=ds.name, sql_dialect=dialect),
+                    proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id, source=("metric", art.id))
+                if created:
+                    proposed.append(m.name)
+        for m in clashing:
+            semantic.propose_metric(s, ctx.workspace.id, semantic.from_metricdef(m, dataset=ds.name, sql_dialect=dialect),
+                                    proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id)
+    n_approved = sum(1 for m in accepted if m.status == "approved")
     ctx.say(f"Defined {len(accepted)} validated KPIs ({', '.join(m.display_name for m in accepted)}); rejected {len(rejected)}"
-            + (f" (LLM proposals from {model})" if data else ""))
-    return {"metrics": [m.name for m in accepted], "rejected": rejected, "semantic_model_id": model_art.id}
+            + (f" (LLM proposals from {model})" if data else "")
+            + f". {n_approved} are approved workspace metrics"
+            + (f"; proposed for approval in the workspace semantic model: {', '.join(proposed)}" if proposed else ""))
+    return {"metrics": [m.name for m in accepted], "rejected": rejected, "semantic_model_id": model_art.id,
+            "approved_metrics": [m.name for m in accepted if m.status == "approved"], "proposed_metrics": proposed}

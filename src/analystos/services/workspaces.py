@@ -22,7 +22,8 @@ def create_workspace(session: Session, user: User, *, name: str, description: st
     session.add(ws)
     session.flush()
     session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
-    save_policy(session, ws, WorkspacePolicyDoc.model_validate(policy or {}), user.id)
+    # New workspaces publish only approved KPIs unless the creator explicitly opts out (P4-K03).
+    save_policy(session, ws, WorkspacePolicyDoc.model_validate({"require_approved_metrics": True, **(policy or {})}), user.id)
     emit(ws.id, "workspace.created", {"name": name}, actor=f"user:{user.id}", session=session)
     audit(f"user:{user.id}", "workspace.created", workspace_id=ws.id, session=session)
     return ws

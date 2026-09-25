@@ -90,7 +90,9 @@ def main() -> int:
 
     # 1. workspace
     ws = admin.post("/api/workspaces", {"name": f"ServiceNow Incident Intelligence {started:%Y%m%d-%H%M}", "objective": OBJECTIVE,
-                                        "description": "MVP DoD demo", "autonomy_level": 3})
+                                        "description": "MVP DoD demo", "autonomy_level": 3,
+                                        # v1 §62 predates the P4-K03 approved-metric gate (tests/integration/test_semantic_layer.py)
+                                        "policy": {"require_approved_metrics": False}})
     wid = ws["id"]
     admin.post(f"/api/workspaces/{wid}/members", {"email": "analyst@analystos.local", "role": "editor"})
     admin.post(f"/api/workspaces/{wid}/members", {"email": "approver@analystos.local", "role": "approver"})
