@@ -1,0 +1,80 @@
+import { useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { api } from "../api";
+import { AutonomyPicker } from "../components/AutonomyPicker";
+import { Card, EmptyState, ErrorBox, Field, Loading, PageHeader } from "../components/ui";
+import { useAction, useAsync } from "../lib/hooks";
+import { AUTONOMY_LEVELS } from "../lib/status";
+import { fmtDate } from "../lib/format";
+
+export function WorkspacesPage() {
+  const list = useAsync(() => api.listWorkspaces(), []);
+  const [showCreate, setShowCreate] = useState(false);
+  return (
+    <div className="page">
+      <PageHeader title="Workspaces" subtitle="Each workspace holds sources, a policy, members, analysis runs and their evidence."
+        actions={<button type="button" className="btn btn-primary" onClick={() => setShowCreate((s) => !s)}>
+          {showCreate ? "Close" : "New workspace"}</button>} />
+      {showCreate && <CreateWorkspace />}
+      <ErrorBox error={list.error} onRetry={list.reload} />
+      {list.loading && !list.data ? <Loading /> : list.data && list.data.length === 0 ? (
+        <EmptyState title="No workspaces yet">Create one to connect a source and start an analysis.</EmptyState>
+      ) : (
+        <div className="grid-cards">
+          {list.data?.map((w) => (
+            <Link key={w.id} to={`/w/${w.id}`} className="card card-link">
+              <div className="card-body">
+                <h2 className="card-title">{w.name}</h2>
+                {w.description && <p className="muted clamp-2">{w.description}</p>}
+                {w.objective && <p className="small clamp-2"><strong>Objective:</strong> {w.objective}</p>}
+                <div className="chip-row small">
+                  <span className="tag tag-info">L{w.autonomy_level} · {AUTONOMY_LEVELS[w.autonomy_level]?.name ?? "?"}</span>
+                  <span className="tag">{w.counts?.sources ?? 0} sources</span>
+                  <span className="tag">{w.counts?.runs ?? 0} runs</span>
+                  <span className="tag tag-success">{w.counts?.verified_insights ?? 0} verified insights</span>
+                  <span className="tag">{w.counts?.dashboard ?? 0} dashboards</span>
+                </div>
+                <p className="muted small">Created {fmtDate(w.created_at)}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateWorkspace() {
+  const nav = useNavigate();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [objective, setObjective] = useState("");
+  const [level, setLevel] = useState(3);
+  const act = useAction();
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective, autonomy_level: level }));
+    if (ws) nav(`/w/${ws.id}`);
+  };
+  return (
+    <Card title="Create workspace">
+      <form onSubmit={submit} className="form">
+        <Field label="Name" htmlFor="ws-name">
+          <input id="ws-name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="IT Service Management" />
+        </Field>
+        <Field label="Description" htmlFor="ws-desc">
+          <input id="ws-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <Field label="Business objective" htmlFor="ws-obj" hint="Pre-fills new analysis runs. At least 10 characters to start a run.">
+          <textarea id="ws-obj" rows={3} value={objective} onChange={(e) => setObjective(e.target.value)}
+            placeholder="Why are incident resolution times increasing, and which groups drive SLA breaches?" />
+        </Field>
+        <AutonomyPicker value={level} onChange={setLevel} />
+        <ErrorBox error={act.error} />
+        <div className="form-actions">
+          <button type="submit" className="btn btn-primary" disabled={act.busy || !name.trim()}>{act.busy ? "Creating…" : "Create workspace"}</button>
+        </div>
+      </form>
+    </Card>
+  );
+}
