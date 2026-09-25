@@ -70,6 +70,82 @@ test.describe("five-journey IA", () => {
   });
 });
 
+test.describe("investigation board (P4-U03)", () => {
+  test("board → why trust this → reject a finding → redirect by chat", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/investigate/${RUN}`);
+    const supported = page.getByRole("listitem", { name: /Supported/ });
+    await expect(supported.getByText("Network resolves P1s slower")).toBeVisible();
+    // Raw JSON is never on the default path: every .json block sits in a closed Technical details.
+    const stray = await page.locator(".json").evaluateAll((els) => els.filter((e) => !e.closest("details[data-technical]:not([open])")).length);
+    expect(stray).toBe(0);
+
+    const f1 = page.getByRole("article", { name: "Finding F1" });
+    await f1.getByRole("button", { name: "Why trust this" }).click();
+    const dialog = page.getByRole("dialog", { name: "Why trust F1?" });
+    await expect(dialog.getByText(/identical result hash on re-run/)).toBeVisible();
+    await expect(dialog.getByText(/q = 0\.0010/)).toBeVisible();
+    await expect(dialog.getByText(/representative \(time_window\)/)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(f1.getByRole("button", { name: "Why trust this" })).toBeFocused();
+
+    await f1.getByRole("button", { name: "Reject" }).click();
+    await f1.getByLabel(/Why is F1 wrong/).fill("Network was reorganised in August.");
+    await f1.getByRole("button", { name: "Reject finding" }).click();
+    await expect(f1.getByText(/Replanned to plan v2/)).toBeVisible();
+
+    await page.getByLabel("Message").fill("Focus on the Network group");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText(/Focus on the Network group\./)).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
+test.describe("operate (P4-U06, P4-U07)", () => {
+  test("registry lists a newly installed plugin and runs it from its generated form", async ({ page, api }) => {
+    await signIn(page, "/operate/registry");
+    const methods = page.getByRole("table", { name: "Analysis methods" });
+    await expect(methods.getByText("method.acme_funnel")).toBeVisible();
+    await expect(methods.getByText("entrypoint:acme-methods")).toBeVisible();
+    await page.getByLabel("Workspace for enablement").selectOption(WS);
+    await expect(page).toHaveURL(new RegExp(`ws=${WS}`));
+    const toggle = page.getByRole("switch", { name: "Enable method.acme_funnel in this workspace" });
+    await expect(toggle).not.toBeChecked();
+    await page.locator("label.switch", { has: toggle }).click();
+    await expect(toggle).toBeChecked();
+
+    await page.getByRole("button", { name: "Open method.acme_funnel" }).click();
+    const run = page.getByRole("region", { name: "Run this capability" });
+    await run.getByRole("button", { name: "Run" }).click();
+    await expect(run.getByText("This field is required.")).toBeVisible();
+    await run.getByLabel(/^Asset/).fill("events");
+    await run.getByRole("button", { name: "Add steps" }).click();
+    await run.getByRole("button", { name: "Add steps" }).click();
+    await run.getByRole("textbox", { name: "Steps 1" }).fill("visit");
+    await run.getByRole("textbox", { name: "Steps 2" }).fill("buy");
+    await run.getByRole("button", { name: "Run" }).click();
+    const result = page.locator("[data-renderer='renderer.stat_result']");
+    await expect(result.getByText("0.0042", { exact: true })).toBeVisible();
+    await expect(result.getByText("cramers_v", { exact: true })).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("approval inbox shows the payload diff, hashes and policy version", async ({ page }) => {
+    await signIn(page, `/w/${WS}/operate/approvals`);
+    const diff = page.getByRole("table", { name: "Payload changes" });
+    await expect(diff.getByText("dashboards[key=p1_resolution].title")).toBeVisible();
+    await expect(diff.getByText("P1 resolution (weekly)")).toBeVisible();
+    await expect(page.getByText("(current v2)")).toBeVisible();
+  });
+
+  test("alerts explain their triage (rule, JEV probability, escalate-only)", async ({ page }) => {
+    await signIn(page, `/w/${WS}/operate/monitoring?tab=alerts`);
+    const triage = page.getByLabel("Triage explanation");
+    await expect(triage.getByText(/Rule: MTTR 9\.4h > 8h/)).toBeVisible();
+    await expect(triage.getByText(/JEV can only raise severity/)).toBeVisible();
+  });
+});
+
 /** Main screen of each journey: [journey, path, text that shows the data has loaded]. */
 const SCREENS: [string, string, RegExp][] = [
   ["Home", `/w/${WS}`, /What changed/],
@@ -79,7 +155,10 @@ const SCREENS: [string, string, RegExp][] = [
   ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
   ["Operate", `/w/${WS}/operate/approvals`, /Publish dashboards/],
   ["Operate · settings", "/operate/settings", /Purpose/],
-  ["Operate · usage", "/operate/usage", /Tokens saved/],
+  ["Operate · usage", "/operate/usage", /Spend by rung not reported/],
+  ["Operate · registry", `/operate/registry?ws=${WS}&cap=method.acme_funnel`, /acme_methods\/tests\/test_funnel\.py/],
+  ["Operate · alerts", `/w/${WS}/operate/monitoring?tab=alerts`, /JEV can only raise severity/],
+  ["Operate · policy", `/w/${WS}/operate/governance`, /Effective policy/],
 ];
 
 for (const scheme of ["light", "dark"] as const) {
@@ -92,6 +171,12 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeViolations(page)).toEqual([]);
       });
     }
+    test("why-trust drawer has no axe violations", async ({ page }) => {
+      await signIn(page, `/w/${WS}/investigate/${RUN}`);
+      await page.getByRole("article", { name: "Finding F1" }).getByRole("button", { name: "Why trust this" }).click();
+      await expect(page.getByRole("dialog")).toContainText(/identical result hash/);
+      expect(await axeViolations(page)).toEqual([]);
+    });
     test("command palette has no axe violations", async ({ page }) => {
       await signIn(page, `/w/${WS}`);
       await expect(page.locator("main")).toContainText(/What changed/);

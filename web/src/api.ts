@@ -265,6 +265,10 @@ export interface VerificationCheck {
   check: string;
   passed: boolean;
   detail: string;
+  /** representative_population (staging/snapshots.py): how the analysed rows were chosen. */
+  method?: string;
+  sampling?: Dict;
+  truncated?: boolean;
 }
 
 export interface Verification {
@@ -377,6 +381,8 @@ export interface Approval {
   reason: string | null;
   expires_at: string;
   evidence: Dict;
+  /** The proposal the approval binds to (list endpoint only; decisions return it without). */
+  payload?: Dict;
   created_at: string;
 }
 
@@ -505,7 +511,28 @@ export interface ConsoleData {
   tool_calls: ToolExecution[];
   model_calls: ModelCall[];
   queries: QueryExecution[];
-  cost: { usd: number; tokens: number; model_calls: number; jev_calls: number; failed_calls: number };
+  cost: ConsoleCost;
+}
+
+/** Run cost block (analysis.py console). Rung counts arrive with the execution ladder (P4-T*); render when present. */
+export interface ConsoleCost {
+  usd: number;
+  tokens: number;
+  model_calls: number;
+  jev_calls: number;
+  failed_calls: number;
+  cache_hits?: number;
+  deterministic_skips?: number;
+  tokens_saved?: number;
+  by_rung?: Record<string, RungSpend> | null;
+}
+
+/** Spend on one rung of the deterministic-first ladder (spec v3 §4.1): L0 cache … L5 strong model. */
+export interface RungSpend {
+  calls?: number;
+  tokens_used?: number;
+  tokens_saved?: number;
+  cost_usd?: number;
 }
 
 export interface QueryResult {
@@ -1136,6 +1163,79 @@ export interface TokenSavings {
     saved_share: number;
   };
   by_purpose: Record<string, TokenSavingsRow>;
+  /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
+  by_rung?: Record<string, RungSpend> | null;
+  by_model?: Record<string, RungSpend> | null;
+}
+
+// ----------------------------------------------------------------------------------- capabilities
+export type CapabilityKind = "Agent" | "Skill" | "Tool" | "Method" | "Connector" | "Engine" | "Publisher" | "DecisionPurpose"
+  | "Detector" | "Crawler" | "KnowledgePack" | "Playbook" | "Renderer";
+export type SideEffect = "none" | "read_source" | "write_internal" | "write_external";
+export type CertStatus = "draft" | "tested" | "certified" | "deprecated";
+
+/** One row of GET /api/capabilities (capabilities.py `_out`). Kinds and values are open: plugins add new ones. */
+export interface CapabilitySummary {
+  id: string;
+  kind: CapabilityKind | string;
+  version: string;
+  ref: string;
+  summary: string;
+  source: string;
+  entry: string | null;
+  determinism: string;
+  side_effect: SideEffect | string;
+  cost_class: string;
+  certification: { status: CertStatus | string; evidence?: string | null };
+  autonomous_ok: boolean;
+  needs_approval: boolean;
+  tags: string[];
+  /** Enablement in the requested workspace; null without `workspace_id`. */
+  enabled: boolean | null;
+}
+
+export interface CapabilityList {
+  digest: string;
+  capabilities: CapabilitySummary[];
+}
+
+/** The full manifest (GET /api/capabilities/{id}, contracts/capability.py). */
+export interface CapabilityManifest {
+  apiVersion?: string;
+  kind: CapabilityKind | string;
+  id: string;
+  version: string;
+  summary: string;
+  entry?: string | null;
+  input_schema?: Dict;
+  output_schema?: Dict;
+  determinism?: string;
+  side_effect?: SideEffect | string;
+  cost_class?: string;
+  permissions?: string[];
+  requires?: string[];
+  certification?: { status: CertStatus | string; evidence?: string | null };
+  ui?: { form?: "auto" | "none" | "custom" | string; renderer?: string | null };
+  tags?: string[];
+  spec?: Dict;
+  source?: string;
+}
+
+export interface CapabilityReload {
+  digest: string;
+  previous_digest: string;
+  count: number;
+  problems: string[];
+}
+
+/** Invocation result: MCP invoke (mcp.py) today; the generic capability invoke shares the shape. */
+export interface CapabilityInvocation {
+  status: "ok" | "error" | "approval_required" | string;
+  capability?: string;
+  side_effect?: string;
+  approval_id?: string;
+  result?: unknown;
+  [k: string]: unknown;
 }
 
 // ----------------------------------------------------------------------------------- errors
@@ -1547,6 +1647,27 @@ export const api = {
     post("/api/admin/settings/rollback", { body: { version } }) as Promise<SettingsUpdateResult>,
   prompts: () => get("/api/admin/prompts", {}) as Promise<PromptTemplate[]>,
   tokenSavings: (days = 30) => get("/api/admin/token-savings", { query: { days } }) as Promise<TokenSavings>,
+
+  // capability registry (P4-X01)
+  listCapabilities: (filter: { kind?: string; workspace_id?: string } = {}) =>
+    get("/api/capabilities", { query: filter }) as Promise<CapabilityList>,
+  getCapability: (id: string) =>
+    get("/api/capabilities/{capability_id}", { path: { capability_id: id } }) as Promise<CapabilityManifest>,
+  setCapabilityEnabled: (ws: string, id: string, enabled: boolean) =>
+    put("/api/workspaces/{workspace_id}/capabilities/{capability_id}", { path: { workspace_id: ws, capability_id: id }, body: { enabled } }) as
+      Promise<Dict>,
+  reloadCapabilities: () => post("/api/admin/capabilities/reload", {}) as Promise<CapabilityReload>,
+  mcpCapabilities: (ws: string) => get("/api/workspaces/{workspace_id}/mcp/capabilities", { path: W(ws) }) as Promise<CapabilityManifest[]>,
+  invokeMcpTool: (ws: string, server: string, tool: string, args: Dict) =>
+    post("/api/workspaces/{workspace_id}/mcp/servers/{server_name}/tools/{tool_name}/invoke",
+      { path: { workspace_id: ws, server_name: server, tool_name: tool }, body: { arguments: args } }) as Promise<CapabilityInvocation>,
+  /**
+   * Backend gap: there is no generic invoke route for built-in or plugin capabilities yet (only MCP
+   * tools). The call is untyped on purpose so the route can land without a client change; until it
+   * does the server answers 404/405 and the form shows a "not available" state.
+   */
+  invokeCapability: (ws: string, id: string, args: Dict) =>
+    request<CapabilityInvocation>("POST", `/workspaces/${encodeURIComponent(ws)}/capabilities/${encodeURIComponent(id)}/invoke`, { arguments: args }),
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)

@@ -224,6 +224,32 @@ export function JsonView({ value, collapsed = false, label = "JSON" }: { value: 
   return <pre className="json">{text}</pre>;
 }
 
+/**
+ * Raw JSON lives only here (spec v3 §9): a closed "Technical details" disclosure, so the default
+ * path of a screen reads as prose, numbers and badges. Tests assert every `.json` block on the
+ * board sits inside one of these.
+ */
+export function TechnicalDetails({ value, label = "Technical details", children }: { value?: unknown; label?: string; children?: ReactNode }) {
+  return (
+    <details className="technical" data-technical="">
+      <summary>{label}</summary>
+      {children}
+      {value !== undefined && <JsonView value={value} />}
+    </details>
+  );
+}
+
+/** An accessible on/off switch (role=switch) for enablement flags. */
+export function EnabledToggle({ enabled, disabled, onChange, label }: { enabled: boolean; disabled: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label className="switch">
+      <input type="checkbox" role="switch" checked={enabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
+      <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
+      <span className="small">{enabled ? "enabled" : "disabled"}</span>
+    </label>
+  );
+}
+
 export function KeyValue({ items }: { items: [string, ReactNode][] }) {
   return (
     <dl className="kv">

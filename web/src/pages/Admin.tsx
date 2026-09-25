@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { api, type AgentSpec, type ToolSpec } from "../api";
 import { useAuth } from "../auth";
-import { Card, EmptyState, ErrorBox, JsonView, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
+import { Card, EmptyState, EnabledToggle, ErrorBox, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { fmtDate, fmtMs, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { PromptsView, SettingsEditor, TokenSavingsView } from "./AdminSettings";
+import { CapabilityRegistry } from "./Registry";
 
-type Tab = "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
+type Tab = "capabilities" | "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
 
 /** Tabs whose endpoints are admin-only: rendered as a notice for everyone else instead of a 403. */
 const ADMIN_ONLY = new Set<Tab>(["settings", "savings", "prompts", "usage", "audit"]);
@@ -17,8 +18,8 @@ export type AdminSection = "registry" | "settings" | "usage";
 const SECTIONS: Record<AdminSection, { title: string; subtitle: string; tabs: { id: Tab; label: string }[] }> = {
   registry: {
     title: "Capability registry",
-    subtitle: "Agents, tools, skills, model routing and prompt templates installed on this platform.",
-    tabs: [{ id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
+    subtitle: "Every installed capability — playbooks, agents, methods, tools, connectors, plugins and MCP tools — with certification, side effects and per-workspace enablement.",
+    tabs: [{ id: "capabilities", label: "Capabilities" }, { id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
       { id: "models", label: "Models" }, { id: "prompts", label: "Prompts" }],
   },
   settings: {
@@ -49,6 +50,7 @@ export function AdminPage({ section = "registry" }: { section?: AdminSection }) 
           <Notice tone="warning">This section is available to platform administrators only.</Notice>
         ) : (
           <>
+            {tab === "capabilities" && <CapabilityRegistry isAdmin={!!user?.is_admin} />}
             {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
             {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
             {tab === "skills" && <Skills />}
@@ -62,16 +64,6 @@ export function AdminPage({ section = "registry" }: { section?: AdminSection }) 
         )}
       </div>
     </div>
-  );
-}
-
-function EnabledToggle({ enabled, disabled, onChange, label }: { enabled: boolean; disabled: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <label className="switch">
-      <input type="checkbox" role="switch" checked={enabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
-      <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
-      <span className="small">{enabled ? "enabled" : "disabled"}</span>
-    </label>
   );
 }
 
@@ -213,7 +205,7 @@ function Models() {
           <div className="chip-row">{d.allowlist.map((a) => <span key={a} className={`tag ${a.startsWith("typesafe/") ? "tag-jev" : ""}`}>{a}</span>)}</div>
         </Card>
       </div>
-      <Card title="Profiles"><JsonView value={d.profiles} collapsed label="Profile settings" /></Card>
+      <Card title="Profiles"><TechnicalDetails value={d.profiles} label="Profile settings" /></Card>
     </div>
   );
 }
@@ -284,7 +276,7 @@ export function AuditTable({ rows, filter, onFilter }: { rows: import("../api").
                   <td><code>{e.action}</code></td>
                   <td className="small">{e.target ?? "—"}</td>
                   <td>{e.decision ? <StatusBadge status={e.decision} /> : "—"}{e.reasons?.length ? <div className="muted small">{e.reasons.join(", ")}</div> : null}</td>
-                  <td>{e.details && Object.keys(e.details).length ? <JsonView value={e.details} collapsed label="details" /> : null}</td>
+                  <td>{e.details && Object.keys(e.details).length ? <TechnicalDetails value={e.details} label="details" /> : null}</td>
                 </tr>
               ))}
             </tbody>
