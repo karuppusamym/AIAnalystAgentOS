@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p .",
     "gen:api": "openapi-typescript openapi.json -o src/generated/openapi.ts --default-non-nullable false",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "echarts": "^6.1.0",
