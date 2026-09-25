@@ -305,3 +305,18 @@ Migration 0018 (knowledge packs) now follows 0023. The chain is 0017 → 0020 �
 | Federated cross-source runs | `QueryGateway._execute_federated`, `skills/federation.py` | `test_federation.py`, `test_cross_source_runs.py` | ✅ Postgres + DuckDB file | Not yet a playbook step; no filter pushdown per leg |
 
 Evidence: `evidence/2026-09-25-knowledge-k01-k10.md`, `evidence/engines-federation-20260925.md`.
+
+### 2026-09-25 — governance review of the wave 4–6 merges, and fixes
+
+A read-only governance review of the build, Ask and self-hosting merges found no blockers, 5 major findings and 11 minor ones. All are fixed, each with a test.
+
+| Finding | Fix | Test |
+|---|---|---|
+| M1: an IdP claim could grant PII clearance (widening scope; any string was truthy) | Platform-controlled attributes (`*clearance*`, `is_admin`, `sso_managed`) are never mapped or synced from the IdP. Clearance counts only when it is the boolean `True`. | `test_idp_claims_never_grant_pii_clearance`, `test_idp_claims_never_grant_or_revoke_pii_clearance` |
+| M2: a capability invoke approval was usable by any workspace member | `requested_by` is in the hashed payload, so only the requester can execute it. | `test_an_approval_runs_only_for_the_user_who_requested_it` |
+| M3: a build did not re-check scope at execution | `execution_scope_check` re-validates every rendered model and the dataset SQL against the requester's current scope, right after `verify_for_execution`. | `test_gateway_rechecks_the_data_scope_at_execution` |
+| M4: the default builder password could be provisioned in production | `check_builder_credentials` refuses a missing or default password outside dev. The builder URL is added to the chart's required secrets. | `test_build_targets_guard.py` |
+| M5: sandbox children had network access in a default Helm install | The chart defaults to `sandboxNetwork: require`, so code refuses to run rather than run networked. A fallback is logged on every run. | `test_isolate_fallback_is_logged_and_recorded`, helm-gated render test |
+| m1–m11 | Invoke gate runs before approval use; editor role for side effects; Azure internal only with `private_link`; Bedrock endpoint egress check; OIDC byte compare, exact issuer and admin only for SSO-created accounts; `AttributeRule` needs a condition; explain hides out-of-scope relations; runbook notes | per-finding unit and integration tests |
+
+Compatibility: a stored workspace policy with an attribute rule whose `require` is empty now fails validation on load (m9).
