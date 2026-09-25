@@ -1,0 +1,17 @@
+apiVersion: analystos/v1
+kind: Method
+id: method.cohort_retention
+version: 1.0.0
+summary: Retention of entity cohorts over time buckets -> chi-square across cohorts (+ grouped logistic and permutation check)
+entry: python:analystos.methods.cohort_retention:CohortRetention
+determinism: seeded
+side_effect: read_source
+cost_class: query
+permissions: [scope:read]
+requires: [engine:sql]
+certification:
+  status: certified
+  evidence: tests/methods/test_cohort_retention.py
+tags: [statistical, time_series, cohort]
+spec:
+  order: 70

@@ -9,18 +9,25 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from analystos import methods
 from analystos.db.models import Artifact, Hypothesis, Insight
+from analystos.methods.base import AnalysisMethod
 
 
 def claim_key(spec: dict[str, Any], highlights: dict[str, Any] | None) -> tuple:
-    """Identity of a claim: what was tested (method, outcome, segment/drivers, population filters)
-    and which group came out on top. Wording is not part of it."""
-    segment = (spec.get("segment") or {}).get("column")
-    if spec.get("method") == "driver_model":
-        segment = "drivers:" + ",".join(sorted(d.get("column", "") for d in spec.get("drivers") or []))
-    filters = ";".join(sorted(f"{f.get('column')}{f.get('op')}{f.get('value')}" for f in spec.get("filters") or []))
-    top = (highlights or {}).get("top_segment", (highlights or {}).get("top_driver"))
-    return (spec.get("method"), (spec.get("outcome") or {}).get("column"), segment, filters, str(top))
+    """Identity of a claim, as the spec's method defines it (analystos.methods): what was tested
+    (method, outcome, subject, population filters) and which group came out on top. Wording is not
+    part of it. The last element is the top group; everything before it is the question."""
+    name = spec.get("method")
+    method = methods.get(name) if name in methods.names() else _Unregistered(name)
+    return tuple(method.claim_key(spec, highlights))
+
+
+class _Unregistered(AnalysisMethod):
+    """Claims of a method no longer registered (an old run) keep the generic identity."""
+
+    def __init__(self, name: Any):
+        self.name = name  # type: ignore[misc]
 
 
 def _claims(session: Session, run_id: str) -> dict[tuple, dict[str, Any]]:
@@ -44,7 +51,7 @@ def _metrics(session: Session, run_id: str) -> dict[str, Any]:
 
 def _tested(session: Session, run_id: str) -> set[tuple]:
     """(method, outcome, segment/drivers, filters) of every hypothesis the run actually tested."""
-    return {claim_key(h.spec, None)[:4] for h in session.scalars(select(Hypothesis).where(
+    return {claim_key(h.spec, None)[:-1] for h in session.scalars(select(Hypothesis).where(
         Hypothesis.run_id == run_id, Hypothesis.status.in_(["supported", "rejected", "inconclusive"])))}
 
 
@@ -54,8 +61,8 @@ def diff_runs(session: Session, previous_run_id: str, run_id: str) -> dict[str, 
     new = [after[k] for k in after if k not in before]
     gone = [k for k in before if k not in after]
     # A previous finding is "resolved" only if the same question was tested again and no longer holds.
-    resolved = [before[k] for k in gone if k[:4] in tested_now]
-    not_retested = [before[k] for k in gone if k[:4] not in tested_now]
+    resolved = [before[k] for k in gone if k[:-1] in tested_now]
+    not_retested = [before[k] for k in gone if k[:-1] not in tested_now]
     persisting, changed = [], []
     for k in after.keys() & before.keys():
         a, b = after[k], before[k]

@@ -8,6 +8,7 @@ import numpy as np
 import sqlglot
 from sqlalchemy import select
 
+from analystos import methods
 from analystos.agents.sql_agent import dataset_def, derivation_alias
 from analystos.artifacts.registry import current_plan_filter, link, save_artifact
 from analystos.contracts.analysis import AnalysisSpec, Derivation
@@ -15,6 +16,7 @@ from analystos.contracts.bi import ChartSpec, DashboardSpec, MetricDef
 from analystos.core.errors import AnalystOSError
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
+from analystos.methods.base import ChartIntent
 from analystos.runtime.context import RunContext
 
 JEV_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
@@ -46,8 +48,9 @@ def preview_sql(chart: ChartSpec, ds_sql: str, metrics: dict[str, MetricDef]) ->
     raise ValueError(f"cannot build preview for {chart.key}")
 
 
-def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef]) -> str | None:
-    if spec.outcome is None or spec.method in ("pareto", "trend"):
+def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef], chart: ChartIntent | None = None) -> str | None:
+    chart = chart or methods.get(spec.method).chart_intent(spec)
+    if spec.outcome is None or chart is None or chart.measure == "volume":
         return "record_count" if "record_count" in metrics else None
     alias = derivation_alias(spec.outcome)
     for cand in (f"{alias}_rate", f"median_{alias}", f"avg_{alias}"):
@@ -100,15 +103,18 @@ def design(ctx: RunContext) -> dict:
                                     intent="trend", dataset=ds.name, metric=rate, dimension=ds.time_column, time_grain="month",
                                     rationale="trend -> line"))
     for code, title, spec in verified:
-        metric = _metric_for_outcome(spec, metrics)
+        # The method says how its finding is shown (analystos.methods); the dashboard charts the
+        # findings that break a metric down by the spec's segment.
+        shown = methods.get(spec.method).chart_intent(spec)
+        metric = _metric_for_outcome(spec, metrics, shown)
         seg = spec.segment
         dim = derivation_alias(seg) if seg is not None else None
-        if spec.method == "trend" or not metric or not dim or dim not in cols:
+        if shown is None or shown.dimension != "segment" or not metric or not dim or dim not in cols:
             continue
         # Filters on dataset columns only (raw columns keep their names in the dataset).
         filters = [f"{_q(f.column)} {f.op} {repr(f.value) if isinstance(f.value, str) else f.value}"
                    for f in spec.filters if f.column in cols and f.op in ("=", "!=", ">", ">=", "<", "<=")]
-        intent = "part_to_whole" if spec.method == "pareto" else "comparison"
+        intent = shown.intent
         card = int(cols[dim].get("distinct") or 10) if isinstance(cols[dim].get("distinct"), int) else 10
         ctype, why = _choose(ctx, intent, cols[dim].get("semantic_type"), card, title)
         charts.append(ChartSpec(key=f"finding_{code.lower().replace('-', '_')}", title=title, chart_type=ctype, intent=intent,

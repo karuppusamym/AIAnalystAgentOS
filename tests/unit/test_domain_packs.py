@@ -28,8 +28,9 @@ SERVICENOW_NAMES = ("made_sla", "assignment_group", "reassignment_count", "reope
 # Only the connector that speaks ServiceNow (and its synthetic data / mock) may name its columns.
 EXEMPT = ("connectors/servicenow.py", "connectors/servicenow_mock.py", "connectors/synthetic_servicenow.py")
 # Known remaining hits in files owned by other increment-4 rows. Each entry must still match (so the
-# list only shrinks) and must be removed with the file's owner (P4-X07 open item).
-ALLOWED = {("agents/prompts.py", "reassignment_count"): "few-shot example text; prompts are derived from the method registry in P4-X04"}
+# list only shrinks) and must be removed with the file's owner. Empty since P4-X04 derived the prompt
+# vocabulary from the method registry.
+ALLOWED: dict[tuple[str, str], str] = {}
 
 
 def _texts(path: Path) -> list[tuple[int, str]]:
@@ -92,7 +93,9 @@ def test_repository_packs_load_as_knowledge_pack_manifests():
 
 
 def test_every_template_names_a_known_method_and_outcome():
-    methods = set(AnalysisSpec.model_fields["method"].annotation.__args__)
+    from analystos import methods as method_registry
+
+    methods = set(method_registry.names())
     for p in packs.installed():
         doc = p.templates
         for t in doc["templates"]:

@@ -20,13 +20,7 @@ Questions must be answerable from the listed columns. """ + UNTRUSTED_NOTE,
     "hypothesis_generation.v1": """You are the Investigation Agent. Convert the objective and questions into testable,
 EXECUTABLE hypotheses over the catalog. Each hypothesis must use this closed analysis vocabulary:
 
-methods:
-- rate_by_segment: boolean outcome rate across groups of `segment`. outcome.type in [equals, is_true, after_hours].
-- numeric_by_segment: numeric outcome across groups of `segment`. outcome.type in [column (numeric), duration_hours].
-- trend: volume (outcome null) or numeric outcome over `time` (time.type = date_trunc, grain week|month).
-- pareto: concentration of volume across `segment` (optionally with filters).
-- correlation: numeric outcome vs numeric drivers[0].
-- driver_model: boolean outcome vs 2-5 drivers (logistic regression + feature importance).
+{method_vocabulary}
 derivation = {"type": column|duration_hours|after_hours|bucket|equals|is_true|date_trunc|hour_of_day|day_of_week,
   "column": str, "end_column": str|null (duration_hours), "value": any (equals), "edges": [numbers] (bucket),
   "grain": day|week|month|quarter (date_trunc), "label": short business label}
@@ -34,7 +28,7 @@ filter = {"column": str, "op": "=|!=|>|>=|<|<=|in|not in|is null|is not null", "
 spec = {"method", "asset": "schema.table", "outcome", "segment", "drivers": [], "time", "filters": []}
 
 Use ONLY columns listed in the catalog for the chosen asset. Prefer low-cardinality categorical segments,
-bucketed counts (e.g. reassignment_count edges [0,1,2,3]) and display-name columns (*_name) over raw ids.
+bucketed counts (e.g. a *_count column with edges [0,1,2,3]) and display-name columns (*_name) over raw ids.
 Return JSON: {"questions": [...], "hypotheses": [{"question", "statement", "rationale", "priority": high|medium|low,
 "spec": {...}}]} with 6-10 hypotheses covering different drivers. Statements must be falsifiable and phrased
 as associations (not causal claims). """ + UNTRUSTED_NOTE,
@@ -87,10 +81,24 @@ Return JSON: {"summary_markdown": str}.""",
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")  # JSON examples in prompts ({"sql": ...}) never match
 
 
+def _method_vocabulary() -> str:
+    from analystos import methods
+
+    return methods.vocabulary_block()
+
+
+# Placeholders filled from a registry rather than by the caller: the analysis-method vocabulary is
+# derived from the method registry (spec v3 §3.5), so a new method reaches the prompt without an edit here.
+DERIVED = {"method_vocabulary": _method_vocabulary}
+
+
 def prompt(name: str, **variables: str) -> str:
     """The prompt text with its `{placeholders}` filled. Plain replacement, not str.format, because
     prompts contain literal JSON braces. An unfilled placeholder is a bug, so it raises."""
     text = PROMPTS[name]
+    for key, derive in DERIVED.items():
+        if "{" + key + "}" in text and key not in variables:
+            variables[key] = derive()
     for key, value in variables.items():
         text = text.replace("{" + key + "}", str(value))
     missing = sorted(set(_PLACEHOLDER.findall(text)))

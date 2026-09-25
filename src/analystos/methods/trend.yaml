@@ -1,0 +1,17 @@
+apiVersion: analystos/v1
+kind: Method
+id: method.trend
+version: 1.0.0
+summary: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)
+entry: python:analystos.methods.trend:Trend
+determinism: deterministic
+side_effect: read_source
+cost_class: query
+permissions: [scope:read]
+requires: [engine:sql]
+certification:
+  status: certified
+  evidence: tests/unit/test_skills_analysis.py
+tags: [statistical, time_series]
+spec:
+  order: 30
