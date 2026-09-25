@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.policy import DataScope, ExecutionIdentity, PolicyDecision, WorkspacePolicyDoc
+from analystos.contracts.policy import AttributeRule, DataScope, ExecutionIdentity, PolicyDecision, WorkspacePolicyDoc
 from analystos.contracts.registry import ToolSpec
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError, Forbidden, NotFound
@@ -103,6 +103,43 @@ def _selected_assets(session: Session, source_ids: list[str]) -> tuple[dict[str,
     return assets, columns
 
 
+def attributes_satisfy(attributes: dict | None, require: dict[str, list[str]]) -> bool:
+    """Every required attribute present with an accepted value (list-valued attributes: any element)."""
+    attributes = attributes or {}
+    for key, accepted in require.items():
+        value = attributes.get(key)
+        values = value if isinstance(value, list) else [value]
+        if not {str(v) for v in values if v is not None} & {str(a) for a in accepted}:
+            return False
+    return True
+
+
+def apply_attribute_rules(scope: DataScope, attributes: dict | None, rules: list[AttributeRule],
+                          column_tags: dict[str, set[str]] | None = None) -> list[str]:
+    """ABAC (SEC-003) on a resolved scope: every rule the caller's attributes do not satisfy removes
+    its assets and denies its columns. Only ever narrows. Returns the ids of the rules applied."""
+    applied = []
+    column_tags = column_tags or {}
+    for rule in rules:
+        if attributes_satisfy(attributes, rule.require):
+            continue
+        applied.append(rule.id or "unnamed")
+        dropped = [fq for fq in scope.assets if any(_matches(p, fq) for p in rule.assets)]
+        for fq in dropped:
+            scope.assets.remove(fq)
+            scope.asset_sources.pop(fq, None)
+            scope.columns.pop(fq, None)
+        for fq, cols in scope.columns.items():
+            for name in cols:
+                col_fq = f"{fq}.{name}"
+                if col_fq in scope.denied_columns:
+                    continue
+                if any(_matches(p, col_fq) for p in rule.columns) or (column_tags.get(col_fq, set()) & set(rule.column_tags)):
+                    scope.denied_columns.append(col_fq)
+        scope.denied_columns = [c for c in scope.denied_columns if c.rsplit(".", 1)[0] in scope.columns]
+    return applied
+
+
 def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids: list[str] | None = None,
                   minimum_role: str = "analyst", pii_access: str | None = None) -> DataScope:
     """Server-side authorized data scope for this caller (§12.2). Selected assets only.
@@ -120,6 +157,7 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
     scope = DataScope(workspace_id=workspace_id, user_id=user.id, role=role, max_rows=policy.max_rows,
                       timeout_seconds=policy.query_timeout_seconds, policy_version=workspace.policy_version)
     assets_by_source, cols_by_asset = _selected_assets(session, [s.id for s in sources])
+    tags_by_column: dict[str, set[str]] = {}
     for source in sources:
         scope.source_ids.append(source.id)
         scope.source_dialects[source.id] = source_dialect(source.kind, source.execution_mode)
@@ -131,10 +169,13 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
             for name, col_tags in cols:
                 col_fq = f"{fq}.{name}"
                 tags = set(col_tags or [])
+                tags_by_column[col_fq] = tags
                 restricted = "restricted" in tags or any(_matches(p, col_fq) for p in policy.restricted_columns)
                 pii = "pii" in tags or any(_matches(p, col_fq) for p in policy.pii_columns)
                 if restricted or (pii and not pii_cleared):
                     scope.denied_columns.append(col_fq)
+    if policy.attribute_rules:
+        apply_attribute_rules(scope, user.attributes, policy.attribute_rules, tags_by_column)
     return scope
 
 

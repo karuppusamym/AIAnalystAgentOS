@@ -123,7 +123,7 @@ def test_llm_json_logs_real_prompt_version_and_sends_filled_dialect(monkeypatch)
     assert "in the tsql dialect" in system and "{dialect}" not in system
     expected = prompt_version_id("sql_generation.v1", prompt("sql_generation.v1", dialect="tsql"))
     assert sink.records[-1]["ctx"].prompt_version == expected
-    assert sink.records[-1]["ctx"].allowed_providers == ["openrouter", "typesafe"]  # policy reaches the router
+    assert sink.records[-1]["ctx"].allowed_providers == ["openrouter", "typesafe", "internal"]  # policy reaches the router
 
 
 def test_llm_json_fails_closed_when_policy_blocks_the_provider(monkeypatch):

@@ -191,4 +191,17 @@ PRESETS: dict[str, dict[str, LLMMode]] = {
     "offline": {p: "off" for p in DETERMINISTIC_CAPABLE | {"verification", "sql_generation", "sql_repair",
                                                           "rev_second_opinion", "risk_check", "alert_triage",
                                                           "statistical_interpretation", "decision_structured"}},
+    # Air-gapped (P4-S04): the offline preset plus a local OpenAI-compatible model as the last rung.
+    # Deterministic rungs answer first wherever they exist; decision-model purposes stay on rules (the
+    # DecisionService keeps rules / local_classifier only). Egress itself is enforced by the deployment
+    # flag ANALYSTOS_AIR_GAPPED, not by this preset: settings are data, the guard is code.
+    "air_gapped": {p: "auto" for p in DETERMINISTIC_CAPABLE} | {
+        "rev_second_opinion": "off", "risk_check": "off", "alert_triage": "off", "decision_structured": "off",
+        "hypothesis_priority": "off", "chart_selection": "off", "feedback_classification": "off", "stop_check": "off",
+        "ask_route": "off", "clarify_needed": "off", "metric_match": "off", "join_path_choice": "off"},
+}
+
+# Settings a preset changes besides the purpose modes (deep-merged by platform_settings.apply_preset).
+PRESET_PATCHES: dict[str, dict] = {
+    "air_gapped": {"features": {"jev_decisions": False}},
 }

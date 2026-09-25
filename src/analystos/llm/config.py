@@ -1,20 +1,65 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from analystos.core.config import get_settings
 
+ProviderType = Literal["openrouter", "openai_compatible", "azure_openai", "anthropic", "bedrock"]
+Egress = Literal["internet", "internal"]
+_PUBLIC_ONLY = ("openrouter", "anthropic", "bedrock")  # provider types that are always an outbound call
+
 
 class ProviderConfig(BaseModel):
+    """One model provider (spec v3 §8 "Model providers"). `type` selects the wire mapping in
+    analystos.llm.providers. Keys never live here: `api_key_env` names the environment variable (a
+    Kubernetes secret in the Helm chart); None means the endpoint takes no key (a local vLLM/Ollama).
+    `egress: internal` declares the endpoint reachable without leaving the installation, the only
+    kind an air-gapped install may call."""
+
+    model_config = ConfigDict(extra="forbid")  # a literal `api_key:` in a models file fails loudly
+
     kind: str
     base_url: str
-    api_key_env: str
+    api_key_env: str | None = None
+    type: ProviderType = "openrouter"
+    base_url_env: str | None = None  # when set and present in the environment, overrides base_url (Helm values)
+    egress: Egress = "internet"
+    api_version: str | None = None  # azure_openai: the `api-version` query parameter
+    deployments: dict[str, str] = Field(default_factory=dict)  # azure_openai: allowlisted model -> deployment name
+    model_map: dict[str, str] = Field(default_factory=dict)  # allowlisted model -> provider model id
+    anthropic_version: str = "2023-06-01"  # anthropic: the `anthropic-version` header
+    aws_region: str | None = None  # bedrock
     region: str | None = None  # where the provider processes requests; None = unknown (fails a residency policy)
+
+    @model_validator(mode="after")
+    def _check(self) -> ProviderConfig:
+        if self.type in _PUBLIC_ONLY and self.egress == "internal":
+            raise ValueError(f"a provider of type {self.type} is a public endpoint and cannot be declared egress: internal")
+        if self.type == "azure_openai" and not self.api_version:
+            raise ValueError("azure_openai providers need api_version")
+        return self
+
+    def url(self) -> str:
+        """Effective base URL: the `base_url_env` override (deployment-specific) else `base_url`."""
+        override = (os.getenv(self.base_url_env) or "").strip() if self.base_url_env else ""
+        return (override or self.base_url).rstrip("/")
+
+    def host(self) -> str:
+        return (urlsplit(self.url()).hostname or "").lower()
+
+    def wire_model(self, model: str) -> str:
+        """The id the provider knows the model by: explicit map, else the full id for OpenRouter and
+        the part after the family prefix elsewhere (`anthropic/claude-sonnet-5` -> `claude-sonnet-5`)."""
+        if model in self.model_map:
+            return self.model_map[model]
+        return model if self.type == "openrouter" else model.split("/", 1)[-1]
 
 
 class ModelMeta(BaseModel):
@@ -48,6 +93,10 @@ class ModelsConfig(BaseModel):
     prices_version: str = "unversioned"
     ladders: dict[str, list[str]] = Field(default_factory=dict)  # purpose -> default rungs (spec v3 §4.1)
     decisions: dict[str, Any] = Field(default_factory=dict)  # DecisionService purposes (analystos.decisions.config)
+
+    def egress_hosts(self, *, internal_only: bool = False) -> set[str]:
+        """Hosts the model transport may reach: every configured provider's, or only the internal ones."""
+        return {p.host() for p in self.providers.values() if p.host() and (not internal_only or p.egress == "internal")}
 
     def region_of(self, model: str, provider: str) -> str | None:
         meta = self.models.get(model)
@@ -92,7 +141,8 @@ class ModelsConfig(BaseModel):
             "allowlist": self.allowlist,
             "profiles": {k: v.model_dump() for k, v in self.profiles.items()},
             "routing": self.routing,
-            "providers": {k: {"kind": v.kind, "base_url": v.base_url, "region": v.region} for k, v in self.providers.items()},
+            "providers": {k: {"kind": v.kind, "type": v.type, "base_url": v.url(), "egress": v.egress, "region": v.region}
+                          for k, v in self.providers.items()},
             "models": {k: v.model_dump() for k, v in self.models.items()},
             "prices_version": self.prices_version,
             "ladders": self.ladders,
@@ -103,7 +153,16 @@ def family(model: str) -> str:
     return model.split("/", 1)[0]
 
 
+def _read(path: Path) -> dict[str, Any]:
+    """A models file may `extends: <file>` (relative to itself): its top-level sections replace the
+    base's wholesale, so an air-gapped or Azure variant restates only providers, models and profiles."""
+    data = yaml.safe_load(path.read_text()) or {}
+    base = data.pop("extends", None)
+    if base:
+        return {**_read((path.parent / base).resolve()), **data}
+    return data
+
+
 @lru_cache
 def load_models_config(path: Path | None = None) -> ModelsConfig:
-    data = yaml.safe_load((path or get_settings().models_config).read_text())
-    return ModelsConfig.model_validate(data)
+    return ModelsConfig.model_validate(_read(path or get_settings().models_config))

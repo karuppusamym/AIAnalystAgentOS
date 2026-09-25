@@ -22,11 +22,16 @@ What this module does:
   allowlist at runtime;
 * inputs go in as JSON on stdin; the result is the JSON-serialised value of the variable `result`.
 
-What it does NOT do: network isolation, syscall filtering, filesystem isolation beyond the working
-directory, or protection from interpreter / C-extension exploits. PRODUCTION MUST RUN THIS INSIDE A
-NETWORK-LESS, READ-ONLY, UNPRIVILEGED CONTAINER (e.g. gVisor/Firecracker or a Docker container with
-`--network none --read-only --cap-drop ALL --pids-limit`, seccomp, non-root user) and treat this module
-as the inner layer.
+* network (P4-S04): on Linux the child gets its own empty network namespace (`unshare(CLONE_NEWNET)`,
+  or with a user namespace when unprivileged), so it has only a down loopback and no route anywhere.
+  `ANALYSTOS_SANDBOX_NETWORK`: `isolate` (default) = when the kernel allows it, recorded on the result
+  as `network_isolated`; `require` = refuse to run where it is not possible; `off` = development only.
+
+What it does NOT do: syscall filtering, filesystem isolation beyond the working directory, or
+protection from interpreter / C-extension exploits. PRODUCTION MUST RUN THIS INSIDE A NETWORK-LESS,
+READ-ONLY, UNPRIVILEGED CONTAINER (the Helm chart's worker pods: `readOnlyRootFilesystem`, all
+capabilities dropped, non-root, seccomp RuntimeDefault, and a NetworkPolicy; gVisor where available)
+and treat this module as the inner layer.
 """
 from __future__ import annotations
 
@@ -88,6 +93,7 @@ class SandboxResult(BaseModel):
     duration_ms: int = 0
     exit_code: int | None = None
     timed_out: bool = False
+    network_isolated: bool | None = None  # the child ran in an empty network namespace
 
 
 class _Checker(ast.NodeVisitor):
@@ -189,9 +195,60 @@ def sandbox_env(workdir: str) -> dict[str, str]:
     }
 
 
-def _limits(memory_mb: int, cpu_s: int, nofile: int, fsize_mb: int):
+CLONE_NEWNET = 0x40000000
+CLONE_NEWUSER = 0x10000000
+
+
+def _unshare_network() -> None:
+    """Move the calling (child) process into a new, empty network namespace. Privileged first; an
+    unprivileged process needs a user namespace alongside (kernel.unprivileged_userns_clone)."""
+    import ctypes
+    import ctypes.util
+
+    libc = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
+    if libc.unshare(CLONE_NEWNET) == 0:
+        return
+    if libc.unshare(CLONE_NEWUSER | CLONE_NEWNET) == 0:
+        return
+    err = ctypes.get_errno()
+    raise OSError(err, f"unshare(CLONE_NEWNET) failed: {os.strerror(err)}")
+
+
+_NETNS: bool | None = None
+
+
+def network_isolation_available() -> bool:
+    """Whether this host lets a child enter its own network namespace (probed once per process)."""
+    global _NETNS
+    if _NETNS is None:
+        if not sys.platform.startswith("linux"):
+            _NETNS = False
+        else:
+            try:
+                _NETNS = subprocess.run([sys.executable, "-I", "-c", "pass"], preexec_fn=_unshare_network,  # noqa: S603
+                                        env=sandbox_env(tempfile.gettempdir()), timeout=10,
+                                        capture_output=True).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                _NETNS = False
+    return _NETNS
+
+
+def _network_mode(network: str | None) -> str:
+    if network is None:
+        from analystos.core.config import get_settings
+
+        network = get_settings().sandbox_network
+    if network not in ("isolate", "require", "off"):
+        raise ValueError(f"sandbox network mode must be isolate, require or off (got {network!r})")
+    return network
+
+
+def _limits(memory_mb: int, cpu_s: int, nofile: int, fsize_mb: int, *, isolate_network: bool = False):
     def apply() -> None:  # runs in the child between fork and exec
         import resource
+
+        if isolate_network:
+            _unshare_network()  # before the limits: a failure aborts the spawn instead of running networked
 
         mem = int(memory_mb) * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
@@ -215,12 +272,19 @@ def _json_default(o: Any) -> Any:
 
 def run_python(code: str, *, inputs: dict[str, list[dict]] | None = None, timeout_s: float = 30, memory_mb: int = 1024,
                allowed_imports: tuple[str, ...] = DEFAULT_ALLOWED_IMPORTS, max_output_bytes: int = 1_000_000,
-               max_result_bytes: int = 10_000_000, nofile: int = 256, fsize_mb: int = 16) -> SandboxResult:
+               max_result_bytes: int = 10_000_000, nofile: int = 256, fsize_mb: int = 16,
+               network: str | None = None) -> SandboxResult:
     """Execute `code` in a resource-limited child interpreter; returns the value of `result`.
 
     `inputs` is visible to the code as the dict `inputs` (e.g. `pd.DataFrame(inputs["rows"])`).
+    `network` (isolate | require | off; default ANALYSTOS_SANDBOX_NETWORK) sets the network namespace.
     """
     t0 = time.monotonic()
+    mode = _network_mode(network)
+    isolate = mode != "off" and network_isolation_available()
+    if mode == "require" and not isolate:
+        return SandboxResult(ok=False, error="sandbox network isolation is required (ANALYSTOS_SANDBOX_NETWORK=require) "
+                                             "but this host does not allow a private network namespace", network_isolated=False)
     problems = check_code(code, allowed_imports)
     if problems:
         return SandboxResult(ok=False, error="rejected by sandbox policy: " + "; ".join(problems[:10]),
@@ -235,10 +299,14 @@ def run_python(code: str, *, inputs: dict[str, list[dict]] | None = None, timeou
     workdir = tempfile.mkdtemp(prefix="aos-sbx-")
     timed_out = False
     try:
-        proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
-            [sys.executable, "-I", "-B", str(HARNESS)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, cwd=workdir, env=sandbox_env(workdir), close_fds=True, start_new_session=True,
-            preexec_fn=_limits(memory_mb, max(1, math.ceil(timeout_s)) + 1, nofile, fsize_mb))
+        try:
+            proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+                [sys.executable, "-I", "-B", str(HARNESS)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, cwd=workdir, env=sandbox_env(workdir), close_fds=True, start_new_session=True,
+                preexec_fn=_limits(memory_mb, max(1, math.ceil(timeout_s)) + 1, nofile, fsize_mb, isolate_network=isolate))
+        except (OSError, subprocess.SubprocessError) as e:  # e.g. the namespace could not be entered: never run networked
+            return SandboxResult(ok=False, error=f"sandbox could not start: {e}", network_isolated=False,
+                                 duration_ms=int((time.monotonic() - t0) * 1000))
         try:
             out, err = proc.communicate(payload.encode(), timeout=timeout_s)
         except subprocess.TimeoutExpired:
@@ -253,7 +321,7 @@ def run_python(code: str, *, inputs: dict[str, list[dict]] | None = None, timeou
     text = out.decode("utf-8", "replace")
     if timed_out:
         return SandboxResult(ok=False, error=f"timeout: exceeded {timeout_s}s wall clock; process group killed",
-                             duration_ms=dur, exit_code=code_rc, timed_out=True)
+                             duration_ms=dur, exit_code=code_rc, timed_out=True, network_isolated=isolate)
     idx = text.rfind(MARKER)
     if idx < 0:
         why = f"child exited with code {code_rc}"
@@ -264,10 +332,11 @@ def run_python(code: str, *, inputs: dict[str, list[dict]] | None = None, timeou
         tail = err.decode("utf-8", "replace")[-2000:]
         if "MemoryError" in tail:
             why = "MemoryError: memory limit exceeded; " + why
-        return SandboxResult(ok=False, error=f"{why}; stderr: {tail.strip()}"[:4000], duration_ms=dur, exit_code=code_rc)
+        return SandboxResult(ok=False, error=f"{why}; stderr: {tail.strip()}"[:4000], duration_ms=dur, exit_code=code_rc,
+                             network_isolated=isolate)
     try:
         env = json.loads(text[idx + len(MARKER):])
     except json.JSONDecodeError as e:
         return SandboxResult(ok=False, error=f"malformed sandbox output: {e}", duration_ms=dur, exit_code=code_rc)
     return SandboxResult(ok=bool(env.get("ok")), stdout=env.get("stdout", ""), result=env.get("result"),
-                         error=env.get("error"), duration_ms=dur, exit_code=code_rc)
+                         error=env.get("error"), duration_ms=dur, exit_code=code_rc, network_isolated=isolate)

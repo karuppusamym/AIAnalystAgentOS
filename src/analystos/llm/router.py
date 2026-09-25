@@ -2,7 +2,8 @@
 bounded retry, budget checks, redaction and a persisted record of every call.
 
 Two call shapes:
-  complete()  chat models via OpenRouter chat completions (text or JSON output)
+  complete()  chat models via OpenRouter chat completions (text or JSON output), or any other provider
+              type through its adapter (analystos.llm.providers: OpenAI-compatible, Azure, Anthropic, Bedrock)
   decide()    TypeSafe Jev via the OpenRouter Decisions API (typed choice/noul/score answers)
 
 The router never silently routes around policy: if the workspace allowlist, provider list or
@@ -22,6 +23,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -29,6 +31,7 @@ from analystos.contracts.platform import MODEL_RUNGS
 from analystos.core.errors import (
     ApprovalRequired,
     BudgetExceeded,
+    EgressBlocked,
     LLMDisabled,
     ModelRouteUnavailable,
     ProviderQuotaExhausted,
@@ -38,6 +41,7 @@ from analystos.core.ids import stable_hash
 from analystos.core.logging import get_logger
 from analystos.llm.cache import ResponseCache, estimate_tokens
 from analystos.llm.config import ModelsConfig, ProfileConfig, family, load_models_config
+from analystos.llm.providers import adapter_for
 from analystos.llm.redaction import redact, redact_obj
 
 log = get_logger(__name__)
@@ -139,18 +143,29 @@ class Transport(Protocol):
 
 
 class HttpTransport:
-    def __init__(self) -> None:
-        self._client = httpx.Client(headers={"HTTP-Referer": "https://github.com/karuppusamym/AIAnalystAgentOS",
-                                             "X-Title": "Context2AI AnalystOS"})
+    """The one HTTP client model calls leave through. `allowed_hosts` is the egress guard: a URL whose
+    host is not a configured provider endpoint (on an air-gapped install: an `egress: internal` one)
+    is refused before any connection is opened. None = unguarded (only for callers that pass their own)."""
 
-    def _post(self, url: str, api_key: str, payload: dict, timeout: float) -> dict:
+    def __init__(self, *, allowed_hosts: set[str] | None = None, client: httpx.Client | None = None) -> None:
+        self.allowed_hosts = {h.lower() for h in allowed_hosts} if allowed_hosts is not None else None
+        self._client = client or httpx.Client()
+
+    def _guard(self, url: str) -> None:
+        host = (urlsplit(url).hostname or "").lower()
+        if self.allowed_hosts is not None and host not in self.allowed_hosts:
+            raise EgressBlocked(f"model transport refused host '{host}': not an allowed provider endpoint "
+                                f"(allowed: {', '.join(sorted(self.allowed_hosts)) or 'none'})")
+
+    def post(self, url: str, *, headers: dict[str, str], payload: dict, timeout: float) -> dict:
+        self._guard(url)
         try:
-            response = self._client.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+            response = self._client.post(url, json=payload, headers=headers, timeout=timeout)
         except httpx.TimeoutException as exc:
             raise UpstreamUnavailable(f"model provider timeout: {exc}") from exc
         except httpx.HTTPError as exc:
             raise UpstreamUnavailable(f"model provider unreachable: {exc}") from exc
-        if response.status_code in (408, 409, 425, 429) or response.status_code >= 500:
+        if response.status_code in (408, 409, 425, 429, 529) or response.status_code >= 500:
             raise UpstreamUnavailable(f"model provider HTTP {response.status_code}: {response.text[:300]}")
         if response.status_code == 402:
             raise ProviderQuotaExhausted(f"model provider refused for credits HTTP 402: {response.text[:300]}")
@@ -158,11 +173,19 @@ class HttpTransport:
             raise ModelRouteUnavailable(f"model provider rejected request HTTP {response.status_code}: {response.text[:300]}")
         return response.json()
 
+    def _openrouter(self, url: str, api_key: str, payload: dict, timeout: float) -> dict:
+        return self.post(url, headers={"Authorization": f"Bearer {api_key}", **OPENROUTER_HEADERS}, payload=payload,
+                         timeout=timeout)
+
     def chat(self, *, base_url: str, api_key: str, payload: dict, timeout: float) -> dict:
-        return self._post(f"{base_url.rstrip('/')}/chat/completions", api_key, payload, timeout)
+        return self._openrouter(f"{base_url.rstrip('/')}/chat/completions", api_key, payload, timeout)
 
     def decide(self, *, base_url: str, api_key: str, payload: dict, timeout: float) -> dict:
-        return self._post(base_url.rstrip("/"), api_key, payload, timeout)
+        return self._openrouter(base_url.rstrip("/"), api_key, payload, timeout)
+
+
+_NO_PROVIDER = type("_NoProvider", (), {"egress": "internet"})()
+OPENROUTER_HEADERS = {"HTTP-Referer": "https://github.com/karuppusamym/AIAnalystAgentOS", "X-Title": "Context2AI AnalystOS"}
 
 
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -294,10 +317,12 @@ class ModelRouter:
     def __init__(self, config: ModelsConfig | None = None, *, sink: UsageSink | None = None,
                  transport: Transport | None = None, api_key_lookup: Callable[[str], str | None] | None = None,
                  max_retries: int = 2, settings_provider: Callable[[], Any] | None = None,
-                 cache: ResponseCache | None = None) -> None:
+                 cache: ResponseCache | None = None, air_gapped: bool | None = None) -> None:
         self.config = config or load_models_config()
         self.sink = sink or NullSink()
-        self.transport = transport or HttpTransport()
+        self.air_gapped = _air_gapped() if air_gapped is None else air_gapped
+        # Egress guard: only configured provider hosts, and only internal ones on an air-gapped install.
+        self.transport = transport or HttpTransport(allowed_hosts=self.config.egress_hosts(internal_only=self.air_gapped))
         self.api_key_lookup = api_key_lookup or (lambda env: (os.getenv(env) or "").strip() or None)
         self.max_retries = max_retries
         self.settings_provider = settings_provider or _default_settings
@@ -377,9 +402,14 @@ class ModelRouter:
             models = [m for m in models if (self.config.region_of(m, profile.provider) or "").strip().lower() == want]
         return profile_name, profile, models
 
-    @staticmethod
-    def _policy_block(profile: ProfileConfig, ctx: CallContext) -> str | None:
-        if ctx.allowed_providers is not None and profile.provider not in ctx.allowed_providers:
+    def _policy_block(self, profile: ProfileConfig, ctx: CallContext) -> str | None:
+        if self.air_gapped:
+            cfg = self.config.providers.get(profile.provider)
+            if cfg is None or cfg.egress != "internal":
+                return f"provider '{profile.provider}' is not an internal endpoint (air-gapped install)"
+        internal = (self.config.providers.get(profile.provider) or _NO_PROVIDER).egress == "internal"
+        if ctx.allowed_providers is not None and profile.provider not in ctx.allowed_providers \
+                and not (internal and "internal" in ctx.allowed_providers):
             return f"provider '{profile.provider}' is not in the workspace allowed_providers {ctx.allowed_providers}"
         return None
 
@@ -422,16 +452,29 @@ class ModelRouter:
         except KeyError:
             return False
         provider = self.config.providers.get(profile.provider)
-        return bool(models and provider and self.api_key_lookup(provider.api_key_env)) and not _cooling_down(profile.provider)
+        keyed = provider is not None and (provider.api_key_env is None or bool(self.api_key_lookup(provider.api_key_env)))
+        return bool(models and keyed) and not _cooling_down(profile.provider)
 
     def _provider(self, profile: ProfileConfig) -> tuple[str, str]:
+        """(base URL, key). A provider without `api_key_env` (a local endpoint, Bedrock's AWS chain)
+        is called without a key; keys are only ever read from the environment."""
         provider = self.config.providers.get(profile.provider)
         if provider is None:
             raise ModelRouteUnavailable(f"provider '{profile.provider}' is not configured")
+        if provider.api_key_env is None:
+            return provider.url(), ""
         key = self.api_key_lookup(provider.api_key_env)
         if not key:
             raise ModelRouteUnavailable(f"no API key for provider '{profile.provider}' (set {provider.api_key_env})")
-        return provider.base_url, key
+        return provider.url(), key
+
+    def _chat(self, profile: ProfileConfig, base_url: str, key: str, payload: dict, timeout: float) -> dict:
+        """OpenRouter keeps the transport's own chat path (replay, fakes); every other provider type
+        goes through its adapter, which maps the payload and the answer (analystos.llm.providers)."""
+        provider = self.config.providers[profile.provider]
+        if provider.type == "openrouter":
+            return self.transport.chat(base_url=base_url, api_key=key, payload=payload, timeout=timeout)
+        return adapter_for(provider).chat(self.transport, provider, key or None, payload, timeout)
 
     # ------------------------------------------------------------------ chat
     def complete(self, purpose: str, messages: list[dict[str, str]], *, ctx: CallContext | None = None,
@@ -500,7 +543,7 @@ class ModelRouter:
                     payload["response_format"] = {"type": "json_object"}
                 started = time.perf_counter()
                 try:
-                    body = self.transport.chat(base_url=base_url, api_key=key, payload=payload, timeout=profile.timeout_seconds)
+                    body = self._chat(profile, base_url, key, payload, profile.timeout_seconds)
                     text = ((body.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
                     usage = body.get("usage") or {}
                     latency = round((time.perf_counter() - started) * 1000)
@@ -627,6 +670,12 @@ class ModelRouter:
                     break
                 time.sleep(min(0.5 * 2 ** (attempt - 1), 4))
         raise ModelRouteUnavailable(f"decision model failed for purpose '{purpose}': {last_error}")
+
+
+def _air_gapped() -> bool:
+    from analystos.core.config import get_settings
+
+    return bool(get_settings().air_gapped)
 
 
 def _default_settings():
