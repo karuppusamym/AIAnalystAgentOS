@@ -20,6 +20,8 @@ TEST_SUFFIX = _DP_DB.removeprefix("analystos_test_dp").strip("_")
 # Every session gets its own role namespace. A bare "aostest_" would make this session's cleanup
 # (LIKE 'aostest\_%') drop the roles of every parallel session using a suffix.
 ROLE_PREFIX = f"aostest_{TEST_SUFFIX or 'default'}_"
+# Budget counters (P4-T07) of test runs never share keys with a dev stack on the same Redis.
+os.environ.setdefault("ANALYSTOS_BUDGET_COUNTER_PREFIX", f"aostest:{TEST_SUFFIX or 'default'}:budget:")
 ANALYTICS_DB = f"{_DP_DB}_analytics"
 _HOSTPORT = TEST_DB.split("@", 1)[1].rsplit("/", 1)[0]
 os.environ["ANALYSTOS_ANALYTICS_LOADER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}loader:loader@{_HOSTPORT}/{ANALYTICS_DB}"

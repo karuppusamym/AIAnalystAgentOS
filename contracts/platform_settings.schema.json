@@ -133,7 +133,7 @@
       "type": "object"
     },
     "LLMSettings": {
-      "description": "How and when models are called.\n\nmode per purpose: off = never call (deterministic path only), auto = deterministic first and call\nthe model only when the deterministic result is insufficient, always = call when available.",
+      "description": "How and when models are called.\n\nEach purpose runs a ladder (config/models.yaml `ladders`, spec v3 \u00a74.1). `ladders` here replaces a\npurpose's ladder outright; `purpose_modes` (the increment-3 modes, what presets set) derive one\nfrom the default: off = no model rung, auto = deterministic rungs first and the model only when\nthey are insufficient, always = model first. Precedence: ladders > purpose_modes > default.",
       "properties": {
         "purpose_modes": {
           "additionalProperties": {
@@ -145,6 +145,34 @@
             "type": "string"
           },
           "title": "Purpose Modes",
+          "type": "object"
+        },
+        "ladders": {
+          "additionalProperties": {
+            "items": {
+              "enum": [
+                "cache",
+                "registry",
+                "rules",
+                "decision",
+                "llm_small",
+                "llm_large"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Ladders",
+          "type": "object"
+        },
+        "purpose_run_caps": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object"
+          },
+          "title": "Purpose Run Caps",
           "type": "object"
         },
         "routing_overrides": {

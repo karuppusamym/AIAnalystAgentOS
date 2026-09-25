@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Neo4j is an optional projection of the Postgres lineage/relationship tables (spec v3 §8), off
     # by default: lineage and table neighbourhood are served from Postgres unless this is on.
     graph_enabled: bool = False
+    budget_counter_prefix: str = "aos:budget:"  # run/workspace/purpose budget counters (P4-T07)
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "analystos-neo4j"

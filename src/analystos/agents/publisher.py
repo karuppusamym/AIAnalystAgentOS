@@ -88,14 +88,14 @@ def request_publication(ctx: RunContext) -> dict:
         if decision.decision == "deny":
             raise PolicyDenied("publication denied: " + ", ".join(decision.reasons))
         run = s.get(AnalysisRun, ctx.run.id)
-        jev = ctx.jev.consequential(f"Publish {len(bundle.dashboards)} dashboards with {len(bundle.charts)} charts to {destination}",
-                                    ctx=ctx.call_ctx())
+        # No risk_check decision here (P4-T02): publication is always high tier and always needs an
+        # approval, so a model opinion could not change the next step.
         approval = request_approval(
             s, workspace_id=ctx.workspace.id, run_id=run.id, action="publish_dashboard", payload=payload, plan_hash=run.plan_hash,
             policy_version=run.policy_version, requested_by=run.requested_by, risk_tier="high", destination=destination,
             affected_assets=[d.name for d in bundle.datasets] + [d.key for d in bundle.dashboards],
             evidence={"governance_review": review, "policy": decision.model_dump(),
-                      "jev_consequential": jev.value if jev else None,
+                      "risk_tier_basis": "deterministic: publication is always high risk and approval-gated",
                       "charts": len(bundle.charts), "metrics": len(bundle.metrics)})
         task = s.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == "publish"))
         task.input = {**task.input, "approval_id": approval.id, "destination": destination}

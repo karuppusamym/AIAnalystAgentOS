@@ -9,7 +9,7 @@ import re
 
 from sqlalchemy import select
 
-from analystos.agents.common import llm_json, task_output
+from analystos.agents.common import compact_json, llm_json, task_output
 from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link
@@ -19,6 +19,7 @@ from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
 from analystos.events.bus import emit
+from analystos.llm.cache import estimate_tokens
 from analystos.llm.config import family
 from analystos.runtime.context import RunContext
 from analystos.services.platform_settings import get as platform
@@ -124,12 +125,18 @@ def verify_insights(ctx: RunContext) -> dict:
                            f"effect={sd.get('effect_size')} agrees={agrees}"})
         except AnalystOSError as exc:
             checks.append({"check": "second_method", "passed": False, "detail": f"failed: {exc.code}"})
-        # ---- Verify: independent model family + JEV (recorded, not decisive)
-        review, review_model = llm_json(ctx, "verification", "verification.v1",
-                                        {"claim": finding, "hypothesis": statement, "method": spec.method,
-                                         "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
-                                                                                   "effect_label", "highlights", "warnings")},
-                                         "checks": checks}, exclude_families=[primary_family] if primary_family else [])
+        # ---- Verify: independent model family (policy opt-in, P4-T02) + JEV (recorded, not decisive)
+        review_payload = {"claim": finding, "hypothesis": statement, "method": spec.method,
+                          "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
+                                                                    "effect_label", "highlights", "warnings")},
+                          "checks": checks}
+        if ctx.policy.independent_model_verification:
+            review, review_model = llm_json(ctx, "verification", "verification.v1", review_payload,
+                                            exclude_families=[primary_family] if primary_family else [])
+        else:
+            review, review_model = None, "policy_off"
+            ctx.router.record_skip("verification", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(review_payload)) + 500,
+                                   reason="workspace policy: independent-model verification is opt-in; deterministic REV checks decide")
         jev = ctx.jev.probability("rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
             "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
             "Does `evidence` support `claim` as worded, without overreach?", ctx=ctx.call_ctx())

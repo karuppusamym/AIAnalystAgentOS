@@ -10,6 +10,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 LLMMode = Literal["off", "auto", "always"]
+# Execution ladder (spec v3 §4.1, ADR-0012): what may answer a purpose, cheapest first. cache = exact
+# response cache (L0), registry = verified query/hypothesis/metric (L1), rules = deterministic code
+# (L2), decision = typed decision model (L3), llm_small / llm_large = low_cost / strong chat profiles
+# (L4/L5). `answered_by` on every model_call row is one of these.
+Rung = Literal["cache", "registry", "rules", "decision", "llm_small", "llm_large"]
+MODEL_RUNGS: tuple[str, ...] = ("decision", "llm_small", "llm_large")
 
 # Purposes where a deterministic path produces an equivalent result (auto = deterministic first).
 DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generation", "insight_narrative", "summarization",
@@ -20,11 +26,16 @@ DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generat
 class LLMSettings(BaseModel):
     """How and when models are called.
 
-    mode per purpose: off = never call (deterministic path only), auto = deterministic first and call
-    the model only when the deterministic result is insufficient, always = call when available.
+    Each purpose runs a ladder (config/models.yaml `ladders`, spec v3 §4.1). `ladders` here replaces a
+    purpose's ladder outright; `purpose_modes` (the increment-3 modes, what presets set) derive one
+    from the default: off = no model rung, auto = deterministic rungs first and the model only when
+    they are insufficient, always = model first. Precedence: ladders > purpose_modes > default.
     """
 
-    purpose_modes: dict[str, LLMMode] = Field(default_factory=dict)  # missing purpose -> "always"
+    purpose_modes: dict[str, LLMMode] = Field(default_factory=dict)  # missing purpose -> its default ladder
+    ladders: dict[str, list[Rung]] = Field(default_factory=dict)  # purpose -> ordered rungs (admin override)
+    # Per-run caps for one purpose, on top of the workspace run budget: {"calls": n, "tokens": n, "usd": x}.
+    purpose_run_caps: dict[str, dict[str, float]] = Field(default_factory=dict)
     routing_overrides: dict[str, str] = Field(default_factory=dict)  # purpose -> profile
     profile_models: dict[str, list[str]] = Field(default_factory=dict)  # profile -> models (fallback order)
     disabled_models: list[str] = Field(default_factory=list)  # removed from the allowlist at runtime
@@ -92,11 +103,14 @@ class PlatformSettings(BaseModel):
 
 
 PRESETS: dict[str, dict[str, LLMMode]] = {
-    # Model quality where it matters most; deterministic where output is equivalent.
-    "balanced": {"feedback_classification": "always", "insight_narrative": "always", "planning": "always"},
+    # The default ladders (P4-T02): deterministic first wherever a rule path exists.
+    "balanced": {},
     # Fewest tokens without losing analysis quality: rules first everywhere a rule path exists.
     "token_saver": {p: "auto" for p in DETERMINISTIC_CAPABLE} | {"verification": "always"},
-    "max_quality": {},
+    # Model first for every purpose (the pre-increment-4 default).
+    "max_quality": {p: "always" for p in DETERMINISTIC_CAPABLE | {"verification", "sql_generation", "sql_repair",
+                                                                 "rev_second_opinion", "risk_check", "alert_triage",
+                                                                 "statistical_interpretation"}},
     # No model calls at all: the platform runs entirely on deterministic paths.
     "offline": {p: "off" for p in DETERMINISTIC_CAPABLE | {"verification", "sql_generation", "sql_repair",
                                                           "rev_second_opinion", "risk_check", "alert_triage",

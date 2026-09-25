@@ -189,9 +189,19 @@ class RunContext:
             self._authorized.add(tool_id)
 
     def check_query_budget(self) -> None:
-        """Every statement a run executes (skills, verification re-runs) counts toward the per-run budget."""
-        with session_scope() as s:
-            used = s.scalar(select(func.count()).select_from(QueryExecution).where(QueryExecution.run_id == self.run.id))
+        """Every statement a run executes (skills, verification re-runs) counts toward the per-run budget.
+
+        Counted with an atomic Redis increment (P4-T07); the gateway's audit rows only seed a missing
+        counter, and are counted directly only while Redis is unavailable."""
+        from analystos.runtime.budget_counters import RUN_TTL_SECONDS, default_budget_counters
+
+        def counted() -> int:
+            with session_scope() as s:
+                return s.scalar(select(func.count()).select_from(QueryExecution).where(QueryExecution.run_id == self.run.id)) or 0
+
+        counters = default_budget_counters()
+        after = counters.incr(counters.run_key(self.run.id, "queries"), counted, RUN_TTL_SECONDS)
+        used = counted() if after is None else int(after) - 1  # statements before this one
         if used >= self.policy.max_queries_per_run:
             raise BudgetExceeded(f"per-run query budget ({self.policy.max_queries_per_run}) exhausted")
 

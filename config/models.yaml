@@ -24,10 +24,13 @@ allowlist:
   - deepseek/deepseek-v4-flash
   - typesafe/jev-1.13
 
-# Optional per-model metadata (all fields optional). Prices are USD per million tokens and are
-# list-price ESTIMATES used only for the pre-call approval check (policy.expensive_model_approval_usd);
-# the billed cost is always the provider-reported usage.cost. A model without prices is not estimated.
+# Versioned price table (P4-T07). Prices are USD per million tokens. They serve (a) the pre-call
+# approval estimate (policy.expensive_model_approval_usd) and (b) the recorded cost when the provider
+# does not report usage.cost (model_call.cost_source = price_table@<prices_version>). A model with no
+# price and no provider-reported cost is recorded as cost_source=missing_price and surfaced in
+# /api/admin/token-savings; it is never silently counted as $0. Bump prices_version on every change.
 # `region` overrides the provider region; unset = unknown (fails closed under data_residency).
+prices_version: "2026-09-25"
 models:
   anthropic/claude-sonnet-5: {input_usd_per_mtok: 3.0, output_usd_per_mtok: 15.0}
   anthropic/claude-opus-5: {input_usd_per_mtok: 5.0, output_usd_per_mtok: 25.0}
@@ -69,6 +72,36 @@ profiles:
     provider: typesafe
     models: [typesafe/jev-1.13]  # pinned: aliases can shift verdicts
     timeout_seconds: 20
+
+# Execution ladder per purpose (spec v3 §4.1, ADR-0012), cheapest rung first:
+# cache (L0) -> registry (L1) -> rules (L2) -> decision (L3) -> llm_small (L4) -> llm_large (L5).
+# A rules/registry rung before the model rung = deterministic first ("auto"); the model rung is only
+# reached when the deterministic result is insufficient. Model rungs name the routed profile's class
+# (low_cost -> llm_small, decision -> decision, otherwise llm_large); the recorded answered_by is the
+# profile actually used (a budget downgrade answers from llm_small). Admins override per purpose in
+# platform settings (llm.ladders / llm.purpose_modes). A purpose without an entry is model first.
+ladders:
+  planning: [cache, rules, llm_large]
+  hypothesis_generation: [cache, registry, rules, llm_large]
+  follow_up_generation: [cache, rules, llm_large]
+  sql_generation: [cache, registry, llm_large]
+  sql_repair: [cache, llm_large]
+  statistical_interpretation: [cache, llm_large]
+  insight_narrative: [cache, rules, llm_small]
+  semantic_modeling: [cache, rules, llm_large]
+  dashboard_design: [cache, rules, llm_small]
+  feedback_interpretation: [cache, rules, llm_large]
+  summarization: [cache, rules, llm_small]
+  agent_actions: [cache, rules, llm_small]
+  metadata_enrichment: [cache, rules, llm_small]
+  verification: [cache, llm_large]  # runs only when the workspace policy opts in (independent_model_verification)
+  hypothesis_priority: [cache, rules, decision]
+  risk_check: [cache, decision]  # escalate-only; no longer called at publish (the tier is fixed high)
+  feedback_classification: [cache, rules, decision]
+  chart_selection: [cache, rules, decision]
+  rev_second_opinion: [cache, decision]
+  stop_check: [cache, rules, decision]
+  alert_triage: [cache, decision, rules]
 
 routing:
   planning: reasoning_strong

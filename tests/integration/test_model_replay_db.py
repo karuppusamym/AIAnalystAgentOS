@@ -31,7 +31,9 @@ def test_run_model_calls_are_stored_and_replay_offline(control_db, capsys, tmp_p
         return UpstreamUnavailable("503") if len(attempts) == 1 else chat_json({"questions": ["q"]}, model=p["model"])
 
     answers = {"priority_0": {"score": 2, "probabilities": {"low": 0.1, "medium": 0.2, "high": 0.7}, "confidence": 0.8}}
-    platform = PlatformSettings()
+    from analystos.contracts.platform import LLMSettings
+
+    platform = PlatformSettings(llm=LLMSettings(purpose_modes={"hypothesis_priority": "always"}))  # default: rules rank
     router = ModelRouter(transport=FakeTransport(chat=chat, decide=lambda p: {"answers": answers, "usage": {}}),
                          sink=DbUsageSink(), api_key_lookup=lambda _e: "sk-test-000000000000000000000000", max_retries=0,
                          settings_provider=lambda: platform, cache=ResponseCache(None))

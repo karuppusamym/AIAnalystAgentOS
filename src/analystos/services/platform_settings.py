@@ -28,7 +28,7 @@ def _deep_merge(base: dict, patch: dict) -> dict:
     out = dict(base)
     for k, v in patch.items():
         out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) and k not in (
-            "purpose_modes", "routing_overrides", "profile_models") else v
+            "purpose_modes", "ladders", "purpose_run_caps", "routing_overrides", "profile_models") else v
     return out
 
 
@@ -88,8 +88,8 @@ def _latest(session: Session) -> tuple[int, PlatformSettings]:
 
 
 def update(session: Session, user: User, patch: dict[str, Any], *, note: str = "") -> dict[str, Any]:
-    """Deep-merge `patch` into the latest version. The maps purpose_modes, routing_overrides and
-    profile_models are replaced wholesale (the only way to remove a key)."""
+    """Deep-merge `patch` into the latest version. The maps purpose_modes, ladders, purpose_run_caps,
+    routing_overrides and profile_models are replaced wholesale (the only way to remove a key)."""
     _require_admin(user)
     version, before = _latest(session)
     merged = _deep_merge(before.model_dump(), patch)
@@ -113,7 +113,8 @@ def update(session: Session, user: User, patch: dict[str, Any], *, note: str = "
 def apply_preset(session: Session, user: User, preset: str) -> dict[str, Any]:
     if preset not in PRESETS:
         raise InvalidInput(f"preset must be one of {sorted(PRESETS)}")
-    return update(session, user, {"llm": {"purpose_modes": PRESETS[preset]}}, note=f"preset {preset}")
+    # A preset is expressed as modes; per-purpose ladder overrides would shadow it, so it clears them.
+    return update(session, user, {"llm": {"purpose_modes": PRESETS[preset], "ladders": {}}}, note=f"preset {preset}")
 
 
 def history(session: Session, limit: int = 50) -> list[dict[str, Any]]:
@@ -155,6 +156,13 @@ def _validate_references(settings: PlatformSettings) -> None:
         unknown = [m for m in models if m not in cfg.allowlist]
         if unknown:
             raise InvalidInput(f"models not on the platform allowlist: {', '.join(unknown)} (edit config/models.yaml to extend it)")
-    for purpose in settings.llm.purpose_modes:
+    for purpose in [*settings.llm.purpose_modes, *settings.llm.ladders, *settings.llm.purpose_run_caps]:
         if purpose not in cfg.routing:
             raise InvalidInput(f"unknown model purpose {purpose}")
+    for purpose, rungs in settings.llm.ladders.items():
+        if not rungs or len(set(rungs)) != len(rungs):
+            raise InvalidInput(f"ladder for {purpose} must list each rung once and not be empty")
+    for purpose, caps in settings.llm.purpose_run_caps.items():
+        unknown = set(caps) - {"calls", "tokens", "usd"}
+        if unknown:
+            raise InvalidInput(f"purpose_run_caps.{purpose}: unknown cap {', '.join(sorted(unknown))} (calls, tokens, usd)")
