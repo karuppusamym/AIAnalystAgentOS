@@ -1,7 +1,7 @@
 """Ask threads and turns (P4-U02)
 
 Revision ID: 0021
-Revises: 0014
+Revises: 0017
 Create Date: 2026-09-25 23:30:00.000000
 
 Hand-written.
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "0021"
-down_revision = "0014"
+down_revision = "0017"  # was 0014; re-chained after merging P4-K03 (0017) so the branch has one head
 branch_labels = None
 depends_on = None
 

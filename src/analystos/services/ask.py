@@ -7,7 +7,8 @@ a remedy, provenance and staleness, the inspector (decisions and model-call rece
 `task_id = turn id`), and promotions of an answer into platform objects.
 
 Promotions that stay inside the platform (verified query, metric, monitor, "Investigate why") are
-role-checked and validated through the gateway; adding an answer to a dashboard is meant for a BI
+role-checked and validated through the gateway (a metric is proposed to the semantic layer, where an
+approver approves it); adding an answer to a dashboard is meant for a BI
 audience, so it is an approval bound to the payload hash and runs only after `verify_for_execution`.
 """
 from __future__ import annotations
@@ -526,16 +527,22 @@ def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None =
             vq = vq_svc.promote(s, me, ws_id, question=body.get("question") or question, query_id=query_id, name=body.get("name"))
             record = {"target": target, "id": vq.id, "name": vq.name, "status": "created"}
         elif target == "metric":
-            require_role(s, me, ws_id, "analyst")
+            # A KPI is proposed to the semantic layer (P4-K03): it becomes usable once an approver
+            # approves it there (separation of duties); the expression is checked through the gateway first.
+            from analystos.contracts.semantic import DialectExpression, SemanticMetricDef
+            from analystos.semantic.service import propose_metric
+
+            require_role(s, me, ws_id, "editor")
             expression, dataset, check = _measure(s, me, turn, body)
             name = _slug(body.get("name") or question)
-            art = save_artifact(s, workspace_id=ws_id, type_="metric", name=name, creator_user=user.id, status="validated",
-                                content={"name": name, "display_name": body.get("display_name") or question[:200],
-                                         "sql_expression": expression, "format": body.get("format"),
-                                         "dataset_artifact_id": dataset.id, "validation": check,
-                                         "origin": {"type": "ask", "turn_id": turn_id, "question": question}})
-            link(s, ws_id, ("metric", art.id), "defined_on", ("dataset", dataset.id))
-            record = {"target": target, "id": art.id, "name": name, "status": "created", "value": check["value"]}
+            defn = SemanticMetricDef(name=name, expressions=[DialectExpression(expression=expression)],
+                                     description=f"Promoted from Ask: {question}"[:500],
+                                     display_name=body.get("display_name") or question[:200], format=body.get("format"),
+                                     dataset=dataset.name)
+            metric, created = propose_metric(s, ws_id, defn, proposed_by=user.id, via="user", source=("ask_turn", turn_id))
+            record = {"target": target, "id": metric.id, "name": metric.name, "version": metric.version,
+                      "status": metric.status if not created else "proposed", "approval_id": metric.approval_id,
+                      "value": check["value"]}
         elif target == "monitor":
             expression, dataset, check = _measure(s, me, turn, body)
             kind = body.get("kind") or "metric_drift"
@@ -549,7 +556,8 @@ def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None =
             record = {"target": target, "id": m.id, "name": m.name, "status": "created", "kind": kind, "value": check["value"]}
         elif target == "dashboard":
             record = _dashboard(s, me, turn, body, request_approval, verify_for_execution, save_artifact, link)
-        node = {"investigate": "run", "dashboard": "approval" if record["status"] == "approval_required" else "chart"}.get(target, target)
+        node = {"investigate": "run", "metric": "semantic_metric",
+                "dashboard": "approval" if record["status"] == "approval_required" else "chart"}.get(target, target)
         link(s, ws_id, ("ask_turn", turn_id), "promoted_to", (node, record["id"]))
         record["at"] = utcnow().isoformat()
         turn.promotions = [*(turn.promotions or []), record]

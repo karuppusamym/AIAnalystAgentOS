@@ -17,21 +17,21 @@ from analystos.services import ask as ask_svc
 router = APIRouter(prefix="/api", tags=["ask"])
 
 
-class ThreadIn(BaseModel):
+class AskThreadIn(BaseModel):
     title: str | None = None
 
 
-class ThreadPatch(BaseModel):
+class AskThreadPatch(BaseModel):
     title: str | None = None
     archived: bool | None = None
 
 
-class TurnIn(BaseModel):
+class AskTurnIn(BaseModel):
     question: str
     parameters: dict | None = None  # values for a verified query's parameters (answers a "needs_input" refusal)
 
 
-class PromoteIn(BaseModel):
+class AskPromoteIn(BaseModel):
     target: Literal["verified_query", "metric", "monitor", "dashboard", "investigate"]
     name: str | None = None
     question: str | None = None  # verified query: the phrasing it answers (default: the question asked)
@@ -58,7 +58,7 @@ def list_threads(workspace_id: str, q: str | None = None, archived: bool = False
 
 
 @router.post("/workspaces/{workspace_id}/ask/threads")
-def create_thread(workspace_id: str, body: ThreadIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def create_thread(workspace_id: str, body: AskThreadIn, user: User = Depends(current_user), session: Session = Depends(db)):
     return ask_svc.create_thread(session, user, workspace_id, body.title)
 
 
@@ -68,12 +68,12 @@ def get_thread(thread_id: str, user: User = Depends(current_user), session: Sess
 
 
 @router.patch("/ask/threads/{thread_id}")
-def patch_thread(thread_id: str, body: ThreadPatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(current_user), session: Session = Depends(db)):
     return ask_svc.update_thread(session, user, thread_id, title=body.title, archived=body.archived)
 
 
 @router.post("/ask/threads/{thread_id}/turns")
-async def ask_turn(thread_id: str, body: TurnIn, request: Request, user: User = Depends(streaming_user)):
+async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, user: User = Depends(streaming_user)):
     """Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned."""
     from analystos.events.stream import run_blocking
@@ -97,7 +97,7 @@ def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Sess
 
 
 @router.post("/ask/turns/{turn_id}/promote")
-def promote_turn(turn_id: str, body: PromoteIn, user: User = Depends(current_user)):
+def promote_turn(turn_id: str, body: AskPromoteIn, user: User = Depends(current_user)):
     """Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), or a
     dashboard chart (202 with an approval request first; again with the approved `approval_id`)."""
     fields = body.model_dump(exclude={"target", "extra"}, exclude_none=True)

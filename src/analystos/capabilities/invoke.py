@@ -124,12 +124,12 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
         from analystos.mcp import client as mcp_client
 
         return mcp_client.invoke_tool(session_scope, user, workspace_id, server, tool, arguments, approval_id=approval_id)
-    errors = schema_errors(m, arguments)
-    if errors:
-        raise InvalidInput(f"input does not match {m.id} input_schema: {errors[0]['msg']}", details={"errors": errors})
     if not executable(m):
         raise InvalidInput(f"{m.ref} cannot be run on its own: it runs inside investigations and playbooks",
                            details={"reason": "not_invocable", "kind": m.kind})
+    errors = schema_errors(m, arguments)
+    if errors:
+        raise InvalidInput(f"input does not match {m.id} input_schema: {errors[0]['msg']}", details={"errors": errors})
     payload = payload_for(m, arguments)
     with session_scope() as s:
         me = s.merge(user)

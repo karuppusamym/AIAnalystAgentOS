@@ -21,7 +21,7 @@ class EnableIn(BaseModel):
     enabled: bool
 
 
-class InvokeIn(BaseModel):
+class CapabilityInvokeIn(BaseModel):
     arguments: dict = Field(default_factory=dict)
     approval_id: str | None = None  # an approved `capability.invoke` request for a capability that is not read-only
 
@@ -68,7 +68,7 @@ def set_capability_enabled(workspace_id: str, capability_id: str, body: EnableIn
 
 
 @router.post("/workspaces/{workspace_id}/capabilities/{capability_id}/invoke")
-def invoke_capability(workspace_id: str, capability_id: str, body: InvokeIn, user: User = Depends(current_user)):
+def invoke_capability(workspace_id: str, capability_id: str, body: CapabilityInvokeIn, user: User = Depends(current_user)):
     """Run a capability with arguments validated against its `input_schema`. Read-only capabilities run
     now; any other side effect returns 202 with an approval request, and runs only when called again
     with that approval once it is approved (verified against the exact payload just before running)."""
