@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import json
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Request
@@ -10,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.api.deps import current_user, db
+from analystos.api.deps import current_user, db, streaming_user
 from analystos.api.serialize import row, rows
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.db.base import session_scope
@@ -23,7 +21,6 @@ from analystos.db.models import (
     Insight,
     ModelCall,
     QueryExecution,
-    RunEvent,
     RunTask,
     ToolExecution,
     User,
@@ -154,34 +151,22 @@ def console(workspace_id: str, run_id: str, user: User = Depends(current_user), 
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/events")
-async def events(workspace_id: str, run_id: str, request: Request, after_id: int = 0, user: User = Depends(current_user)):
-    """Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID)."""
-    with session_scope() as s:
-        run_svc.get_run_for(s, user, run_id)
+async def events(workspace_id: str, run_id: str, request: Request, after_id: int = 0, user: User = Depends(streaming_user)):
+    """Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).
+    Database reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback)."""
+    from analystos.events.stream import run_blocking, run_event_stream
+
+    await run_blocking(_authorize_stream, user, workspace_id, run_id)
     last = int(request.headers.get("last-event-id") or after_id)
+    return StreamingResponse(run_event_stream(run_id, last, is_disconnected=request.is_disconnected),
+                             media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    async def stream():
-        nonlocal last
-        idle = 0
-        while not await request.is_disconnected():
-            with session_scope() as s:
-                batch = list(s.scalars(select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > last).order_by(RunEvent.id).limit(200)))
-                status = s.scalar(select(AnalysisRun.status).where(AnalysisRun.id == run_id))
-            for e in batch:
-                last = e.id
-                yield f"id: {e.id}\nevent: {e.type}\ndata: {json.dumps({'id': e.id, 'type': e.type, 'payload': e.payload, 'actor': e.actor, 'created_at': e.created_at.isoformat()}, default=str)}\n\n"
-            if not batch:
-                idle += 1
-                if idle % 30 == 0:
-                    yield ": keep-alive\n\n"
-                if status in run_svc.TERMINAL and idle > 4:
-                    yield f"event: end\ndata: {json.dumps({'status': status})}\n\n"
-                    return
-            else:
-                idle = 0
-            await asyncio.sleep(0.5)
 
-    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+def _authorize_stream(user: User, workspace_id: str, run_id: str) -> None:
+    with session_scope() as s:
+        run = run_svc.get_run_for(s, user, run_id)
+        if run.workspace_id != workspace_id:
+            raise NotFound("run not in workspace")
 
 
 @router.patch("/hypotheses/{hypothesis_id}")
