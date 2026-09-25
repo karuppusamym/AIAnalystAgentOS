@@ -4,7 +4,9 @@ Status vocabulary: **Done** (code + automated test, and live evidence where the 
 **Done (mock)** (built and tested only against a mock/synthetic system — not certified) ·
 **Partial** (usable, with a named gap) · **Not started** · **Phase N** (deliberately out of this release).
 Evidence lives in the [capability register](02-capability-register.md). IDs are spec v1 §60 IDs.
-Last reconciled: 2026-09-25 (after increment 3 live evidence).
+Last reconciled: 2026-09-25, after increment 3 live evidence. Status was corrected the same day by
+the [architecture review](../70-reviews/2026-09-25-architecture-review.md), which also added
+increment 4.
 
 ## P. Current execution queue
 
@@ -14,6 +16,9 @@ increments stay here as history.
 
 ### Increment 1 — Phase 0 + Phase 1 MVP (2026-09-25) — **Done**
 Evidence: `evidence/e2e-20260925-054942.md` (26/26). Rows below in the phase tables.
+This evidence predates commits `55b1eef` and `1e8aa20`, which fixed the duplicate metrics and the
+×100 percentage KPIs visible in it, and it does not record run duration. Re-running it at HEAD is
+row P4-C08.
 
 ### Increment 2 — Phase 3: scheduled & continuous analytics (2026-09-25) — **Done**
 
@@ -72,16 +77,130 @@ Findings from the live runs and the governance review that changed the design (k
 - **Tag-wiping re-discovery.** `discover_source` used to drop owner `restricted` tags on every
   re-discovery. It now runs through the crawler, which never removes tags.
 
-### Next candidates (not started — to be prioritised)
+### Increment 4 — Platform re-architecture (proposed 2026-09-25)
 
-| # | Scope | Why |
-|---|---|---|
-| N-1 | Phase 2 semantic layer: versioned semantic models, metric approval workflow (SEM-001..005) | KPIs are validated but not yet owned/approved objects |
-| N-2 | Existing-dashboard mode (BI-011/012) on top of `SupersetPublisher.inspect_dashboard` | v1 §35 |
-| N-3 | Approval-gated external delivery (email/webhook) for reports and alerts | completes SCH-003 delivery |
-| N-4 | Cross-source analysis (INT-001..005, TRN-004 Trino) | v1 Phase 2 |
-| N-5 | SSO/OIDC + ABAC (SEC-001..003) | pilot readiness |
-| N-6 | Sandbox in a network-less container; Unicode PDF font | readiness gaps |
+**Sources:**
+
+- the review [`70-reviews/2026-09-25-architecture-review.md`](../70-reviews/2026-09-25-architecture-review.md)
+  (challenges C1–C12);
+- the target design [spec v3](../00-intent/03-spec-v3-platform.md) and ADR-0011 to ADR-0015.
+
+**Builds on increment 3** ([ADR-0010](../10-architecture/adr/0010-universal-sources-crawler-token-economy.md)).
+Rows that increment partly delivered say so, and name only what remains. The review re-checked
+every finding at `59e85da` (review §0.1).
+
+**Rules for this increment:**
+
+- Work the waves in order. A later wave may start early only where its row says "parallel".
+- Rows from the old "Next candidates" list (N-1 … N-6) are folded in below, marked with ⟵. There is
+  no second queue.
+- Priority: P0 blocks a controlled pilot or the next wave. P1 is needed for the product claim. P2
+  is valuable but can be deferred.
+
+#### Wave 0 — correctness and governance debt (pilot blockers found by the review)
+
+| # | Scope | Pri | Acceptance (Done means all of it) | Status |
+|---|---|---|---|---|
+| P4-C01 | Enforce the four dead policy fields: `send_data_samples_to_models`, `allowed_providers`, `expensive_model_approval_usd`, `data_residency` (review C3) | P0 | Each field has a unit test proving it changes behaviour: no top values in prompts when false; provider outside the list → route fails closed; pre-call estimate over the limit → `approval_required`; residency set and region unknown → fail closed | Not started |
+| P4-C02 | Close budget bypasses: critic re-runs call `gateway.execute` directly (`agents/critic.py:79`); Ask runs without a budget (review C6) | P0 | Verification re-runs count toward `max_queries_per_run`; Ask has a per-user/workspace query budget; tests for both | Not started |
+| P4-C03 | Isolation between workspaces, in depth: a per-workspace reader role for `src_*` schemas (`staging/loader.py:178`); `workspace_id` in the `lineage_edge` uniqueness key (`db/models.py:434`); Neo4j nodes keyed by workspace (`graph/projection.py:47`) (review C6) | P0 | Negative tests: workspace B cannot read A's staged table even when the validator is bypassed in the test; the same name-identified edge exists in two workspaces; graph neighbourhood never crosses workspaces | Not started |
+| P4-C04 | Non-blocking SSE: move the synchronous DB poll off the event loop (`api/routers/analysis.py:159-178`); subscribe to the events already published (`events/bus.py:44`) | P0 | Load test: 200 concurrent streams with p95 event latency < 1 s and no event-loop stall warnings; evidence file | Not started |
+| P4-C05 | Remove the prompt truncation `compact_json(payload)[:60_000]` (`agents/common.py:118`), which can cut mid-JSON even after increment-3 compaction; interim structured trimming until P4-T03 | P0 | An oversized payload trims whole catalog entries and records what it omitted; a unit test proves the output is valid JSON | Not started |
+| P4-C06 | Prompt hygiene: fill the unformatted `{dialect}` in `sql_generation.v1` (`agents/prompts.py:57`); log the real prompt version as name plus text hash (`runtime/context.py:109`); derive the critic's primary model family from the actual narrative model (`agents/critic.py:101`) | P1 | Unit tests for all three | Not started |
+| P4-C07 | Replan must supersede run artifacts: stale charts and metrics must not enter a publish bundle (`runtime/engine.py:267-301`, `agents/visualization.py:198-205`). Found by reading the code and not yet observed live, so write the test first. | P0 | An integration test redirects after `visualize` and asserts that the bundle holds only artifacts from the current plan version | Not started |
+| P4-C08 | Re-run both live e2e scenarios at HEAD, recording run duration; de-duplicate the repeated alert and the ×100 scale variant seen in `e2e-phase3-20260925-064436.md` | P0 | New dated evidence files; alert de-duplication test; register updated | Not started |
+| P4-C09 | Make model calls and decisions replayable: store the redacted prompt and response payload (or a content-addressed reference) on `model_call`; persist JEV probabilities, not only `priority_by` | P1 | A replay tool reproduces a run's model inputs and outputs from storage; test | Not started |
+| P4-C10 | Tests: API router tests with `TestClient` (auth, role, scope on every router); unit tests for engine `get_state`/`execute_task` that need no stack | P0 | Every router has a positive test and a negative authz test; engine tests run in the fast suite | Not started |
+| P4-C11 | Make tool-gate coverage match spec v2 §6. Skill SQL (`runtime/context.py:123`) and artifact writes currently bypass `ToolRuntime`. Route them through the gate, or amend the spec to name the exempt paths and why. | P1 | Test: a workspace `tool_denylist` entry blocks every path it names | Not started |
+| P4-C12 | **Staged warehouse snapshots are an unflagged, arbitrary subset.** `GenericSQLConnector.extract` runs `LIMIT max_rows` with no order and no sampling (`connectors/generic_sql.py:634`, cap `staged_max_rows` = 1M, `contracts/platform.py:75`). Record `truncated` and rows staged against the source's total per snapshot; declare a sampling strategy (full, time window, or native `TABLESAMPLE`); add a population caveat to findings; add a `representative_population` verification check that fails on undeclared truncation (review C8) | P0 | Integration test: a table larger than the cap produces a truncated snapshot, and its findings carry the caveat and fail the check; with `TABLESAMPLE` declared, the check passes with the method recorded | Not started |
+
+#### Wave 1 — capability platform (ADR-0011; the "add anything anytime" requirement)
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-X01 | Capability manifest schema and registry: discovery from built-ins, directory packs, the `analystos.capabilities` entry points and MCP; validation at load; per-workspace enablement; certification status; hot reload; bound capability versions in the plan hash | P0 | Loading a pack with an unknown skill name fails; a plugin installed with pip appears without code changes to core; reload without restart; run in flight keeps its versions | Not started |
+| P4-X02 | Playbook engine: `BASE_STEPS`, `REPLAN_RESET`, `DOWNSTREAM_OF_VERIFY` and the gate keys move to `playbooks/investigate.v1.yaml` with `approval_gate`, `side_effect` and `replan_boundary` step types | P0 | `investigate.v1` reproduces today's plan hash for the same inputs; the §62 live scenario passes unchanged; the hardcoded keys in `engine.py` are deleted | Not started |
+| P4-X03 | Declarative agents: generic propose → validate → execute runtime; every manifest field enforced (`skills`, `model_purpose`, `policies`, budget); disabling an optional agent skips its step instead of failing the run | P0 | A new agent defined only in YAML runs in a playbook with no code change; unknown or unauthorized action → rejected with reason; tests | Not started |
+| P4-X04 | Analysis methods as plugins (`Method` protocol). Port the 6 methods; derive vocabulary, prompt block, JSON Schema, validation, template, chart intent and claim key from the registry. Add `cohort_retention` and `contribution_decomposition`. | P0 | Each new method is one module plus a manifest, with no other file touched; planted-effect benchmark per method | Not started |
+| P4-X05 | MCP client: workspace-registered servers on an allowlist; tools imported as capabilities with `side_effect: write_external` until classified; description injection screening; tool gate, budget and audit apply | P1 | Superset 6.1 MCP or the dbt MCP server registered in a test; an unclassified tool requires approval; audit rows | Not started |
+| P4-X06 | MCP server (SDK, spec 2026-07-28): knowledge, findings, metrics and datasets as resources; `ask` / `investigate` / `get_finding_evidence` / `validate_sql` tools; per-client grants, quotas, hashed secrets (DataPilot pattern) | P1 | MCP conformance test; a client without a grant is refused; quota returns 429; audit | Not started |
+| P4-X07 | Domain packs. Increment 3 added a domain-neutral, role-driven hypothesis block (P3-05) that found planted retail effects. What remains: move the ITSM specifics still in core (`investigator.py:119,173`, `sql_agent.py:83`, the glossary in `cli.py`) into `packs/itsm`; add `packs/sales` with its benchmark in CI (review C2) | P1 | No ServiceNow column name remains in core (grep test); the pack benchmarks run in CI | Not started |
+| P4-X08 | Connector SDK on the capability model. Increment 3 unified the source kinds (`config/source_kinds.yaml`, `connectors/kinds.py`). What remains: express kinds as ADR-0011 manifests, and derive capability and certification flags from live evidence files instead of the hand-kept list in P3-01 | P1 | A kind's `certified` flag flips only when its live evidence file exists; test | Not started |
+
+#### Wave 2 — token economy and decisions (ADR-0012, ADR-0015)
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-T01 | Execution ladder in the router, generalising the increment-3 modes (`off/auto/always`, P3-03): per-purpose `ladder`; `answered_by` recorded alongside the existing savings ledger (`skipped/cache_hit/refused`, `tokens_saved`); spend by purpose and rung | P0 | Every model-call row has a rung; `/api/admin/token-savings` breaks spend down by rung | Not started |
+| P4-T02 | Make deterministic-first the **default**: `auto` for every purpose with a rule path (today only the `token_saver` preset does this; `balanced` leaves them on `always`). Remove calls that cannot change the next step: the publish `risk_check` (`publisher.py:91`); chart override by rules; independent-family verification opt-in by policy | P0 | Same dataset under the default preset, before and after: verified findings unchanged; chat calls per run ≤ 10 (measured, evidence file) | Not started |
+| P4-T03 | Context compiler, extending increment-3 compaction (ranked and capped catalog): relevant-column digest, purpose profiles and budgets, receipts, `NO_MATCH`, omitted list; fails visibly when over budget | P0 | Unit tests on the selection; prompt tokens per run measured before and after | Not started |
+| P4-T04 | Prompt-cache-stable layout: static system text, vocabulary and workspace header first; `cache_control` through OpenRouter where the provider supports it | P1 | Cached-token share recorded per call; ≥ 60% on a cache-capable provider in a live run (evidence) | Not started |
+| P4-T05 | Registries: parameterised verified-query registry for Ask (tool-first; decline when a required input is missing); hypothesis registry replayed by scheduled re-analysis with 0 model calls; opt-in novelty round with its own budget (review C11) | P0 | Scheduled re-analysis on unchanged data: 0 chat calls, 0 "new" or "resolved" findings; Ask registry hit p50 < 1 s | Not started |
+| P4-T06 | Exact response cache (L0): **exists** since increment 3 (`llm/cache.py`, P3-03). What remains: add the knowledge version to the key so edits to the knowledge pack invalidate cached answers | P2 | Test: a knowledge edit misses the cache | Partial |
+| P4-T07 | Budget counters in Redis (replacing `COUNT(*)` per statement and `SUM` per call); per-purpose caps; versioned price table used when the provider does not report cost; a missing price fails visibly | P1 | Tests; no `COUNT(*)` on `query_execution` on the hot path | Not started |
+| P4-T08 | `DecisionService`: backends `jev`, `rules`, `local_classifier`, `llm_structured`; authority classes; 3 s timeout; circuit breaker; `decision` table with probabilities; purpose changes from ADR-0015 (chart → rules, stop rule-first, alert materiality rules first); new purposes `ask_route`, `clarify_needed`, `metric_match`, `join_path_choice` | P0 | No purpose can lower risk, skip a gate or suppress an alert (tests per class); JEV outage → rules, recorded | Not started |
+| P4-T09 | Calibration of decisions: labelled outcomes from accept, reject, dismiss and corrections; nightly Brier/ECE per purpose and backend; automatic downgrade below threshold | P1 | Report in Operate; downgrade test | Not started |
+| P4-T10 | CI cost gate: replay recorded runs; fail if calls or tokens per run rise by more than 10% over the baseline | P1 | CI job; a deliberately added call fails it | Not started |
+
+#### Wave 3 — open knowledge layer (ADR-0013)
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-K01 | OKF v0.2 knowledge pack as system of record (pin by commit and `SPEC.md` hash); versioned revisions; optional git remote; Postgres index (sections, BM25, pgvector **HNSW**, links) rebuildable by `analystos knowledge reindex`; replace NULL-workspace `context_entry` rows with a read-only `platform` pack | P0 | Deleting the index and reindexing gives identical retrieval results; HNSW index present; test that one workspace never sees another's knowledge | Not started |
+| P4-K02 | OKF import and export, including Atlas bundles | P1 | Round trip is lossless on the Atlas sample bundle; the publish policy (no dangling links, size caps) is enforced | Not started |
+| P4-K03 ⟵ N-1 | Semantic layer on Apache Ossie 0.1.1: datasets, metrics, dimensions, relationships and `ai_context` in the pack; versioned; metric approval workflow; import from dbt 1.12 `osi_document.json`; export to Superset metrics and dbt `osi/`; conformance tests (SEM-001..005) | P0 | Official Ossie examples validate; dbt round trip; duplicate or conflicting KPI flagged; approved metric required for publish | Not started |
+| P4-K04 | Evidence in open formats: findings as OKF Attested Computations; ODCS v3.2 contract for published datasets; OpenLineage events for queries and builds | P1 | Schema validation tests; a finding document carries query hash, result hash, q-value, effect size, verified_by and stale_after | Not started |
+| P4-K05 | Context compiler over the pack (extends P4-T03): hybrid RRF ranking with one hop over the graph; section-level excerpts; receipts shown in the UI; episode memory, prior findings and negative knowledge reach prompts through their own purposes (fixes write-only memory) | P0 | Retrieval benchmark on labelled questions; test that episodes cannot crowd out glossary terms | Not started |
+| P4-K06 | Extend the increment-3 crawler (P3-02, `services/crawler.py`; it already has fingerprints, drift, rename candidates, deprecation, curation precedence and scheduled incremental crawls). Add: a value-free query-history miner, dbt manifest, Superset metadata, document upload, facet-level failure; write the results as OKF documents into the pack | P1 | Each new source has an integration test; a refused permission costs one facet, not the crawl; crawl output is valid OKF | Not started |
+| P4-K07 | AI-suggested knowledge, extending the increment-3 enrichment (placeholders only, confidence below 0.6, screened batches): add per-field provenance and confidence, and a batch review queue where a rejection becomes negative knowledge | P1 | Tests; review-queue API | Not started |
+| P4-K08 | Learning loop: approved findings, approved KPIs, user corrections and redirects become knowledge drafts | P2 | An approved finding appears as a draft Attested Computation | Not started |
+| P4-K09 | Context2AI interop: `ContextProvider` implementations `local`, `okf_import` and `mcp` (Atlas `get_knowledge_context`); retire the speculative REST adapter; answers spec v2 §18 open question 1 (CTX-001) | P1 | Live test against an Atlas instance (or recorded MCP fixture, labelled as a mock) | Not started |
+| P4-K10 | Embedding provider option: a local sentence-transformer by default for air-gapped installs; configurable dimension; re-embed job; hashing kept as the fallback (amends ADR-0007) | P2 | Paraphrase-retrieval benchmark improves over hashing; re-embed test | Not started |
+
+#### Wave 4 — engines, federation and minimal ELT (ADR-0014)
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-E01 | `Engine` protocol wrapping the increment-3 `GenericSQLConnector`, with **multi-dialect validation** (a validator security suite per dialect: Snowflake, BigQuery, Databricks, Trino, …) so warehouses push down instead of being staged; DuckDB engine for files and local federation | P0 | The validator suite passes per dialect; a live Snowflake or Databricks query runs in place; existing gateway tests pass through the Engine layer | Not started |
+| P4-E02 | Spark engine (Spark Connect or Databricks SQL), Snowflake and BigQuery read engines. Each stays `draft` until certified against a live instance. | P1 | One dated live certification evidence file per engine | Not started |
+| P4-E03 ⟵ N-4 | Cross-source runs: several sources per run; join-key proposals validated by containment and cardinality; federation on Trino or DuckDB, or on Spark (INT-001..005, TRN-004) | P1 | Planted cross-source effect found; per-source scope still enforced (negative test) | Not started |
+| P4-E04 | dbt builder (`elt_build` playbook): generate a dbt project (models, tests, Ossie metrics) from the virtual dataset and KPIs; dry run and cost estimate; approval bound to project hash, engine, target schema and plan hash; run on the customer's runner; harvest manifest and OpenLineage (TRN-001..003) | P1 | Live run on a dbt Core container against Postgres; approval-hash tamper test; rollback plan recorded | Not started |
+| P4-E05 | Spike: dlt versus the current staged loader for incremental ingestion from non-SQL sources (ServiceNow, REST), ending in an ADR | P2 | ADR with a measured comparison | Not started |
+| P4-E06 | `BuildGateway`: separate write identity limited to designated target schemas; approved plans only; `verify_for_execution` immediately before running; per-job audit; sources remain read-only | P0 for E04 | Tests: write to a non-target schema refused; source write refused; expired approval refused | Not started |
+
+#### Wave 5 — UI on the five-journey IA (spec v3 §9) — parallel from wave 1 for U01
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-U01 | IA and design system: journeys Home, Ask, Investigate, Knowledge, Build and Operate, with at most 20 screens (the increment-3 Catalog and crawl panels move into Knowledge, admin settings and token savings into Operate); tokens with light and dark themes; Ctrl/Cmd-K; state families (unknown never shown as 0); **OpenAPI-generated client** replacing the hand-written types in `web/src/api.ts`; axe and Playwright journey tests in CI | P0 | Screen count ≤ 20; generated client; accessibility and journey tests green in CI | Not started |
+| P4-U02 | Ask: threads; streamed stages in plain language; answer card with ECharts and table; inspector tabs Result / SQL / Evidence / Decision; provenance and staleness pills; one refusal state per kind with a remedy; promote actions (verified query, metric, monitor, dashboard, "Investigate why"); paste-SQL explain | P0 | Playwright journey covering ask → promote to monitor → investigate | Not started |
+| P4-U03 | Investigation board: hypothesis columns by status; finding cards with a "Why trust this" drawer (re-run hash, second method, q-value, effect size, n, data-quality caveats); redirect by chat; live cost and rung meter; raw JSON only under "Technical details"; accept and reject signals captured for calibration | P0 | No `JsonView` on the default path; journey test | Not started |
+| P4-U04 | Knowledge studio: OKF browser and editor with trust-field frontmatter; review queue with batch actions; semantic graph with governed edges solid and inferred edges dashed; Ossie metric editor with validation; import and export | P1 | Journey test: review an AI suggestion → publish → it shows as a receipt in Ask | Not started |
+| P4-U05 | Build: dataset and dbt diff view, dry-run results and cost estimate; KPI editor; native ECharts dashboard preview → publish; reports | P1 | Journey test | Not started |
+| P4-U06 | Operate: approval inbox with payload diff, hashes and policy version; alert triage explanation; spend by purpose, rung and model; **capability registry page generated from the registry**; policies | P1 | Registry page lists a newly installed plugin without a UI change | Not started |
+| P4-U07 | Capability-driven UI: forms generated from JSON Schema, plus a renderer registry keyed by the manifest's `ui.renderer` | P0 | A new method or tool with a manifest gets a working form and result view with no new screen | Not started |
+
+#### Wave 6 — scale and self-hosted operations (spec v3 §8) — S01 to S03 can run parallel from wave 1
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-S01 | Temporal task queues per workload (analysis, compute, publish, crawl, elt); process pool for CPU statistics; heartbeats; `start_to_close` sized per queue; `continue_as_new` | P1 | A hung statistics task is detected within its heartbeat window; worker pools scale independently (compose and Helm values) | Not started |
+| P4-S02 | Engine loop: `get_state` without a per-loop `FOR UPDATE` (`runtime/engine.py:119`); optimistic claims; per-artifact lineage query instead of loading the whole workspace (`artifacts/registry.py:57`); remove the N+1 in `resolve_scope` (`governance/policy.py:91`) | P1 | Query count per task measured before and after | Not started |
+| P4-S03 | Neo4j becomes an optional projection, off by default; lineage and neighbourhood served from Postgres | P2 | The stack runs and passes e2e without Neo4j | Not started |
+| P4-S04 ⟵ N-5, N-6 | Self-hosted packaging: Helm chart with HA values; offline image bundle; **air-gapped mode**, extending the increment-3 `offline` preset (OpenAI-compatible local model endpoint, DecisionService on rules or a local classifier); providers beyond OpenRouter (OpenAI-compatible, Azure OpenAI, Bedrock, Anthropic direct); OIDC SSO and ABAC (SEC-001..003); sandbox in a network-less container; Unicode PDF font | P0 (pilot) | Air-gapped install passes the §62 scenario with a local model (evidence); SSO login live-tested | Not started |
+| P4-S05 | Load tests against the spec v3 §8 targets (50 concurrent runs, 1,000 workspaces, 500 SSE streams) | P1 | Measured results in the capability register | Not started |
+
+#### Evaluation and cross-repository
+
+| # | Scope | Pri | Acceptance | Status |
+|---|---|---|---|---|
+| P4-V01 | Analytical benchmark across domains (ITSM, sales, finance) with planted effects and null controls; precision and recall of verified findings; FDR compared with nominal α; also run on local models for air-gapped certification | P0 | Benchmark job in CI (deterministic part) plus a dated live report | Not started |
+| P4-V02 | Ask accuracy benchmark with a **real model** (Atlas never measured this): execution-match accuracy and refusal correctness per domain | P1 | Dated report; threshold set before the pilot | Not started |
+| P4-G01 | Cross-repository contract alignment with Atlas and DataPilot: a shared OKF profile pin, a decision-purpose schema and an approval-hash format, documented in each repo's contracts folder. This is a decision for the owners; there is no code merge. | P2 | A decision record agreed by the owners | Not started |
+
+**Still open outside increment 4:** N-2, existing-dashboard mode (BI-011/012, builds on P4-K06 Superset
+metadata), and N-3, approval-gated external delivery (email and webhook) for reports and alerts.
+Both stay Not started and are scheduled after wave 3.
 
 ## Phase 0 — Foundation
 
@@ -92,7 +211,7 @@ Findings from the live runs and the governance review that changed the design (k
 | FND-003 | CI pipeline | Done | `.github/workflows/ci.yml` (lint, unit, integration with services, web build) |
 | FND-004 | CD skeleton | Partial | Images build from compose; no deploy target defined |
 | FND-005 | Workspace schema | Done | migration 0001 |
-| FND-006 | Agent contract | Done | `AgentSpec`, `config/agents/*.yaml`, `contracts/agent.schema.json` |
+| FND-006 | Agent contract | Partial | `AgentSpec`, `config/agents/*.yaml`, `contracts/agent.schema.json`. Only `id`, `tools` and `prompt_version` are read at runtime; `skills`, `model_profile`, `policies` and `verification_required` are not enforced, and YAML skill names are not validated (review C1) → P4-X01, P4-X03 |
 | FND-007 | Skill contract | Done | `SkillSpec`, `skills/registry.py` |
 | FND-008 | Tool contract | Done | `ToolSpec`, `tools/registry.py` |
 | FND-009 | Artifact model | Done | `artifact`, `artifact_version`, `lineage_edge` |
@@ -110,32 +229,33 @@ Findings from the live runs and the governance review that changed the design (k
 | WSP-001..002 | Workspace create/update API | Done | |
 | WSP-003 | Member model | Done | roles owner/editor/analyst/approver/viewer |
 | WSP-004 | Source registration | Done | |
-| WSP-005 | Policy settings | Done | stored, versioned, enforced (scope, gateway, approvals, budgets) |
+| WSP-005 | Policy settings | Partial | stored, versioned, enforced (scope, gateway, approvals, budgets). `send_data_samples_to_models`, `allowed_providers`, `expensive_model_approval_usd` and `data_residency` are never read (review C3) → P4-C01 |
 | WSP-006..007 | Artifact view, activity feed | Done | |
 | WSP-008 | Workspace UI | Done | `web/` |
-| CTX-001 | Context2AI client | Partial | HTTP adapter written against v1 §11.1 paths; no live Context2AI to test — local store serves the same role |
+| CTX-001 | Context2AI client | Partial | HTTP adapter written against v1 §11.1 paths; no live Context2AI to test — local store serves the same role. Its results reach no prompt. Replaced by OKF import and MCP providers → P4-K09 |
 | CTX-002 | Semantic search | Done | pgvector + deterministic embeddings (ADR-0007) |
 | CTX-003 | Neo4j relationship adapter | Done | projection + neighborhood query |
 | CTX-004 | Business-term resolver | Done | glossary `mapped_columns` → scope columns |
-| CTX-005 | Context caching | Partial | LLM response cache added in increment 3; the Redis cache for Context2AI calls comes with the live adapter |
+| CTX-005 | Context caching | Partial | LLM response cache added in increment 3; the Redis cache for Context2AI calls comes with the live adapter. Remaining: knowledge-version-aware keys (P4-T06) and compiled-context reuse (P4-K05) |
 | META-001 | PostgreSQL connector | Done | pushdown; integration-tested against compose Postgres |
 | META-002 | SQL Server connector | Partial | metadata + dialect + validator tested; never run against a live SQL Server (other databases: see P3-01) |
 | META-003 | CSV connector | Done | CSV/Parquet; Excel skipped when no engine installed |
 | META-004 | ServiceNow connector | Done (mock) | Table API + display values; tested only against the bundled mock |
 | META-005 | Metadata normalization | Done | `DiscoveredAsset/Column` |
 | META-006 | Source statistics | Done | row counts, freshness, profile stats |
-| TLR-001..003 | Tool registry, permission checks, audit | Done | |
+| TLR-001, TLR-003 | Tool registry, audit | Done | |
+| TLR-002 | Tool permission checks | Partial | Enforced in `ToolRuntime.invoke`, but skill SQL (`runtime/context.py:123`) and artifact writes bypass the tool gate; gateway scope checks still apply (review C6) → P4-C11 |
 | SKL-001 | Skill registry | Done | |
 | MOD-001 | Model router | Done | live OpenRouter verified |
 | MOD-002 | Provider fallback | Done | model fallback within profile; fail closed when none allowed |
 | MOD-003 | Token/cost accounting | Done | `model_call`, run totals, budgets |
-| MOD-004 | Prompt version registry | Done | `agents/prompts.py`, version on every call |
+| MOD-004 | Prompt version registry | Partial | `agents/prompts.py`. The logged version is `<agent>.v1`, not the prompt actually sent (e.g. `semantic_modeling.v2` logged as `semantic.v1`) → P4-C06 |
 | QRY-001..005 | Gateway, read-only validation, timeout, row limit, audit | Done | 109-case validator security suite + live tests |
 | QRY-006 | Query cache | Done | Redis, key includes scope hash + source version |
 | QRY-007 | Dialect abstraction | Done | pushdown in postgres + tsql; every other kind staged and validated as postgres (ADR-0010) |
 | DEX-001 | DuckDB engine | Partial | used for file inspection and skill tests; analysis runs as pushdown SQL |
 | DEX-002 | Polars engine | Done | extraction/transforms, profiling inputs |
-| DEX-003..005 | Python sandbox, memory, timeout | Done | rlimits + AST allowlist; not a hard security boundary (see readiness) |
+| DEX-003..005 | Python sandbox, memory, timeout | Done | rlimits + AST allowlist; not a hard security boundary (see readiness). `python.execute` is not yet invoked by any agent; container isolation → P4-S04 |
 | AGT-001..003 | Runtime, task state machine, messages | Done | |
 | AGT-004..012 | Supervisor … REV critic | Done | see capability register for live evidence |
 | AGT-013 | Pause/resume | Done | |
@@ -153,8 +273,8 @@ Findings from the live runs and the governance review that changed the design (k
 
 | ID range | Status |
 |---|---|
-| INT-001..005, TRN-001..004, SEM-001..005 (beyond Phase-1 KPI validation), PBI-001..002, BI-011..012 | Phase 2 — `inspect_dashboard` exists as a foundation for BI-011 |
+| INT-001..005, TRN-001..004, SEM-001..005 (beyond Phase-1 KPI validation), PBI-001..002, BI-011..012 | Phase 2 — `inspect_dashboard` exists as a foundation for BI-011. Scheduled in increment 4: SEM → P4-K03; INT and TRN-004 → P4-E03; TRN-001..003 → P4-E04 (dbt on the customer's engine, ADR-0014); BI-011/012 → N-2 after wave 3; PBI stays Phase 2 (spec v3 §12 question 4) |
 | SCH-001..005, RPT-001..003, MON-001..005 | **Done** in increment 2 (see section P) — external delivery channels deliberately not included |
-| SEC-001..007, GOV-001..004, OPS-001..005 | Phase 4 — baseline RBAC, column policy, PII denial, destination and model allowlists already enforced; SSO/ABAC/row policy/HA/DR not started |
-| AUT-001..006 | Phase 5 — iteration loop, stop criteria and budgets exist in Phase-1 form |
+| SEC-001..007, GOV-001..004, OPS-001..005 | Phase 4 — baseline RBAC, column policy, PII denial, destination and model allowlists already enforced; SSO/ABAC/row policy/HA/DR not started. SEC-001..003 and OPS-001 → P4-S04; SEC-007 isolation → P4-C03; OPS-004 cost dashboard → P4-T01, P4-U06 |
+| AUT-001..006 | Phase 5 — iteration loop, stop criteria and budgets exist in Phase-1 form. AUT-003 novelty and AUT-005 stop criteria are shaped by P4-T05 and P4-T08 |
 | PRO-001..006 | Phase 6 |

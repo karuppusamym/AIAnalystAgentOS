@@ -6,6 +6,10 @@
 safely, and draws a hard line around what Phase 1 must prove. Where v2 narrows or reorders v1, the
 reason is stated. Nothing in v1's vision is dropped; items outside Phase 1 remain in the
 [tracker](../60-delivery/01-tracker.md) with their v1 IDs.
+**Amended by:** [spec v3 — platform](03-spec-v3-platform.md) (proposed 2026-09-25). v3 changes how
+agents, plans, methods, model calls, knowledge, engines and the UI are built: §5, §6, §7, §10, §11,
+§13 and §15 here. It builds on the increment-3 additions in §10.1 and §11. Every principle,
+invariant and verification rule in this document still holds.
 
 ---
 
@@ -318,7 +322,9 @@ environment; read-only; visible limits. Controlled-pilot and production gates ar
 ## 18. Open questions
 
 1. Real Context2AI endpoint contract (v1 §11.1 lists paths but not payloads) — the adapter
-   assumes `{results: [...]}`; confirm with the Context2AI owners.
+   assumes `{results: [...]}`; confirm with the Context2AI owners. *Proposed answer (spec v3
+   §6.6):* consume Context2AI (Atlas) through OKF v0.2 bundle import and its MCP knowledge tools
+   instead of a bespoke REST contract.
 2. ServiceNow instance for connector certification (mock-only today; v1 §62 forbids certifying on mocks).
 3. Model allowlist and residency requirements per tenant.
 4. Whether Level-4 autonomy should ever permit unattended publication (requires the adversarial

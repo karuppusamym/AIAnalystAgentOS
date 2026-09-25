@@ -2,8 +2,11 @@
 
 Context2AI AnalystOS is a governed, autonomous analytics agent OS (Python 3.11 / FastAPI /
 Postgres+pgvector / Temporal / Neo4j / Redis / Superset / React). Read
-[`docs/00-intent/02-spec-v2.md`](docs/00-intent/02-spec-v2.md) before changing behaviour; the
-original product vision is [`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_AnalystOS_Complete_Spec.md).
+[`docs/00-intent/02-spec-v2.md`](docs/00-intent/02-spec-v2.md) before changing behaviour, and
+[`docs/00-intent/03-spec-v3-platform.md`](docs/00-intent/03-spec-v3-platform.md) before starting an
+increment-4 (`P4-*`) row. The original product vision is
+[`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_AnalystOS_Complete_Spec.md). Reviews under
+`docs/70-reviews/` are dated evidence, not work queues.
 
 ## Rules (each one exists because the failure mode is expensive here)
 
@@ -64,9 +67,9 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `src/analystos/llm/` | router, JEV, redaction; `config/models.yaml` |
 | `src/analystos/publishing/` | BI publisher interface, Superset adapter, preview |
 | `src/analystos/services/{schedules,monitors,reports,changes,notifications}.py`, `src/analystos/reports/` | Phase 3: scheduling, monitoring, reports |
-| `config/agents/*.yaml` | agent catalog (config-driven agents) |
+| `config/agents/*.yaml` | agent catalog. Metadata only today: behaviour is in `agents/*.py`, and only `id`/`tools` are read at runtime. Declarative agents are P4-X03. |
 | `migrations/` | Alembic; regenerate with `alembic revision --autogenerate` after model changes |
-| `docs/` | intent/spec v2, architecture + ADRs, runbooks, delivery tracker/register/readiness |
+| `docs/` | intent (spec v2, spec v3), architecture + ADRs, runbooks, delivery tracker/register/readiness, dated reviews (`70-reviews/`) |
 
 ## Conventions
 
