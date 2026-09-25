@@ -25,7 +25,7 @@ def source_dialect(kind: str, execution_mode: str | None) -> str:
 
 # Autonomy ceiling in the initial release (§39): publication, scheduling, external notification
 # and source mutation always need an approval regardless of workspace autonomy level.
-ALWAYS_APPROVAL_ACTIONS = {"publish", "schedule", "notify_external", "export"}
+ALWAYS_APPROVAL_ACTIONS = {"publish", "schedule", "notify_external", "export", "build"}
 NEVER_ALLOWED_ACTIONS = {"source_mutation"}
 
 

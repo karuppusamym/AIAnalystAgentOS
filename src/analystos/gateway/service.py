@@ -140,6 +140,9 @@ class QueryGateway:
             raise InvalidInput("analytics_reader_url must not point at the control-plane database")
         if reader.username in (control.username, loader.username):
             raise InvalidInput("analytics_reader_url must use the dedicated reader identity, not the loader/control identity")
+        builder = getattr(self.settings, "analytics_builder_url", None)
+        if builder and make_url(builder).username == reader.username:
+            raise InvalidInput("analytics_reader_url must not be the build (write) identity")
 
     # ------------------------------------------------------------------ public API
     def run_sql_for(self, scope: DataScope, *, actor: str, run_id: str | None = None, task_id: str | None = None,

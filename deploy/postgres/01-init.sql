@@ -9,8 +9,11 @@
 -- that the loader creates (hence CREATEROLE) and grants to the reader WITHOUT inheritance: the
 -- gateway does SET LOCAL ROLE per query, so the reader login alone reads no workspace's data.
 -- Clusters initialised before this: `analystos migrate` grants CREATEROLE and backfills the roles.
+-- The builder is the BuildGateway's write identity (P4-E06): no privilege of its own; it SETs a
+-- per-workspace build role (analystos_b_<workspace>) that may CREATE only in designated target schemas.
 CREATE ROLE analystos_loader LOGIN CREATEROLE PASSWORD 'loader';
 CREATE ROLE analystos_reader LOGIN NOINHERIT PASSWORD 'reader';
+CREATE ROLE analystos_builder LOGIN NOINHERIT PASSWORD 'builder';
 CREATE ROLE superset LOGIN PASSWORD 'superset';
 
 CREATE DATABASE analytics OWNER analystos_loader;
@@ -20,7 +23,7 @@ REVOKE CONNECT ON DATABASE analystos FROM PUBLIC;
 REVOKE CONNECT ON DATABASE superset FROM PUBLIC;
 GRANT CONNECT ON DATABASE analystos TO analystos;
 REVOKE CONNECT ON DATABASE analytics FROM PUBLIC;
-GRANT CONNECT ON DATABASE analytics TO analystos_loader, analystos_reader;
+GRANT CONNECT ON DATABASE analytics TO analystos_loader, analystos_reader, analystos_builder;
 
 ALTER ROLE analystos_reader SET default_transaction_read_only = on;
 ALTER ROLE analystos_reader SET statement_timeout = '60s';

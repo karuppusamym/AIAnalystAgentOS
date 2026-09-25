@@ -27,6 +27,10 @@ _HOSTPORT = TEST_DB.split("@", 1)[1].rsplit("/", 1)[0]
 os.environ["ANALYSTOS_ANALYTICS_LOADER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}loader:loader@{_HOSTPORT}/{ANALYTICS_DB}"
 os.environ["ANALYSTOS_ANALYTICS_READER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}reader:reader@{_HOSTPORT}/{ANALYTICS_DB}"
 os.environ["ANALYSTOS_ANALYTICS_WORKSPACE_ROLE_PREFIX"] = f"{ROLE_PREFIX}r_"
+# The BuildGateway's write login and per-workspace build roles (P4-E06), in the same namespace.
+os.environ["ANALYSTOS_ANALYTICS_BUILDER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}builder:builder@{_HOSTPORT}/{ANALYTICS_DB}"
+os.environ["ANALYSTOS_ANALYTICS_BUILD_ROLE_PREFIX"] = f"{ROLE_PREFIX}b_"
+os.environ.setdefault("ANALYSTOS_BUILD_DIR", os.path.join(__import__("tempfile").gettempdir(), f"{ROLE_PREFIX}builds"))
 # Superset reaches the same cluster from inside the compose network.
 os.environ["ANALYSTOS_SUPERSET_ANALYTICS_SQLALCHEMY_URI"] = f"postgresql+psycopg2://{ROLE_PREFIX}reader:reader@postgres:5432/{ANALYTICS_DB}"
 
@@ -44,7 +48,8 @@ def _drop_analytics_plane(conn) -> None:  # noqa: ANN001
     like = ROLE_PREFIX.replace("_", "\\_") + "%"
     roles = [r[0] for r in conn.execute(text("SELECT rolname FROM pg_roles WHERE rolname LIKE :p"), {"p": like})]
     # Workspace roles first (their memberships were granted by the loader), then the logins.
-    for role in sorted(roles, key=lambda r: (r in (f"{ROLE_PREFIX}loader", f"{ROLE_PREFIX}reader"), r)):
+    logins = (f"{ROLE_PREFIX}loader", f"{ROLE_PREFIX}reader", f"{ROLE_PREFIX}builder")
+    for role in sorted(roles, key=lambda r: (r in logins, r)):
         conn.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
 
 
@@ -59,15 +64,17 @@ def analytics_plane():
             _drop_analytics_plane(c)
             c.execute(text(f"CREATE ROLE {ROLE_PREFIX}loader LOGIN CREATEROLE PASSWORD 'loader'"))
             c.execute(text(f"CREATE ROLE {ROLE_PREFIX}reader LOGIN NOINHERIT PASSWORD 'reader'"))
+            c.execute(text(f"CREATE ROLE {ROLE_PREFIX}builder LOGIN NOINHERIT PASSWORD 'builder'"))
             c.execute(text(f"ALTER ROLE {ROLE_PREFIX}reader SET default_transaction_read_only = on"))
             c.execute(text(f"ALTER ROLE {ROLE_PREFIX}reader SET statement_timeout = '60s'"))
             c.execute(text(f'CREATE DATABASE "{ANALYTICS_DB}" OWNER {ROLE_PREFIX}loader'))
             c.execute(text(f'REVOKE CONNECT ON DATABASE "{ANALYTICS_DB}" FROM PUBLIC'))
-            c.execute(text(f'GRANT CONNECT ON DATABASE "{ANALYTICS_DB}" TO {ROLE_PREFIX}loader, {ROLE_PREFIX}reader'))
+            c.execute(text(f'GRANT CONNECT ON DATABASE "{ANALYTICS_DB}" TO {ROLE_PREFIX}loader, {ROLE_PREFIX}reader, '
+                           f'{ROLE_PREFIX}builder'))
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"Postgres unavailable: {exc}")
     yield {"db": ANALYTICS_DB, "prefix": ROLE_PREFIX, "loader": f"{ROLE_PREFIX}loader", "reader": f"{ROLE_PREFIX}reader",
-           "admin_url": _admin_url()}
+           "builder": f"{ROLE_PREFIX}builder", "admin_url": _admin_url()}
     from analystos.gateway.engines import dispose_all
 
     dispose_all()
