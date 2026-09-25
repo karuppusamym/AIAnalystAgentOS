@@ -41,7 +41,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
     ToolSpec(tool_id="context.search", name="Context search", category="context",
              description="Layered retrieval over Context2AI / local glossary, metrics, prior episodes and graph neighborhood."),
     ToolSpec(tool_id="graph.neighborhood", name="Graph neighborhood", category="graph",
-             description="Neo4j neighborhood of tables: joins and prior findings."),
+             description="Neighbourhood of tables (joins and prior findings) from the Postgres lineage graph; Neo4j when enabled."),
     ToolSpec(tool_id="viz.chart", name="Chart designer", category="visualization",
              description="Select chart type and encodings for an analytical intent and compute a governed preview."),
     ToolSpec(tool_id="artifact.write", name="Artifact writer", category="observability", side_effects="internal_write",

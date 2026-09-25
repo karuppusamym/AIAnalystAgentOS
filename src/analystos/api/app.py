@@ -81,9 +81,12 @@ def health():
         redis.Redis.from_url(settings.redis_url, socket_timeout=1).ping()
 
     def neo():
+        if not settings.graph_enabled:  # optional projection; lineage and neighbourhood come from Postgres
+            return {"enabled": False, "status": "disabled"}
         from analystos.graph.projection import _driver
 
         _driver().verify_connectivity()
+        return {"enabled": True}
 
     def temporal():
         import socket

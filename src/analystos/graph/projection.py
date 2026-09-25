@@ -1,11 +1,13 @@
-"""Analytics knowledge graph (§30). Neo4j is a projection of the Postgres lineage/relationship
-tables, rebuilt idempotently (MERGE), so a Neo4j outage never loses provenance."""
+"""Analytics knowledge graph (§30). Postgres (`lineage_edge`, `relationship`) is the graph of record
+and serves lineage and table neighbourhood. Neo4j is an optional projection of those tables (spec v3
+§8), off unless `ANALYSTOS_GRAPH_ENABLED=true`, rebuilt idempotently (MERGE), so a Neo4j outage or
+absence never loses provenance or context."""
 from __future__ import annotations
 
 from functools import lru_cache
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import Session, aliased
 
 from analystos.core.config import get_settings
 from analystos.core.logging import get_logger
@@ -18,6 +20,13 @@ LABELS = {"objective": "BusinessObjective", "run": "AnalysisRun", "hypothesis": 
           "agent": "Agent", "tool": "Tool", "user": "User", "approval": "Decision", "publication": "Publication",
           "profile": "Artifact", "quality_report": "Artifact", "context_package": "Artifact", "plan": "Artifact",
           "semantic_model": "SemanticModel", "feedback": "Feedback"}
+
+
+NEIGHBOURHOOD_LIMIT = 200
+
+
+def graph_enabled() -> bool:
+    return get_settings().graph_enabled
 
 
 @lru_cache
@@ -36,7 +45,9 @@ def ensure_schema(g) -> None:  # noqa: ANN001
 
 
 def project_workspace(session: Session, workspace_id: str) -> dict:
-    """MERGE all lineage edges and table relationships of a workspace into Neo4j."""
+    """MERGE all lineage edges and table relationships of a workspace into Neo4j (when enabled)."""
+    if not graph_enabled():
+        return {"ok": False, "skipped": True, "reason": "graph projection disabled (ANALYSTOS_GRAPH_ENABLED=false)"}
     edges = list(session.scalars(select(LineageEdge).where(LineageEdge.workspace_id == workspace_id)))
     rels = list(session.scalars(select(Relationship).where(Relationship.workspace_id == workspace_id)))
     assets = {a.id: f"{a.schema_name}.{a.name}" for a in session.scalars(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id))}
@@ -64,16 +75,56 @@ def project_workspace(session: Session, workspace_id: str) -> dict:
         return {"ok": False, "error": str(exc)[:300]}
 
 
-def neighborhood(tables: list[str], workspace_id: str) -> list[dict]:
-    """Graph neighborhood for context retrieval: joins and prior findings touching these tables."""
-    try:
-        with _driver().session() as g:
-            # Both ends are pinned to the workspace, so a stray cross-workspace edge is never followed.
-            result = g.run("MATCH (t:AOS {workspace_id: $ws, type:'table'})-[r]-(n:AOS {workspace_id: $ws}) "
-                           "WHERE t.id IN $tables "
-                           "RETURN t.id AS table, type(r) AS rel, n.type AS type, n.id AS id LIMIT 200",
-                           tables=tables, ws=workspace_id)
-            return [dict(r) for r in result]
-    except Exception as exc:
-        log.warning("neo4j neighborhood failed: %s", exc)
+def neighborhood(tables: list[str], workspace_id: str, session: Session | None = None) -> list[dict]:
+    """Graph neighbourhood for context retrieval: joins and prior findings touching these tables.
+    Served by Neo4j when the projection is enabled and reachable, otherwise by Postgres."""
+    if graph_enabled():
+        try:
+            return neo4j_neighborhood(tables, workspace_id)
+        except Exception as exc:
+            log.warning("neo4j neighbourhood failed, serving it from Postgres: %s", exc)
+    if session is not None:
+        return pg_neighborhood(session, tables, workspace_id)
+    from analystos.db.base import session_scope
+
+    with session_scope() as s:
+        return pg_neighborhood(s, tables, workspace_id)
+
+
+def neo4j_neighborhood(tables: list[str], workspace_id: str) -> list[dict]:
+    with _driver().session() as g:
+        # Both ends are pinned to the workspace, so a stray cross-workspace edge is never followed.
+        result = g.run("MATCH (t:AOS {workspace_id: $ws, type:'table'})-[r]-(n:AOS {workspace_id: $ws}) "
+                       "WHERE t.id IN $tables "
+                       "RETURN DISTINCT t.id AS table, type(r) AS rel, n.type AS type, n.id AS id "
+                       "ORDER BY table, rel, type, id LIMIT $limit",
+                       tables=tables, ws=workspace_id, limit=NEIGHBOURHOOD_LIMIT)
+        return [dict(r) for r in result]
+
+
+def pg_neighborhood(session: Session, tables: list[str], workspace_id: str) -> list[dict]:
+    """One hop from each table over the same edges the projection writes, workspace-filtered:
+    lineage edges in either direction (relation upper-cased, as the projection labels it) and
+    table relationships as JOINS_TO. Same rows, order and limit as the Neo4j query."""
+    if not tables:
         return []
+    e = LineageEdge
+    out = select(e.from_id, func.upper(e.relation), e.to_type, e.to_id).where(
+        e.workspace_id == workspace_id, e.from_type == "table", e.from_id.in_(tables))
+    inc = select(e.to_id, func.upper(e.relation), e.from_type, e.from_id).where(
+        e.workspace_id == workspace_id, e.to_type == "table", e.to_id.in_(tables))
+    fa, ta = aliased(SourceAsset), aliased(SourceAsset)
+    # The projection names a relationship end `schema.table` when its asset is in the workspace, else by asset id.
+    a = func.coalesce(fa.schema_name + "." + fa.name, Relationship.from_asset_id)
+    b = func.coalesce(ta.schema_name + "." + ta.name, Relationship.to_asset_id)
+    joined = (select(a.label("a"), b.label("b")).select_from(Relationship)
+              .outerjoin(fa, and_(fa.id == Relationship.from_asset_id, fa.workspace_id == workspace_id))
+              .outerjoin(ta, and_(ta.id == Relationship.to_asset_id, ta.workspace_id == workspace_id))
+              .where(Relationship.workspace_id == workspace_id)).subquery()
+    rows: set[tuple[str, str, str, str]] = {tuple(r) for q in (out, inc) for r in session.execute(q)}
+    for ra, rb in session.execute(select(joined.c.a, joined.c.b).where(joined.c.a.in_(tables) | joined.c.b.in_(tables))):
+        if ra in tables:
+            rows.add((ra, "JOINS_TO", "table", rb))
+        if rb in tables:
+            rows.add((rb, "JOINS_TO", "table", ra))
+    return [{"table": t, "rel": r, "type": ty, "id": i} for t, r, ty, i in sorted(rows)[:NEIGHBOURHOOD_LIMIT]]

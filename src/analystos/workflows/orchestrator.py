@@ -51,10 +51,12 @@ def start_run(run_id: str) -> str:
         async def go():
             from temporalio.exceptions import WorkflowAlreadyStartedError
 
+            from analystos.workflows.queues import queue_name, workflow_options
+
             client = await _temporal_client()
             try:
-                await client.start_workflow("AnalysisWorkflow", run_id, id=workflow_id(run_id),
-                                            task_queue=settings.temporal_task_queue)
+                await client.start_workflow("AnalysisWorkflow", args=[run_id, workflow_options()], id=workflow_id(run_id),
+                                            task_queue=queue_name(settings.temporal_queue_prefix, "analysis"))
             except WorkflowAlreadyStartedError:  # idempotent: the loop is alive, just wake it
                 await client.get_workflow_handle(workflow_id(run_id)).signal("nudge")
         _run(go())
@@ -74,6 +76,27 @@ def signal_run(run_id: str) -> None:
         _run(go())
     except Exception as exc:  # the workflow also re-checks state periodically
         log.warning("signal to %s failed: %s", run_id, exc)
+
+
+def start_crawl_job(crawl_id: str, user_id: str) -> str | None:
+    """Run a started crawl on the Temporal `crawl` pool. None when the orchestrator is local or Temporal
+    cannot take it; the caller then runs the crawl in-process as before."""
+    settings = get_settings()
+    if settings.orchestrator != "temporal":
+        return None
+
+    async def go():
+        from analystos.workflows.queues import queue_name, workflow_options
+
+        client = await _temporal_client()
+        await client.start_workflow("CrawlWorkflow", args=[crawl_id, user_id, workflow_options()], id=f"crawl-{crawl_id}",
+                                    task_queue=queue_name(settings.temporal_queue_prefix, "crawl"))
+    try:
+        _run(go())
+    except Exception as exc:
+        log.warning("crawl %s not handed to Temporal (%s); running it in-process", crawl_id, exc)
+        return None
+    return f"crawl-{crawl_id}"
 
 
 def run_local(run_id: str, *, poll: float = 0.3, max_seconds: float = 3600) -> str:

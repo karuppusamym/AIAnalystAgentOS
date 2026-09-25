@@ -1,0 +1,42 @@
+# Temporal task queues per workload (spec v3 §8, P4-S01). Each workload is its own queue
+# `<ANALYSTOS_TEMPORAL_QUEUE_PREFIX>-<workload>` and its own worker pool, so pools scale
+# independently (`analystos worker --queues compute`). Which run step goes to which queue is code:
+# src/analystos/workflows/queues.py (STEP_WORKLOADS).
+#
+#   start_to_close_seconds  hard ceiling for one activity attempt. Engine tasks (analysis, compute,
+#                           publish) must stay <= 1800: the engine's task-claim TTL assumes it.
+#   heartbeat_seconds       an attempt that stops heartbeating this long is declared hung and retried.
+#                           Activities heartbeat from a pump thread every heartbeat_seconds / 3.
+#   max_concurrent          activity slots per worker process (the process-pool size for `process`).
+#   executor                thread (I/O-bound) | process (CPU-bound: a hung or GIL-holding statistic
+#                           cannot starve the worker's event loop, its heartbeats or other runs).
+#   max_tasks_per_child     process executor only: recycle a pool process after this many tasks.
+max_activities_per_run: 400   # AnalysisWorkflow continues-as-new after this many activities
+queues:
+  analysis:
+    start_to_close_seconds: 1800
+    heartbeat_seconds: 120
+    max_concurrent: 8
+    executor: thread
+  compute:
+    start_to_close_seconds: 600
+    heartbeat_seconds: 60
+    max_concurrent: 4
+    executor: process
+    max_tasks_per_child: 50
+  publish:
+    start_to_close_seconds: 900
+    heartbeat_seconds: 120
+    max_concurrent: 4
+    executor: thread
+  crawl:
+    start_to_close_seconds: 1800
+    heartbeat_seconds: 120
+    max_concurrent: 2
+    executor: thread
+  elt:
+    # Placeholder pool: ELT activities (P4-E*) land here; today it only answers `queue_ping`.
+    start_to_close_seconds: 3600
+    heartbeat_seconds: 120
+    max_concurrent: 2
+    executor: thread

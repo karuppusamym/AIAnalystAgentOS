@@ -54,6 +54,9 @@ def test_full_run_without_models(control_db, servicenow_url, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("SERVICENOW_PASSWORD", "admin")
     monkeypatch.setenv("ANALYSTOS_SUPERSET_URL", "http://127.0.0.1:9")  # force the preview destination
+    # P4-S03: the whole flow runs without Neo4j. The graph is off (the default) and even its URI is dead.
+    monkeypatch.setenv("ANALYSTOS_GRAPH_ENABLED", "false")
+    monkeypatch.setenv("ANALYSTOS_NEO4J_URI", f"bolt://127.0.0.1:{_free_port()}")
     from analystos.core.config import get_settings
     from analystos.runtime.context import default_router
 
@@ -110,6 +113,14 @@ def test_full_run_without_models(control_db, servicenow_url, monkeypatch):
             assert all(a.status == "published" and a.platform == "preview" for a in by_type["dashboard"])
             assert queries is not None
             assert r.summary.get("published") is True
+            assert r.summary["graph_projection"].get("skipped") is True
+            # Context packages still carry the table neighbourhood, now from the Postgres lineage graph.
+            from analystos.context.service import build_context_package
+
+            package = build_context_package(s, ws_id, "SLA breaches", r.scope["assets"])
+            assert package["graph"], "no neighbourhood without Neo4j"
+            assert {g["table"] for g in package["graph"]} <= set(r.scope["assets"])
+            assert {"dataset", "table"} & {g["type"] for g in package["graph"]}
     finally:
         get_settings.cache_clear()
         default_router.cache_clear()

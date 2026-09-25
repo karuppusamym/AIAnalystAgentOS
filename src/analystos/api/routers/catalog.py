@@ -57,7 +57,10 @@ def start_crawl(workspace_id: str, source_id: str, body: CrawlIn, background: Ba
     run = crawler.start_crawl(session, user, source_id, **body.model_dump())
     view = crawler.crawl_view(run)
     session.commit()  # the background task reads the crawl_run row in its own session: it must be visible first
-    background.add_task(_run_quietly, run.id, user.id)
+    from analystos.workflows.orchestrator import start_crawl_job
+
+    if start_crawl_job(run.id, user.id) is None:  # local orchestrator, or Temporal unreachable
+        background.add_task(_run_quietly, run.id, user.id)
     return view
 
 
