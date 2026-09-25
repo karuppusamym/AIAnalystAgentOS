@@ -40,6 +40,8 @@ jobs:
       - run: .venv/bin/pytest -q -m "not integration"
       - name: Cost gate (replayed runs; fails when model calls or tokens per run rise > 10% over the baseline)
         run: PYTHONPATH=src .venv/bin/python scripts/cost_gate.py
+      - name: Analytical benchmark, deterministic tier (P4-V01; precision, recall, FDR vs alpha on ITSM/sales/finance, ~3 min)
+        run: PYTHONPATH=src .venv/bin/python scripts/benchmark_analytical.py --tier component --check
       - run: .venv/bin/analystos migrate
       - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
         run: .venv/bin/pytest -q -m integration
