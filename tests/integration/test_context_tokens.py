@@ -97,6 +97,7 @@ def test_prompt_tokens_per_run_with_every_chat_purpose_on(control_db, servicenow
     from analystos.db.models import ModelCall, PlatformSetting, User
     from analystos.llm import router as router_mod
     from analystos.llm.cache import estimate_tokens
+    from analystos.llm.config import load_models_config
     from analystos.runtime.context import default_router
     from analystos.services import platform_settings
 
@@ -111,6 +112,8 @@ def test_prompt_tokens_per_run_with_every_chat_purpose_on(control_db, servicenow
         return original(self, purpose, messages, **kw)
 
     monkeypatch.setattr(router_mod.ModelRouter, "complete", complete)
+    # Every chat purpose model-first (P4-T02 made `auto` the default); decision purposes stay off.
+    CHAT_ALWAYS = {p: "always" for p, profile in load_models_config().routing.items() if profile != "decision"}
     CALLS.clear()
     get_settings.cache_clear()
     default_router.cache_clear()
@@ -119,7 +122,7 @@ def test_prompt_tokens_per_run_with_every_chat_purpose_on(control_db, servicenow
         last = s.scalar(select(PlatformSetting).order_by(PlatformSetting.version.desc()).limit(1))
         previous_doc, version = (dict(last.document), last.version) if last else ({}, 0)
         s.add(PlatformSetting(version=version + 1, created_by=admin_id, note="token measurement",
-                              document={**previous_doc, "llm": {**previous_doc.get("llm", {}), "purpose_modes": {},
+                              document={**previous_doc, "llm": {**previous_doc.get("llm", {}), "purpose_modes": CHAT_ALWAYS,
                                                                 "cache_enabled": False},
                                         "features": {**previous_doc.get("features", {}), "jev_decisions": False}}))
     platform_settings.invalidate()

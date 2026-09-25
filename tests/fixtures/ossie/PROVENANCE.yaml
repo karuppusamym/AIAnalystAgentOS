@@ -1,0 +1,32 @@
+# Conformance fixtures for the Ossie 0.1.1 / dbt 1.12 adapters (P4-K03). None of these is hand-written.
+official_tpcds_semantic_model.yaml:
+  upstream: https://github.com/apache/ossie @ faf581054dcf7964d5fe0ceae7d6f415c8ce32a5 (branch release/0.1.1)
+  path: examples/tpcds_semantic_model.yaml
+  license: Apache-2.0
+official_gooddata_osi_tpcds.yaml:
+  upstream: https://github.com/apache/ossie @ faf581054dcf7964d5fe0ceae7d6f415c8ce32a5 (branch release/0.1.1)
+  path: converters/gooddata/tests/fixtures/osi_tpcds.yaml
+  license: Apache-2.0
+official_salesforce_osi_example.yaml:
+  upstream: https://github.com/apache/ossie @ faf581054dcf7964d5fe0ceae7d6f415c8ce32a5 (branch release/0.1.1)
+  path: converters/salesforce/src/test/resources/examples/osiToSalesforce.yaml
+  license: Apache-2.0
+dbt_1_12_0_osi_document.json:
+  produced_by: dbt-core 1.12.0 + dbt-duckdb 1.11.0 (metricflow 0.213.0 resolved by pip), `dbt parse`, 2026-09-25
+  inputs: dbt_project_shop/ (this directory; regenerate with `DBT_PROFILES_DIR=. dbt parse` inside it)
+  output: target/osi_document.json, copied verbatim
+  notes: >
+    Real dbt output, not a reproduction. It shows one upstream defect we must tolerate: the derived metric
+    average_order_value comes out as `SUM(SUM(CASE WHEN orders.order_id ...).amount) / ...` because metricflow's
+    MSI->OSI converter substitutes the metric name `orders` inside `orders.amount`. The importer keeps such a
+    metric as a proposal and reports the problem; it never auto-approves imported metrics.
+dbt_1_12_0_parsed_our_export.json:
+  produced_by: analystos.semantic.dbt.export_osi_folder over the import of dbt_1_12_0_osi_document.json, minus the
+    mangled average_order_value metric, 2026-09-25
+  verified: placed as osi/semantic_model.json in a copy of dbt_project_shop without the native semantic models;
+    `dbt parse` (dbt-core 1.12.0) succeeded. Before the adapter unquoted sources and mapped key columns to field
+    names, the same file failed ("does not match any dbt model"; then "Semantic Manifest validation failed").
+dbt_1_12_0_reemitted_our_export.json:
+  produced_by: the target/osi_document.json dbt wrote for that parse. dbt's side is lossy by design (measure fields
+    gain dimension {is_time: false}; the ratio metric grows __numerator/__denominator sub-metrics; sqlglot rewrites
+    `x IS NOT NULL` to `NOT x IS NULL`) — equal under normalize_expression, not byte-equal.

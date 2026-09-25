@@ -106,7 +106,8 @@ def measure_standard_run(servicenow_url: str, monkeypatch) -> dict:
                                                                                       gateway=runtime_context.default_gateway()))
     with session_scope() as s:
         admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
-        ws = create_workspace(s, admin, name=f"token default {time.time_ns()}", objective="Find the drivers of SLA breaches in IT incidents")
+        ws = create_workspace(s, admin, name=f"token default {time.time_ns()}", objective="Find the drivers of SLA breaches in IT incidents",
+                              policy={"require_approved_metrics": False})  # the gate: test_semantic_layer.py
         s.flush()
         add_member(s, admin, ws.id, "approver@analystos.local", "approver")
         src = register_source(s, admin, ws.id, kind="servicenow", name="SN",

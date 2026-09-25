@@ -45,6 +45,23 @@ _METRIC_PUT_FIELDS = {
 }
 
 
+def superset_metric(m: MetricDef) -> dict[str, Any]:
+    """A KPI as a Superset dataset metric. An approved semantic-layer metric (P4-K03) is marked certified,
+    so Superset users can tell the governed definitions from ad-hoc ones."""
+    item: dict[str, Any] = {
+        "metric_name": m.name,
+        "expression": m.sql_expression,
+        "verbose_name": m.display_name,
+        "description": m.definition,
+        "d3format": metric_d3format(m),
+    }
+    if m.status == "approved":
+        item["extra"] = json.dumps({"certification": {
+            "certified_by": "AnalystOS semantic layer",
+            "details": "Approved metric of the workspace semantic model" + (f" (owner {m.owner})" if m.owner else "")}})
+    return item
+
+
 def _message(resp: httpx.Response) -> str:
     try:
         body = resp.json()
@@ -420,13 +437,7 @@ class SupersetPublisher:
             if name not in ours:
                 payload.append({k: v for k, v in m.items() if k in _METRIC_PUT_FIELDS and v is not None})
         for name, m in ours.items():
-            item: dict[str, Any] = {
-                "metric_name": name,
-                "expression": m.sql_expression,
-                "verbose_name": m.display_name,
-                "description": m.definition,
-                "d3format": metric_d3format(m),
-            }
+            item = superset_metric(m)
             if name in existing:
                 item["id"] = existing[name]["id"]
             payload.append({k: v for k, v in item.items() if v is not None})
