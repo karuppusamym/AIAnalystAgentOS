@@ -13,6 +13,8 @@ EVENT_TYPES = {
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
     "mcp.server.refreshed", "mcp.tool_called", "agent.action", "verified_query.promoted", "verified_query.updated",
     "hypothesis_registry.updated",
+    # Write path (P4-E04/E06): build targets and dbt build jobs
+    "build_target.provisioned", "build.planned", "build.started", "build.completed", "build.failed", "build.refused",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

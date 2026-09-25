@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     # Per-workspace NOLOGIN roles (<prefix><workspace id>) hold SELECT on that workspace's staged
     # schemas; the reader identity only reaches them via SET ROLE, so it cannot read across workspaces.
     analytics_workspace_role_prefix: str = "analystos_r_"
+    # Write path (P4-E06, spec v3 §7.4): a third analytics identity used only by the BuildGateway. It
+    # reaches per-workspace NOLOGIN build roles (<prefix><workspace id>) by SET ROLE; each holds CREATE
+    # on that workspace's designated target schemas only and reads its staged schemas through the
+    # workspace reader role. Never used for queries; the query identities never write.
+    analytics_builder_url: str = "postgresql+psycopg://analystos_builder:builder@localhost:5432/analytics"
+    analytics_build_role_prefix: str = "analystos_b_"
+    # The customer's dbt runner (P4-E04): a dbt Core executable run as a separate process (its own
+    # venv or container image), never imported in-process. Projects and job logs live under build_dir.
+    dbt_executable: str = "dbt"
+    build_dir: Path = REPO_ROOT / "var" / "builds"
+    build_timeout_seconds: int = 1800
     redis_url: str = "redis://localhost:6379/0"
     # Neo4j is an optional projection of the Postgres lineage/relationship tables (spec v3 §8), off
     # by default: lineage and table neighbourhood are served from Postgres unless this is on.

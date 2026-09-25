@@ -901,3 +901,55 @@ class RegisteredHypothesis(Base):
     times_verified: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BuildTarget(Base):
+    """A schema the workspace owner designated for builds (P4-E06). The BuildGateway writes nowhere
+    else: its per-workspace build role holds CREATE on these schemas only, and sources stay read-only."""
+
+    __tablename__ = "build_target"
+    __table_args__ = (UniqueConstraint("workspace_id", "engine", "schema_name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    engine: Mapped[str] = mapped_column(String(80))  # postgres:analytics
+    schema_name: Mapped[str] = mapped_column(String(63))
+    build_role: Mapped[str] = mapped_column(String(63))  # NOLOGIN role the builder login SETs for this workspace
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    provisioning: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class BuildJob(Base):
+    """One generated dbt project and its execution (P4-E04): the project files and their hash, the dry
+    run and cost estimate, the approval that covers it, the rollback plan, the harvested manifest,
+    run results and OpenLineage events. Provenance: dataset/metrics -> transformation -> job -> tables."""
+
+    __tablename__ = "build_job"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str] = mapped_column(String(40), index=True)  # the elt_build run
+    source_run_id: Mapped[str] = mapped_column(String(40), index=True)  # the run whose dataset and KPIs are built
+    artifact_id: Mapped[str | None] = mapped_column(String(40), nullable=True)  # the `transformation` artifact
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    engine: Mapped[str] = mapped_column(String(80))
+    runner: Mapped[str] = mapped_column(String(40), default="dbt-core")
+    target_schema: Mapped[str] = mapped_column(String(63))
+    project_name: Mapped[str] = mapped_column(String(120))
+    project_files: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    project_hash: Mapped[str] = mapped_column(String(64))
+    plan_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    relations: Mapped[list[str]] = mapped_column(JSON, default=list)  # schema.relation the job creates or replaces
+    dry_run: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    estimate: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    rollback: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="planned")  # planned|awaiting_approval|running|succeeded|failed|refused
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # harvested summary of target/manifest.json
+    run_results: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    openlineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    log_tail: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
