@@ -22,6 +22,8 @@
   "hypothesis.updated",
   "insight.created",
   "insight.verified",
+  "mcp.server.refreshed",
+  "mcp.tool_called",
   "metadata.collected",
   "metric.created",
   "model.called",
