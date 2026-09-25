@@ -20,6 +20,7 @@ from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Experiment, Hypothesis
+from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
@@ -230,19 +231,28 @@ def identity_keys(spec: AnalysisSpec) -> set[str]:
 
 
 def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
-    verdicts = ctx.jev.score_hypotheses(ctx.run.objective, {str(i): a["statement"] for i, a in enumerate(accepted)},
-                                        ctx=ctx.call_ctx())
+    """Rank (ADR-0015 `rank`): JEV may reorder, never drop; a hypothesis it does not score keeps its label."""
+    if not accepted:
+        return "rules"
     rank = {"high": 2.0, "medium": 1.0, "low": 0.0}
+    items = {str(i): a["statement"] for i, a in enumerate(accepted)}
+    decision = ctx.decisions.decide(
+        "hypothesis_priority", {"objective": ctx.run.objective},
+        Question.scores("How valuable is testing each hypothesis for answering the objective?", items,
+                        hint={str(i): rank.get(a.get("priority", "medium"), 1.0) for i, a in enumerate(accepted)}),
+        ctx=ctx.call_ctx())
     for i, a in enumerate(accepted):
-        v = (verdicts or {}).get(str(i))
-        a["priority_score"] = round(v.value / 2, 3) if v else rank.get(a.get("priority", "medium"), 1.0) / 2
-        a["priority_by"] = f"jev:{v.model}" if v else "rules"
+        score, item = decision.value[str(i)], decision.details.get(str(i)) or {}
+        v = item.get("by") == "jev" and decision.backend == "jev"
+        a["priority_score"] = round(score / 2, 3)
+        a["priority_by"] = f"jev:{decision.model}" if v else "rules"
         # The decision itself, not only who made it (P4-C09): replay and audit need the probabilities.
-        a["priority_decision"] = {"score": v.value, "probabilities": v.probabilities, "confidence": v.confidence,
-                                  "model": v.model} if v else None
+        a["priority_decision"] = {"score": score, "probabilities": item.get("probabilities") or {},
+                                  "confidence": item.get("confidence"), "model": decision.model,
+                                  "decision_id": decision.id} if v else None
         a["priority"] = "high" if a["priority_score"] >= 0.7 else "medium" if a["priority_score"] >= 0.35 else "low"
     accepted.sort(key=lambda a: -a["priority_score"])
-    return "jev" if verdicts else "rules"
+    return "jev" if decision.backend == "jev" else "rules"
 
 
 def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key: str) -> list[str]:
@@ -431,6 +441,13 @@ def _results_summary(run_id: str) -> list[dict]:
         return out
 
 
+def _new_supported(run_id: str, round_no: int) -> int:
+    """Supported hypotheses first tested in round `round_no` (AUT-005: stop when a round adds none)."""
+    with session_scope() as s:
+        return int(s.scalar(select(func.count()).select_from(Hypothesis).where(
+            Hypothesis.run_id == run_id, Hypothesis.iteration == round_no, Hypothesis.status == "supported")) or 0)
+
+
 def follow_ups(ctx: RunContext) -> dict:
     round_no = int(ctx.task.input.get("round", 1))
     results = _results_summary(ctx.run.id)
@@ -438,14 +455,21 @@ def follow_ups(ctx: RunContext) -> dict:
     if not supported:
         ctx.say("No supported hypothesis to drill into; stopping iteration.", kind="decision")
         return {"added": 0, "stop": "no_supported_results"}
-    # Stop criterion (JEV): is the objective already answered well enough?
-    stop = ctx.jev.probability("stop_check", {"objective": ctx.run.objective,
-                                              "findings": "; ".join(f"{r['statement']} ({r['status']})" for r in results)[:3500]},
-                               "Do `findings` already answer `objective` well enough that further drill-down analysis is unnecessary?",
-                               ctx=ctx.call_ctx())
-    if stop and stop.value >= 0.85 and round_no >= 1 and len(supported) >= 3:
-        ctx.say(f"JEV stop check: P(objective answered)={stop.value:.2f} ≥ 0.85 — stopping iteration.", kind="decision")
-        return {"added": 0, "stop": "jev_stop_check", "p": stop.value}
+    # Stop criterion (ADR-0015 bounded_stop): rule first (nothing new in the last round), JEV only as a
+    # tie-break after the minimum rounds with enough supported findings.
+    stop = ctx.decisions.decide(
+        "stop_check", {"objective": ctx.run.objective,
+                       "findings": "; ".join(f"{r['statement']} ({r['status']})" for r in results)[:3500]},
+        Question.probability("Do `findings` already answer `objective` well enough that further drill-down analysis is unnecessary?"),
+        facts={"round": round_no, "supported": len(supported), "new_supported_last_round": _new_supported(ctx.run.id, round_no)},
+        ctx=ctx.call_ctx())
+    if stop.value:
+        if stop.backend == "rules":
+            ctx.say("Stop check: the last round found no new supported finding — stopping iteration.", kind="decision")
+            return {"added": 0, "stop": "rule_stop_check", "decision_id": stop.id}
+        who = "JEV" if stop.backend == "jev" else stop.backend
+        ctx.say(f"{who} stop check: P(objective answered)={stop.p:.2f} ≥ 0.85 — stopping iteration.", kind="decision")
+        return {"added": 0, "stop": f"{stop.backend}_stop_check", "p": stop.p, "decision_id": stop.id}
     types = semantic_types(ctx)
     seen = set().union(*(identity_keys(AnalysisSpec.model_validate(r["spec"])) for r in results)) if results else set()
     # Deterministic follow-ups: drill into supported findings, and continue each tested outcome across the

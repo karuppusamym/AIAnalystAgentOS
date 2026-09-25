@@ -1,0 +1,52 @@
+# DecisionService `local_classifier` backend (ADR-0015): keyword/bigram-weighted logistic (probability
+# purposes) and softmax (choice purposes) models. No network, no ML dependency: the air-gapped option.
+# Features are lower-cased words and word bigrams of the decision state. Weights are hand-set
+# baselines (version 1); retrain offline from decision_outcome labels and bump `version` - the version
+# is recorded as the decision's model (local:<purpose>@<version>) so calibration is per version.
+feedback_classification:
+  version: "1"
+  classes:
+    redirect:
+      bias: 0.3
+      words: {only: 1.6, focus: 1.6, exclude: 1.8, excluding: 1.8, ignore: 1.5, without: 1.2, just: 0.8, restrict: 1.5,
+              limit: 1.0, instead: 1.0, "focus on": 0.8, remove: 1.0, drop: 0.8}
+    add_context:
+      bias: 0.0
+      words: {means: 1.6, definition: 1.8, defined: 1.6, "note that": 1.4, fyi: 1.6, context: 1.4, because: 0.6,
+              policy: 0.8, "we changed": 1.2, "was changed": 1.0, migrated: 1.0, usually: 0.6}
+    reject_finding:
+      bias: -0.2
+      words: {wrong: 2.0, incorrect: 2.0, "not true": 2.0, misleading: 1.8, useless: 1.6, "not useful": 1.8, reject: 2.0,
+              nonsense: 1.8, bogus: 1.8, spurious: 1.6}
+    deeper_analysis:
+      bias: 0.0
+      words: {deeper: 2.0, drill: 1.8, "drill down": 1.0, investigate: 1.4, "break down": 1.6, breakdown: 1.6, why: 0.8,
+              more: 0.4, explore: 1.2, "look into": 1.4, compare: 0.8}
+    question:
+      bias: -0.3
+      words: {what: 0.9, how: 0.9, why: 0.5, which: 0.8, who: 0.8, when: 0.6, explain: 1.2, "can you": 0.6, "is it": 0.6}
+
+risk_check:
+  version: "1"
+  bias: -3.0
+  words: {delete: 4.0, truncate: 4.0, publish: 3.5, schedule: 3.0, send: 3.0, email: 3.0, export: 3.0, share: 2.5,
+          grant: 3.5, revoke: 3.5, deploy: 3.0, overwrite: 3.5, "drop table": 4.0, update: 1.0, write: 1.0}
+
+clarify_needed:
+  version: "1"
+  bias: -1.5
+  words: {it: 0.4, this: 0.4, that: 0.4, them: 0.4, best: 0.8, better: 0.6, good: 0.5, performance: 0.8, recently: 0.6,
+          stuff: 1.2, things: 1.0, something: 1.0, whatever: 1.2}
+
+ask_route:
+  version: "1"
+  classes:
+    verified_query:
+      bias: 0.2
+      words: {how: 0.6, many: 0.8, total: 0.8, count: 0.8, number: 0.6, average: 0.6, rate: 0.6, last: 0.4, month: 0.4}
+    tool:
+      bias: 0.0
+      words: {forecast: 1.6, trend: 1.0, anomaly: 1.6, anomalies: 1.6, compare: 0.8, segment: 1.0, driver: 1.2, drivers: 1.2}
+    generate:
+      bias: 0.1
+      words: {list: 0.6, show: 0.4, where: 0.4, join: 1.0, each: 0.6, per: 0.4, top: 0.4}

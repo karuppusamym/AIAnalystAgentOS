@@ -20,7 +20,8 @@ MODEL_RUNGS: tuple[str, ...] = ("decision", "llm_small", "llm_large")
 # Purposes where a deterministic path produces an equivalent result (auto = deterministic first).
 DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generation", "insight_narrative", "summarization",
                          "semantic_modeling", "dashboard_design", "feedback_interpretation", "metadata_enrichment",
-                         "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check", "agent_actions"}
+                         "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check", "agent_actions",
+                         "ask_route", "clarify_needed", "metric_match", "join_path_choice"}
 
 
 class LLMSettings(BaseModel):
@@ -78,6 +79,23 @@ class MonitorSettings(BaseModel):
     default_z_threshold: float = Field(3.0, ge=1.0, le=10.0)
     triage_escalate_probability: float = Field(0.8, ge=0.5, le=1.0)
     auto_investigation_enabled: bool = True
+    # alert_triage materiality rules (ADR-0015): below these a signal keeps its severity and is not
+    # escalated or auto-investigated; it is never suppressed (the alert is still raised).
+    min_material_effect: float = Field(0.0, ge=0.0, le=10.0)  # |relative change|, 0 = no minimum
+    min_material_points: int = Field(3, ge=2, le=520)
+
+
+class DecisionSettings(BaseModel):
+    """DecisionService (ADR-0015) knobs an administrator can change without a redeploy."""
+
+    backends: dict[str, list[str]] = Field(default_factory=dict)  # purpose -> backend order override (rules always kept)
+    calibration_window_days: int = Field(30, ge=1, le=365)
+    calibration_min_outcomes: int = Field(20, ge=1, le=100_000)  # fewer labelled outcomes = no verdict, no change
+    max_brier: float = Field(0.2, ge=0.0, le=1.0)  # spec v3 §5: route/bounded_stop need Brier <= 0.2
+    max_ece: float = Field(0.15, ge=0.0, le=1.0)
+    purpose_max_brier: dict[str, float] = Field(default_factory=dict)  # per-purpose override
+    auto_downgrade: bool = True  # a backend below threshold drops out of that purpose's chain (recorded, reversible)
+    pinned: list[str] = Field(default_factory=list)  # "purpose:backend" pairs never downgraded automatically
 
 
 class SourceSettings(BaseModel):
@@ -100,6 +118,7 @@ class PlatformSettings(BaseModel):
     monitors: MonitorSettings = Field(default_factory=MonitorSettings)
     sources: SourceSettings = Field(default_factory=SourceSettings)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
+    decisions: DecisionSettings = Field(default_factory=DecisionSettings)
 
 
 PRESETS: dict[str, dict[str, LLMMode]] = {
@@ -114,5 +133,5 @@ PRESETS: dict[str, dict[str, LLMMode]] = {
     # No model calls at all: the platform runs entirely on deterministic paths.
     "offline": {p: "off" for p in DETERMINISTIC_CAPABLE | {"verification", "sql_generation", "sql_repair",
                                                           "rev_second_opinion", "risk_check", "alert_triage",
-                                                          "statistical_interpretation"}},
+                                                          "statistical_interpretation", "decision_structured"}},
 }

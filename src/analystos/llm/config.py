@@ -43,6 +43,7 @@ class ModelsConfig(BaseModel):
     models: dict[str, ModelMeta] = Field(default_factory=dict)
     prices_version: str = "unversioned"
     ladders: dict[str, list[str]] = Field(default_factory=dict)  # purpose -> default rungs (spec v3 §4.1)
+    decisions: dict[str, Any] = Field(default_factory=dict)  # DecisionService purposes (analystos.decisions.config)
 
     def region_of(self, model: str, provider: str) -> str | None:
         meta = self.models.get(model)

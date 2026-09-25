@@ -19,6 +19,9 @@ from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
 from analystos.methods.base import ChartIntent
 from analystos.runtime.context import RunContext
 
+CHART_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
+                      "trend": ["line", "bar"], "part_to_whole": ["treemap", "stacked_bar", "pie", "bar"]}
+
 
 def _q(c: str) -> str:
     return '"' + c.replace('"', '""') + '"'
@@ -59,9 +62,21 @@ def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef], chart
 def _choose(ctx: RunContext, intent: str, dim_type: str | None, cardinality: int, title: str) -> tuple[str, str]:
     from analystos.skills.viz import choose_chart
 
-    # Rules decide (P4-T02, spec v3 §4.2): the chart follows from intent, dimension type and
-    # cardinality; a model override could only restyle a finding, never change it.
-    return choose_chart(intent, dim_type, cardinality, 1)
+    chart_type, rationale = choose_chart(intent, dim_type, cardinality, 1)
+    options = {t: {"bar": "bar chart comparing categories", "treemap": "treemap of part-to-whole shares",
+                   "pie": "pie chart of shares (few categories)", "table": "detail table", "histogram": "histogram of a distribution",
+                   "line": "line chart over time", "stacked_bar": "stacked bars of composition"}[t]
+               for t in CHART_ALTERNATIVES.get(intent, []) if not (t == "pie" and cardinality > 5)}
+    if chart_type in options and len(options) > 1:
+        # ADR-0015 choose_presentation: the chart rules decide; a model only breaks a rule tie.
+        from analystos.decisions import Question
+
+        d = ctx.decisions.decide("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
+                                 Question.choice("Which chart type communicates `chart_title` best to a business audience?",
+                                                 options, hint=chart_type), ctx=ctx.call_ctx())
+        if d.value != chart_type:
+            return d.value, f"{rationale}; tie broken by {d.backend} ({d.value})"
+    return chart_type, rationale
 
 
 def design(ctx: RunContext) -> dict:

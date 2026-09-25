@@ -17,6 +17,7 @@ from analystos.core.config import get_settings
 from analystos.core.errors import BudgetExceeded, NotFound, PolicyDenied, RunCancelled
 from analystos.db.base import session_scope
 from analystos.db.models import AgentDefinition, AgentMessage, AnalysisRun, QueryExecution, RunTask, User, Workspace
+from analystos.decisions import DecisionService
 from analystos.events.bus import emit
 from analystos.governance.policy import load_policy, resolve_scope
 from analystos.llm.jev import JevDecisions
@@ -71,6 +72,10 @@ class Services:
     @property
     def jev(self) -> JevDecisions:
         return JevDecisions(self.router)
+
+    @property
+    def decisions(self) -> DecisionService:
+        return DecisionService(self.router)
 
 
 def default_services() -> Services:
@@ -176,6 +181,11 @@ class RunContext:
     @property
     def jev(self) -> JevDecisions:
         return self.services.jev
+
+    @property
+    def decisions(self) -> DecisionService:
+        """Every bounded choice an agent delegates (ADR-0015): authority classes, fallbacks, persisted."""
+        return self.services.decisions
 
     def tools(self) -> ToolRuntime:
         return ToolRuntime(user=self.user, identity=self.identity, agent=self.agent)
