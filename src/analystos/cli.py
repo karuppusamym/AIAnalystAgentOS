@@ -57,9 +57,10 @@ def seed() -> None:
 
     settings = get_settings()
     with session_scope() as s:
-        users = [(settings.bootstrap_admin_email, "Platform Admin", settings.bootstrap_admin_password, True, {"pii_clearance": False}),
-                 ("analyst@analystos.local", "Ada Analyst", "ChangeMe123!", False, {}),
-                 ("approver@analystos.local", "Priya Approver", "ChangeMe123!", False, {})]
+        users = [(settings.bootstrap_admin_email, "Platform Admin", settings.bootstrap_admin_password, True, {"pii_clearance": False})]
+        if settings.env == "dev":  # demo accounts with a known password never exist outside development (Helm sets production)
+            users += [("analyst@analystos.local", "Ada Analyst", "ChangeMe123!", False, {}),
+                      ("approver@analystos.local", "Priya Approver", "ChangeMe123!", False, {})]
         for email, name, pw, admin, attrs in users:
             if not s.scalar(select(User).where(User.email == email)):
                 s.add(User(id=new_id("usr"), email=email, name=name, password_hash=hash_password(pw), is_admin=admin, attributes=attrs))

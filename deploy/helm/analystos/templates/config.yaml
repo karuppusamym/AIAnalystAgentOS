@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "analystos.fullname" . }}-config
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+data:
+  ANALYSTOS_ENV: {{ .Values.env | quote }}
+  ANALYSTOS_ORCHESTRATOR: {{ .Values.config.orchestrator | quote }}
+  ANALYSTOS_TEMPORAL_ADDRESS: {{ .Values.config.temporalAddress | quote }}
+  ANALYSTOS_TEMPORAL_NAMESPACE: {{ .Values.config.temporalNamespace | quote }}
+  ANALYSTOS_TEMPORAL_QUEUE_PREFIX: {{ .Values.config.temporalQueuePrefix | quote }}
+  ANALYSTOS_SUPERSET_URL: {{ .Values.config.supersetUrl | quote }}
+  ANALYSTOS_WEB_URL: {{ .Values.config.webUrl | quote }}
+  ANALYSTOS_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  ANALYSTOS_GRAPH_ENABLED: {{ .Values.config.graphEnabled | quote }}
+  ANALYSTOS_SANDBOX_NETWORK: {{ .Values.config.sandboxNetwork | quote }}
+  ANALYSTOS_AIR_GAPPED: {{ .Values.airGapped.enabled | quote }}
+  {{- if .Values.models.customConfig }}
+  ANALYSTOS_MODELS_CONFIG: /etc/analystos/models.yaml
+  {{- else if .Values.models.modelsConfig }}
+  ANALYSTOS_MODELS_CONFIG: {{ printf "/app/config/%s" .Values.models.modelsConfig | quote }}
+  {{- else if .Values.airGapped.enabled }}
+  ANALYSTOS_MODELS_CONFIG: /app/config/models.airgapped.yaml
+  {{- end }}
+  {{- if .Values.airGapped.localModel.url }}
+  ANALYSTOS_LOCAL_LLM_URL: {{ .Values.airGapped.localModel.url | quote }}
+  {{- end }}
+  ANALYSTOS_PASSWORD_LOGIN: {{ .Values.oidc.passwordLogin | quote }}
+  {{- if .Values.oidc.enabled }}
+  ANALYSTOS_OIDC_ISSUER: {{ required "oidc.issuer is required when oidc.enabled" .Values.oidc.issuer | quote }}
+  ANALYSTOS_OIDC_CLIENT_ID: {{ required "oidc.clientId is required when oidc.enabled" .Values.oidc.clientId | quote }}
+  ANALYSTOS_OIDC_REDIRECT_URI: {{ required "oidc.redirectUri is required when oidc.enabled" .Values.oidc.redirectUri | quote }}
+  ANALYSTOS_OIDC_SCOPES: {{ .Values.oidc.scopes | quote }}
+  ANALYSTOS_OIDC_GROUPS_CLAIM: {{ .Values.oidc.groupsClaim | quote }}
+  ANALYSTOS_OIDC_PROVIDER_NAME: {{ .Values.oidc.providerName | quote }}
+  ANALYSTOS_OIDC_MAPPING_FILE: /etc/analystos/oidc.yaml
+  {{- end }}
+  {{- range $k, $v := .Values.config.extra }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- if .Values.models.customConfig }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "analystos.fullname" . }}-models
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+data:
+  models.yaml: |
+    {{- .Values.models.customConfig | nindent 4 }}
+{{- end }}
+{{- if .Values.oidc.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "analystos.fullname" . }}-oidc
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+data:
+  oidc.yaml: |
+    {{- .Values.oidc.mapping | nindent 4 }}
+{{- end }}
+{{- if .Values.serviceAccount.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "analystos.serviceAccountName" . }}
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
+{{- end }}

@@ -1,7 +1,7 @@
 """Temporal workers, one pool per workload queue (spec v3 §8, P4-S01).
 
 `analystos worker --queues analysis,compute` serves only those queues, so each pool is deployed and
-scaled on its own (compose `worker-*` services, `deploy/helm/values.workers.yaml`). The compute pool
+scaled on its own (compose `worker-*` services, `deploy/helm/analystos` (Helm chart, one Deployment per pool)). The compute pool
 runs activities in a bounded *process* pool: CPU-bound statistics neither block this process's event
 loop nor stop its heartbeats, and a statistic hung in native code only freezes its own pool process.
 """

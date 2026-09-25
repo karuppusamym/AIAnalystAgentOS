@@ -1,0 +1,173 @@
+# AnalystOS Helm chart (P4-S04). Defaults are a small single-zone install against EXTERNAL
+# Postgres (pgvector), Redis, Temporal and Superset; `values-ha.yaml` layers the HA sizing on top and
+# `values-airgapped.yaml` the air-gapped mode. Secrets are never values: every credential comes from a
+# Kubernetes Secret (`secrets.existingSecret`), read into the pods with envFrom.
+
+image:
+  registry: ""                         # e.g. registry.internal:5000 for an offline bundle (scripts/bundle_images.sh)
+  repository: analystos/app
+  tag: ""                              # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+webImage:
+  repository: analystos/web
+  tag: ""
+imagePullSecrets: []
+
+# ANALYSTOS_ENV: anything but `dev` skips the demo accounts with known passwords at seed time.
+env: production
+
+# Non-secret settings (rendered into a ConfigMap as ANALYSTOS_* variables).
+config:
+  temporalAddress: temporal-frontend.temporal.svc:7233
+  temporalNamespace: default
+  temporalQueuePrefix: analystos     # every pool of one installation must share the prefix
+  supersetUrl: http://superset.superset.svc:8088
+  webUrl: https://analystos.example.com
+  corsOrigins: https://analystos.example.com
+  orchestrator: temporal
+  graphEnabled: false                # Neo4j is an optional projection (spec v3 §8)
+  sandboxNetwork: isolate            # isolate | require | off (sandbox children in an empty network namespace)
+  extra: {}                          # any other ANALYSTOS_* setting, e.g. {ANALYSTOS_QUERY_MAX_ROWS: "20000"}
+
+secrets:
+  # Name of a Secret holding at least ANALYSTOS_DATABASE_URL, ANALYSTOS_ANALYTICS_LOADER_URL,
+  # ANALYSTOS_ANALYTICS_READER_URL, ANALYSTOS_REDIS_URL, ANALYSTOS_JWT_SECRET, ANALYSTOS_BOOTSTRAP_ADMIN_PASSWORD,
+  # ANALYSTOS_SUPERSET_PASSWORD; optional OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY,
+  # ANALYSTOS_OIDC_CLIENT_SECRET and source passwords referenced by `secret_ref: env:NAME`.
+  existingSecret: analystos-secrets
+
+# Model providers. `modelsConfig` picks the file inside the image (config/models*.yaml) or a mounted one.
+models:
+  modelsConfig: ""                   # "" = config/models.yaml (OpenRouter)
+  customConfig: ""                   # inline models YAML; mounted at /etc/analystos/models.yaml and used when set
+
+airGapped:
+  enabled: false                     # ANALYSTOS_AIR_GAPPED: only `egress: internal` providers, rules/local_classifier decisions
+  localModel:
+    url: ""                          # ANALYSTOS_LOCAL_LLM_URL, e.g. http://vllm.llm.svc:8000/v1
+  # Egress the pods keep under the NetworkPolicy (cluster DNS is always allowed). CIDRs of the external
+  # Postgres / Redis / Temporal / Superset / local model / IdP / sources.
+  allowedEgressCidrs: []
+
+oidc:
+  enabled: false
+  issuer: ""
+  clientId: ""
+  redirectUri: ""                    # https://<host>/api/auth/oidc/callback
+  scopes: "openid email profile groups"
+  groupsClaim: groups
+  providerName: Single sign-on
+  passwordLogin: true                # keep a break-glass local admin
+  mapping: |                         # config/oidc.yaml format: groups -> roles, claims -> ABAC attributes
+    platform_admin_groups: []
+    workspace_roles: []
+    attributes: {department: department, region: region, pii_clearance: pii_clearance}
+    require_group: false
+
+migrations:
+  enabled: true                      # pre-install/pre-upgrade Job: analystos migrate && analystos seed
+  backoffLimit: 2
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: {type: RuntimeDefault}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+api:
+  replicas: 2
+  port: 8000
+  uvicornWorkers: 2
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "2", memory: 2Gi}
+  autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}
+  pdb: {enabled: true, minAvailable: 1}
+  service: {type: ClusterIP, port: 8000}
+
+# One Deployment per Temporal task-queue pool (P4-S01, config/task_queues.yaml). Per-process slots,
+# executor type and activity timeouts are baked into the image; keep the compute pool's cpu limit at
+# least its process-pool size (task_queues.yaml `compute.max_concurrent`, default 4).
+# In-flight workflows must be drained (or continue-as-new) before an upgrade that changes workflow code.
+workers:
+  analysis:            # I/O-bound agent steps + AnalysisWorkflow
+    queues: analysis
+    replicas: 2
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}
+    pdb: {enabled: true, minAvailable: 1}
+  compute:             # CPU-bound statistics in a process pool
+    queues: compute
+    replicas: 2
+    resources:
+      requests: {cpu: "2", memory: 3Gi}
+      limits: {cpu: "4", memory: 6Gi}
+    autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 12, targetCPUUtilizationPercentage: 75}
+    pdb: {enabled: true, minAvailable: 1}
+  publish:             # BI side effects; few replicas keep the destination's rate limits honest
+    queues: publish
+    replicas: 1
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+  crawl:               # metadata crawls
+    queues: crawl
+    replicas: 1
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+  elt:                 # placeholder until ELT activities exist (P4-E*); answers queue_ping only
+    queues: elt
+    replicas: 0
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+
+scheduler:
+  # Claim-then-execute: several replicas never fire a schedule twice, so 2 is safe for HA.
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  pdb: {enabled: false, minAvailable: 1}
+
+web:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  pdb: {enabled: true, minAvailable: 1}
+  service: {type: ClusterIP, port: 80}
+
+ingress:
+  enabled: false
+  className: ""
+  host: analystos.example.com
+  annotations: {}
+  tls: []                            # [{secretName: analystos-tls, hosts: [analystos.example.com]}]
+
+networkPolicy:
+  enabled: false                     # forced on when airGapped.enabled
+
+serviceAccount:
+  create: true
+  name: ""
+  automountToken: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpread: false                # spread each Deployment across zones (values-ha.yaml turns it on)
