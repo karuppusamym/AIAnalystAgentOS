@@ -254,6 +254,9 @@ def test_connector_extract_paginates_and_types(client: TestClient) -> None:
     assert table.schema.field("start_date").type == pa.timestamp("us")
     assert table.schema.field("risk").type == pa.int64()
     assert len(set(table.column("sys_id").to_pylist())) == 2_500
+    snap = con.last_snapshot  # P4-C12: the cap cut the table, and the snapshot says so
+    assert (snap["rows_staged"], snap["truncated"], snap["sampling_method"]) == (2_500, True, "undeclared")
+    assert snap["source_total_rows"] > 2_500 and snap["total_rows_basis"] == "x-total-count"
     names = set(table.column("assignment_group_name").to_pylist())
     assert "Network Operations" in names or len(names) > 5
     ci = pa.Table.from_batches(list(con.extract(assets["cmdb_ci"], max_rows=1000)))
@@ -266,6 +269,7 @@ def test_connector_extract_incident_display_values(client: TestClient) -> None:
     (asset,) = con.discover()
     t = pa.Table.from_batches(list(con.extract(asset, max_rows=20_000)))
     assert t.num_rows == 20_000
+    assert con.last_snapshot["truncated"] is False and con.last_snapshot["source_total_rows"] == 20_000
     df = pl.from_arrow(t)
     assert "Payments Gateway" in df["cmdb_ci_name"].to_list()
     caused = df.filter(pl.col("caused_by").is_not_null())

@@ -127,6 +127,8 @@ class SourceAsset(Base):
     business_name_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | model | user
     reviewed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What the staged snapshot is relative to its origin: rows staged, origin total, truncated, sampling (P4-C12)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
 
 

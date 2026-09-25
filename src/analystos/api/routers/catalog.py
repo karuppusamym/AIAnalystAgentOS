@@ -109,6 +109,7 @@ def catalog(workspace_id: str, q: str = "", domain: str | None = None, role: str
                     "reviewed": a.reviewed, "selected": a.selected, "lifecycle": a.lifecycle, "row_count": a.row_count,
                     "role": sem.get("role"), "domain": sem.get("domain"), "grain": sem.get("grain"),
                     "confidence": sem.get("confidence"), "last_crawled_at": a.last_crawled_at,
+                    "snapshot": a.snapshot or None,  # staged population: rows staged vs origin, truncated, sampling
                     "columns": [{"name": c.name, "data_type": c.data_type, "business_name": c.business_name,
                                  "description": c.description, "tags": c.tags, "tags_origin": c.tags_origin,
                                  "role": (c.semantics or {}).get("semantic_role"), "unit": (c.semantics or {}).get("unit"),

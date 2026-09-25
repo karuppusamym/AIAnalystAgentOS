@@ -16,6 +16,7 @@ from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
+from analystos.staging.snapshots import population_for
 
 _NUM = re.compile(r"(?<![A-Za-z_-])-?\d+(?:\.\d+)?")
 
@@ -185,6 +186,9 @@ def build_insights(ctx: RunContext) -> dict:
         caveats = ["Association in historical data; not proof of causation."] + list(stat.get("warnings") or [])[:3]
         if spec.get("filters"):
             caveats.append("Scoped to: " + ", ".join(f"{f['column']} {f['op']} {f.get('value')}" for f in spec["filters"]))
+        population = population_for(spec.get("asset"), ctx.scope.asset_sources.get(spec.get("asset") or "")).caveat()
+        if population:  # a sampled or truncated snapshot: say which population the finding describes (P4-C12)
+            caveats.append(population)
         ctx.check_control()  # never write findings into a plan that was replaced while we ran
         with session_scope() as s:
             n = s.query(Insight).filter(Insight.run_id == ctx.run.id).count() + 1

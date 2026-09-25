@@ -10,7 +10,7 @@ quoted.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -117,9 +117,11 @@ class StagingLoader:
         return get_engine(self.loader_url)
 
     def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch], *,
-             workspace_id: str) -> dict[str, Any]:
+             workspace_id: str, snapshot: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
         """Load ``batches`` as ``src_<source_id>.<asset name>`` readable only by ``workspace_id``'s
-        reader role and return ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``."""
+        reader role and return ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``, plus
+        ``snapshot`` and ``truncated`` when ``snapshot`` (read after the batches are exhausted) describes
+        the population."""
         schema_name = staging_schema_for(source_id)
         ws_role = role_for(self.settings, workspace_id)
         raw_name = asset.name if isinstance(asset, DiscoveredAsset) else str(asset)
@@ -188,12 +190,17 @@ class StagingLoader:
             raise
         raw.close()
         _log.info("staged %s rows into %s.%s", row_count, schema_name, table_name)
-        return {
+        info: dict[str, Any] = {
             "row_count": row_count,
             "schema": schema_name,
             "table": table_name,
             "columns": [{"name": n, "type": ty} for n, ty in zip(col_names, pg_types, strict=True)],
         }
+        record = snapshot() if snapshot is not None else None
+        if record:
+            info["snapshot"] = {**record, "rows_staged": row_count}
+            info["truncated"] = bool(record.get("truncated"))
+        return info
 
     def drop_source(self, source_id: str) -> None:
         schema_name = staging_schema_for(source_id)

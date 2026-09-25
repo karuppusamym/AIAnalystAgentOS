@@ -52,6 +52,10 @@ def register_source(session: Session, user: User, workspace_id: str, *, kind: st
     if spec.secret and spec.secret.required and not secret_ref:
         raise InvalidInput(f"{spec.label} needs a secret reference (env:NAME or file:/path) for its {spec.secret.field}")
     mode = kinds.execution_mode_for(spec.kind, config.pop("execution_mode", None) if settings.allow_pushdown else "staged")
+    if mode == "staged":  # a snapshot must say which population it is (P4-C12)
+        from analystos.connectors.sampling import validate_sampling
+
+        validate_sampling(spec.kind, spec.is_sql, config, spec.sqlglot_dialect)
     src = Source(id=new_id("src"), workspace_id=workspace_id, kind=spec.kind, name=name, config=config, secret_ref=secret_ref,
                  status="registered", execution_mode=mode)
     session.add(src)
@@ -86,7 +90,7 @@ def discover_source(user: User, source_id: str) -> dict:
             cols = s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))
             assets.append({"source_name": a.source_name, "name": a.name, "schema_name": a.schema_name, "kind": a.kind,
                            "row_count": a.row_count, "description": a.description, "business_name": a.business_name,
-                           "freshness_at": a.freshness_at, "semantics": a.semantics,
+                           "freshness_at": a.freshness_at, "semantics": a.semantics, "snapshot": a.snapshot or None,
                            "columns": [{"name": c.name, "data_type": c.data_type, "nullable": c.nullable, "is_key": c.is_key,
                                         "description": c.description, "business_name": c.business_name, "tags": c.tags,
                                         "references": (c.profile or {}).get("references")} for c in cols]})
@@ -102,6 +106,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
     from analystos.staging.loader import StagingLoader
+    from analystos.staging.snapshots import stage_asset
 
     with session_scope() as s:
         src = _source(s, user, source_id)
@@ -128,12 +133,12 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
         loader = StagingLoader(settings)
         for asset_id, source_name, name, schema, cols in selected:
             d = DiscoveredAsset(source_name=source_name, name=name, columns=cols, kind="api_table")
-            max_rows = min(int(src.config.get("max_rows") or platform_max), platform_max)
-            info = loader.load(source_id, d, connector.extract(d, max_rows=max_rows), workspace_id=src.workspace_id)
+            info = stage_asset(loader, connector, source_id, d, config=src.config, platform_max=platform_max,
+                               workspace_id=src.workspace_id)
             loaded.append({"asset": f"{schema}.{name}", **info})
             with session_scope() as s:
                 a = s.get(SourceAsset, asset_id)
-                a.row_count, a.freshness_at = info.get("row_count"), utcnow()
+                a.row_count, a.freshness_at, a.snapshot = info.get("row_count"), utcnow(), info["snapshot"]
     with session_scope() as s:
         row = s.get(Source, source_id)
         row.status = "ready"

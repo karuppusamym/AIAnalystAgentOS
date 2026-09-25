@@ -400,19 +400,22 @@ class _Crawl:
             targets = [k for k in changed if (a := s.get(SourceAsset, ids[k])) is not None and a.selected]
         if not targets:
             return
+        from analystos.staging.snapshots import stage_asset
+
         loader = StagingLoader(get_settings())
-        max_rows = min(int((self.source.config or {}).get("max_rows") or self.settings.sources.staged_max_rows),
-                       self.settings.sources.staged_max_rows)
         restaged = []
         for key in targets:
             d = by_key[key]
-            info = loader.load(self.source.id, d, connector.extract(d, max_rows=max_rows),
+            info = stage_asset(loader, connector, self.source.id, d, config=self.source.config,
+                               platform_max=self.settings.sources.staged_max_rows,
                                workspace_id=self.source.workspace_id)
             with session_scope() as s:
                 a = s.get(SourceAsset, ids[key])
                 a.row_count, a.freshness_at, a.stats = info.get("row_count"), utcnow(), {}  # stats re-profiled below
+                a.snapshot = info["snapshot"]
                 s.get(Source, self.source.id).last_discovered_at = utcnow()  # new source version: no stale cached results
-            restaged.append({"asset": key, "rows": info.get("row_count")})
+            restaged.append({"asset": key, "rows": info.get("row_count"), "truncated": info["snapshot"]["truncated"],
+                             "sampling_method": info["snapshot"]["sampling_method"]})
         self.stats["restaged"] = len(restaged)
         self.log.stage("apply", f"re-staged {len(restaged)} changed selected assets so the snapshot matches the origin",
                        restaged=restaged)
