@@ -43,8 +43,11 @@ jobs:
       - name: Analytical benchmark, deterministic tier (P4-V01; precision, recall, FDR vs alpha on ITSM/sales/finance, ~3 min)
         run: PYTHONPATH=src .venv/bin/python scripts/benchmark_analytical.py --tier component --check
       - run: .venv/bin/analystos migrate
+      - name: Ask benchmark, fake + off tiers (P4-V02; 162 questions each through Ask and the gateway, ~1 min)
+        timeout-minutes: 8
+        run: .venv/bin/pytest -q -m integration tests/integration/test_ask_benchmark.py
       - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
-        run: .venv/bin/pytest -q -m integration
+        run: .venv/bin/pytest -q -m integration --ignore=tests/integration/test_ask_benchmark.py
 
   web:
     runs-on: ubuntu-latest
