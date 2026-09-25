@@ -8,7 +8,7 @@
 > **Specification boundary:** This is the target product and engineering specification, not a statement that every capability is already implemented. Treat tracker defaults as planning placeholders until each item has code, test, and deployment evidence. The AIDataAnalyst and AIDataEngineerAgentOS reviews cited in §70 describe separate implementations: their status and capabilities must not be reported as AnalystOS completion evidence.
 
 
-use OpenRouter with OPENROUTER_API_KEY supplied through the environment; never commit the key.
+use OpenRouter with `OPENROUTER_API_KEY` supplied through the environment; never commit the key.
 
 USe JEV model decisioning 
 
