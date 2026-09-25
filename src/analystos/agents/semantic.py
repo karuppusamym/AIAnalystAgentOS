@@ -82,6 +82,17 @@ def previous_metrics(ctx: RunContext) -> list[MetricDef]:
         return out
 
 
+def admission_clash(name: str, norm: str, seen: dict[str, str], names: set[str]) -> str | None:
+    """Why a candidate KPI may not be admitted, given those already admitted (in candidate order:
+    carried-forward definitions first). A name keeps its first definition — seen live: a model
+    re-proposed critical_incident_rate with a wider expression and silently replaced the stable KPI."""
+    if norm in seen:
+        return f"duplicate of {seen[norm]}"
+    if name in names:
+        return "name already defined with a different expression; KPI definitions are stable across runs"
+    return None
+
+
 def define_metrics(ctx: RunContext) -> dict:
     ds, content = dataset_def(ctx.run.id)
     dialect = content.get("dialect", "postgres")
@@ -99,14 +110,16 @@ def define_metrics(ctx: RunContext) -> dict:
             continue
     run_sql = ctx.run_sql(content.get("source_id"))
     accepted, seen, rejected = [], {}, []
+    names: set[str] = set()
     for m in candidates:
         problem = _valid_expression(m.sql_expression, columns, dialect)
         norm = _normalize(m.sql_expression, dialect)
         if problem:
             rejected.append({"metric": m.name, "reason": problem})
             continue
-        if norm in seen:
-            rejected.append({"metric": m.name, "reason": f"duplicate of {seen[norm]}"})
+        clash = admission_clash(m.name, norm, seen, names)
+        if clash:
+            rejected.append({"metric": m.name, "reason": clash})
             continue
         try:
             r = run_sql(f"SELECT {m.sql_expression} AS v FROM ({ds.sql}) d", purpose=f"metric.validate.{m.name}")
@@ -118,6 +131,7 @@ def define_metrics(ctx: RunContext) -> dict:
             rejected.append({"metric": m.name, "reason": f"percent metrics must be fractions in [0, 1]; got {value}"})
             continue
         seen[norm] = m.name
+        names.add(m.name)
         m.validation = {"value": value, "query_id": r.query_id, "validated_by": "execution"}
         m.status = "validated"
         m.dimensions = m.dimensions or [c["name"] for c in ds.columns if c.get("semantic_type") in ("categorical",)][:8]

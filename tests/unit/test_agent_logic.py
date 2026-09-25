@@ -198,3 +198,23 @@ def test_matrix_continuation_prefers_least_explored_business_measures():
     roles = {"s.o.quantity": "measure", "s.o.net_amount": "amount", "s.o.returned": "flag"}
     order = [p["spec"]["outcome"]["column"] for p in _matrix_continuations(results, types, [], roles)]
     assert order == ["net_amount", "quantity", "returned"]
+
+
+def test_model_narrative_must_be_english_but_may_quote_non_latin_evidence():
+    from analystos.agents.insight import _language_ok
+
+    facts = {"top_segment": "東京", "top_rate": 0.31}
+    assert _language_ok("Missed SLA concentrates in region = 東京 (31%).", facts)
+    assert _language_ok("Café opening hours differ by région.", facts)  # Latin-extended letters are fine
+    assert not _language_ok("高重新分配次数与SLA错失率显著相关", {"top_rate": 0.3})  # seen live from a low-cost model
+
+
+def test_kpi_name_keeps_its_carried_forward_definition():
+    from analystos.agents.semantic import admission_clash
+
+    seen = {"avg(case when priority = 1 then 1.0 else 0.0 end)": "critical_incident_rate"}
+    names = {"critical_incident_rate"}
+    wider = "avg(case when priority = 1 or impact = 1 then 1.0 else 0.0 end)"
+    assert "stable across runs" in admission_clash("critical_incident_rate", wider, seen, names)
+    assert admission_clash("any_name", next(iter(seen)), seen, names).startswith("duplicate of")
+    assert admission_clash("broad_critical_rate", wider, seen, names) is None  # a new name is a new KPI

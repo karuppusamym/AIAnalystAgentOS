@@ -36,7 +36,8 @@ PERCENT_TOLERANCE = 1e-9
 def condition_key(workspace_id: str, kind: str, config: dict) -> str:
     """Identity of what a monitor watches. Two monitors with the same condition are the same signal:
     they share alerts instead of each raising its own (the repeated alert in the Phase-3 evidence)."""
-    return stable_hash({"workspace": workspace_id, "kind": kind, "config": config})[:32]
+    watched = {k: v for k, v in config.items() if k != "pinned"}  # the pin records how, not what
+    return stable_hash({"workspace": workspace_id, "kind": kind, "config": watched})[:32]
 
 
 # ------------------------------------------------------------------------------------ definitions
@@ -84,14 +85,16 @@ def _usable_metric(metric: Artifact | None) -> bool:
 def _dataset_and_metric(session: Session, monitor: Monitor) -> tuple[dict, str, str, str | None]:
     cfg = monitor.config
     stmt = select(Artifact).where(Artifact.workspace_id == monitor.workspace_id, Artifact.type == "dataset")
-    if cfg.get("dataset_artifact_id"):
-        stmt = stmt.where(Artifact.id == cfg["dataset_artifact_id"])
+    dataset_id = cfg.get("dataset_artifact_id") or (cfg.get("pinned") or {}).get("dataset_artifact_id")
+    if dataset_id:
+        stmt = stmt.where(Artifact.id == dataset_id)
     dataset = session.scalar(stmt.order_by(Artifact.created_at.desc()))
     if dataset is None:
         raise InvalidInput("no analytical dataset in this workspace yet: run an analysis first")
-    expression = cfg.get("sql_expression")
-    label = cfg.get("metric") or monitor.name
-    fmt = cfg.get("format")
+    pinned = cfg.get("pinned") or {}
+    expression = cfg.get("sql_expression") or pinned.get("sql_expression")
+    label = pinned.get("display_name") or cfg.get("metric") or monitor.name
+    fmt = cfg.get("format") or pinned.get("format")
     if not expression:
         metric = session.scalar(select(Artifact).where(Artifact.workspace_id == monitor.workspace_id, Artifact.type == "metric",
                                                        Artifact.name == cfg["metric"], Artifact.run_id == dataset.run_id))
@@ -105,6 +108,9 @@ def _dataset_and_metric(session: Session, monitor: Monitor) -> tuple[dict, str, 
         expression = metric.content["sql_expression"]
         label = metric.content.get("display_name") or label
         fmt = metric.content.get("format")
+        # Pin the definition: a monitor measures one fixed KPI, even if a later run redefines the name.
+        monitor.config = {**cfg, "pinned": {"sql_expression": expression, "format": fmt, "display_name": label,
+                                            "metric_artifact_id": metric.id, "dataset_artifact_id": dataset.id}}
     return dict(dataset.content), expression, label, fmt
 
 

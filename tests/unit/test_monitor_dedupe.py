@@ -131,4 +131,24 @@ def test_monitor_never_resolves_a_legacy_x100_percent_definition(world):
     with session_scope() as s:
         s.delete(s.get(Artifact, "art_fraction"))
     with session_scope() as s, pytest.raises(Exception, match="legacy x100"):
-        mon._dataset_and_metric(s, s.get(Monitor, "mon_a"))
+        mon._dataset_and_metric(s, s.get(Monitor, _monitor("mon_b", "fresh", {**THRESHOLD, "grain": "week"})))
+
+
+def test_monitor_pins_its_kpi_so_a_later_redefinition_cannot_change_it(world):
+    """Seen live: a scheduled run redefined critical_incident_rate (priority OR impact OR urgency) and the
+    monitor, resolving by name, alerted on 0.38 instead of 0.04."""
+    with session_scope() as s:
+        s.add(Artifact(id="art_ds", workspace_id="ws_1", run_id="run_1", type="dataset", name="ds",
+                       content={"sql": "select 1", "raw_time_column": "opened_at"}, content_hash="d"))
+    _metric("art_v1", "run_1", "AVG(CASE WHEN priority = 1 THEN 1.0 ELSE 0.0 END)", 0.0419)
+    with session_scope() as s:
+        m = s.get(Monitor, _monitor("mon_p", "rate"))
+        key_before = mon.condition_key("ws_1", m.kind, m.config)
+        _, first, _, _ = mon._dataset_and_metric(s, m)
+    _metric("art_v2", "run_2", "AVG(CASE WHEN priority = 1 OR impact = 1 THEN 1.0 ELSE 0.0 END)", 0.38)
+    with session_scope() as s:
+        m = s.get(Monitor, "mon_p")
+        _, again, _, _ = mon._dataset_and_metric(s, m)
+        assert m.config["pinned"]["metric_artifact_id"] == "art_v1"
+        assert mon.condition_key("ws_1", m.kind, m.config) == key_before  # pinning does not change the condition
+    assert first == again == "AVG(CASE WHEN priority = 1 THEN 1.0 ELSE 0.0 END)"

@@ -88,6 +88,21 @@ def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]
     return title[:200], text
 
 
+def _language_ok(text: str, facts: dict[str, Any]) -> bool:
+    """Model narrative must be in the platform's working language (English). Seen live: a low-cost
+    model answered in Chinese and passed the numbers guard. Words quoted from the evidence (segment
+    values may legitimately be in any script) are removed before measuring."""
+    rest = text
+    for v in _flatten(facts):
+        if isinstance(v, str) and len(v) >= 2:
+            rest = rest.replace(v, " ")
+    letters = [ch for ch in rest if ch.isalpha()]
+    if not letters:
+        return True
+    latin = sum(1 for ch in letters if ch.isascii() or "\u00c0" <= ch <= "\u024f")
+    return latin / len(letters) >= 0.9
+
+
 def _guard(text: str, facts: dict[str, Any]) -> bool:
     allowed: set[float] = set()
     for v in _flatten(facts):
@@ -171,11 +186,14 @@ def build_insights(ctx: RunContext) -> dict:
         payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
         data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload) \
             if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
-        if isinstance(data, dict) and isinstance(data.get("finding"), str) and _guard(data["finding"] + " " + str(data.get("title", "")), facts):
+        text = (str(data.get("finding")) + " " + str(data.get("title", "")) + " " + str(data.get("recommended_action") or "")) \
+            if isinstance(data, dict) else ""
+        if isinstance(data, dict) and isinstance(data.get("finding"), str) and _guard(text, facts) and _language_ok(text, facts):
             title, finding, source = str(data.get("title") or title)[:200], data["finding"], f"llm:{model}"
             action = data.get("recommended_action")
         elif data is not None:
-            ctx.say(f"Narrative for {code} quoted numbers not present in the evidence; using the deterministic template.", kind="decision")
+            why = "quoted numbers not present in the evidence" if not _guard(text, facts) else "was not written in English"
+            ctx.say(f"Narrative for {code} {why}; using the deterministic template.", kind="decision")
         hl = stat.get("highlights") or {}
         impact = {k: hl[k] for k in ("affected_records", "excess_events", "top_segment_n", "top_n") if k in hl}
         if "excess_events" not in impact and isinstance(hl.get("top_rate"), (int, float)) and isinstance(hl.get("baseline_rate"), (int, float)):
