@@ -1,6 +1,6 @@
 """Workspace knowledge version (P4-T06): part of the L0 response-cache key, so an edit to the
-knowledge a workspace sees (its context entries, global/pack entries, enabled pack versions or the
-platform settings) makes the next identical request miss the cache instead of replaying an answer
+knowledge a workspace sees (its context entries, the head revisions of the knowledge packs it sees,
+enabled domain-pack versions or the platform settings) makes the next identical request miss the cache instead of replaying an answer
 given under the old knowledge.
 
 Episodes are left out: one is written at the end of every run, and when an episode reaches a
@@ -21,14 +21,23 @@ SELECT count(*) AS n,
                                             coalesce(CAST(synonyms AS text), '') || '|' || CAST(trusted AS text)),
                                ',' ORDER BY id)), '') AS digest
 FROM context_entry
-WHERE (workspace_id = :ws OR workspace_id IS NULL) AND kind <> 'episode'
+WHERE workspace_id = :ws AND kind <> 'episode'
+""")
+# Knowledge packs (P4-K01) the workspace sees: the platform pack and its own packs, by head content.
+_PACKS = text("""
+SELECT coalesce(string_agg(p.id || ':' || coalesce(r.content_digest, ''), ',' ORDER BY p.id), '') AS packs
+FROM knowledge_pack p
+LEFT JOIN knowledge_revision r ON r.pack_id = p.id AND r.number = p.head_revision
+WHERE p.workspace_id = :ws OR p.kind = 'platform'
 """)
 
 
 def knowledge_version(session: Any, workspace_id: str | None, *, pack_refs: Iterable[str] = (),
                       settings_version: int | None = None) -> str:
     row = session.execute(_DIGEST, {"ws": workspace_id}).one()
-    material = {"entries": [int(row.n), row.digest], "packs": sorted(set(pack_refs)), "settings": settings_version}
+    packs = session.execute(_PACKS, {"ws": workspace_id}).scalar()
+    material = {"entries": [int(row.n), row.digest], "packs": sorted(set(pack_refs)), "settings": settings_version,
+                "knowledge": packs or ""}
     return "kv:" + hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()[:16]
 
 

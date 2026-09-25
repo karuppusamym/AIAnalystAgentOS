@@ -8,6 +8,17 @@ from pydantic import BaseModel, Field
 Decision = Literal["allow", "deny", "approval_required"]
 
 
+class ContextProviderConfig(BaseModel):
+    kind: Literal["local", "okf_import", "mcp"]
+    slug: str | None = None  # okf_import: the imported pack
+    location: str | None = None  # okf_import: bundle directory or .zip below the upload directory
+    server: str | None = None  # mcp: registered MCP server name
+    product_key: str | None = None  # mcp: Atlas context product
+    version: int | None = None  # mcp: Atlas context product version
+    tool: str | None = None  # mcp: default atlas__get_knowledge_context
+    max_chars: int | None = Field(default=None, ge=1_000, le=48_000)
+
+
 class WorkspacePolicyDoc(BaseModel):
     """Versioned per-workspace policy. Values here may only tighten the platform ceilings."""
 
@@ -41,6 +52,9 @@ class WorkspacePolicyDoc(BaseModel):
     # Domain packs (spec v3 §3.6) whose templates and knowledge runs use: None = every installed pack
     # whose applies_when matches the selected catalog; a list (even empty) = exactly these pack ids.
     domain_packs: list[str] | None = None
+    # Where knowledge comes from (P4-K09, spec v3 §6.6): the workspace's own packs, imported OKF/Atlas
+    # bundles, and Atlas `get_knowledge_context` over an allowlisted MCP server. Data, never authority.
+    context_providers: list[ContextProviderConfig] = Field(default_factory=lambda: [ContextProviderConfig(kind="local")])
 
 
 class DataScope(BaseModel):

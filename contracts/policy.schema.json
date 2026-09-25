@@ -1,4 +1,110 @@
 {
+  "$defs": {
+    "ContextProviderConfig": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "local",
+            "okf_import",
+            "mcp"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "slug": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slug"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "server": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Server"
+        },
+        "product_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Key"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "max_chars": {
+          "anyOf": [
+            {
+              "maximum": 48000,
+              "minimum": 1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Chars"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ContextProviderConfig",
+      "type": "object"
+    }
+  },
   "description": "Versioned per-workspace policy. Values here may only tighten the platform ceilings.",
   "properties": {
     "max_rows": {
@@ -159,6 +265,13 @@
       ],
       "default": null,
       "title": "Domain Packs"
+    },
+    "context_providers": {
+      "items": {
+        "$ref": "#/$defs/ContextProviderConfig"
+      },
+      "title": "Context Providers",
+      "type": "array"
     }
   },
   "title": "WorkspacePolicyDoc",

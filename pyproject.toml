@@ -49,6 +49,8 @@ dev = [
 sqlserver = ["pymssql>=2.3"]
 # MCP client and server (P4-X05/X06): the official SDK, streamable HTTP, protocol 2026-07-28.
 mcp = ["mcp>=2.2"]
+# Local sentence-transformer embeddings for the knowledge index (P4-K10). Optional: hashing is the fallback.
+embeddings = ["sentence-transformers>=3.0"]
 # Source drivers (config/source_kinds.yaml names the extra each kind needs).
 mysql = ["pymysql>=1.1"]
 oracle = ["oracledb>=2.0"]

@@ -369,24 +369,25 @@ def _drop_last_knowledge(body: dict[str, Any], profile: PurposeProfile, receipts
 # ------------------------------------------------------------------------------------ knowledge
 def load_knowledge(session: Any, workspace_id: str, sections: Iterable[str], *, run_id: str | None = None,
                    per_kind: int = 300) -> list[KnowledgeItem]:
-    """Candidate items for the requested sections: context entries (workspace + global, which
-    includes installed pack knowledge), verified findings and rejected hypotheses of *other* runs."""
-    from sqlalchemy import or_, select
+    """Candidate items for the requested sections: the workspace's context entries, the knowledge
+    packs it sees (the platform pack holds installed domain-pack knowledge; P4-K01), verified
+    findings and rejected hypotheses of *other* runs."""
+    from sqlalchemy import select
 
-    from analystos.db.models import ContextEntry, Hypothesis, Insight
+    from analystos.db.models import Hypothesis, Insight
+    from analystos.knowledge.entries import pack_entries, workspace_rows
 
     wanted = set(sections)
     out: list[KnowledgeItem] = []
     kinds = [k for k, s in KIND_SECTIONS.items() if s in wanted]
     for kind in kinds:
         limit = 20 if kind == "episode" else per_kind
-        rows = session.scalars(select(ContextEntry).where(
-            or_(ContextEntry.workspace_id == workspace_id, ContextEntry.workspace_id.is_(None)), ContextEntry.kind == kind)
-            .order_by(ContextEntry.created_at.desc()).limit(limit))
-        for e in rows:
+        entries = workspace_rows(session, workspace_id, kinds=[kind])[:limit]
+        entries += pack_entries(session, workspace_id, kinds=[kind])[:per_kind]
+        for e in entries:
             out.append(KnowledgeItem(id=e.id, section=KIND_SECTIONS[kind], name=e.name,
-                                     text=" ".join([e.body or "", *(f"({s})" for s in (e.synonyms or []))]),
-                                     source=e.origin or "user", mapped_columns=tuple(e.mapped_columns or ()),
+                                     text=" ".join([e.body or "", *(f"({s})" for s in e.synonyms)]),
+                                     source=e.origin or "user", mapped_columns=tuple(e.mapped_columns),
                                      trusted=bool(e.trusted)))
     if "prior_findings" in wanted:
         q = select(Insight).where(Insight.workspace_id == workspace_id, Insight.status == "verified")
