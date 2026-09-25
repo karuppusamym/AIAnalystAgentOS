@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts"""
+"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts | packs"""
 from __future__ import annotations
 
 import argparse
@@ -18,31 +18,10 @@ def migrate() -> None:
     command.upgrade(cfg, "head")
 
 
-GLOSSARY = [
-    ("term", "SLA breach", "An incident that did not meet its service-level agreement target (made_sla = false).",
-     ["missed SLA", "SLA violation"], ["incident.made_sla"]),
-    ("metric", "MTTR", "Mean Time to Resolve: average of resolved_at - opened_at for resolved incidents, in hours.",
-     ["mean time to resolve", "resolution time"], ["incident.opened_at", "incident.resolved_at"]),
-    ("term", "Reassignment", "Number of times an incident moved between assignment groups (reassignment_count). High "
-     "reassignment usually signals routing problems.", ["hand-off", "ping-pong"], ["incident.reassignment_count"]),
-    ("term", "Priority 1 (P1)", "Critical incident: priority = 1 (impact high, urgency high).", ["Sev-1", "critical incident", "P1"],
-     ["incident.priority"]),
-    ("term", "After-hours incident", "Incident opened before 08:00, after 18:00 or at the weekend.", ["out of hours"],
-     ["incident.opened_at"]),
-    ("term", "Change-related incident", "Incident whose caused_by references a change request.", ["change-induced incident"],
-     ["incident.caused_by", "change_request.sys_id"]),
-    ("term", "Emergency change", "Change request of type emergency, implemented outside the normal CAB cycle.", ["expedited change"],
-     ["change_request.type"]),
-    ("term", "Assignment group", "The support team responsible for an incident or change.", ["resolver group", "team"],
-     ["incident.assignment_group", "sys_user_group.name"]),
-    ("term", "Configuration item", "Application, service or infrastructure element from the CMDB affected by the record.",
-     ["CI", "application", "service"], ["incident.cmdb_ci", "cmdb_ci.name"]),
-]
-
-
 def seed() -> None:
     from sqlalchemy import select
 
+    from analystos.capabilities import packs
     from analystos.context.service import add_entry
     from analystos.core.ids import new_id
     from analystos.db.base import session_scope
@@ -59,10 +38,28 @@ def seed() -> None:
             if not s.scalar(select(User).where(User.email == email)):
                 s.add(User(id=new_id("usr"), email=email, name=name, password_hash=hash_password(pw), is_admin=admin, attributes=attrs))
         seed_registries(s)
-        if not s.scalar(select(ContextEntry).where(ContextEntry.workspace_id.is_(None), ContextEntry.origin == "context2ai-seed")):
-            for kind, name, body, syn, cols in GLOSSARY:
-                add_entry(s, workspace_id=None, kind=kind, name=name, body=body, synonyms=syn, mapped_columns=cols, origin="context2ai-seed")
-    print("seeded users, registries and ServiceNow glossary")
+        # Domain knowledge comes from the installed domain packs (packs/<name>/knowledge); an entry
+        # already present under the same name is kept, so re-seeding and older seeds never duplicate.
+        existing = set(s.scalars(select(ContextEntry.name).where(ContextEntry.workspace_id.is_(None))))
+        added: dict[str, int] = {}
+        for pack in packs.installed():
+            for doc in pack.knowledge:
+                if doc.name in existing:
+                    continue
+                add_entry(s, workspace_id=None, kind=doc.kind, name=doc.name, body=doc.body, synonyms=list(doc.synonyms),
+                          mapped_columns=list(doc.maps_to), origin=f"pack:{pack.name}")
+                existing.add(doc.name)
+                added[pack.name] = added.get(pack.name, 0) + 1
+    print("seeded users, registries and domain-pack knowledge "
+          f"({', '.join(f'{k}: {v} new' for k, v in sorted(added.items())) or 'already present'})")
+
+
+def list_packs() -> None:
+    from analystos.capabilities import packs
+
+    for p in packs.installed():
+        print(f"{p.ref:24} {len(p.templates.get('templates') or []):2} templates  {len(p.knowledge):2} knowledge docs  "
+              f"{len(p.kpis):2} KPIs  applies_when={p.applies_when}  {p.summary}")
 
 
 def export_contracts() -> None:
@@ -85,7 +82,7 @@ def export_contracts() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
-    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts"])
+    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts", "packs"])
     args = parser.parse_args(argv)
     if args.command == "migrate":
         migrate()
@@ -105,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         uvicorn.run("analystos.api.app:app", host="0.0.0.0", port=8000)
     elif args.command == "export-contracts":
         export_contracts()
+    elif args.command == "packs":
+        list_packs()
     return 0
 
 

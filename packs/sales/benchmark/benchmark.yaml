@@ -1,0 +1,30 @@
+# Sales benchmark: seeded retail orders (generator.py) with three planted effects and a null control.
+# The same generator writes the SQLite file scripts/e2e_increment3.py uploads for its live run.
+dataset:
+  generator: generator.py:shop_tables
+  schema: bench
+  prepare:
+    - CREATE TABLE bench.orders AS SELECT * FROM raw.orders
+tables: [orders]
+
+planted:
+  - id: returns_by_channel             # marketplace orders are returned ~3x as often (18% vs 6%)
+    match: {method: rate_by_segment, outcome: returned, segment: channel}
+    expect_top: marketplace
+  - id: order_value_by_segment         # Enterprise order value ~2.1x Consumer
+    match: {method: numeric_by_segment, outcome: net_amount, segment: customer_segment}
+    expect_top: Enterprise
+  - id: shipping_by_region             # APAC ships ~3 days slower
+    match: {method: numeric_by_segment, outcome: shipping_days, segment: sales_region}
+    expect_top: APAC
+
+null_controls:
+  - id: payment_method_no_effect       # payment method is drawn independently of every outcome
+    columns: [payment_method]
+    specs:
+      - {method: rate_by_segment, asset: bench.orders, outcome: {type: is_true, column: returned},
+         segment: {type: column, column: payment_method}}
+      - {method: numeric_by_segment, asset: bench.orders, outcome: {type: column, column: net_amount},
+         segment: {type: column, column: payment_method}}
+      - {method: numeric_by_segment, asset: bench.orders, outcome: {type: column, column: shipping_days},
+         segment: {type: column, column: payment_method}}

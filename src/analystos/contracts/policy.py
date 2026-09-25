@@ -32,6 +32,9 @@ class WorkspacePolicyDoc(BaseModel):
     approval_ttl_hours: int = 72
     max_iterations: int = 3
     alpha: float = 0.05
+    # Domain packs (spec v3 §3.6) whose templates and knowledge runs use: None = every installed pack
+    # whose applies_when matches the selected catalog; a list (even empty) = exactly these pack ids.
+    domain_packs: list[str] | None = None
 
 
 class DataScope(BaseModel):

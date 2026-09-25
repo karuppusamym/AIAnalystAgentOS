@@ -21,19 +21,22 @@ router = APIRouter(prefix="/api", tags=["catalog"])
 
 @router.get("/source-kinds")
 def source_kinds(user: User = Depends(current_user)):
-    """Every database/file/API kind the platform can connect, with the fields a form needs and
-    whether its driver is installed and enabled by the administrator."""
-    from analystos.connectors import kinds
+    """Every database/file/API kind the platform can connect, with the fields a form needs,
+    whether its driver is installed and enabled by the administrator, and whether it is certified
+    (a dated live-run evidence file exists; connectors/certification.py)."""
+    from analystos.connectors import certification, kinds
     from analystos.services.platform_settings import get as platform
 
     enabled = set(platform().sources.enabled_kinds)
+    certs = certification.statuses()
     return [{**k.model_dump(include={"kind", "label", "category", "required", "optional", "default_port", "docs"}),
              "secret_field": k.secret.field if k.secret else None,
              "execution_mode": kinds.execution_mode_for(k.kind), "dialect": kinds.dialect_for(k.kind),
              "driver_installed": kinds.driver_available(k.kind),
              "install_hint": (f"pip install 'analystos[{k.driver.extra}]'" if k.driver.extra else
                               ("pip install " + " ".join(k.driver.packages) if k.driver.packages else None)),
-             "enabled": not enabled or k.kind in enabled}
+             "enabled": not enabled or k.kind in enabled,
+             "certified": certs[k.kind]["status"] == "certified", "certification": certs[k.kind]}
             for k in kinds.list_kinds()]
 
 

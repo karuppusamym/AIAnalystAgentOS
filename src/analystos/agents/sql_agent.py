@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, task_output
 from analystos.artifacts.registry import link, save_artifact
+from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.contracts.bi import DatasetDef
 from analystos.core.errors import AnalystOSError, InvalidInput, SQLRejected
@@ -58,7 +59,9 @@ def build_dataset(ctx: RunContext) -> dict:
         for d in (spec.outcome, spec.segment, spec.time, *spec.drivers):
             if d is not None and d.type != "column":
                 derived.setdefault(derivation_alias(d), d)
-    time_col = next((c for c in raw_cols if types.get(c) == "datetime" and re.search(r"opened|created|start", c)), None) or \
+    hints = pack_registry.hints()
+    start_words = "|".join(map(re.escape, ("created", "start", *hints.event_start)))
+    time_col = next((c for c in raw_cols if types.get(c) == "datetime" and re.search(start_words, c)), None) or \
         next((c for c in raw_cols if types.get(c) == "datetime"), None)
     if time_col:
         for d in (Derivation(type="date_trunc", column=time_col, grain="month"), Derivation(type="day_of_week", column=time_col),
@@ -80,7 +83,8 @@ def build_dataset(ctx: RunContext) -> dict:
         tfq = f"{tgt.schema_name}.{tgt.name}"
         if tfq not in ctx.scope.assets or ctx.scope.asset_sources.get(tfq) != source_id or f"{r.from_column}_name" in raw_cols:
             continue
-        name_col = next((c for c in ctx.scope.columns.get(tfq, []) if c in ("name", "number", "u_name") and f"{tfq}.{c}" not in denied), None)
+        name_col = next((c for c in ctx.scope.columns.get(tfq, []) if c in ("name", "number", *hints.display_columns)
+                         and f"{tfq}.{c}" not in denied), None)
         if not name_col:
             continue
         alias = f"j{i}"

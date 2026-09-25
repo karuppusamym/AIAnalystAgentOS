@@ -3,12 +3,12 @@
 Checks (codes):
   high_null_rate        null share >= 20% (info), >= 50% (warning), 100% (warning, "all null")
   constant_column       exactly one distinct non-null value
-  duplicate_key         a declared/candidate key column has repeated values (critical for declared keys
-                        and `id` / `sys_id` / `number`)
+  duplicate_key         a declared/candidate key column has repeated values (critical for declared keys,
+                        `id` / `number` and the installed domain packs' key columns)
   orphan_reference      FK values with no matching parent row, for the given relationships
                         (critical when > 5% of non-null references)
-  temporal_order        end < start for lifecycle pairs (opened_at/resolved_at/closed_at,
-                        start_*/end_*, created/updated...)
+  temporal_order        end < start for lifecycle pairs (created/updated, start_*/end_*, the
+                        installed domain packs' lifecycle pairs...)
   future_timestamp      timestamps later than `now` + 1 day (planning columns such as due/expected/
                         planned/scheduled/target/expiry/end dates are skipped)
   case_variant_category categorical values equal after lower()/trim() but spelled differently
@@ -52,13 +52,11 @@ NULL_INFO, NULL_WARN = 0.2, 0.5
 ORPHAN_CRITICAL = 0.05
 FUTURE_TOLERANCE = _dt.timedelta(days=1)
 PLANNING_NAME = re.compile(r"(due|expect|plan|schedul|estimat|target|valid_to|expir|end_date|next_|deadline|renew)", re.I)
-STRICT_KEY_NAMES = {"id", "sys_id", "number"}
+STRICT_KEY_NAMES = {"id", "number"}
 
 KNOWN_PAIRS = [
-    ("opened_at", "resolved_at"), ("opened_at", "closed_at"), ("resolved_at", "closed_at"),
-    ("opened_at", "work_start"), ("work_start", "work_end"), ("sys_created_on", "sys_updated_on"),
-    ("sys_created_on", "closed_at"), ("created_at", "updated_at"), ("created_at", "closed_at"),
-    ("created_at", "resolved_at"), ("created", "updated"), ("start_date", "end_date"), ("start_time", "end_time"),
+    ("work_start", "work_end"), ("created_at", "updated_at"), ("created_at", "closed_at"),
+    ("created", "updated"), ("start_date", "end_date"), ("start_time", "end_time"),
     ("started_at", "ended_at"), ("started_at", "completed_at"), ("start", "end"), ("begin_date", "end_date"),
     ("valid_from", "valid_to"), ("order_date", "ship_date"), ("ship_date", "delivery_date"),
 ]
@@ -80,9 +78,11 @@ def _pct(k: int | float, n: int | float) -> str:
 
 def temporal_pairs(datetime_columns: list[str]) -> list[tuple[str, str]]:
     """(start, end) pairs among `datetime_columns`: known lifecycle pairs + start/begin -> end renames."""
+    from analystos.capabilities.packs import hints
+
     cols = {c.lower(): c for c in datetime_columns}
     pairs: list[tuple[str, str]] = []
-    for a, b in KNOWN_PAIRS:
+    for a, b in dict.fromkeys([*hints().lifecycle_pairs, *KNOWN_PAIRS]):
         if a in cols and b in cols:
             pairs.append((cols[a], cols[b]))
     for lc, c in cols.items():
@@ -111,8 +111,11 @@ class _Q:
 def check_quality(run_sql: RunSQL, asset: str, profile: AssetProfile, relationships: list[Any] | None = None, *,
                   now: _dt.datetime | None = None) -> list[QualityIssue]:
     """Run the checks listed in the module docstring; returns issues ordered by severity."""
+    from analystos.capabilities.packs import hints
+
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
     q = _Q(run_sql, dialect)
+    strict_keys = STRICT_KEY_NAMES | {k.lower() for k in hints().key_columns}
     now = now or _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
     n = profile.row_count
     issues: list[QualityIssue] = []
@@ -153,7 +156,7 @@ def check_quality(run_sql: RunSQL, asset: str, profile: AssetProfile, relationsh
         dv, dr = int(r.get("dup_values") or 0), int(r.get("dup_rows") or 0)
         if dv == 0:
             continue
-        sev = "critical" if (k.get("declared") or name.lower() in STRICT_KEY_NAMES) else "warning"
+        sev = "critical" if (k.get("declared") or name.lower() in strict_keys) else "warning"
         examples = sorted({str(e) for e in (r.get("example_min"), r.get("example_max")) if e is not None})
         issues.append(QualityIssue(code="duplicate_key", severity=sev, asset=asset, column=name,
                                    message=f"{dv} value(s) of key column {name} occur more than once, affecting {dr} rows "

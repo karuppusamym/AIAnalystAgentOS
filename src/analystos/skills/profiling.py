@@ -47,7 +47,7 @@ HIST_BINS = 20
 CATEGORICAL_MAX_DISTINCT = 200
 CATEGORICAL_MAX_RATIO = 0.05
 PERCENTILES = (0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)
-ID_NAME = re.compile(r"(^id$|_id$|^sys_id$|^number$|^uuid$|^guid$|_key$|^key$|_uuid$|_guid$)", re.I)
+ID_NAME = re.compile(r"(^id$|_id$|^number$|^uuid$|^guid$|_key$|^key$|_uuid$|_guid$)", re.I)
 
 
 class ColumnProfile(BaseModel):
@@ -115,7 +115,7 @@ def infer_semantic_type(name: str, family: str, *, row_count: int, non_null: int
     """Rule-based semantic type from name, physical type family and profile statistics.
 
     Declared keys and reference (foreign-key) columns are `id`; so are id-named columns that are
-    (nearly) unique or end in `_id`, and fixed-width 32-character text (ServiceNow sys_id shape).
+    (nearly) unique or end in `_id`, and fixed-width 32-character text (a GUID-shaped surrogate key).
     """
     ratio = distinct / non_null if non_null else 0.0
     idname = bool(ID_NAME.search(name))
