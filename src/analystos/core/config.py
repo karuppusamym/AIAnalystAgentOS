@@ -64,7 +64,14 @@ class Settings(BaseSettings):
     # How Superset reaches the analytics DB (from inside the compose network).
     superset_analytics_sqlalchemy_uri: str = "postgresql+psycopg2://analystos_reader:reader@postgres:5432/analytics"
 
-    context2ai_url: str | None = None  # existing Context2AI service; local context store when unset
+    # Knowledge index embeddings (P4-K10): auto | hashing | sentence_transformers. `auto` uses the
+    # local sentence-transformer when the `embeddings` extra and the model are installed, hashing
+    # otherwise. The model is never downloaded at runtime unless allowed (air-gapped by default).
+    # Context2AI is reached through context providers (knowledge/providers.py), not a URL here.
+    knowledge_embedding_provider: str = "auto"
+    knowledge_embedding_model: str = "BAAI/bge-small-en-v1.5"  # 384-d, ~130 MB; best of four on the K10 benchmark
+    knowledge_embedding_dim: int | None = None  # None = the provider's native dimension (hashing: 256)
+    knowledge_embedding_allow_download: bool = False
     jwt_secret: str = Field(default="dev-only-change-me-please-32bytes!!")
     jwt_ttl_minutes: int = 12 * 60
     bootstrap_admin_email: str = "admin@analystos.local"

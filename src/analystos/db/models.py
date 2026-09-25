@@ -12,6 +12,8 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -23,12 +25,15 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from analystos.db.base import Base
 
 EMBEDDING_DIM = 256
+# Knowledge-index vectors (P4-K10): the column is created at this dimension; `analystos knowledge
+# reembed` retypes it when the configured provider needs another (knowledge/embeddings.py).
+KNOWLEDGE_EMBEDDING_DIM = 256
 JSON = JSONB
 
 
@@ -191,7 +196,8 @@ class ContextEntry(Base):
 
     __tablename__ = "context_entry"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)  # null = global
+    # Platform-wide knowledge lives in the read-only `platform` knowledge pack (P4-K01), never here.
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     kind: Mapped[str] = mapped_column(String(30))  # term | definition | metric | rule | note | episode | dashboard
     name: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
@@ -201,6 +207,137 @@ class ContextEntry(Base):
     trusted: Mapped[bool] = mapped_column(Boolean, default=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgePack(Base):
+    """An OKF v0.2 knowledge pack: the system of record for knowledge (P4-K01, ADR-0013). `platform`
+    (exactly one, no workspace, read-only), `workspace` (a workspace's own) or `imported` (an Atlas
+    or other OKF bundle, read-only, replaced only by re-import). Content is its revisions."""
+
+    __tablename__ = "knowledge_pack"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "slug"),
+        CheckConstraint("(kind = 'platform') = (workspace_id IS NULL)", name="ck_knowledge_pack_platform_scope"),
+        Index("uq_knowledge_pack_platform_slug", "slug", unique=True, postgresql_where="workspace_id IS NULL"),
+    )
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True, nullable=True)
+    kind: Mapped[str] = mapped_column(String(20))  # platform | workspace | imported
+    slug: Mapped[str] = mapped_column(String(120))
+    title: Mapped[str] = mapped_column(String(300), default="")
+    read_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    okf_version: Mapped[str] = mapped_column(String(10), default="0.2")
+    okf_spec_revision: Mapped[str] = mapped_column(String(64))
+    okf_spec_sha256: Mapped[str] = mapped_column(String(64))
+    okf_root: Mapped[str] = mapped_column(String(200), default="")  # bundle root inside the pack ("bundle" for Atlas)
+    head_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    git_remote: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    git_branch: Mapped[str] = mapped_column(String(120), default="main")
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # importer / provider configuration
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class KnowledgeObject(Base):
+    """Content-addressed file bytes of a pack (sha256 of the bytes). Immutable; shared by revisions."""
+
+    __tablename__ = "knowledge_object"
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgeRevision(Base):
+    """One immutable revision of a pack: the full {path: sha256} file map, who and why."""
+
+    __tablename__ = "knowledge_revision"
+    __table_args__ = (UniqueConstraint("pack_id", "number"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    parent_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    author: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    origin: Mapped[str] = mapped_column(String(30))  # seed | migration | user | okf_import | crawler | learning
+    files: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    content_digest: Mapped[str] = mapped_column(String(64))
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # conformance, import report, remote commit
+    created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgeDocument(Base):
+    """Index (rebuildable from the pack): one OKF concept document of a pack's head revision."""
+
+    __tablename__ = "knowledge_document"
+    __table_args__ = (UniqueConstraint("pack_id", "path"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # deterministic: pack + path
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)  # NULL = platform pack
+    revision: Mapped[int] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(String(500))
+    concept_id: Mapped[str] = mapped_column(String(500))
+    type: Mapped[str] = mapped_column(String(120), index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)  # term | metric | rule | ... | document (entries.doc_kind)
+    title: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="stable")
+    trust_tier: Mapped[str] = mapped_column(String(30), default="unverified")
+    stale_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frontmatter: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    body: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+
+
+class KnowledgeSection(Base):
+    """Index: one top-level section of a document, with its full-text vector and embedding."""
+
+    __tablename__ = "knowledge_section"
+    __table_args__ = (
+        UniqueConstraint("document_id", "anchor"),
+        Index("ix_knowledge_section_tsv", "tsv", postgresql_using="gin"),
+        Index("ix_knowledge_section_embedding_hnsw", "embedding", postgresql_using="hnsw",
+              postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # deterministic: document + anchor
+    document_id: Mapped[str] = mapped_column(ForeignKey("knowledge_document.id", ondelete="CASCADE"), index=True)
+    pack_id: Mapped[str] = mapped_column(String(40), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    anchor: Mapped[str] = mapped_column(String(200))
+    heading: Mapped[str] = mapped_column(String(500), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    search_text: Mapped[str] = mapped_column(Text, default="")
+    tsv = mapped_column(TSVECTOR, Computed("to_tsvector('english', coalesce(search_text, ''))", persisted=True))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(KNOWLEDGE_EMBEDDING_DIM), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class KnowledgeLink(Base):
+    """Index: the link graph (§6.1 links are untyped directed edges)."""
+
+    __tablename__ = "knowledge_link"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pack_id: Mapped[str] = mapped_column(String(40), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    source_path: Mapped[str] = mapped_column(String(500))
+    raw: Mapped[str] = mapped_column(String(2000))
+    kind: Mapped[str] = mapped_column(String(20))  # internal | external | fragment | invalid
+    target_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class KnowledgeIndexState(Base):
+    """What the index was built from: per pack the indexed revision (`pack:<id>`), plus the embedding
+    provider (`embedding`), so `refresh` finds stale packs and queries embed with the index's provider."""
+
+    __tablename__ = "knowledge_index_state"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AgentDefinition(Base):

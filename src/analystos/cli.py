@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,21 @@ def migrate() -> None:
     cfg.set_main_option("sqlalchemy.url", get_settings().database_url)
     command.upgrade(cfg, "head")
     provision_analytics_roles()
+    refresh_knowledge_index()
+
+
+def refresh_knowledge_index() -> None:
+    """Index packs whose head revision is not indexed yet (e.g. the platform pack migration 0018
+    creates). Best effort, like role provisioning: `analystos knowledge reindex` rebuilds it all."""
+    from analystos.core.logging import get_logger
+    from analystos.db.base import session_scope
+    from analystos.knowledge.index import refresh
+
+    try:
+        with session_scope() as s:
+            refresh(s)
+    except Exception as exc:  # noqa: BLE001
+        get_logger(__name__).warning("knowledge index refresh skipped: %s", type(exc).__name__)
 
 
 def provision_analytics_roles() -> dict:
@@ -55,10 +70,10 @@ def seed() -> None:
     from sqlalchemy import select
 
     from analystos.capabilities import packs
-    from analystos.context.service import add_entry
     from analystos.core.ids import new_id
     from analystos.db.base import session_scope
-    from analystos.db.models import ContextEntry, User
+    from analystos.db.models import User
+    from analystos.knowledge.platform import sync_from_domain_packs
     from analystos.security.auth import hash_password
     from analystos.tools.registry import seed_registries
 
@@ -72,20 +87,12 @@ def seed() -> None:
             if not s.scalar(select(User).where(User.email == email)):
                 s.add(User(id=new_id("usr"), email=email, name=name, password_hash=hash_password(pw), is_admin=admin, attributes=attrs))
         seed_registries(s)
-        # Domain knowledge comes from the installed domain packs (packs/<name>/knowledge); an entry
-        # already present under the same name is kept, so re-seeding and older seeds never duplicate.
-        existing = set(s.scalars(select(ContextEntry.name).where(ContextEntry.workspace_id.is_(None))))
-        added: dict[str, int] = {}
-        for pack in packs.installed():
-            for doc in pack.knowledge:
-                if doc.name in existing:
-                    continue
-                add_entry(s, workspace_id=None, kind=doc.kind, name=doc.name, body=doc.body, synonyms=list(doc.synonyms),
-                          mapped_columns=list(doc.maps_to), origin=f"pack:{pack.name}")
-                existing.add(doc.name)
-                added[pack.name] = added.get(pack.name, 0) + 1
+        # Domain knowledge comes from the installed domain packs (packs/<name>/knowledge) and lives in
+        # the read-only platform knowledge pack (P4-K01); an unchanged sync writes no new revision.
+        report = sync_from_domain_packs(s, packs.installed())
     print("seeded users, registries and domain-pack knowledge "
-          f"({', '.join(f'{k}: {v} new' for k, v in sorted(added.items())) or 'already present'})")
+          f"(platform pack revision {report['revision']}, {report['documents']} documents, "
+          f"{'updated' if report['changed'] else 'unchanged'})")
 
 
 def list_packs() -> None:
@@ -150,9 +157,15 @@ def calibrate(*, dry_run: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["knowledge"]:
+        from analystos.knowledge.cli import main as knowledge_main
+
+        return knowledge_main(argv[1:])
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
-                                            "export-contracts", "replay-run", "packs", "calibrate"])
+                                            "export-contracts", "replay-run", "packs", "calibrate", "knowledge"],
+                        help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...)")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
     parser.add_argument("--out", help="replay-run: write the JSON report to this file")

@@ -53,6 +53,8 @@ mcp = ["mcp>=2.2"]
 # executable as a separate process (ANALYSTOS_DBT_EXECUTABLE), so installing it into its own venv or
 # image is preferred: dbt pins protobuf/networkx versions that can differ from the platform's.
 dbt = ["dbt-core>=1.12,<1.13", "dbt-postgres>=1.9"]
+# Local sentence-transformer embeddings for the knowledge index (P4-K10). Optional: hashing is the fallback.
+embeddings = ["sentence-transformers>=3.0"]
 # Source drivers (config/source_kinds.yaml names the extra each kind needs).
 mysql = ["pymysql>=1.1"]
 oracle = ["oracledb>=2.0"]

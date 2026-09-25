@@ -18,13 +18,12 @@ from datetime import date
 from typing import Any
 
 import sqlglot
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlglot import exp
 
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.db.models import (
-    ContextEntry,
     Hypothesis,
     Insight,
     QueryExecution,
@@ -75,9 +74,9 @@ def lexicon(session: Session, workspace_id: str) -> Lexicon:
     if cached is not None and time.monotonic() - cached.loaded_at < _LEXICON_TTL_SECONDS:
         return cached
     phrases: dict[str, str] = {}
-    for e in session.scalars(select(ContextEntry).where(
-            or_(ContextEntry.workspace_id == workspace_id, ContextEntry.workspace_id.is_(None)),
-            ContextEntry.kind.in_(("term", "metric", "definition")), ContextEntry.trusted.is_(True))):
+    from analystos.knowledge.entries import visible_entries
+
+    for e in visible_entries(session, workspace_id, kinds=("term", "metric", "definition"), trusted_only=True):
         canonical = _plain_phrase(e.name)
         for syn in e.synonyms or []:
             if _plain_phrase(syn) and _plain_phrase(syn) != canonical:

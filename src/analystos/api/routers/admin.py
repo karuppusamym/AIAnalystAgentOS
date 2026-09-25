@@ -14,6 +14,7 @@ from analystos.db.models import (
     AgentDefinition,
     AuditEvent,
     ContextEntry,
+    KnowledgeDocument,
     ModelCall,
     QueryExecution,
     SkillDefinition,
@@ -55,13 +56,21 @@ def context_search(body: SearchIn, user: User = Depends(current_user), session: 
 
 @router.get("/context/entities/{entry_id}")
 def context_entity(entry_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    from analystos.knowledge.entries import get_entry
+
     e = session.get(ContextEntry, entry_id)
-    if e is None:
+    doc = session.get(KnowledgeDocument, entry_id) if e is None else None
+    owner = e.workspace_id if e is not None else (doc.workspace_id if doc is not None else None)
+    if e is None and doc is None:
         raise NotFound("context entry not found")
-    if e.workspace_id:
-        require_role(session, user, e.workspace_id, "viewer")
-    return {"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms, "mapped_columns": e.mapped_columns,
-            "origin": e.origin, "workspace_id": e.workspace_id}
+    if owner:
+        require_role(session, user, owner, "viewer")
+    view = get_entry(session, owner, entry_id) if owner else None
+    if view is None:  # a platform-pack document: visible to every workspace
+        from analystos.knowledge.entries import doc_entry
+
+        view = doc_entry(doc, "platform")
+    return {**view.as_dict(), "workspace_id": owner}
 
 
 @router.post("/workspaces/{workspace_id}/context")
@@ -73,11 +82,11 @@ def add_context(workspace_id: str, body: ContextIn, user: User = Depends(current
 
 @router.get("/workspaces/{workspace_id}/context")
 def list_context(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    from analystos.knowledge.entries import visible_entries
+
     require_role(session, user, workspace_id, "viewer")
-    return [{"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms, "mapped_columns": e.mapped_columns,
-             "origin": e.origin, "global": e.workspace_id is None}
-            for e in session.scalars(select(ContextEntry).where((ContextEntry.workspace_id == workspace_id) | ContextEntry.workspace_id.is_(None))
-                                     .where(ContextEntry.kind != "episode").order_by(ContextEntry.kind, ContextEntry.name))]
+    return [e.as_dict() for e in sorted(visible_entries(session, workspace_id, exclude_kinds=["episode"]),
+                                        key=lambda e: (e.kind, e.name, e.id))]
 
 
 @router.get("/tools")

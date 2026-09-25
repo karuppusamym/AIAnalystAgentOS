@@ -18,6 +18,7 @@ EVENT_TYPES = {
     "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
     "ask.answered", "ask.promoted", "capability.invoked",
+    "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

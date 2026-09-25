@@ -544,9 +544,10 @@ class _Crawl:
     def _glossary(self, ids: dict[str, str]) -> None:
         ws = self.source.workspace_id
         with session_scope() as s:
-            terms = [{"id": t.id, "name": t.name, "synonyms": t.synonyms or [], "mapped_columns": t.mapped_columns or []}
-                     for t in s.scalars(select(ContextEntry).where(ContextEntry.kind == "term",
-                                                                  (ContextEntry.workspace_id == ws) | ContextEntry.workspace_id.is_(None)))]
+            from analystos.knowledge.entries import visible_entries
+
+            terms = [{"id": t.id, "name": t.name, "synonyms": list(t.synonyms), "mapped_columns": list(t.mapped_columns)}
+                     for t in visible_entries(s, ws, kinds=["term"])]
             if not terms:
                 self.stats["glossary_links"] = 0
                 return

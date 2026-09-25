@@ -1,48 +1,34 @@
-"""Context service adapter (§11). Layered retrieval:
+"""Context service (§11). Layered retrieval:
   1 exact metadata  2 graph neighborhood  3 vector search  4 prior artifacts/episodes
   5 user-provided context (feedback)  6 source inspection happens in the metadata/profiler agents.
-Context2AI is used when configured; otherwise the local store (context_entry) serves the same API.
+
+Knowledge comes from the workspace's `context_entry` rows and from the knowledge packs (platform
+pack, workspace pack, imported bundles) through the knowledge index (P4-K01). Other knowledge
+sources are context providers (knowledge/providers.py, P4-K09: `okf_import`, Atlas over `mcp`);
+the speculative REST adapter to a Context2AI service was retired with them.
 Context is DATA: agents quote it inside an untrusted-context envelope and it can never grant tools
 or widen scope."""
 from __future__ import annotations
 
 from typing import Any
 
-import httpx
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.context.embeddings import embed
-from analystos.core.config import get_settings
 from analystos.core.ids import new_id
 from analystos.core.logging import get_logger
-from analystos.db.models import ContextEntry, SourceAsset, SourceColumn
+from analystos.db.models import ContextEntry, KnowledgeDocument, SourceAsset, SourceColumn
 from analystos.graph.projection import neighborhood
 
 log = get_logger(__name__)
 
 
-class Context2AIClient:
-    """HTTP client for an existing Context2AI deployment (CTX-001). Endpoints per spec §11.1."""
-
-    def __init__(self, base_url: str, token: str | None = None) -> None:
-        self.client = httpx.Client(base_url=base_url.rstrip("/"), timeout=10,
-                                   headers={"Authorization": f"Bearer {token}"} if token else {})
-
-    def search(self, query: str, workspace_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        r = self.client.post("/context/search", json={"query": query, "workspace_id": workspace_id, "limit": limit})
-        r.raise_for_status()
-        return r.json().get("results", [])
-
-    def metrics(self) -> list[dict[str, Any]]:
-        r = self.client.get("/context/metrics")
-        r.raise_for_status()
-        return r.json()
-
-
-def add_entry(session: Session, *, workspace_id: str | None, kind: str, name: str, body: str,
+def add_entry(session: Session, *, workspace_id: str, kind: str, name: str, body: str,
               synonyms: list[str] | None = None, mapped_columns: list[str] | None = None, origin: str = "user",
               trusted: bool = True) -> ContextEntry:
+    if not workspace_id:
+        raise ValueError("context entries belong to a workspace; platform knowledge lives in the platform pack")
     entry = ContextEntry(id=new_id("ctx"), workspace_id=workspace_id, kind=kind, name=name, body=body,
                          synonyms=synonyms or [], mapped_columns=mapped_columns or [], origin=origin, trusted=trusted,
                          embedding=embed(" ".join([name, body, *(synonyms or [])])))
@@ -51,19 +37,64 @@ def add_entry(session: Session, *, workspace_id: str | None, kind: str, name: st
 
 
 def search(session: Session, workspace_id: str, query: str, *, limit: int = 8, kinds: list[str] | None = None) -> list[dict]:
+    """The workspace's own entries (cosine over their hashing embeddings) merged with pack knowledge
+    (hybrid index retrieval, scored by its vector similarity), best first."""
+    from analystos.knowledge.index import retrieve
+
     vec = embed(query)
     stmt = select(ContextEntry, ContextEntry.embedding.cosine_distance(vec).label("dist")).where(
-        or_(ContextEntry.workspace_id == workspace_id, ContextEntry.workspace_id.is_(None)))
+        ContextEntry.workspace_id == workspace_id)
     if kinds:
         stmt = stmt.where(ContextEntry.kind.in_(kinds))
     rows = session.execute(stmt.order_by("dist").limit(limit)).all()
-    return [{"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms,
-             "mapped_columns": e.mapped_columns, "origin": e.origin, "score": round(1 - float(d), 4)} for e, d in rows]
+    out = [{"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms,
+            "mapped_columns": e.mapped_columns, "origin": e.origin, "score": round(1 - float(d), 4) if d is not None else 0.0}
+           for e, d in rows]
+    seen: set[str] = set()
+    for h in retrieve(session, workspace_id, query, limit=limit * 3, kinds=kinds):
+        if h.document_id in seen:
+            continue  # one entry per document: its best section
+        seen.add(h.document_id)
+        out.append(_hit_entry(session, h))
+        if len(seen) >= limit:
+            break
+    out.sort(key=lambda r: (-r["score"], r["name"], r["id"]))
+    return out[:limit]
+
+
+def _hit_entry(session: Session, h: Any) -> dict[str, Any]:
+    doc = session.get(KnowledgeDocument, h.document_id)
+    ext = (doc.frontmatter or {}).get("analystos") if doc is not None else None
+    ext = ext if isinstance(ext, dict) else {}
+    return {"id": h.document_id, "kind": h.kind, "name": h.title, "body": h.text, "synonyms": list(ext.get("synonyms") or []),
+            "mapped_columns": list(ext.get("mapped_columns") or []),
+            "origin": str(ext.get("origin") or f"okf:{h.pack_slug}"), "score": round(float(h.similarity or 0.0), 4),
+            "receipt": h.receipt()}
+
+
+def external_context(session: Session, workspace_id: str, objective: str, *, user: Any = None,
+                     run_id: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+    """Results of the workspace's non-local context providers (imported bundles, Atlas over MCP).
+    A provider that fails reports UNAVAILABLE; it never fails the run."""
+    from analystos.governance.policy import get_workspace, load_policy
+    from analystos.knowledge.providers import for_workspace
+
+    out = []
+    for provider in for_workspace(load_policy(session, get_workspace(session, workspace_id))):
+        if provider.kind == "local":
+            continue
+        try:
+            out.append(provider.retrieve(session, workspace_id, objective, limit=limit, user=user, run_id=run_id).as_dict())
+        except Exception as exc:  # noqa: BLE001 - context is best effort
+            log.warning("context provider %s failed: %s", provider.kind, type(exc).__name__)
+            out.append({"provider": provider.kind, "status": "UNAVAILABLE", "detail": {"reason": type(exc).__name__},
+                        "items": [], "receipts": []})
+    return out
 
 
 def build_context_package(session: Session, workspace_id: str, objective: str, assets: list[str],
-                          extra_notes: list[str] | None = None) -> dict[str, Any]:
-    settings = get_settings()
+                          extra_notes: list[str] | None = None, *, user: Any = None,
+                          run_id: str | None = None) -> dict[str, Any]:
     # 1 exact metadata
     tables = []
     for fq in assets:
@@ -80,14 +111,9 @@ def build_context_package(session: Session, workspace_id: str, objective: str, a
                                    for c in cols]})
     # 2 graph neighborhood
     graph = neighborhood(assets, workspace_id, session)
-    # 3 vector search (+ Context2AI when configured)
+    # 3 vector search (+ the workspace's other context providers)
     terms = search(session, workspace_id, objective, limit=12)
-    external: list[dict] = []
-    if settings.context2ai_url:
-        try:
-            external = Context2AIClient(settings.context2ai_url).search(objective, workspace_id)
-        except Exception as exc:
-            log.warning("Context2AI unavailable, using local context only: %s", exc)
+    external = external_context(session, workspace_id, objective, user=user, run_id=run_id)
     # 4 prior episodes / known dashboards and metrics
     episodes = search(session, workspace_id, objective, limit=3, kinds=["episode"])
     metrics = search(session, workspace_id, objective, limit=8, kinds=["metric"])
