@@ -57,7 +57,8 @@ def test_preset_changes_router_behaviour_and_rollback_restores_it(users):
     from analystos.llm.router import ModelRouter
 
     router = ModelRouter(config=load_models_config(), settings_provider=ps.get, api_key_lookup=lambda _n: "k")
-    assert router.mode("planning") == "always" and router.available("planning")
+    # Deterministic first by default (P4-T02): planning answers from rules, the model stays available.
+    assert router.mode("planning") == "auto" and router.available("planning")
     with session_scope() as s:
         ps.apply_preset(s, s.get(User, users["admin"]), "offline")
     assert router.mode("planning") == "off" and not router.available("planning")

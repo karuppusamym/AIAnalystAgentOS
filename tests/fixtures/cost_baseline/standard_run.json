@@ -1,0 +1,409 @@
+{
+ "description": "Standard run (v1 \u00a762 flow, ServiceNow incident + change_request) recorded by tests/integration/test_token_default.py under the default settings. Fake transport, not live models: chat answers '{}', decisions answer nothing.",
+ "name": "standard_run",
+ "points": [
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "planning",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1936
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "hypothesis_generation",
+   "request": null,
+   "response": null,
+   "tokens_hint": 3275
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "hypothesis_priority",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "stop_check",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "follow_up_generation",
+   "request": null,
+   "response": null,
+   "tokens_hint": 5007
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "hypothesis_priority",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "stop_check",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "follow_up_generation",
+   "request": null,
+   "response": null,
+   "tokens_hint": 5952
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "hypothesis_priority",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 657
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 691
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 668
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 692
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 681
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 660
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 696
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 963
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Median resolution hours is 52.6 for opened after hours = true versus 33.5 for false.",
+     "evidence": "{'test': 'mann_whitney_u', 'n': 19894, 'p_adjusted': 0.0, 'effect_size': 0.2820525545, 'effect_label': 'rank_biserial', 'highlights': {'n': 19894, 'outcome': 'resolution hours', 'p_value': 0.0, 'sampled': False, 'top_mean': 71.7803, 'mean_ratio': 1.622, 'segment_by': 'opened after hours', 'top_median': 52.6433, 'top_segment': 'true', 'median_ratio': 1.572, 'baseline_mean': 44.2468, 'rank_biserial': 0.2821, 'baseline_median': 33.481, 'baseline_segment': 'false', 'median_difference': 19.1624}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 994
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Records with reassignment count = 3+ have a missed SLA rate of 29.1% versus 9.6% for reassignment count = 1 (3.0x).",
+     "evidence": "{'test': 'chi_square_independence', 'n': 20000, 'p_adjusted': 0.0, 'effect_size': 0.2002481403, 'effect_label': 'cramers_v', 'highlights': {'n': 20000, 'top_n': 3089, 'outcome': 'missed SLA', 'p_value': 0.0, 'n_groups': 4, 'top_rate': 0.2914, 'cramers_v': 0.2002, 'baseline_n': 6673, 'rate_ratio': 3.038, 'segment_by': 'reassignment count', 'top_segment': '3+', 'overall_rate': 0.144, 'baseline_rate': 0.0959, 'rate_ratio_ci': [2.771, 3.33], 'reference_rate': 0.1013, 'rate_difference': 0.1954, 'baseline_segment': '1', 'reference_segment': '0', 'rate_ratio_vs_overall': 2.023, 'rate_ratio_vs_reference': 2.876}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 932
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Payments Gateway accounts for 37.5% of records (where priority = 1).",
+     "evidence": "{'test': 'concentration_gof_uniform', 'n': 775, 'p_adjusted': 0.0, 'effect_size': 0.568483871, 'effect_label': 'gini', 'highlights': {'gini': 0.5685, 'top_k': 3, 'p_value': 0.0, 'top_share': 0.3755, 'n_segments': 40, 'segment_by': 'cmdb ci name', 'top_volume': 291.0, 'top_3_share': 0.4477, 'top_segment': 'Payments Gateway', 'total_volume': 775.0, 'top_20pct_share': 0.6065, 'segments_for_80pct': 18, 'top_20pct_segments': 8, 'top_share_vs_fair_share': 15.019}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1013
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 12.8% for assignment group name = Cloud Platform (1.7x) (where category = network).",
+     "evidence": "{'test': 'chi_square_independence', 'n': 4020, 'p_adjusted': 5.460000000000001e-10, 'effect_size': 0.1048652096, 'effect_label': 'cramers_v', 'highlights': {'n': 4020, 'top_n': 2825, 'outcome': 'missed SLA', 'p_value': 0.0, 'n_groups': 3, 'top_rate': 0.2212, 'cramers_v': 0.1049, 'baseline_n': 780, 'rate_ratio': 1.726, 'segment_by': 'assignment group name', 'top_segment': 'Network Operations', 'overall_rate': 0.1943, 'baseline_rate': 0.1282, 'rate_ratio_ci': [1.419, 2.099], 'rate_difference': 0.093, 'baseline_segment': 'Cloud Platform', 'rate_ratio_vs_overall': 1.139}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 993
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 10.2% for assignment group name = Storage and Backup (2.2x).",
+     "evidence": "{'test': 'chi_square_independence', 'n': 19399, 'p_adjusted': 0.0, 'effect_size': 0.0960090398, 'effect_label': 'cramers_v', 'highlights': {'n': 19399, 'top_n': 2825, 'outcome': 'missed SLA', 'p_value': 0.0, 'n_groups': 12, 'top_rate': 0.2212, 'cramers_v': 0.096, 'baseline_n': 673, 'rate_ratio': 2.158, 'segment_by': 'assignment group name', 'top_segment': 'Network Operations', 'overall_rate': 0.1446, 'baseline_rate': 0.1025, 'rate_ratio_ci': [1.708, 2.727], 'rate_difference': 0.1187, 'baseline_segment': 'Storage and Backup', 'rate_ratio_vs_overall': 1.53}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 964
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Records with category = network have a missed SLA rate of 19.3% versus 12.0% for category = hardware (1.6x).",
+     "evidence": "{'test': 'chi_square_independence', 'n': 20000, 'p_adjusted': 0.0, 'effect_size': 0.0735419095, 'effect_label': 'cramers_v', 'highlights': {'n': 20000, 'top_n': 4138, 'outcome': 'missed SLA', 'p_value': 0.0, 'n_groups': 5, 'top_rate': 0.1926, 'cramers_v': 0.0735, 'baseline_n': 3111, 'rate_ratio': 1.598, 'segment_by': 'category', 'top_segment': 'network', 'overall_rate': 0.144, 'baseline_rate': 0.1205, 'rate_ratio_ci': [1.426, 1.79], 'rate_difference': 0.0721, 'baseline_segment': 'hardware', 'rate_ratio_vs_overall': 1.338}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1020
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Weekly volume changed by -0.4% from first to last period.",
+     "evidence": "{'test': 'ols_linear_trend', 'n': 58, 'p_adjusted': 0.[REDACTED_NUMBER], 'effect_size': -0.4415694188, 'effect_label': 'pct_change_fitted', 'highlights': {'metric': 'count', 'p_value': 7.39e-05, 'direction': 'decreasing', 'n_periods': 58, 'r_squared': 0.2464, 'last_value': 1.0, 'pct_change': -0.4416, 'first_value': 367.0, 'fitted_last': 247.1233, 'kendall_tau': -0.0792, 'last_period': '2027-01-04T00:00:00', 'first_period': '2025-09-01T00:00:00', 'fitted_first': 442.5319, 'change_period': '2026-08-31T00:00:00', 'change_points': 1, 'pct_change_raw': -0.9973, 'kendall_p_value': 0.38285551, 'slope_per_period': -3.4282, 'change_after_mean': 9.3333, 'change_before_mean': 383.5385}}"
+    }
+   },
+   "response": {
+    "answers": {},
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "cost": 2e-05,
+     "input_tokens": 200,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 205
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "semantic_modeling",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1271
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "summarization",
+   "request": null,
+   "response": null,
+   "tokens_hint": 988
+  }
+ ]
+}

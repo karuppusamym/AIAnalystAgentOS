@@ -44,3 +44,15 @@ def sqlite_db(monkeypatch):
     monkeypatch.setattr(bus, "_redis", False)  # no Redis nudges from unit tests
     yield factory
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def budget_counters(monkeypatch):
+    """Budget counters on an in-memory Redis stand-in: unit tests never touch a real Redis."""
+    from tests.fakes import FakeRedis
+
+    from analystos.runtime import budget_counters as bc
+
+    counters = bc.BudgetCounters(None, "unit:", client=FakeRedis())
+    monkeypatch.setattr(bc, "default_budget_counters", lambda: counters)
+    return counters

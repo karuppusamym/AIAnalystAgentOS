@@ -32,7 +32,10 @@ class Sink:
 
 
 def recording_router(sink, transport):
-    platform = PlatformSettings()
+    from analystos.contracts.platform import LLMSettings
+
+    # Model first for the purposes recorded here (their default ladders answer from rules).
+    platform = PlatformSettings(llm=LLMSettings(purpose_modes={"chart_selection": "always"}))
     return ModelRouter(transport=transport, sink=sink, api_key_lookup=KEY.get, max_retries=0,
                        settings_provider=lambda: platform, cache=ResponseCache(None))
 

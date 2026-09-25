@@ -77,6 +77,11 @@
       "title": "Send Data Samples To Models",
       "type": "boolean"
     },
+    "independent_model_verification": {
+      "default": false,
+      "title": "Independent Model Verification",
+      "type": "boolean"
+    },
     "restricted_columns": {
       "items": {
         "type": "string"

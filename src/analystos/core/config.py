@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # schemas; the reader identity only reaches them via SET ROLE, so it cannot read across workspaces.
     analytics_workspace_role_prefix: str = "analystos_r_"
     redis_url: str = "redis://localhost:6379/0"
+    budget_counter_prefix: str = "aos:budget:"  # run/workspace/purpose budget counters (P4-T07)
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "analystos-neo4j"

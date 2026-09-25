@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -326,7 +327,13 @@ class ModelCall(Base):
     # Replay (P4-C09): content addresses of the redacted request and response in model_payload.
     request_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     response_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Execution ladder (P4-T01): the rung that answered — cache | registry | rules | decision | llm_small | llm_large.
+    answered_by: Mapped[str] = mapped_column(String(20), default="llm_large", server_default="llm_large")
+    # P4-T07: provider | price_table@<prices_version> | missing_price | none (no billable call).
+    cost_source: Mapped[str | None] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (Index("ix_model_call_created_purpose_rung", "created_at", "purpose", "answered_by"),)
 
 
 class ToolExecution(Base):

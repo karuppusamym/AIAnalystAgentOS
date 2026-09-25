@@ -18,8 +18,8 @@ class ProviderConfig(BaseModel):
 
 
 class ModelMeta(BaseModel):
-    """Optional per-model metadata. Prices are list-price estimates used only for the pre-call
-    approval check (policy.expensive_model_approval_usd); billed cost is always the provider's."""
+    """Optional per-model metadata. Prices (versioned by ModelsConfig.prices_version) serve the
+    pre-call approval estimate and the recorded cost when the provider reports none."""
 
     region: str | None = None  # overrides the provider region; None = inherit (unknown if both are None)
     input_usd_per_mtok: float | None = None
@@ -41,6 +41,8 @@ class ModelsConfig(BaseModel):
     profiles: dict[str, ProfileConfig]
     routing: dict[str, str]
     models: dict[str, ModelMeta] = Field(default_factory=dict)
+    prices_version: str = "unversioned"
+    ladders: dict[str, list[str]] = Field(default_factory=dict)  # purpose -> default rungs (spec v3 §4.1)
 
     def region_of(self, model: str, provider: str) -> str | None:
         meta = self.models.get(model)
@@ -56,6 +58,20 @@ class ModelsConfig(BaseModel):
             return None
         return (input_tokens * meta.input_usd_per_mtok + output_tokens * meta.output_usd_per_mtok) / 1_000_000
 
+    def model_rung(self, profile_name: str) -> str:
+        """The ladder rung a profile answers from: low_cost = L4 small, decision model = L3, else L5."""
+        profile = self.profiles.get(profile_name)
+        if profile is not None and self.providers.get(profile.provider) is not None \
+                and self.providers[profile.provider].kind == "decision":
+            return "decision"
+        return "llm_small" if profile_name == "low_cost" else "llm_large"
+
+    def default_ladder(self, purpose: str) -> list[str]:
+        if purpose in self.ladders:
+            return list(self.ladders[purpose])
+        name = self.routing.get(purpose)
+        return ["cache", self.model_rung(name) if name else "llm_large", "rules"]
+
     def profile_for(self, purpose: str) -> tuple[str, ProfileConfig]:
         name = self.routing.get(purpose)
         if not name or name not in self.profiles:
@@ -69,6 +85,8 @@ class ModelsConfig(BaseModel):
             "routing": self.routing,
             "providers": {k: {"kind": v.kind, "base_url": v.base_url, "region": v.region} for k, v in self.providers.items()},
             "models": {k: v.model_dump() for k, v in self.models.items()},
+            "prices_version": self.prices_version,
+            "ladders": self.ladders,
         }
 
 

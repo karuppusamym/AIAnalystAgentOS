@@ -147,9 +147,11 @@ class ReplayTransport:
 
 def _replay_settings():
     from analystos.contracts.platform import LLMSettings, PlatformSettings
+    from analystos.llm.config import load_models_config
 
-    # Every purpose on, no cache, no size refusal, no budget downgrade: the recording decides.
-    return PlatformSettings(llm=LLMSettings(cache_enabled=False, max_prompt_tokens=400_000,
+    # Every purpose model first, no cache, no size refusal, no budget downgrade: the recording decides.
+    return PlatformSettings(llm=LLMSettings(purpose_modes={p: "always" for p in load_models_config().routing},
+                                            cache_enabled=False, max_prompt_tokens=400_000,
                                             downgrade_below_budget_fraction=0.0))
 
 

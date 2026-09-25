@@ -25,6 +25,9 @@ class WorkspacePolicyDoc(BaseModel):
     allowed_providers: list[str] = Field(default_factory=lambda: ["openrouter", "typesafe"])
     data_residency: str | None = None  # informational until providers expose region metadata
     send_data_samples_to_models: bool = False  # only aggregates/stats/schema leave the platform by default
+    # An extra review of every finding by a model of another family (spec v3 §4.2). Off by default: the
+    # deterministic REV checks decide verification; high-stakes workspaces may opt in.
+    independent_model_verification: bool = False
     restricted_columns: list[str] = Field(default_factory=list)  # "schema.table.column" or "*.column"
     pii_columns: list[str] = Field(default_factory=list)
     pii_access: Literal["none", "restricted", "allowed"] = "restricted"

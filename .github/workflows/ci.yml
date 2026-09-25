@@ -38,6 +38,8 @@ jobs:
           PYTHONPATH=src .venv/bin/python scripts/export_openapi.py
           git diff --exit-code web/openapi.json
       - run: .venv/bin/pytest -q -m "not integration"
+      - name: Cost gate (replayed runs; fails when model calls or tokens per run rise > 10% over the baseline)
+        run: PYTHONPATH=src .venv/bin/python scripts/cost_gate.py
       - run: .venv/bin/analystos migrate
       - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
         run: .venv/bin/pytest -q -m integration

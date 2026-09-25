@@ -19,9 +19,6 @@ from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
 from analystos.methods.base import ChartIntent
 from analystos.runtime.context import RunContext
 
-JEV_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
-                    "trend": ["line", "bar"], "part_to_whole": ["treemap", "stacked_bar", "pie", "bar"]}
-
 
 def _q(c: str) -> str:
     return '"' + c.replace('"', '""') + '"'
@@ -62,19 +59,9 @@ def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef], chart
 def _choose(ctx: RunContext, intent: str, dim_type: str | None, cardinality: int, title: str) -> tuple[str, str]:
     from analystos.skills.viz import choose_chart
 
-    chart_type, rationale = choose_chart(intent, dim_type, cardinality, 1)
-    options = {t: {"bar": "bar chart comparing categories", "treemap": "treemap of part-to-whole shares",
-                   "pie": "pie chart of shares (few categories)", "table": "detail table", "histogram": "histogram of a distribution",
-                   "line": "line chart over time", "stacked_bar": "stacked bars of composition"}[t]
-               for t in JEV_ALTERNATIVES.get(intent, []) if not (t == "pie" and cardinality > 5)}
-    if chart_type in options and len(options) > 1:
-        v = ctx.jev.choose("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
-                           "Which chart type communicates `chart_title` best to a business audience?", options, ctx=ctx.call_ctx())
-        if v and v.value != chart_type and v.probabilities.get(v.value, 0) >= 0.6:
-            return v.value, f"{rationale}; overridden by JEV ({v.value} p={v.probabilities.get(v.value):.2f})"
-        if v:
-            rationale += f"; JEV agrees ({chart_type} p={v.probabilities.get(chart_type, 0):.2f})"
-    return chart_type, rationale
+    # Rules decide (P4-T02, spec v3 §4.2): the chart follows from intent, dimension type and
+    # cardinality; a model override could only restyle a finding, never change it.
+    return choose_chart(intent, dim_type, cardinality, 1)
 
 
 def design(ctx: RunContext) -> dict:
