@@ -146,7 +146,8 @@ def test_ask_runs_through_the_ask_path_as_the_service_identity(api, world, monke
     assert not out.is_error, out.content
     assert out.structured_content["result"]["rows"] == [["INC1"]]
     assert seen["scope"].user_id == world["service_user"] and seen["scope"].role == "analyst"
-    assert "src_t.incident.salary" in seen["scope"].denied_columns and seen["actor"] == "agent:sql"
+    # Ask is audited as the calling user (P4-C02 per-user Ask budget); over MCP that is the client's service identity.
+    assert "src_t.incident.salary" in seen["scope"].denied_columns and seen["actor"] == f"user:{world['service_user']}"
 
 
 def test_unauthenticated_and_revoked_clients_get_401(api, world):

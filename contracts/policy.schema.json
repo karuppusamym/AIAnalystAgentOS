@@ -16,6 +16,16 @@
       "title": "Max Queries Per Run",
       "type": "integer"
     },
+    "ask_queries_per_user_per_hour": {
+      "default": 60,
+      "title": "Ask Queries Per User Per Hour",
+      "type": "integer"
+    },
+    "ask_queries_per_workspace_per_hour": {
+      "default": 600,
+      "title": "Ask Queries Per Workspace Per Hour",
+      "type": "integer"
+    },
     "run_token_budget": {
       "default": 400000,
       "title": "Run Token Budget",

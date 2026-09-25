@@ -406,7 +406,8 @@ class _Crawl:
         restaged = []
         for key in targets:
             d = by_key[key]
-            info = loader.load(self.source.id, d, connector.extract(d, max_rows=max_rows))
+            info = loader.load(self.source.id, d, connector.extract(d, max_rows=max_rows),
+                               workspace_id=self.source.workspace_id)
             with session_scope() as s:
                 a = s.get(SourceAsset, ids[key])
                 a.row_count, a.freshness_at, a.stats = info.get("row_count"), utcnow(), {}  # stats re-profiled below

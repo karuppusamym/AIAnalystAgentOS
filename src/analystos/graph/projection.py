@@ -28,6 +28,13 @@ def _driver():
     return GraphDatabase.driver(s.neo4j_uri, auth=(s.neo4j_user, s.neo4j_password), connection_timeout=3)
 
 
+def ensure_schema(g) -> None:  # noqa: ANN001
+    """Nodes are keyed by (workspace_id, type, id): the same table name in two workspaces is two nodes.
+    The earlier (type, id) constraint let the last projection's workspace overwrite the node."""
+    g.run("DROP CONSTRAINT aos_node IF EXISTS")
+    g.run("CREATE CONSTRAINT aos_node_ws IF NOT EXISTS FOR (n:AOS) REQUIRE (n.workspace_id, n.type, n.id) IS UNIQUE")
+
+
 def project_workspace(session: Session, workspace_id: str) -> dict:
     """MERGE all lineage edges and table relationships of a workspace into Neo4j."""
     edges = list(session.scalars(select(LineageEdge).where(LineageEdge.workspace_id == workspace_id)))
@@ -39,16 +46,16 @@ def project_workspace(session: Session, workspace_id: str) -> dict:
                  "bc": r.to_column, "card": r.cardinality, "conf": r.confidence} for r in rels]
     try:
         with _driver().session() as g:
-            g.run("CREATE CONSTRAINT aos_node IF NOT EXISTS FOR (n:AOS) REQUIRE (n.type, n.id) IS UNIQUE")
+            ensure_schema(g)
             by_rel: dict[tuple, list] = {}
             for r in rows:
                 by_rel.setdefault((r["fl"], r["rel"], r["tl"]), []).append(r)
             for (fl, rel, tl), batch in by_rel.items():
-                g.run(f"UNWIND $rows AS r MERGE (a:AOS {{type: r.ft, id: r.fid}}) SET a:{fl}, a.workspace_id=$ws "
-                      f"MERGE (b:AOS {{type: r.tt, id: r.tid}}) SET b:{tl}, b.workspace_id=$ws "
+                g.run(f"UNWIND $rows AS r MERGE (a:AOS {{workspace_id: $ws, type: r.ft, id: r.fid}}) SET a:{fl} "
+                      f"MERGE (b:AOS {{workspace_id: $ws, type: r.tt, id: r.tid}}) SET b:{tl} "
                       f"MERGE (a)-[:{rel}]->(b)", rows=batch, ws=workspace_id)
-            g.run("UNWIND $rows AS r MERGE (a:AOS {type:'table', id:r.a}) SET a:Table, a.workspace_id=$ws "
-                  "MERGE (b:AOS {type:'table', id:r.b}) SET b:Table, b.workspace_id=$ws "
+            g.run("UNWIND $rows AS r MERGE (a:AOS {workspace_id: $ws, type:'table', id:r.a}) SET a:Table "
+                  "MERGE (b:AOS {workspace_id: $ws, type:'table', id:r.b}) SET b:Table "
                   "MERGE (a)-[j:JOINS_TO {from_column:r.ac, to_column:r.bc}]->(b) SET j.cardinality=r.card, j.confidence=r.conf",
                   rows=rel_rows, ws=workspace_id)
         return {"ok": True, "edges": len(rows), "relationships": len(rel_rows)}
@@ -61,7 +68,9 @@ def neighborhood(tables: list[str], workspace_id: str) -> list[dict]:
     """Graph neighborhood for context retrieval: joins and prior findings touching these tables."""
     try:
         with _driver().session() as g:
-            result = g.run("MATCH (t:AOS {type:'table'})-[r]-(n:AOS) WHERE t.id IN $tables AND t.workspace_id=$ws "
+            # Both ends are pinned to the workspace, so a stray cross-workspace edge is never followed.
+            result = g.run("MATCH (t:AOS {workspace_id: $ws, type:'table'})-[r]-(n:AOS {workspace_id: $ws}) "
+                           "WHERE t.id IN $tables "
                            "RETURN t.id AS table, type(r) AS rel, n.type AS type, n.id AS id LIMIT 200",
                            tables=tables, ws=workspace_id)
             return [dict(r) for r in result]
