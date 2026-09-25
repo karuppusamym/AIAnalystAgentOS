@@ -4,7 +4,7 @@ Status vocabulary: **Done** (code + automated test, and live evidence where the 
 **Done (mock)** (built and tested only against a mock/synthetic system — not certified) ·
 **Partial** (usable, with a named gap) · **Not started** · **Phase N** (deliberately out of this release).
 Evidence lives in the [capability register](02-capability-register.md). IDs are spec v1 §60 IDs.
-Last reconciled: 2026-09-25.
+Last reconciled: 2026-09-25 (after live e2e `evidence/e2e-20260925-054942.md`, 26/26).
 
 ## Phase 0 — Foundation
 

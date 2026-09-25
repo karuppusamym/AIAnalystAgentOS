@@ -1,0 +1,136 @@
+{
+  "description": "Versioned per-workspace policy. Values here may only tighten the platform ceilings.",
+  "properties": {
+    "max_rows": {
+      "default": 50000,
+      "title": "Max Rows",
+      "type": "integer"
+    },
+    "query_timeout_seconds": {
+      "default": 30,
+      "title": "Query Timeout Seconds",
+      "type": "integer"
+    },
+    "max_queries_per_run": {
+      "default": 200,
+      "title": "Max Queries Per Run",
+      "type": "integer"
+    },
+    "run_token_budget": {
+      "default": 400000,
+      "title": "Run Token Budget",
+      "type": "integer"
+    },
+    "run_cost_budget_usd": {
+      "default": 2.0,
+      "title": "Run Cost Budget Usd",
+      "type": "number"
+    },
+    "workspace_monthly_cost_budget_usd": {
+      "default": 50.0,
+      "title": "Workspace Monthly Cost Budget Usd",
+      "type": "number"
+    },
+    "expensive_model_approval_usd": {
+      "default": 1.0,
+      "title": "Expensive Model Approval Usd",
+      "type": "number"
+    },
+    "allowed_models": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Models",
+      "type": "array"
+    },
+    "allowed_providers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Providers",
+      "type": "array"
+    },
+    "data_residency": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Data Residency"
+    },
+    "send_data_samples_to_models": {
+      "default": false,
+      "title": "Send Data Samples To Models",
+      "type": "boolean"
+    },
+    "restricted_columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Restricted Columns",
+      "type": "array"
+    },
+    "pii_columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pii Columns",
+      "type": "array"
+    },
+    "pii_access": {
+      "default": "restricted",
+      "enum": [
+        "none",
+        "restricted",
+        "allowed"
+      ],
+      "title": "Pii Access",
+      "type": "string"
+    },
+    "tool_denylist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tool Denylist",
+      "type": "array"
+    },
+    "publish_destinations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Publish Destinations",
+      "type": "array"
+    },
+    "publish_requires_approval": {
+      "default": true,
+      "title": "Publish Requires Approval",
+      "type": "boolean"
+    },
+    "separation_of_duties": {
+      "default": false,
+      "title": "Separation Of Duties",
+      "type": "boolean"
+    },
+    "approval_ttl_hours": {
+      "default": 72,
+      "title": "Approval Ttl Hours",
+      "type": "integer"
+    },
+    "max_iterations": {
+      "default": 3,
+      "title": "Max Iterations",
+      "type": "integer"
+    },
+    "alpha": {
+      "default": 0.05,
+      "title": "Alpha",
+      "type": "number"
+    }
+  },
+  "title": "WorkspacePolicyDoc",
+  "type": "object"
+}

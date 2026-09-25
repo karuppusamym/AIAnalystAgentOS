@@ -41,6 +41,11 @@ def facts_for(stat: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
+def _cap(text: str) -> str:
+    """Capitalise the first letter only ('missed SLA' -> 'Missed SLA', not 'Missed sla')."""
+    return text[:1].upper() + text[1:]
+
+
 def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]:
     """Deterministic title + finding built only from computed values."""
     hl = stat.get("highlights") or {}
@@ -50,14 +55,14 @@ def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]
         if spec.get("filters") else ""
     m = spec.get("method")
     if m == "rate_by_segment" and "top_rate" in hl:
-        title = f"{out.capitalize()} concentrates in {seg} = {hl.get('top_segment')}"
+        title = f"{_cap(out)} concentrates in {seg} = {hl.get('top_segment')}"
         text = (f"Records with {seg} = {hl.get('top_segment')} have a {out} rate of {_fmt_pct(hl['top_rate'])} versus "
                 f"{_fmt_pct(hl.get('baseline_rate', 0))} for {seg} = {hl.get('baseline_segment')}"
                 + (f" ({hl['rate_ratio']:.1f}x)" if isinstance(hl.get("rate_ratio"), (int, float)) else "") + f"{scope}.")
     elif m == "numeric_by_segment" and ("top_median" in hl or "top_value" in hl):
         top = hl.get("top_median", hl.get("top_value"))
         base = hl.get("baseline_median", hl.get("baseline_value"))
-        title = f"{out.capitalize()} is higher for {seg} = {hl.get('top_segment')}"
+        title = f"{_cap(out)} is higher for {seg} = {hl.get('top_segment')}"
         text = (f"Median {out} is {top:.1f} for {seg} = {hl.get('top_segment')} versus {base:.1f} for "
                 f"{hl.get('baseline_segment')}" + (f" ({hl['ratio']:.1f}x)" if isinstance(hl.get("ratio"), (int, float)) else "") + f"{scope}.")
     elif m == "pareto" and ("top_share" in hl or "top_k_share" in hl):
@@ -66,11 +71,11 @@ def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]
         text = (f"{hl.get('top_segment', 'The top segment')} accounts for {_fmt_pct(share)} of records{scope}"
                 + (f"; the top {hl.get('top_k')} account for {_fmt_pct(hl['top_k_share'])}" if hl.get("top_k_share") and hl.get("top_k") else "") + ".")
     elif m == "trend":
-        title = f"{out.capitalize() if out != 'volume' else 'Volume'} shows a significant trend"
+        title = f"{_cap(out) if out != 'volume' else 'Volume'} shows a significant trend"
         text = (f"Weekly {out} changed by {hl.get('pct_change', 0):.1f}% from first to last period" if isinstance(hl.get("pct_change"), (int, float))
                 else f"A significant trend was detected in {out}") + f"{scope}."
     else:
-        title = f"{out.capitalize()} is associated with {seg}"
+        title = f"{_cap(out)} is associated with {seg}"
         text = f"{stat.get('test')} indicates an association (effect {stat.get('effect_size')}, n={stat.get('n')}){scope}."
     return title[:200], text
 

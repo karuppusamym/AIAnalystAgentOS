@@ -1,0 +1,93 @@
+{
+  "description": "Semantic metric (\u00a724). `sql_expression` is an aggregate over the dataset columns.",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "display_name": {
+      "title": "Display Name",
+      "type": "string"
+    },
+    "definition": {
+      "title": "Definition",
+      "type": "string"
+    },
+    "sql_expression": {
+      "title": "Sql Expression",
+      "type": "string"
+    },
+    "format": {
+      "default": "number",
+      "enum": [
+        "number",
+        "percent",
+        "hours",
+        "currency"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "grain": {
+      "default": "",
+      "title": "Grain",
+      "type": "string"
+    },
+    "filters": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Filters",
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "owner": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner"
+    },
+    "source_columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Columns",
+      "type": "array"
+    },
+    "validation": {
+      "additionalProperties": true,
+      "title": "Validation",
+      "type": "object"
+    },
+    "status": {
+      "default": "proposed",
+      "enum": [
+        "proposed",
+        "validated",
+        "approved"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "display_name",
+    "definition",
+    "sql_expression"
+  ],
+  "title": "MetricDef",
+  "type": "object"
+}
