@@ -642,3 +642,75 @@ class CrawlRun(Base):
     started_by: Mapped[str] = mapped_column(String(80))
     started_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class McpServer(Base):
+    """An external MCP server registered in one workspace (spec v3 §3.7, P4-X05).
+
+    Nothing is called until an owner/admin sets `allowed`. `tools` is the last screened
+    `tools/list` snapshot; `classifications` holds the owner's side-effect verdict per tool, bound to
+    the tool's definition hash so a changed tool falls back to `write_external`.
+    """
+
+    __tablename__ = "mcp_server"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    url: Mapped[str] = mapped_column(String(500))
+    transport: Mapped[str] = mapped_column(String(30), default="streamable_http")
+    secret_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)  # env:NAME | file:/path, never a value
+    status: Mapped[str] = mapped_column(String(20), default="registered")  # registered | ready | error
+    allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # max_calls_per_run, timeout_seconds
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    classifications: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class McpClient(Base):
+    """An external MCP client of AnalystOS (P4-X06). Only a SHA-256 of the secret is stored; the client
+    acts as its own service user, so scope, roles and the gateway apply unchanged."""
+
+    __tablename__ = "mcp_client"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # the public client_id
+    name: Mapped[str] = mapped_column(String(200))
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    service_user_id: Mapped[str] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | revoked
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class McpGrant(Base):
+    """What one MCP client may do in one workspace: role, tools and per-tool daily quotas."""
+
+    __tablename__ = "mcp_grant"
+    __table_args__ = (UniqueConstraint("client_id", "workspace_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("mcp_client.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="viewer")  # viewer | analyst
+    tools: Mapped[list[str]] = mapped_column(JSON, default=list)
+    quotas: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)  # tool -> calls per UTC day
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class McpUsage(Base):
+    """Per-day call counters for quota enforcement (incremented atomically before a call runs)."""
+
+    __tablename__ = "mcp_usage"
+    __table_args__ = (UniqueConstraint("client_id", "workspace_id", "tool", "day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("mcp_client.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40))
+    tool: Mapped[str] = mapped_column(String(80))
+    day: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD (UTC)
+    count: Mapped[int] = mapped_column(Integer, default=0)
