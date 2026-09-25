@@ -10,6 +10,8 @@
 
 use OpenRouter with OPENROUTER_API_KEY supplied through the environment; never commit the key.
 
+USe JEV model decisioning 
+
 ---
 
 # 1. Executive Summary
