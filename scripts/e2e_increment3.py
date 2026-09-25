@@ -128,7 +128,9 @@ def main() -> int:
     try:
         # 3. workspace + an uploaded SQLite database registered as a source
         ws = admin.post("/api/workspaces", {"name": f"Retail orders (SQLite) {started:%Y%m%d-%H%M}", "objective": OBJECTIVE,
-                                            "description": "Increment 3 evidence: any database", "autonomy_level": 3})
+                                            "description": "Increment 3 evidence: any database", "autonomy_level": 3,
+                                            # predates the P4-K03 approved-metric gate (tests/integration/test_semantic_layer.py)
+                                            "policy": {"require_approved_metrics": False}})
         wid = ws["id"]
         admin.post(f"/api/workspaces/{wid}/members", {"email": "analyst@analystos.local", "role": "editor"})
         admin.post(f"/api/workspaces/{wid}/members", {"email": "approver@analystos.local", "role": "approver"})

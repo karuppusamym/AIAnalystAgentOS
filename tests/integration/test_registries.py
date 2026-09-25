@@ -201,7 +201,8 @@ def test_scheduled_reanalysis_replays_the_registry_with_zero_model_calls(world, 
     novel_spec = {**entry.spec, "filters": [*(entry.spec.get("filters") or []), {"column": seg, "op": "is not null"}]}
 
     def propose(payload):
-        body = json.loads(payload["messages"][1]["content"])
+        content = payload["messages"][-1]["content"]  # text blocks when the model takes cache_control (P4-T04)
+        body = json.loads(content if isinstance(content, str) else content[-1]["text"])
         assert body["already_testing"] and body["max_new_hypotheses"] == 2
         return {"hypotheses": [{"statement": "Novel: same question on rows with a known segment", "question": "Novel?",
                                 "spec": novel_spec, "priority": "high"}]}

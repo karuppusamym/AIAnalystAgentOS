@@ -207,3 +207,57 @@ Suites at merge: 1,197 unit, 102 integration, 114 vitest, 21 Playwright.
 | Connector certification from evidence | `connectors/certification.py`, `scripts/certify_connectors.py` | `test_connector_certification.py` | postgres, mysql, sqlite, duckdb | Warehouses remain `tested` |
 | Five-journey UI shell | `web/src/routes.ts`, `components/CommandPalette.tsx` | 114 vitest, 21 Playwright (axe AA) | — | Journey content (U02–U07) not built |
 
+
+## 2026-09-25 — Increment 4, wave 2 (token and decision economy) plus S02, U03, U06, U07
+
+Merged from parallel streams onto `claude/gracious-knuth-ievauj`. Migrations chain
+0011 → 0015 (registries) → 0016 (task claims) → 0012 (ladder) → 0013 (decisions) → 0014 (prompt cache).
+Up/down/up was verified on a scratch database after each re-chain.
+
+### Measured (fake transport; live model runs are blocked by exhausted OpenRouter credits)
+
+| Measure | Before | After | Evidence |
+|---|---:|---:|---|
+| Chat calls per standard run | 20 | 0 | `evidence/token-default-20260925-183030.md` |
+| Decision calls per standard run | 15 | 7 (`rev_second_opinion`) | same |
+| Tokens per standard run | 25,075 | 1,435 | same; guarded by `scripts/cost_gate.py` in CI |
+| Prompt tokens, compiled purposes | 18,942 | 15,342 (−19 %) | `evidence/context-compiler-20260925-182819.md` |
+| Ask registry hit latency | — | p50 < 1 s asserted (no model call) | `test_registries.py` |
+| Queries per engine task | measured | — | `evidence/engine-queries-20260925-182754.md` |
+
+### Capabilities
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Execution ladder, `answered_by` per call | `llm/router.py` (`ladder`, `mode_of`), `config/models.yaml` `ladders:` | `test_ladder_and_budgets.py` | — | The JEV rung counts as a model rung, so `off` removes it |
+| Deterministic-first default | `contracts/platform.py` presets, `agents/{publisher,visualization,critic}.py` | `test_token_default.py`, `test_cost_gate.py` | — | Planning is not yet merged into hypothesis generation |
+| Context compiler with receipts | `context/compiler.py`, `agents/common.compile_for` | `test_context_compiler*.py`, `test_context_tokens.py` | — | Lexical relevance only (hybrid ranking is P4-K05) |
+| Prompt-cache layout and accounting | `llm/router.py` `wire_messages`, `cached_prompt_tokens` | `test_prompt_cache.py` | ❌ not measured | Stable prefix ≈ 18 % of sent text; the ≥ 60 % target is unlikely without a larger header |
+| Verified-query and hypothesis registries | `registries/`, `agents/sql_agent.py`, `agents/investigator.py` | `test_registries.py`, `test_registry_logic.py` | — | — |
+| Knowledge version in cache keys | `context/version.py` | `test_context_compiler_db.py` | — | — |
+| Redis budget counters, price table | `runtime/budget_counters.py`, `runtime/usage.py` | `test_budget_counters.py` | — | Ask's rolling-hour budget still counts in the database; JEV has no list price (`missing_price`) |
+| DecisionService, authority classes | `decisions/` | `test_decision_service.py`, `test_decisions_db.py` | — | Local-classifier weights are hand-set (v1) |
+| Decision calibration and downgrade | `decisions/calibration.py`, `analystos calibrate` | `test_decision_calibration.py`, `test_decisions_db.py` | — | No Operate screen for the report yet |
+| CI cost gate | `scripts/cost_gate.py`, `tests/fixtures/cost_baseline/` | `test_cost_gate.py` | — | New agent call sites are only caught once the fixture is re-recorded, or by `test_token_default.py` |
+| Engine loop without locks or N+1 | `runtime/engine.py`, `artifacts/registry.py`, `governance/policy.py` | `test_engine_claims.py`, `test_engine_queries.py` | ✅ | In-flight Temporal workflows must be drained before deploying |
+| Investigation board, Operate, capability-driven UI | `web/src/` | vitest, Playwright journeys | — | Capability invoke endpoint pending (P4-U02 stream) |
+
+### Merge decision recorded
+
+When the ladder and the DecisionService were merged, their meanings of `auto` differed. The
+ladder used `auto` to mean "rules first, then the model". The DecisionService used it to mean
+"the rule decides".
+
+The resolution: under `auto`, the service moves `rules` to the front of the purpose's backend
+chain, so JEV answers only what the rule leaves open (a tie, an abstention, an escalation). `off`
+removes the model backends. Direct `JevDecisions` callers keep "auto = the rule decides". The
+cost gate is unchanged (7 and 3 calls).
+
+## 2026-09-25 — Increment 4, wave 3: semantic layer (P4-K03)
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Ossie 0.1.1 semantic model, pinned schema | `semantic/ossie.py`, `semantic/schema/` (+ `PROVENANCE.yaml`) | `test_semantic_ossie.py` (upstream examples) | — | Upstream's Salesforce fixture fails its own SQL rule; recorded, not hidden |
+| Metric approval workflow | `semantic/service.py`, `governance/approvals.py` (`ALWAYS_SEPARATE_DUTIES`) | `test_semantic_layer.py` | ✅ deterministic run: run 1 refused at publish, approved, run 2 publishes (37 s) | Semantic-model structure versions have no approve endpoint |
+| dbt 1.12 import/export | `semantic/dbt.py` | `test_semantic_ossie.py` fixtures from real `dbt parse` | ✅ by hand (dbt-core 1.12.0 + metricflow 0.213.0) | dbt is not in the project environment; metricflow mangles percent KPIs (export warns) |
+| Publish gate on approved metrics | `semantic/service.gate_bundle`, `build_bundle` | `test_semantic_ossie.py`, `test_semantic_layer.py` | ✅ | Existing workspaces default to off; new ones on |
