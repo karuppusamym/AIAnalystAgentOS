@@ -6,7 +6,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import Integer, String, and_, case, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -89,29 +89,29 @@ def link(session: Session, workspace_id: str, from_: tuple[str, str], relation: 
 
 
 def lineage_for(session: Session, workspace_id: str, node: tuple[str, str], *, depth: int = 6) -> dict[str, Any]:
-    """Upstream + downstream provenance around a node (BFS over edges, both directions)."""
-    edges = list(session.scalars(select(LineageEdge).where(LineageEdge.workspace_id == workspace_id)))
-    out_adj: dict[tuple[str, str], list[LineageEdge]] = {}
-    in_adj: dict[tuple[str, str], list[LineageEdge]] = {}
-    for e in edges:
-        out_adj.setdefault((e.from_type, e.from_id), []).append(e)
-        in_adj.setdefault((e.to_type, e.to_id), []).append(e)
-    seen_nodes = {node}
-    seen_edges: set[int] = set()
-    frontier = [node]
-    for _ in range(depth):
-        nxt = []
-        for n in frontier:
-            for e in out_adj.get(n, []) + in_adj.get(n, []):
-                if e.id in seen_edges:
-                    continue
-                seen_edges.add(e.id)
-                for m in ((e.from_type, e.from_id), (e.to_type, e.to_id)):
-                    if m not in seen_nodes:
-                        seen_nodes.add(m)
-                        nxt.append(m)
-        frontier = nxt
-    by_id = {e.id: e for e in edges}
-    return {"nodes": [{"type": t, "id": i} for t, i in sorted(seen_nodes)],
-            "edges": [{"from": [by_id[i].from_type, by_id[i].from_id], "relation": by_id[i].relation,
-                       "to": [by_id[i].to_type, by_id[i].to_id]} for i in sorted(seen_edges)]}
+    """Upstream + downstream provenance around a node: every edge touching a node within `depth - 1`
+    hops (either direction), and those edges' ends. One recursive CTE over this workspace's edges
+    (P4-S02); it reads the neighbourhood only, never the whole workspace."""
+    node = (node[0], str(node[1]))
+    if depth <= 0:
+        return {"nodes": [{"type": node[0], "id": node[1]}], "edges": []}
+    e = LineageEdge
+
+    def touches(t, i):  # noqa: ANN001, ANN202 - either end of a workspace edge (both ends are indexed)
+        return and_(e.workspace_id == workspace_id,
+                    or_(and_(e.from_type == t, e.from_id == i), and_(e.to_type == t, e.to_id == i)))
+
+    reach = select(literal(node[0], String).label("t"), literal(node[1], String).label("i"),
+                   literal(0, Integer).label("d")).cte("reach", recursive=True)
+    from_end = and_(e.from_type == reach.c.t, e.from_id == reach.c.i)
+    reach = reach.union(select(case((from_end, e.to_type), else_=e.from_type), case((from_end, e.to_id), else_=e.from_id),
+                               reach.c.d + 1)
+                        .join_from(reach, e, touches(reach.c.t, reach.c.i)).where(reach.c.d < depth - 1))
+    near = select(reach.c.t, reach.c.i).distinct().subquery("near")
+    touching = select(e.id).join_from(near, e, touches(near.c.t, near.c.i))
+    rows = session.execute(select(e.id, e.from_type, e.from_id, e.relation, e.to_type, e.to_id)
+                           .where(e.id.in_(touching)).order_by(e.id)).all()
+    nodes = {node} | {(r.from_type, r.from_id) for r in rows} | {(r.to_type, r.to_id) for r in rows}
+    return {"nodes": [{"type": t, "id": i} for t, i in sorted(nodes)],
+            "edges": [{"from": [r.from_type, r.from_id], "relation": r.relation, "to": [r.to_type, r.to_id]}
+                      for r in rows]}
