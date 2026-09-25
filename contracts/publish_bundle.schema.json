@@ -1,0 +1,420 @@
+{
+  "$defs": {
+    "ChartSpec": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "chart_type": {
+          "enum": [
+            "kpi",
+            "line",
+            "bar",
+            "stacked_bar",
+            "histogram",
+            "scatter",
+            "heatmap",
+            "table",
+            "pie",
+            "treemap"
+          ],
+          "title": "Chart Type",
+          "type": "string"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "dataset": {
+          "title": "Dataset",
+          "type": "string"
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric"
+        },
+        "metrics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimension"
+        },
+        "series": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Series"
+        },
+        "time_grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Grain"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filters",
+          "type": "array"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limit"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "insight_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Insight Codes",
+          "type": "array"
+        },
+        "rationale": {
+          "default": "",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "preview": {
+          "additionalProperties": true,
+          "title": "Preview",
+          "type": "object"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "chart_type",
+        "intent",
+        "dataset"
+      ],
+      "title": "ChartSpec",
+      "type": "object"
+    },
+    "DashboardSpec": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "audience": {
+          "enum": [
+            "executive",
+            "operational"
+          ],
+          "title": "Audience",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "charts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Charts",
+          "type": "array"
+        },
+        "layout": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Layout",
+          "type": "array"
+        },
+        "native_filters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Native Filters",
+          "type": "array"
+        },
+        "summary_markdown": {
+          "default": "",
+          "title": "Summary Markdown",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "audience",
+        "charts"
+      ],
+      "title": "DashboardSpec",
+      "type": "object"
+    },
+    "DatasetDef": {
+      "description": "A reusable analytical dataset: a governed SELECT (virtual dataset; no source writes in MVP).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "sql": {
+          "title": "Sql",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "time_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Column"
+        },
+        "source_assets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Assets",
+          "type": "array"
+        },
+        "row_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Count"
+        }
+      },
+      "required": [
+        "name",
+        "sql"
+      ],
+      "title": "DatasetDef",
+      "type": "object"
+    },
+    "MetricDef": {
+      "description": "Semantic metric (\u00a724). `sql_expression` is an aggregate over the dataset columns.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "definition": {
+          "title": "Definition",
+          "type": "string"
+        },
+        "sql_expression": {
+          "title": "Sql Expression",
+          "type": "string"
+        },
+        "format": {
+          "default": "number",
+          "enum": [
+            "number",
+            "percent",
+            "hours",
+            "currency"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "grain": {
+          "default": "",
+          "title": "Grain",
+          "type": "string"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filters",
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner"
+        },
+        "source_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Columns",
+          "type": "array"
+        },
+        "validation": {
+          "additionalProperties": true,
+          "title": "Validation",
+          "type": "object"
+        },
+        "status": {
+          "default": "proposed",
+          "enum": [
+            "proposed",
+            "validated",
+            "approved"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "display_name",
+        "definition",
+        "sql_expression"
+      ],
+      "title": "MetricDef",
+      "type": "object"
+    }
+  },
+  "description": "Exactly what gets published. Its hash is what an approval binds to.",
+  "properties": {
+    "workspace_id": {
+      "title": "Workspace Id",
+      "type": "string"
+    },
+    "destination": {
+      "default": "superset",
+      "enum": [
+        "superset",
+        "powerbi",
+        "preview"
+      ],
+      "title": "Destination",
+      "type": "string"
+    },
+    "datasets": {
+      "items": {
+        "$ref": "#/$defs/DatasetDef"
+      },
+      "title": "Datasets",
+      "type": "array"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/MetricDef"
+      },
+      "title": "Metrics",
+      "type": "array"
+    },
+    "charts": {
+      "items": {
+        "$ref": "#/$defs/ChartSpec"
+      },
+      "title": "Charts",
+      "type": "array"
+    },
+    "dashboards": {
+      "items": {
+        "$ref": "#/$defs/DashboardSpec"
+      },
+      "title": "Dashboards",
+      "type": "array"
+    }
+  },
+  "required": [
+    "workspace_id",
+    "datasets",
+    "metrics",
+    "charts",
+    "dashboards"
+  ],
+  "title": "PublishBundle",
+  "type": "object"
+}

@@ -1,0 +1,27 @@
+agent:
+  id: critic
+  version: '1.0'
+  name: REV Critic Agent
+  description: 'Reason -> Evaluate -> Verify: challenges each finding, checks method fit, sample size, multiple-testing-adjusted
+    significance and overreach, re-runs the query, applies an independent second method and records an independent-model-family
+    opinion.'
+  capabilities:
+  - verification
+  - reproducibility
+  - contradiction_detection
+  skills:
+  - significance_testing
+  - confidence_interval
+  tools:
+  - analysis.verify
+  - sql.execute
+  - artifact.write
+  model_profile: independent_model_family
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

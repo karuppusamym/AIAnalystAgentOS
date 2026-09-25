@@ -1,0 +1,63 @@
+{
+  "description": "A reusable analytical dataset: a governed SELECT (virtual dataset; no source writes in MVP).",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "sql": {
+      "title": "Sql",
+      "type": "string"
+    },
+    "columns": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "time_column": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Time Column"
+    },
+    "source_assets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Assets",
+      "type": "array"
+    },
+    "row_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Row Count"
+    }
+  },
+  "required": [
+    "name",
+    "sql"
+  ],
+  "title": "DatasetDef",
+  "type": "object"
+}

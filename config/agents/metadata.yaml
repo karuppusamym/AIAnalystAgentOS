@@ -1,0 +1,28 @@
+agent:
+  id: metadata
+  version: '1.0'
+  name: Metadata Agent
+  description: Discovers schemas, tables, columns, keys, row counts and freshness for the selected assets and infers
+    candidate relationships.
+  capabilities:
+  - schema_discovery
+  - relationship_detection
+  - source_statistics
+  skills:
+  - schema_discovery
+  - relationship_detection
+  - column_semantics
+  tools:
+  - metadata.read
+  - relationships.discover
+  - sql.execute
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

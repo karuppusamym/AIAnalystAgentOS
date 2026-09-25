@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "Derivation": {
+      "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)",
+      "properties": {
+        "type": {
+          "default": "column",
+          "enum": [
+            "column",
+            "duration_hours",
+            "after_hours",
+            "bucket",
+            "equals",
+            "is_true",
+            "date_trunc",
+            "hour_of_day",
+            "day_of_week"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "end_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Column"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "edges": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Edges"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "start_hour": {
+          "default": 8,
+          "title": "Start Hour",
+          "type": "integer"
+        },
+        "end_hour": {
+          "default": 18,
+          "title": "End Hour",
+          "type": "integer"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "Derivation",
+      "type": "object"
+    },
+    "Filter": {
+      "properties": {
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "=",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "in",
+            "not in",
+            "is null",
+            "is not null"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "origin": {
+          "default": "plan",
+          "enum": [
+            "plan",
+            "user_redirect",
+            "policy"
+          ],
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "column",
+        "op"
+      ],
+      "title": "Filter",
+      "type": "object"
+    }
+  },
+  "description": "method:\nrate_by_segment      outcome boolean rate across segment groups           -> chi-square (+ logistic check)\nnumeric_by_segment   outcome numeric across segment groups                -> Mann-Whitney / Kruskal-Wallis\ntrend                outcome (count or numeric mean) over time            -> linear trend + change point\npareto               share of volume by segment                           -> concentration (top-k share, Gini)\ncorrelation          numeric vs numeric                                   -> Spearman (+ Pearson)\ndriver_model         boolean outcome vs several drivers                   -> logistic regression + feature importance",
+  "properties": {
+    "method": {
+      "enum": [
+        "rate_by_segment",
+        "numeric_by_segment",
+        "trend",
+        "pareto",
+        "correlation",
+        "driver_model"
+      ],
+      "title": "Method",
+      "type": "string"
+    },
+    "asset": {
+      "title": "Asset",
+      "type": "string"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Derivation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "segment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Derivation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "drivers": {
+      "items": {
+        "$ref": "#/$defs/Derivation"
+      },
+      "title": "Drivers",
+      "type": "array"
+    },
+    "time": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Derivation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "filters": {
+      "items": {
+        "$ref": "#/$defs/Filter"
+      },
+      "title": "Filters",
+      "type": "array"
+    },
+    "min_group_size": {
+      "default": 30,
+      "title": "Min Group Size",
+      "type": "integer"
+    },
+    "top_k": {
+      "default": 12,
+      "title": "Top K",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "method",
+    "asset"
+  ],
+  "title": "AnalysisSpec",
+  "type": "object"
+}

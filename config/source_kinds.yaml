@@ -1,0 +1,356 @@
+# Source-kind catalog (data plane). Read by analystos.connectors.kinds.
+#
+# Every SQL kind is served by connectors/generic_sql.py through SQLAlchemy; servicenow and csv keep
+# their dedicated connectors. The fields:
+#
+#   url_template     SQLAlchemy URL with {placeholders}. Credentials and every placeholder value are
+#                    URL-escaped by kinds.build_url; query parameters that render empty are dropped,
+#                    and ":{password}" is removed when the kind's secret is optional and absent.
+#   required         config keys that must be present (the secret is never a config key).
+#   secret           the credential, always supplied through Source.secret_ref (env:NAME / file:/path),
+#                    resolved just in time and never logged. `encoding: base64` (BigQuery) encodes the
+#                    resolved value (a service-account JSON) before it enters the URL.
+#   driver           python modules that must import, the pip packages, and the analystos[extra].
+#   sqlglot_dialect  the source's native dialect. Pushdown (querying in place through the gateway) is
+#                    allowed ONLY when it is one the analysis compiler and validator speak for pushdown
+#                    (postgres, tsql). Every other SQL kind is staged: extracted with a read-only
+#                    session into the analytics DB and queried there in the postgres dialect.
+#   session_sql      readonly: run on every connection the connector opens (discover/extract) and by
+#                    the gateway before pushdown queries. Kinds with an empty list have no session-level
+#                    read-only switch: the configured identity MUST be least-privilege (SELECT only).
+#                    timeout: statement timeout; {timeout_ms} / {timeout_s} are substituted.
+#   connect_args     static DBAPI connect() arguments (e.g. DuckDB read_only).
+#   connect_timeout_arg  DBAPI connect() argument that bounds connection time (seconds).
+#   row_estimate     cheap statistics strategy used by discovery (see generic_sql.ROW_ESTIMATES);
+#                    `none` reports unknown rather than scanning.
+#   catalog          metadata strategy: `inspector` (SQLAlchemy Inspector) or `duckdb` (duckdb_*()
+#                    table functions; duckdb-engine's reflection is not reliable on SQLAlchemy 2.1).
+#   system_schemas   fnmatch patterns (case-insensitive) never discovered.
+#   default_schemas  schemas used when config.schemas is absent; null = every non-system schema.
+
+kinds:
+  postgres:
+    label: PostgreSQL
+    category: database
+    url_template: "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}?connect_timeout={connect_timeout}&sslmode={sslmode}"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables, sslmode, connect_timeout]
+    secret: {field: password, required: true}
+    default_port: 5432
+    driver: {modules: [psycopg], packages: ["psycopg[binary]"], extra: null}
+    sqlglot_dialect: postgres
+    session_sql:
+      readonly: ["SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"]
+      timeout: ["SET statement_timeout = {timeout_ms}"]
+    connect_timeout_arg: null
+    row_estimate: pg_class
+    catalog: inspector
+    system_schemas: [pg_catalog, information_schema, pg_toast, "pg_temp_*", "pg_toast_temp_*"]
+    default_schemas: null
+    docs: >-
+      Pushdown. Use a login with USAGE on the schemas and SELECT on the tables (ideally
+      default_transaction_read_only=on); the gateway also opens every query READ ONLY with a
+      statement_timeout.
+
+  redshift:
+    label: Amazon Redshift
+    category: warehouse
+    url_template: "redshift+psycopg2://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables, sslmode]
+    secret: {field: password, required: true}
+    default_port: 5439
+    driver: {modules: [sqlalchemy_redshift, psycopg2], packages: [sqlalchemy-redshift, psycopg2-binary], extra: redshift}
+    sqlglot_dialect: redshift
+    session_sql:
+      readonly: []
+      timeout: ["SET statement_timeout TO {timeout_ms}"]
+    connect_timeout_arg: connect_timeout
+    row_estimate: redshift_svv_table_info
+    catalog: inspector
+    system_schemas: [pg_catalog, information_schema, pg_internal, catalog_history, "pg_temp_*", "pg_automv"]
+    default_schemas: null
+    docs: >-
+      Staged (Redshift SQL is not a pushdown dialect of the analysis compiler). No session read-only
+      switch: grant the login SELECT only.
+
+  mysql:
+    label: MySQL
+    category: database
+    url_template: "mysql+pymysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables]
+    secret: {field: password, required: true}
+    default_port: 3306
+    driver: {modules: [pymysql], packages: [pymysql], extra: mysql}
+    sqlglot_dialect: mysql
+    session_sql:
+      readonly: ["SET SESSION TRANSACTION READ ONLY"]
+      timeout: ["SET SESSION MAX_EXECUTION_TIME = {timeout_ms}"]
+    connect_timeout_arg: connect_timeout
+    row_estimate: mysql_information_schema
+    catalog: inspector
+    system_schemas: [mysql, information_schema, performance_schema, sys]
+    default_schemas: ["{database}"]
+    docs: >-
+      Staged. A MySQL "schema" is a database; config.schemas may list several databases the login can
+      read. Grant SELECT (and SHOW VIEW for views) only.
+
+  mariadb:
+    label: MariaDB
+    category: database
+    url_template: "mariadb+pymysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables]
+    secret: {field: password, required: true}
+    default_port: 3306
+    driver: {modules: [pymysql], packages: [pymysql], extra: mysql}
+    sqlglot_dialect: mysql
+    session_sql:
+      readonly: ["SET SESSION TRANSACTION READ ONLY"]
+      timeout: ["SET SESSION max_statement_time = {timeout_s}"]
+    connect_timeout_arg: connect_timeout
+    row_estimate: mysql_information_schema
+    catalog: inspector
+    system_schemas: [mysql, information_schema, performance_schema, sys]
+    default_schemas: ["{database}"]
+    docs: "Staged. Same identity rules as MySQL."
+
+  sqlserver:
+    label: Microsoft SQL Server
+    category: database
+    url_template: "mssql+pymssql://{username}:{password}@{host}:{port}/{database}?login_timeout={connect_timeout}"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables, connect_timeout]
+    secret: {field: password, required: true}
+    default_port: 1433
+    driver: {modules: [pymssql], packages: [pymssql], extra: sqlserver}
+    sqlglot_dialect: tsql
+    session_sql:
+      readonly: []
+      timeout: []
+    timeout_url_param: timeout
+    connect_timeout_arg: null
+    row_estimate: sqlserver_partition_stats
+    catalog: inspector
+    system_schemas: [sys, INFORMATION_SCHEMA, guest, "db_*"]
+    default_schemas: [dbo]
+    docs: >-
+      Pushdown (tsql). SQL Server has no session read-only switch: the login MUST be a least-privilege
+      reader (db_datareader or explicit SELECT grants). The query timeout is the driver's `timeout`.
+
+  oracle:
+    label: Oracle Database
+    category: database
+    url_template: "oracle+oracledb://{username}:{password}@{host}:{port}/?service_name={database}"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables]
+    secret: {field: password, required: true}
+    default_port: 1521
+    driver: {modules: [oracledb], packages: [oracledb], extra: oracle}
+    sqlglot_dialect: oracle
+    session_sql:
+      readonly: []
+      timeout: []
+    connect_timeout_arg: tcp_connect_timeout
+    row_estimate: oracle_all_tables
+    catalog: inspector
+    system_schemas: [SYS, SYSTEM, OUTLN, XDB, DBSNMP, APPQOSSYS, CTXSYS, DVSYS, DVF, GSMADMIN_INTERNAL, LBACSYS, MDSYS,
+                     OJVMSYS, OLAPSYS, ORDDATA, ORDSYS, ORDPLUGINS, SI_INFORMTN_SCHEMA, WMSYS, AUDSYS, DBSFWUSER,
+                     REMOTE_SCHEDULER_AGENT, GGSYS, ANONYMOUS, ORACLE_OCM, XS$NULL, MDDATA, DIP, "GSM*", "SYSBACKUP",
+                     "SYSDG", "SYSKM", "SYSRAC", "SYS$UMF", "APEX_*", "FLOWS_*", PUBLIC]
+    default_schemas: ["{username}"]
+    docs: >-
+      Staged. config.database is the service name. No session-level read-only switch is applied:
+      grant the user CREATE SESSION and SELECT on the tables only.
+
+  snowflake:
+    label: Snowflake
+    category: warehouse
+    url_template: "snowflake://{username}:{password}@{account}/{database}/{schema}?warehouse={warehouse}&role={role}"
+    required: [account, database, username]
+    optional: [schema, warehouse, role, schemas, include, exclude, max_tables]
+    secret: {field: password, required: true}
+    default_port: null
+    driver: {modules: [snowflake.sqlalchemy], packages: [snowflake-sqlalchemy], extra: snowflake}
+    sqlglot_dialect: snowflake
+    session_sql:
+      readonly: []
+      timeout: ["ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {timeout_s}"]
+    connect_timeout_arg: login_timeout
+    row_estimate: snowflake_information_schema
+    catalog: inspector
+    system_schemas: [information_schema]
+    default_schemas: null
+    docs: >-
+      Staged. Use a role granted only USAGE on the warehouse/database/schemas and SELECT on the tables;
+      Snowflake has no session read-only switch.
+
+  bigquery:
+    label: Google BigQuery
+    category: warehouse
+    url_template: "bigquery://{project}/{database}?credentials_base64={password}"
+    required: [project]
+    optional: [database, schemas, include, exclude, max_tables]
+    secret: {field: credentials_json, required: false, encoding: base64}
+    default_port: null
+    driver: {modules: [sqlalchemy_bigquery], packages: [sqlalchemy-bigquery], extra: bigquery}
+    sqlglot_dialect: bigquery
+    session_sql:
+      readonly: []
+      timeout: []
+    connect_timeout_arg: null
+    row_estimate: none
+    catalog: inspector
+    system_schemas: [INFORMATION_SCHEMA]
+    default_schemas: null
+    docs: >-
+      Staged. config.database is the default dataset; schemas are datasets. The secret is a
+      least-privilege service-account JSON (secret_ref file:/path) with roles/bigquery.dataViewer + jobUser only;
+      without a secret, application-default credentials are used.
+
+  databricks:
+    label: Databricks SQL
+    category: lakehouse
+    url_template: "databricks://token:{password}@{host}?http_path={http_path}&catalog={catalog}&schema={schema}"
+    required: [host, http_path]
+    optional: [catalog, schema, schemas, include, exclude, max_tables]
+    secret: {field: token, required: true}
+    default_port: 443
+    driver: {modules: [databricks.sqlalchemy], packages: [databricks-sqlalchemy], extra: databricks}
+    sqlglot_dialect: databricks
+    session_sql:
+      readonly: []
+      timeout: []
+    connect_timeout_arg: null
+    row_estimate: none
+    catalog: inspector
+    system_schemas: [information_schema]
+    default_schemas: null
+    docs: >-
+      Staged. Use a personal access token of a service principal with USE CATALOG / USE SCHEMA /
+      SELECT only (Unity Catalog); no session read-only switch.
+
+  trino:
+    label: Trino / Starburst
+    category: engine
+    url_template: "trino://{username}:{password}@{host}:{port}/{catalog}?http_scheme={http_scheme}"
+    required: [host, catalog, username]
+    optional: [port, http_scheme, schemas, include, exclude, max_tables]
+    secret: {field: password, required: false}
+    default_port: 8080
+    driver: {modules: [trino.sqlalchemy], packages: [trino], extra: trino}
+    sqlglot_dialect: trino
+    session_sql:
+      readonly: []
+      timeout: ["SET SESSION query_max_execution_time = '{timeout_s}s'"]
+    connect_timeout_arg: null
+    row_estimate: none
+    catalog: inspector
+    system_schemas: [information_schema, "$*"]
+    default_schemas: null
+    docs: >-
+      Staged. Password authentication requires http_scheme=https. Restrict the user with Trino
+      access control (read-only catalog rules); there is no session read-only switch.
+
+  clickhouse:
+    label: ClickHouse
+    category: database
+    url_template: "clickhouse+http://{username}:{password}@{host}:{port}/{database}"
+    required: [host, database, username]
+    optional: [port, schemas, include, exclude, max_tables]
+    secret: {field: password, required: false}
+    default_port: 8123
+    driver: {modules: [clickhouse_sqlalchemy], packages: [clickhouse-sqlalchemy], extra: clickhouse}
+    sqlglot_dialect: clickhouse
+    session_sql:
+      readonly: []
+      timeout: []
+    connect_timeout_arg: null
+    row_estimate: clickhouse_system_tables
+    catalog: inspector
+    system_schemas: [system, information_schema, INFORMATION_SCHEMA]
+    default_schemas: ["{database}"]
+    docs: >-
+      Staged. Give the user a settings profile with readonly=1 (or 2) and max_execution_time; the
+      HTTP interface is stateless, so session SET statements are not relied on.
+
+  duckdb:
+    label: DuckDB file
+    category: file
+    url_template: "duckdb:///{path}"
+    required: [path]
+    optional: [schemas, include, exclude, max_tables]
+    secret: null
+    default_port: null
+    driver: {modules: [duckdb, duckdb_engine], packages: [duckdb-engine], extra: duckdb}
+    sqlglot_dialect: duckdb
+    session_sql:
+      readonly: []
+      timeout: []
+    connect_args: {read_only: true}
+    connect_timeout_arg: null
+    row_estimate: duckdb_estimated_size
+    catalog: duckdb
+    system_schemas: [information_schema, pg_catalog]
+    default_schemas: null
+    docs: >-
+      Staged. config.path must be inside the upload directory; the file is opened read_only.
+
+  sqlite:
+    label: SQLite file
+    category: file
+    url_template: "sqlite:///file:{path}?mode=ro&uri=true"
+    required: [path]
+    optional: [schemas, include, exclude, max_tables, row_count_cap]
+    secret: null
+    default_port: null
+    driver: {modules: [sqlite3], packages: [], extra: null}
+    sqlglot_dialect: sqlite
+    session_sql:
+      readonly: ["PRAGMA query_only = ON"]
+      timeout: []
+    connect_timeout_arg: null
+    row_estimate: count_capped
+    catalog: inspector
+    system_schemas: []
+    default_schemas: [main]
+    docs: >-
+      Staged. config.path must be inside the upload directory; the file is opened mode=ro with
+      query_only on.
+
+  servicenow:
+    label: ServiceNow
+    category: api
+    url_template: null
+    required: [username]
+    optional: [instance_url, tables, page_size, max_rows]
+    secret: {field: password, required: false}
+    default_port: null
+    driver: {modules: [httpx], packages: [], extra: null}
+    sqlglot_dialect: postgres
+    session_sql: {readonly: [], timeout: []}
+    connect_timeout_arg: null
+    row_estimate: none
+    catalog: none
+    system_schemas: []
+    default_schemas: null
+    docs: "Staged through the Table API (connectors/servicenow.py)."
+
+  csv:
+    label: Files (CSV / Parquet / Excel)
+    category: file
+    url_template: null
+    required: [path]
+    optional: [delimiter, sheet, max_rows]
+    secret: null
+    default_port: null
+    driver: {modules: [polars], packages: [], extra: null}
+    sqlglot_dialect: postgres
+    session_sql: {readonly: [], timeout: []}
+    connect_timeout_arg: null
+    row_estimate: none
+    catalog: none
+    system_schemas: []
+    default_schemas: null
+    docs: "Staged from the upload directory (connectors/csv_file.py). `file` is an alias."

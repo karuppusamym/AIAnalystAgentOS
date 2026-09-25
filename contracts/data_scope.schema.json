@@ -1,0 +1,84 @@
+{
+  "description": "The resolved, server-side authorized scope carried through a run (\u00a712.2 invariants).\n\nassets: fully qualified \"schema.table\" names the caller may reference.\ndenied_columns: \"schema.table.column\" never readable (restricted + PII without clearance).",
+  "properties": {
+    "workspace_id": {
+      "title": "Workspace Id",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "source_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Ids",
+      "type": "array"
+    },
+    "assets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assets",
+      "type": "array"
+    },
+    "asset_sources": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Asset Sources",
+      "type": "object"
+    },
+    "denied_columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Denied Columns",
+      "type": "array"
+    },
+    "columns": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Columns",
+      "type": "object"
+    },
+    "source_dialects": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Dialects",
+      "type": "object"
+    },
+    "max_rows": {
+      "default": 50000,
+      "title": "Max Rows",
+      "type": "integer"
+    },
+    "timeout_seconds": {
+      "default": 30,
+      "title": "Timeout Seconds",
+      "type": "integer"
+    },
+    "policy_version": {
+      "default": 1,
+      "title": "Policy Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "workspace_id",
+    "user_id",
+    "role"
+  ],
+  "title": "DataScope",
+  "type": "object"
+}

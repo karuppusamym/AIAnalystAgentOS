@@ -1,0 +1,27 @@
+agent:
+  id: visualization
+  version: '1.0'
+  name: Visualization Agent
+  description: Selects chart types from intent and data shape (rules + JEV choice), configures encodings, filters
+    and drill paths, and lays out executive and operational dashboards.
+  capabilities:
+  - chart_selection
+  - dashboard_layout
+  skills:
+  - chart_selection
+  - dashboard_layout
+  - executive_dashboard
+  - operational_dashboard
+  tools:
+  - viz.chart
+  - sql.execute
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

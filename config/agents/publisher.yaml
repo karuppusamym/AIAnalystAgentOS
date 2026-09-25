@@ -1,0 +1,24 @@
+agent:
+  id: publisher
+  version: '1.0'
+  name: BI Publisher Agent
+  description: Packages datasets, metrics, charts and dashboards into an immutable publish bundle, requests approval
+    bound to its hash, and publishes idempotently to Superset.
+  capabilities:
+  - publishing
+  skills:
+  - executive_dashboard
+  - operational_dashboard
+  tools:
+  - superset.publish
+  - preview.publish
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

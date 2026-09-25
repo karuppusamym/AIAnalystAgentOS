@@ -1,0 +1,37 @@
+agent:
+  id: data_scientist
+  version: '1.0'
+  name: Data Scientist Agent
+  description: 'Executes statistical tests and ML-lite methods on governed query results: chi-square, Mann-Whitney/Kruskal,
+    correlation, logistic regression, feature importance, trend and change-point, Pareto.'
+  capabilities:
+  - segmentation
+  - statistical_testing
+  - regression
+  - classification
+  - trend
+  - anomaly_detection
+  skills:
+  - chi_square
+  - t_test
+  - anova
+  - nonparametric_test
+  - correlation
+  - logistic_regression
+  - feature_importance
+  - trend_analysis
+  - pareto_analysis
+  tools:
+  - analysis.run
+  - sql.execute
+  - python.execute
+  - artifact.write
+  model_profile: analytical_reasoning
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: true
+  phase: mvp

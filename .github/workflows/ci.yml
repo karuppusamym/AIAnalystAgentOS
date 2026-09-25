@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: analystos
+          POSTGRES_PASSWORD: analystos
+          POSTGRES_DB: analystos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U analystos" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      ANALYSTOS_ORCHESTRATOR: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv -p 3.11 .venv && uv pip install -e ".[dev,mysql,duckdb]"
+      - name: Initialise databases and roles (same scripts as compose)
+        env: {PGPASSWORD: analystos}
+        run: |
+          psql -h localhost -U analystos -d analystos -f deploy/postgres/01-init.sql
+          POSTGRES_USER=analystos PGHOST=localhost sh deploy/postgres/02-extensions.sh
+      - run: .venv/bin/ruff check src tests
+      - run: .venv/bin/pytest -q -m "not integration"
+      - run: .venv/bin/analystos migrate
+      - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
+        run: .venv/bin/pytest -q -m integration
+
+  web:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: web}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

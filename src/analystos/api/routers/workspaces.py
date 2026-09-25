@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, File, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from analystos.api.deps import current_user, db
+from analystos.api.serialize import row, rows
+from analystos.core.config import get_settings
+from analystos.core.errors import InvalidInput
+from analystos.db.models import (
+    AnalysisRun,
+    Artifact,
+    AuditEvent,
+    Insight,
+    Relationship,
+    Source,
+    SourceAsset,
+    SourceColumn,
+    User,
+    WorkspaceMember,
+)
+from analystos.events.bus import list_events
+from analystos.governance.policy import get_workspace, load_policy, require_role
+from analystos.services import sources as source_svc
+from analystos.services import workspaces as ws_svc
+
+router = APIRouter(prefix="/api", tags=["workspaces"])
+# Files and file databases (sqlite/duckdb kinds read them in place, inside the upload directory only).
+UPLOAD_EXTENSIONS = (".csv", ".parquet", ".xlsx", ".db", ".sqlite", ".sqlite3", ".duckdb")
+
+
+class WorkspaceIn(BaseModel):
+    name: str
+    description: str = ""
+    objective: str = ""
+    autonomy_level: int = 3
+    policy: dict | None = None
+
+
+class WorkspacePatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    objective: str | None = None
+    autonomy_level: int | None = None
+    settings: dict | None = None
+
+
+class MemberIn(BaseModel):
+    email: str
+    role: str
+
+
+class SourceIn(BaseModel):
+    kind: str
+    name: str
+    config: dict = {}
+    secret_ref: str | None = None
+
+
+class Selection(BaseModel):
+    assets: list[str]
+
+
+class TagsIn(BaseModel):
+    tags: list[str]
+
+
+def _summary(session: Session, ws) -> dict:
+    counts = {t: session.scalar(select(func.count()).select_from(Artifact).where(Artifact.workspace_id == ws.id, Artifact.type == t))
+              for t in ("query", "dataset", "metric", "chart", "dashboard")}
+    counts["runs"] = session.scalar(select(func.count()).select_from(AnalysisRun).where(AnalysisRun.workspace_id == ws.id))
+    counts["verified_insights"] = session.scalar(select(func.count()).select_from(Insight).where(
+        Insight.workspace_id == ws.id, Insight.status == "verified"))
+    counts["sources"] = session.scalar(select(func.count()).select_from(Source).where(Source.workspace_id == ws.id))
+    return {**row(ws), "counts": counts}
+
+
+@router.post("/workspaces")
+def create(body: WorkspaceIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    ws = ws_svc.create_workspace(session, session.merge(user), **body.model_dump())
+    session.flush()
+    return row(ws)
+
+
+@router.get("/workspaces")
+def list_(user: User = Depends(current_user), session: Session = Depends(db)):
+    return [_summary(session, ws) for ws in ws_svc.list_workspaces(session, user)]
+
+
+@router.get("/workspaces/{workspace_id}")
+def get(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    role = require_role(session, user, workspace_id, "viewer")
+    ws = get_workspace(session, workspace_id)
+    return {**_summary(session, ws), "role": role, "policy": load_policy(session, ws).model_dump(),
+            "members": [{"user_id": m.user_id, "role": m.role, "email": u.email, "name": u.name} for m, u in session.execute(
+                select(WorkspaceMember, User).join(User, User.id == WorkspaceMember.user_id)
+                .where(WorkspaceMember.workspace_id == workspace_id)).all()]}
+
+
+@router.patch("/workspaces/{workspace_id}")
+def patch(workspace_id: str, body: WorkspacePatch, user: User = Depends(current_user), session: Session = Depends(db)):
+    return row(ws_svc.update_workspace(session, user, workspace_id, body.model_dump()))
+
+
+@router.delete("/workspaces/{workspace_id}")
+def delete(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    ws_svc.delete_workspace(session, user, workspace_id)
+    return {"deleted": True}
+
+
+@router.put("/workspaces/{workspace_id}/policy")
+def put_policy(workspace_id: str, body: dict, user: User = Depends(current_user), session: Session = Depends(db)):
+    return {"policy_version": ws_svc.set_policy(session, user, workspace_id, body)}
+
+
+@router.post("/workspaces/{workspace_id}/members")
+def add_member(workspace_id: str, body: MemberIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    m = ws_svc.add_member(session, user, workspace_id, body.email, body.role)
+    return {"user_id": m.user_id, "role": m.role}
+
+
+@router.delete("/workspaces/{workspace_id}/members/{user_id}")
+def remove_member(workspace_id: str, user_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    ws_svc.remove_member(session, user, workspace_id, user_id)
+    return {"removed": True}
+
+
+# --------------------------------------------------------------------------------------- sources
+@router.post("/workspaces/{workspace_id}/sources")
+def add_source(workspace_id: str, body: SourceIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    src = source_svc.register_source(session, user, workspace_id, **body.model_dump())
+    session.flush()
+    return row(src)
+
+
+@router.get("/workspaces/{workspace_id}/sources")
+def list_sources(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "viewer")
+    return rows(session.scalars(select(Source).where(Source.workspace_id == workspace_id).order_by(Source.created_at)))
+
+
+@router.post("/workspaces/{workspace_id}/sources/{source_id}/discover")
+def discover(workspace_id: str, source_id: str, user: User = Depends(current_user)):
+    return source_svc.discover_source(user, source_id)
+
+
+@router.put("/workspaces/{workspace_id}/sources/{source_id}/selection")
+def select_assets(workspace_id: str, source_id: str, body: Selection, user: User = Depends(current_user)):
+    return source_svc.select_assets(user, source_id, body.assets)
+
+
+@router.post("/workspaces/{workspace_id}/uploads")
+async def upload(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "editor")
+    name = (file.filename or "upload.csv").replace("/", "_").replace("..", "_")
+    if not name.lower().endswith(UPLOAD_EXTENSIONS):
+        raise InvalidInput(f"only {', '.join(UPLOAD_EXTENSIONS)} uploads")
+    target = get_settings().upload_dir / workspace_id
+    target.mkdir(parents=True, exist_ok=True)
+    data = await file.read()
+    if len(data) > 200 * 1024 * 1024:
+        raise InvalidInput("file larger than 200 MB")
+    (target / name).write_bytes(data)
+    return {"path": str(target / name), "bytes": len(data)}
+
+
+@router.get("/workspaces/{workspace_id}/assets")
+def assets(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "viewer")
+    out = []
+    for a in session.scalars(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id).order_by(SourceAsset.name)):
+        cols = session.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))
+        out.append({**row(a), "fq": f"{a.schema_name}.{a.name}", "columns": rows(cols)})
+    return out
+
+
+@router.put("/assets/{asset_id}/columns/{column}/tags")
+def tag(asset_id: str, column: str, body: TagsIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    return row(source_svc.tag_column(session, user, asset_id, column, body.tags))
+
+
+@router.get("/workspaces/{workspace_id}/relationships")
+def relationships(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "viewer")
+    names = {a.id: f"{a.schema_name}.{a.name}" for a in session.scalars(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id))}
+    return [{**row(r), "from_asset": names.get(r.from_asset_id), "to_asset": names.get(r.to_asset_id)}
+            for r in session.scalars(select(Relationship).where(Relationship.workspace_id == workspace_id))]
+
+
+@router.get("/workspaces/{workspace_id}/activity")
+def activity(workspace_id: str, after_id: int = 0, limit: int = 200, user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "viewer")
+    return rows(list_events(session, workspace_id=workspace_id, after_id=after_id, limit=min(limit, 1000)))
+
+
+@router.get("/workspaces/{workspace_id}/audit")
+def audit_log(workspace_id: str, limit: int = 200, user: User = Depends(current_user), session: Session = Depends(db)):
+    require_role(session, user, workspace_id, "owner")
+    return rows(session.scalars(select(AuditEvent).where(AuditEvent.workspace_id == workspace_id)
+                                .order_by(AuditEvent.id.desc()).limit(min(limit, 2000))))

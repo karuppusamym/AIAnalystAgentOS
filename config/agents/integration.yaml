@@ -1,0 +1,12 @@
+agent:
+  id: integration
+  version: '0.1'
+  name: Data Integration Agent
+  description: Plans cross-source joins, type alignment, entity matching and federation vs materialization.
+  capabilities:
+  - multi_source_join
+  - entity_matching
+  skills: []
+  tools: []
+  model_profile: analytical_reasoning
+  phase: phase2

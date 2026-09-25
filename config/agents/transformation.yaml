@@ -1,0 +1,12 @@
+agent:
+  id: transformation
+  version: '0.1'
+  name: Transformation Agent
+  description: Generates minimal reusable transformations and materializations.
+  capabilities:
+  - transformation
+  - materialization
+  skills: []
+  tools: []
+  model_profile: coding
+  phase: phase2

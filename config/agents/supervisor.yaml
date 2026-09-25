@@ -1,0 +1,25 @@
+agent:
+  id: supervisor
+  version: '1.0'
+  name: Analytics Supervisor
+  description: Interprets the objective, builds and versions the execution plan, assigns agents, resolves dependencies,
+    replans on user redirects, enforces stop criteria and consolidates results.
+  capabilities:
+  - planning
+  - replanning
+  - progress_tracking
+  - stop_criteria
+  - consolidation
+  skills: []
+  tools:
+  - context.search
+  - artifact.write
+  model_profile: reasoning_strong
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

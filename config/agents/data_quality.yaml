@@ -1,0 +1,24 @@
+agent:
+  id: data_quality
+  version: '1.0'
+  name: Data Quality Agent
+  description: Detects missing and invalid values, duplicate keys, broken joins, temporal-order violations, future
+    timestamps and suspicious categories.
+  capabilities:
+  - data_quality
+  skills:
+  - missingness_analysis
+  - uniqueness_analysis
+  tools:
+  - quality.check
+  - sql.execute
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

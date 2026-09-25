@@ -1,0 +1,310 @@
+{
+  "$defs": {
+    "AnalysisSettings": {
+      "properties": {
+        "max_round1_hypotheses": {
+          "default": 8,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Max Round1 Hypotheses",
+          "type": "integer"
+        },
+        "max_followups_per_round": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Max Followups Per Round",
+          "type": "integer"
+        },
+        "min_sample_size": {
+          "default": 100,
+          "maximum": 1000000,
+          "minimum": 30,
+          "title": "Min Sample Size",
+          "type": "integer"
+        },
+        "sample_rows": {
+          "default": 50000,
+          "maximum": 5000000,
+          "minimum": 1000,
+          "title": "Sample Rows",
+          "type": "integer"
+        },
+        "heuristic_hypotheses_sufficient": {
+          "default": 6,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Heuristic Hypotheses Sufficient",
+          "type": "integer"
+        },
+        "max_charts": {
+          "default": 16,
+          "maximum": 60,
+          "minimum": 1,
+          "title": "Max Charts",
+          "type": "integer"
+        }
+      },
+      "title": "AnalysisSettings",
+      "type": "object"
+    },
+    "CrawlSettings": {
+      "properties": {
+        "default_mode": {
+          "default": "incremental",
+          "enum": [
+            "full",
+            "incremental"
+          ],
+          "title": "Default Mode",
+          "type": "string"
+        },
+        "max_tables": {
+          "default": 2000,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Tables",
+          "type": "integer"
+        },
+        "profile_changed_only": {
+          "default": true,
+          "title": "Profile Changed Only",
+          "type": "boolean"
+        },
+        "profile_sample_rows": {
+          "default": 100000,
+          "maximum": 10000000,
+          "minimum": 0,
+          "title": "Profile Sample Rows",
+          "type": "integer"
+        },
+        "llm_enrichment": {
+          "default": false,
+          "title": "Llm Enrichment",
+          "type": "boolean"
+        },
+        "enrichment_batch_tables": {
+          "default": 25,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Enrichment Batch Tables",
+          "type": "integer"
+        },
+        "enrichment_max_columns": {
+          "default": 12,
+          "maximum": 60,
+          "minimum": 1,
+          "title": "Enrichment Max Columns",
+          "type": "integer"
+        },
+        "pii_value_sampling": {
+          "default": true,
+          "title": "Pii Value Sampling",
+          "type": "boolean"
+        }
+      },
+      "title": "CrawlSettings",
+      "type": "object"
+    },
+    "FeatureFlags": {
+      "properties": {
+        "jev_decisions": {
+          "default": true,
+          "title": "Jev Decisions",
+          "type": "boolean"
+        },
+        "superset_publishing": {
+          "default": true,
+          "title": "Superset Publishing",
+          "type": "boolean"
+        },
+        "python_sandbox": {
+          "default": true,
+          "title": "Python Sandbox",
+          "type": "boolean"
+        },
+        "reports": {
+          "default": true,
+          "title": "Reports",
+          "type": "boolean"
+        }
+      },
+      "title": "FeatureFlags",
+      "type": "object"
+    },
+    "LLMSettings": {
+      "description": "How and when models are called.\n\nmode per purpose: off = never call (deterministic path only), auto = deterministic first and call\nthe model only when the deterministic result is insufficient, always = call when available.",
+      "properties": {
+        "purpose_modes": {
+          "additionalProperties": {
+            "enum": [
+              "off",
+              "auto",
+              "always"
+            ],
+            "type": "string"
+          },
+          "title": "Purpose Modes",
+          "type": "object"
+        },
+        "routing_overrides": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Routing Overrides",
+          "type": "object"
+        },
+        "profile_models": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Profile Models",
+          "type": "object"
+        },
+        "disabled_models": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disabled Models",
+          "type": "array"
+        },
+        "cache_enabled": {
+          "default": true,
+          "title": "Cache Enabled",
+          "type": "boolean"
+        },
+        "cache_ttl_hours": {
+          "default": 168,
+          "maximum": 2160,
+          "minimum": 0,
+          "title": "Cache Ttl Hours",
+          "type": "integer"
+        },
+        "cacheable_purposes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Cacheable Purposes",
+          "type": "array"
+        },
+        "max_prompt_tokens": {
+          "default": 16000,
+          "maximum": 400000,
+          "minimum": 500,
+          "title": "Max Prompt Tokens",
+          "type": "integer"
+        },
+        "downgrade_below_budget_fraction": {
+          "default": 0.25,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Downgrade Below Budget Fraction",
+          "type": "number"
+        },
+        "compact_prompts": {
+          "default": true,
+          "title": "Compact Prompts",
+          "type": "boolean"
+        },
+        "catalog_max_columns_per_table": {
+          "default": 30,
+          "maximum": 500,
+          "minimum": 5,
+          "title": "Catalog Max Columns Per Table",
+          "type": "integer"
+        },
+        "catalog_max_tables": {
+          "default": 12,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Catalog Max Tables",
+          "type": "integer"
+        }
+      },
+      "title": "LLMSettings",
+      "type": "object"
+    },
+    "MonitorSettings": {
+      "properties": {
+        "default_lookback": {
+          "default": 8,
+          "maximum": 520,
+          "minimum": 3,
+          "title": "Default Lookback",
+          "type": "integer"
+        },
+        "default_z_threshold": {
+          "default": 3.0,
+          "maximum": 10.0,
+          "minimum": 1.0,
+          "title": "Default Z Threshold",
+          "type": "number"
+        },
+        "triage_escalate_probability": {
+          "default": 0.8,
+          "maximum": 1.0,
+          "minimum": 0.5,
+          "title": "Triage Escalate Probability",
+          "type": "number"
+        },
+        "auto_investigation_enabled": {
+          "default": true,
+          "title": "Auto Investigation Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "MonitorSettings",
+      "type": "object"
+    },
+    "SourceSettings": {
+      "properties": {
+        "enabled_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled Kinds",
+          "type": "array"
+        },
+        "allow_pushdown": {
+          "default": true,
+          "title": "Allow Pushdown",
+          "type": "boolean"
+        },
+        "staged_max_rows": {
+          "default": 1000000,
+          "maximum": 100000000,
+          "minimum": 1000,
+          "title": "Staged Max Rows",
+          "type": "integer"
+        }
+      },
+      "title": "SourceSettings",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "llm": {
+      "$ref": "#/$defs/LLMSettings"
+    },
+    "analysis": {
+      "$ref": "#/$defs/AnalysisSettings"
+    },
+    "crawl": {
+      "$ref": "#/$defs/CrawlSettings"
+    },
+    "monitors": {
+      "$ref": "#/$defs/MonitorSettings"
+    },
+    "sources": {
+      "$ref": "#/$defs/SourceSettings"
+    },
+    "features": {
+      "$ref": "#/$defs/FeatureFlags"
+    }
+  },
+  "title": "PlatformSettings",
+  "type": "object"
+}

@@ -1,0 +1,28 @@
+agent:
+  id: profiler
+  version: '1.0'
+  name: Dataset Profiler Agent
+  description: 'Profiles every selected table with pushdown SQL: cardinality, nulls, distinct values, quantiles,
+    histograms, category frequency, time coverage, duplicates and outlier candidates.'
+  capabilities:
+  - profiling
+  skills:
+  - numeric_profile
+  - categorical_profile
+  - datetime_profile
+  - outlier_detection
+  - uniqueness_analysis
+  - missingness_analysis
+  tools:
+  - profile.table
+  - sql.execute
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp
