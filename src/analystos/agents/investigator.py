@@ -277,6 +277,11 @@ def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key
 
 
 def generate_hypotheses(ctx: RunContext) -> dict:
+    from analystos.registries.replay import replay_settings
+
+    replay = replay_settings(ctx.run)
+    if replay is not None:
+        return replay_hypotheses(ctx, replay)
     types = semantic_types(ctx)
     context = task_output(ctx.run.id, "context")
     quality = task_output(ctx.run.id, "quality").get("issues") or []
@@ -328,6 +333,78 @@ def generate_hypotheses(ctx: RunContext) -> dict:
                                    "domain_packs": pack_refs})
     return {"hypotheses": len(accepted), "tasks": keys, "rejected": rejected, "source": source, "priority_by": by,
             "domain_packs": pack_refs}
+
+
+def replay_hypotheses(ctx: RunContext, settings: dict[str, Any]) -> dict:
+    """Scheduled re-analysis (P4-T05, review C11): re-test the hypothesis registry with no model call,
+    so on unchanged data the run asks the same questions and gets the same answers. No follow-up
+    rounds (the registry already holds the previous rounds' questions). The opt-in novelty round is
+    the only model use, within its own budget; its hypotheses are labelled `novelty`."""
+    from analystos.agents.common import compact_json
+    from analystos.llm.cache import estimate_tokens
+    from analystos.registries.hypotheses import replay_proposals
+
+    types = semantic_types(ctx)
+    previous = (ctx.run.origin or {}).get("previous_run_id")
+    with session_scope() as s:
+        proposals = replay_proposals(s, ctx.workspace.id, previous, ctx.scope.assets, scope=settings["registry_scope"])
+    seen: set[str] = set()
+    accepted, rejected = _accept(ctx, proposals, types, origin="registry", seen=seen)
+    source = "registry"
+    for a in accepted:
+        a["priority_by"] = "registry"
+    if not accepted:  # no usable baseline yet: the rule playbook, still without a model
+        accepted, rejected_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
+                                           origin="heuristic", seen=seen)
+        rejected += rejected_rules
+        _prioritise(ctx, accepted)  # a replay run's router is off for hypothesis_priority: rule ranking
+        accepted = diverse_top(accepted, platform().analysis.max_round1_hypotheses)
+        source = "rules (empty registry)"
+    avoided = {"objective": ctx.run.objective, "catalog": catalog_for_prompt(ctx), "already_testing": [a["statement"] for a in accepted]}
+    ctx.router.record_skip("hypothesis_generation", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(avoided)) + 500,
+                           reason=f"L1 registry: {len(accepted)} registered hypotheses replayed")
+    novel: list[dict] = []
+    if settings["novelty"]["enabled"]:
+        novel, rejected_novel = _novelty_round(ctx, types, seen, settings["novelty"], avoided)
+        rejected += rejected_novel
+    for r in rejected:
+        ctx.say(f"Not replayed: '{(r.get('statement') or '')[:100]}': {r['reason']}", kind="decision")
+    keys = _persist(ctx, accepted + novel, iteration=1, round_key="hypotheses")
+    novelty_note = f"novelty round added {len(novel)} new questions" if settings["novelty"]["enabled"] else "novelty round off"
+    ctx.say(f"Scheduled re-analysis: replayed {len(accepted)} hypotheses (source: {source}; no model call); {novelty_note}; "
+            f"{len(rejected)} not replayed.", kind="decision")
+    return {"hypotheses": len(keys), "tasks": keys, "rejected": rejected, "source": source, "priority_by": "registry",
+            "replayed": len(accepted), "novelty": len(novel)}
+
+
+def _purpose_spend(run_id: str, purpose: str) -> float:
+    from analystos.db.models import ModelCall
+
+    with session_scope() as s:
+        return float(s.scalar(select(func.coalesce(func.sum(ModelCall.cost_usd), 0.0)).where(
+            ModelCall.run_id == run_id, ModelCall.purpose == purpose)) or 0.0)
+
+
+def _novelty_round(ctx: RunContext, types, seen: set[str], novelty: dict[str, Any],
+                   payload: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """Opt-in exploration: at most one model call, and only while the round's USD budget lasts."""
+    budget = novelty["llm_budget_usd"]
+    if _purpose_spend(ctx.run.id, "hypothesis_generation") >= budget:
+        ctx.say(f"Novelty round skipped: its budget (${budget:.4f}) is used up.", kind="decision")
+        return [], []
+    data, model = llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1",
+                           {**payload, "max_new_hypotheses": novelty["max_hypotheses"],
+                            "instruction": "Propose only questions that are not in already_testing."}, max_tokens=3000)
+    props = [{**p, "origin": "novelty"} for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] \
+        if isinstance(data, dict) else []
+    accepted, rejected = _accept(ctx, props, types, origin="novelty", seen=seen)
+    accepted = accepted[:novelty["max_hypotheses"]]
+    for a in accepted:
+        a.update(priority="low", priority_score=0.3, priority_by=f"novelty:{model}")
+    spent = _purpose_spend(ctx.run.id, "hypothesis_generation")
+    if spent > budget:
+        ctx.say(f"Novelty round spent ${spent:.4f}, above its ${budget:.4f} budget.", kind="decision")
+    return accepted, rejected
 
 
 def carried_forward(ctx: RunContext) -> list[dict]:

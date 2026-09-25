@@ -21,6 +21,7 @@
   "feedback.received",
   "hypothesis.created",
   "hypothesis.updated",
+  "hypothesis_registry.updated",
   "insight.created",
   "insight.verified",
   "mcp.server.refreshed",
@@ -45,6 +46,8 @@
   "settings.updated",
   "source.connected",
   "task.updated",
+  "verified_query.promoted",
+  "verified_query.updated",
   "workspace.created",
   "workspace.updated"
 ]

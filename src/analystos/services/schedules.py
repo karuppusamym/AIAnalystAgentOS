@@ -55,6 +55,10 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
         raise InvalidInput("config.report must be an object like {kind, formats}")
     if config.get("publish", "skip") not in ("skip", "propose"):
         raise InvalidInput("config.publish must be skip or propose (publication always needs an approval)")
+    if kind == "reanalysis":
+        from analystos.registries.replay import validate_schedule_config
+
+        validate_schedule_config(config)
 
 
 def create_schedule(session: Session, user: User, workspace_id: str, *, name: str, kind: str, cron: str, timezone: str = "UTC",
@@ -229,10 +233,15 @@ def _reanalysis(owner: User, workspace_id: str, schedule_id: str, srun_id: str, 
     from analystos.services.runs import create_run
 
     refreshed = _refresh(owner, workspace_id, schedule_id, srun_id, config) if config.get("refresh_first", True) else {}
+    from analystos.registries.replay import novelty_config
+
     previous = _previous_run(workspace_id, schedule_id)
+    # Replay (default): the run re-tests the hypothesis registry with no model call; novelty is opt-in (P4-T05).
     run = create_run(owner, workspace_id, objective=config.get("objective"), source_ids=config.get("source_ids"),
                      origin={"type": "schedule", "schedule_id": schedule_id, "schedule_run_id": srun_id,
                              "previous_run_id": previous, "publish": config.get("publish", "skip"),
+                             "replay": bool(config.get("replay", True)), "novelty": novelty_config(config.get("novelty")),
+                             "registry_scope": config.get("registry_scope", "previous_run"),
                              "report": config.get("report", {"kind": "weekly_summary", "formats": ["html", "pdf", "xlsx"]})})
     return {"_pending": True, "run_id": run.id, "previous_run_id": previous, "refreshed": refreshed}
 
@@ -280,7 +289,7 @@ def complete_from_run(run_id: str) -> None:
     if status == "COMPLETED":
         changes = summary.get("changes") or {}
         _finish(srun_id, "succeeded", {"run_id": run_id, "report_artifact_id": summary.get("report_artifact_id"),
-                                       "changes": {k: len(changes.get(k, [])) for k in ("new", "persisting", "changed", "resolved")}})
+                                       "changes": {k: len(changes.get(k, [])) for k in ("new", "persisting", "changed", "resolved", "new_questions")}})
     else:
         _finish(srun_id, "failed", {"run_id": run_id}, error=f"run {status}: {summary.get('error') or ''}".strip())
 

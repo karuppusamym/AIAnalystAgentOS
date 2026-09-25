@@ -47,6 +47,8 @@ class FeedbackIn(BaseModel):
 
 class AskIn(BaseModel):
     question: str
+    parameters: dict | None = None  # values for a verified query's parameters (answers a "needs_input" decline)
+    use_registry: bool = True
 
 
 class SqlIn(BaseModel):
@@ -238,7 +240,7 @@ def _adhoc(session: Session, user: User, workspace_id: str) -> _AdhocCtx:
 def ask(workspace_id: str, body: AskIn, user: User = Depends(current_user), session: Session = Depends(db)):
     from analystos.agents.sql_agent import ask as sql_ask
 
-    return sql_ask(_adhoc(session, user, workspace_id), body.question)
+    return sql_ask(_adhoc(session, user, workspace_id), body.question, parameters=body.parameters, use_registry=body.use_registry)
 
 
 @router.post("/workspaces/{workspace_id}/query")

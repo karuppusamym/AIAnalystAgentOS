@@ -134,8 +134,11 @@ class RunContext:
             if not scope.assets:
                 raise PolicyDenied("no authorized assets remain in scope for this run")
             s.expunge_all()
-        return cls(run=run, task=task, user=user, workspace=workspace, policy=policy, scope=scope, agent=agent, services=services,
-                   manifest=manifest)
+        from analystos.registries.replay import services_for
+
+        # A scheduled re-analysis replays the hypothesis registry with every model purpose off (P4-T05).
+        return cls(run=run, task=task, user=user, workspace=workspace, policy=policy, scope=scope, agent=agent,
+                   services=services_for(run, services), manifest=manifest)
 
     # ------------------------------------------------------------------ budget
     @property

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
 from analystos.api.routers import mcp as mcp_router
+from analystos.api.routers import registries as registries_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -35,7 +36,7 @@ app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router,
-          capabilities.router):
+          capabilities.router, registries_router.router):
     app.include_router(r)
 app.include_router(mcp_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)

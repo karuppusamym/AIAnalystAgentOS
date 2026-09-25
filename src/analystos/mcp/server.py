@@ -87,7 +87,9 @@ def _tool_ask(principal: G.ClientPrincipal, ws: str, args: dict[str, Any]) -> di
     result = dict(out.get("result") or {})
     rows = result.get("rows") or []
     result["rows"], result["rows_returned"] = rows[:MAX_ROWS_OUT], min(len(rows), MAX_ROWS_OUT)
-    return {"sql": out.get("sql"), "explanation": out.get("explanation"), "result": result}
+    # A verified-query decline (P4-T05) comes back as status needs_input with the missing parameters.
+    return {"sql": out.get("sql"), "explanation": out.get("explanation"), "result": result, "status": out.get("status"),
+            "answered_by": out.get("answered_by"), "missing": out.get("missing")}
 
 
 def _tool_investigate(principal: G.ClientPrincipal, ws: str, args: dict[str, Any]) -> dict[str, Any]:
