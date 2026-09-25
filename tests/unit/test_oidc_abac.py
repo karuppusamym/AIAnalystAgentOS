@@ -13,7 +13,7 @@ from tests.oidc_fake import CLIENT_ID, ISSUER, FakeIdP, new_key
 
 from analystos.contracts.policy import AttributeRule, DataScope
 from analystos.core.errors import Unauthenticated
-from analystos.governance.policy import apply_attribute_rules, attributes_satisfy
+from analystos.governance.policy import apply_attribute_rules, attributes_satisfy, has_pii_clearance
 from analystos.security import oidc
 
 
@@ -157,11 +157,32 @@ def test_discovery_issuer_must_match(idp):
         p.metadata()
 
 
+def test_discovery_issuer_is_compared_exactly(idp):
+    """OIDC Discovery §4.3: the published issuer must equal the configured one exactly (no slash folding)."""
+    slashed = oidc.OidcProvider(issuer=ISSUER + "/", client_id=CLIENT_ID, client_secret=None, redirect_uri="x", scopes="openid",
+                                transport=idp.transport())
+    assert slashed.discovery_url == f"{ISSUER}/.well-known/openid-configuration"
+    with pytest.raises(Exception, match="does not match"):
+        slashed.metadata()
+    assert _provider(idp).metadata()["issuer"] == ISSUER
+
+
+@pytest.mark.parametrize("state", ["\u00e9tat-\u00fc", "\u2603"])
+def test_non_ascii_state_or_nonce_is_a_401_not_a_crash(idp, state):
+    sealed = oidc.seal_transaction({"state": "s1", "nonce": "n", "verifier": "v", "return_to": "/"})
+    with pytest.raises(Unauthenticated, match="state mismatch"):
+        oidc.open_transaction(sealed, state)
+    p = _provider(idp)
+    with pytest.raises(Unauthenticated, match="nonce"):
+        p.validate_id_token(idp.id_token({"sub": "u", "email": "a@b.c", "nonce": "n"}), nonce=state)
+
+
 # ----------------------------------------------------------------------------- claims -> roles and attributes
 MAPPING = oidc.Mapping(
     platform_admin_groups=["aos-admins"],
     workspace_roles=[oidc.RoleGrant("itsm-viewers", "ITSM", "viewer"), oidc.RoleGrant("itsm-analysts", "ITSM", "analyst"),
                      oidc.RoleGrant("fin-approvers", "ws_fin", "approver")],
+    # pii_clearance is mapped here on purpose: a hand-built mapping still never lets the IdP write it
     attributes={"department": "department", "pii_clearance": "pii_clearance"})
 
 
@@ -170,8 +191,29 @@ def test_groups_map_to_the_highest_role_and_attributes():
                              "department": "finance", "pii_clearance": True, "salary": 1}, MAPPING)
     assert ident.email == "ana@corp.test" and ident.roles == {"ITSM": "analyst", "ws_fin": "approver"}
     assert not ident.is_admin
-    assert ident.attributes == {"groups": ["fin-approvers", "itsm-analysts", "itsm-viewers"], "department": "finance",
-                                "pii_clearance": True}  # only mapped claims become attributes
+    # only mapped claims become attributes, and never a platform-controlled one
+    assert ident.attributes == {"groups": ["fin-approvers", "itsm-analysts", "itsm-viewers"], "department": "finance"}
+
+
+@pytest.mark.parametrize("claim", ["true", "false", True, "yes", 1])
+def test_idp_claims_never_grant_pii_clearance(claim, tmp_path):
+    """M1: an IdP claim (any value, any type) never becomes a clearance, and a string is never one."""
+    ident = oidc.map_claims({"sub": "u", "email": "a@corp.test", "pii_clearance": claim}, MAPPING)
+    assert "pii_clearance" not in ident.attributes
+    assert has_pii_clearance({"pii_clearance": claim}) is (claim is True)  # only the boolean an admin sets
+    assert has_pii_clearance({"pii_clearance": True}) and not has_pii_clearance({"pii_clearance": "false"})
+    assert not has_pii_clearance({"pii_clearance": "true"}) and not has_pii_clearance(None)
+
+
+@pytest.mark.parametrize("attr", ["pii_clearance", "PII_Clearance", "data_clearance", "sso_managed", "is_admin"])
+def test_mapping_file_refuses_platform_controlled_attributes(tmp_path, attr):
+    path = tmp_path / "oidc.yaml"
+    path.write_text(f"attributes: {{department: department, {attr}: some_claim}}\n")
+    with pytest.raises(Exception, match="platform-controlled"):
+        oidc.load_mapping(path)
+    assert oidc.platform_controlled(attr) and not oidc.platform_controlled("department")
+    for shipped in (oidc.get_settings().oidc_mapping_file,):
+        assert not [a for a in oidc.load_mapping(shipped).attributes if oidc.platform_controlled(a)]
     assert oidc.map_claims({"sub": "a", "email": "a@x", "groups": "aos-admins"}, MAPPING).is_admin
 
 
@@ -226,3 +268,14 @@ def test_attributes_satisfy_semantics():
     assert not attributes_satisfy({}, {"department": ["hr"]})
     assert not attributes_satisfy({"department": "hr"}, {"department": ["hr"], "region": ["emea"]})
     assert attributes_satisfy({"pii_clearance": True}, {"pii_clearance": ["True"]})
+
+
+def test_attribute_rules_need_a_condition():
+    """m9: an empty `require` (satisfied by everyone) or an attribute with no accepted value is refused."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="at least one required attribute"):
+        AttributeRule(id="empty", assets=["*.payroll"])
+    with pytest.raises(ValidationError, match="no accepted values"):
+        AttributeRule(id="none", assets=["*.payroll"], require={"department": []})
+    assert AttributeRule(id="ok", assets=["*.payroll"], require={"department": ["hr"]}).require

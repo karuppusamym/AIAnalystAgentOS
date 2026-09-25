@@ -9,6 +9,12 @@ Air-gapped mode is ON: only `egress: internal` model providers are called, decis
 rules/local_classifier, and the NetworkPolicy drops egress outside airGapped.allowedEgressCidrs.
 Apply the matching platform preset once:  POST /api/admin/settings/preset {"preset": "air_gapped"}
 {{- end }}
+{{- if and (ne .Values.config.sandboxNetwork "require") (not (or .Values.networkPolicy.enabled .Values.airGapped.enabled)) }}
+
+WARNING: config.sandboxNetwork={{ .Values.config.sandboxNetwork }} without a NetworkPolicy. Where the node cannot give a
+sandbox child its own network namespace, python.execute children run WITH the pod's network. Use
+config.sandboxNetwork=require, or networkPolicy.enabled=true with airGapped.allowedEgressCidrs.
+{{- end }}
 {{- if .Values.oidc.enabled }}
 
 Single sign-on: {{ .Values.oidc.issuer }} (redirect URI {{ .Values.oidc.redirectUri }}).

@@ -223,6 +223,16 @@ def test_plan_summary_walks_every_node_and_relation():
                    "relations": ["stg.incident"]}
 
 
+def test_explain_shows_only_relations_in_the_callers_scope():
+    """m10: a plan through a view names its base tables; only the caller's assets (and bare names the
+    statement itself referenced) are returned."""
+    from analystos.gateway.service import visible_relations
+
+    relations = ["hr.salaries", "incident", "pg_catalog.pg_class", "stg.incident", "secret_base"]
+    assert visible_relations(relations, ["stg.incident", "stg.problem"], ["stg.incident"]) == ["incident", "stg.incident"]
+    assert visible_relations(["problem"], ["stg.incident", "stg.problem"], ["stg.incident"]) == []
+
+
 # ------------------------------------------------------------------------------------ capability invoke
 def _manifest(**kw):
     base = {"kind": "Skill", "id": "skill.demo", "summary": "demo", "entry": "python:analystos.skills.lookup:row_count",
@@ -247,15 +257,15 @@ def test_only_context_entries_are_invocable_and_the_payload_binds_the_version():
     assert executable(_manifest())
     assert not executable(_manifest(kind="Method", id="method.demo", spec={}))
     assert not executable(_manifest(entry="builtin:sql.execute"))
-    assert payload_for(_manifest(), {"asset": "a"}) == {"capability": "skill.demo@1.0.0", "arguments": {"asset": "a"}}
+    assert payload_for(_manifest(), {"asset": "a"}, "usr_1") == {"capability": "skill.demo@1.0.0", "arguments": {"asset": "a"},
+                                                                 "requested_by": "usr_1"}
 
 
-def test_invoke_never_runs_a_side_effect_without_an_approval(monkeypatch):
-    """A write capability returns an approval request; the entry is not called."""
+def _invoke_world(monkeypatch, m, *, approval=None):
+    """invoke() with the session, policy and approvals faked; returns the recorded calls."""
     from analystos.capabilities import invoke as inv
 
-    m = _manifest(side_effect="write_external")
-    calls = []
+    calls = {"roles": [], "requested": [], "verified": [], "audits": [], "ran": []}
 
     class Snap:
         def get(self, cid):
@@ -269,7 +279,7 @@ def test_invoke_never_runs_a_side_effect_without_an_approval(monkeypatch):
             pass
 
         def get(self, *a, **k):
-            return None
+            return approval
 
     class Scope:
         def __enter__(self):
@@ -278,19 +288,73 @@ def test_invoke_never_runs_a_side_effect_without_an_approval(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    apr = SimpleNamespace(id="apr_1", payload_hash="ph")
     monkeypatch.setattr(inv, "session_scope", Scope)
     monkeypatch.setattr(inv, "_snapshot", lambda s, ws: Snap())
     monkeypatch.setattr(inv.enablement, "usable", lambda *a, **k: None)
     monkeypatch.setattr(inv.enablement, "overrides", lambda *a, **k: {})
-    monkeypatch.setattr("analystos.governance.policy.require_role", lambda *a, **k: "owner")
+    monkeypatch.setattr("analystos.governance.policy.require_role", lambda s, u, ws, minimum: calls["roles"].append(minimum))
     monkeypatch.setattr("analystos.governance.policy.get_workspace", lambda s, ws: SimpleNamespace(id=ws, policy_version=1))
-    monkeypatch.setattr("analystos.governance.approvals.request_approval", lambda s, **kw: calls.append(kw) or apr)
-    monkeypatch.setattr(inv.registry, "resolve_entry", lambda m: pytest.fail("a side effect must not run before approval"))
+    monkeypatch.setattr("analystos.governance.policy.load_policy", lambda s, ws: SimpleNamespace(pii_access="none"))
+    monkeypatch.setattr("analystos.governance.policy.resolve_scope", lambda s, u, ws: SimpleNamespace(assets=[]))
+    monkeypatch.setattr("analystos.runtime.context.default_services", lambda: SimpleNamespace())
+    monkeypatch.setattr("analystos.governance.approvals.request_approval",
+                        lambda s, **kw: calls["requested"].append(kw) or SimpleNamespace(id="apr_1", payload_hash="ph"))
+    monkeypatch.setattr("analystos.governance.approvals.verify_for_execution",
+                        lambda s, approval_id, **kw: calls["verified"].append((approval_id, kw)))
+    monkeypatch.setattr("analystos.governance.audit.audit", lambda *a, **k: calls["audits"].append((a, k)))
+    monkeypatch.setattr("analystos.events.bus.emit", lambda *a, **k: None)
+    monkeypatch.setattr(inv.registry, "resolve_entry", lambda m: lambda ctx, **kw: calls["ran"].append(kw) or {"done": True})
+    return inv, calls
+
+
+def test_invoke_never_runs_a_side_effect_without_an_approval(monkeypatch):
+    """A write capability returns an approval request bound to the requester; the entry is not run,
+    and requesting one needs an editor (m2)."""
+    inv, calls = _invoke_world(monkeypatch, _manifest(side_effect="write_external"))
     out = inv.invoke(SimpleNamespace(id="usr_1"), "ws_1", "skill.demo", {"asset": "stg.incident"})
     assert out["status"] == "approval_required" and out["approval_id"] == "apr_1"
-    assert calls[0]["action"] == "capability.invoke" and calls[0]["payload"]["capability"] == "skill.demo@1.0.0"
-    assert calls[0]["risk_tier"] == "high"
+    req = calls["requested"][0]
+    assert req["action"] == "capability.invoke" and req["payload"]["capability"] == "skill.demo@1.0.0"
+    assert req["payload"]["requested_by"] == "usr_1" and req["requested_by"] == "usr_1"
+    assert req["risk_tier"] == "high" and calls["roles"][-1] == "editor" and not calls["ran"]
+
+
+def test_read_only_invoke_needs_only_an_analyst(monkeypatch):
+    inv, calls = _invoke_world(monkeypatch, _manifest())
+    out = inv.invoke(SimpleNamespace(id="usr_1"), "ws_1", "skill.demo", {"asset": "stg.incident"})
+    assert out["status"] == "ok" and calls["roles"][-1] == "analyst" and not calls["requested"] and not calls["verified"]
+
+
+def test_an_approval_runs_only_for_the_user_who_requested_it(monkeypatch):
+    """M2: another editor presenting someone else's approved request is refused and nothing runs."""
+    approval = SimpleNamespace(id="apr_1", workspace_id="ws_1", action="capability.invoke", requested_by="usr_owner",
+                               status="approved")
+    inv, calls = _invoke_world(monkeypatch, _manifest(side_effect="write_internal"), approval=approval)
+    with pytest.raises(PolicyDenied, match="another user"):
+        inv.invoke(SimpleNamespace(id="usr_other"), "ws_1", "skill.demo", {"asset": "stg.incident"}, approval_id="apr_1")
+    assert not calls["verified"] and not calls["ran"] and approval.status == "approved"
+    assert calls["audits"][0][0][1] == "capability.invoke_refused"
+    out = inv.invoke(SimpleNamespace(id="usr_owner"), "ws_1", "skill.demo", {"asset": "stg.incident"}, approval_id="apr_1")
+    assert out["status"] == "ok" and approval.status == "executed" and calls["ran"] == [{"asset": "stg.incident"}]
+    assert calls["verified"][0][1]["payload"]["requested_by"] == "usr_owner"
+
+
+def test_a_tool_gate_denial_does_not_consume_the_approval(monkeypatch):
+    """m1: the gate and the entry are checked before verify_for_execution consumes the approval."""
+    from analystos.capabilities import invoke as inv_mod
+
+    approval = SimpleNamespace(id="apr_1", workspace_id="ws_1", action="capability.invoke", requested_by="usr_1",
+                               status="approved")
+    inv, calls = _invoke_world(monkeypatch, _manifest(side_effect="write_internal", spec={"call": "context", "tool": "x.write"}),
+                               approval=approval)
+
+    def deny(self, tool_id, inputs=None, *, bound=True):
+        raise PolicyDenied(f"tool {tool_id} denied")
+
+    monkeypatch.setattr(inv_mod.InvokeContext, "tools", lambda self: SimpleNamespace(authorize=lambda *a, **k: deny(None, *a, **k)))
+    with pytest.raises(PolicyDenied, match="x.write denied"):
+        inv.invoke(SimpleNamespace(id="usr_1"), "ws_1", "skill.demo", {"asset": "stg.incident"}, approval_id="apr_1")
+    assert approval.status == "approved" and not calls["verified"] and not calls["ran"]
 
 
 def test_capability_list_rows_carry_ui_hints_and_input_schema():

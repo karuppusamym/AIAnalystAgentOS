@@ -2,10 +2,11 @@
 
 Order, all before anything runs: the manifest (with the workspace's MCP overlay), enablement and
 certification, the input against the manifest's `input_schema`, that the generic runtime can execute
-it (a python `spec.call: context` entry, as for declarative agents), then the side effect. A
-capability that is not read-only (`write_internal`, `write_external`) never executes directly:
-the first call creates a hash-bound approval request; a call presenting an approved one is verified
-(`verify_for_execution`) immediately before the entry runs. MCP tools go through the MCP client,
+it (a python `spec.call: context` entry, as for declarative agents), the entry and its tool gate, then
+the side effect. A capability that is not read-only (`write_internal`, `write_external`) needs an
+editor and never executes directly: the first call creates an approval request bound to the payload
+hash *and the requesting user*; only that user, presenting the approved request, runs it, verified
+(`verify_for_execution`) and consumed immediately before the entry runs. MCP tools go through the MCP client,
 which applies the same rule with its own allowlist and classification.
 
 The entry runs with an `InvokeContext`: the caller's resolved scope, SQL only through the gateway
@@ -89,9 +90,10 @@ def executable(m: CapabilityManifest) -> bool:
     return m.kind in EXECUTABLE_KINDS and m.spec.get("call") == "context" and (m.entry or "").startswith("python:")
 
 
-def payload_for(m: CapabilityManifest, arguments: dict[str, Any]) -> dict[str, Any]:
-    """What an approval covers: the exact capability version and arguments."""
-    return {"capability": m.ref, "arguments": arguments}
+def payload_for(m: CapabilityManifest, arguments: dict[str, Any], requested_by: str) -> dict[str, Any]:
+    """What an approval covers: the exact capability version and arguments, for the user who asked.
+    The entry runs under the executing user's scope, so an approval is not transferable."""
+    return {"capability": m.ref, "arguments": arguments, "requested_by": requested_by}
 
 
 def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str, Any] | None = None, *,
@@ -130,12 +132,27 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
     errors = schema_errors(m, arguments)
     if errors:
         raise InvalidInput(f"input does not match {m.id} input_schema: {errors[0]['msg']}", details={"errors": errors})
-    payload = payload_for(m, arguments)
+    payload = payload_for(m, arguments, user.id)
+    writes = m.side_effect not in READ_ONLY
     with session_scope() as s:
         me = s.merge(user)
-        require_role(s, me, workspace_id, "analyst")
+        require_role(s, me, workspace_id, "editor" if writes else "analyst")  # a write needs publish rights to request
         ws = get_workspace(s, workspace_id)
-        if m.side_effect not in READ_ONLY:
+        policy = load_policy(s, ws)
+        scope = resolve_scope(s, me, workspace_id)
+        s.expunge_all()
+    agent = AgentSpec(id="capability_console", name="Capability console", description="A capability run by a signed-in user",
+                      policies=AgentPolicies(pii_access=policy.pii_access))
+    ctx = InvokeContext(user=user, workspace=ws, scope=scope, policy=policy, agent=agent, services=default_services(),
+                        capability=m.ref)
+    # Everything that can refuse runs before an approval is requested or consumed: a gate denial or an
+    # unresolvable entry must not burn a single-use approval.
+    fn = registry.resolve_entry(m)
+    gate = m.spec.get("tool")
+    if gate:
+        ctx.tools().authorize(gate, {"capability": m.ref, **arguments}, bound=False)
+    if writes:
+        with session_scope() as s:
             if not approval_id:
                 apr = request_approval(s, workspace_id=workspace_id, run_id=None, action=APPROVAL_ACTION, payload=payload,
                                        plan_hash=None, policy_version=ws.policy_version, requested_by=user.id,
@@ -147,19 +164,13 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
             apr = s.get(Approval, approval_id, with_for_update=True)
             if apr is None or apr.workspace_id != workspace_id or apr.action != APPROVAL_ACTION:
                 raise ApprovalRequired("the approval does not cover a capability invocation in this workspace")
+            if apr.requested_by != user.id:
+                audit(f"user:{user.id}", "capability.invoke_refused", workspace_id=workspace_id, target=m.ref,
+                      decision="deny", reasons=["approval_belongs_to_another_requester"],
+                      details={"approval_id": approval_id})  # own transaction: survives the refusal
+                raise PolicyDenied("this approval was requested by another user; request your own")
             verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-            apr.status = "executed"  # single use: consumed before the side effect, never replayable
-        policy = load_policy(s, ws)
-        scope = resolve_scope(s, me, workspace_id)
-        s.expunge_all()
-    agent = AgentSpec(id="capability_console", name="Capability console", description="A capability run by a signed-in user",
-                      policies=AgentPolicies(pii_access=policy.pii_access))
-    ctx = InvokeContext(user=user, workspace=ws, scope=scope, policy=policy, agent=agent, services=default_services(),
-                        capability=m.ref)
-    fn = registry.resolve_entry(m)
-    gate = m.spec.get("tool")
-    if gate:
-        ctx.tools().authorize(gate, {"capability": m.ref, **arguments}, bound=False)
+            apr.status = "executed"  # single use: consumed immediately before the side effect, never replayable
     result = fn(ctx, **arguments)
     with session_scope() as s:
         audit(f"user:{user.id}", "capability.invoked", workspace_id=workspace_id, target=m.ref,

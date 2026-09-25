@@ -16,12 +16,13 @@ workspace_roles: []
 #  - {group: itsm-approvers, workspace: "ITSM operations", role: approver}
 #  - {group: finance-owners, workspace: ws_finance, role: owner}
 
-# ID-token claims copied onto the user as ABAC attributes (workspace policy `attribute_rules` and the PII
-# clearance check read them). `groups` is always copied.
+# ID-token claims copied onto the user as ABAC attributes (workspace policy `attribute_rules` reads them).
+# `groups` is always copied. Attributes only narrow a scope: platform-controlled attributes (`pii_clearance`,
+# any `*clearance*`, `sso_managed`, `is_admin`) cannot be mapped here -- the file is refused -- because a
+# clearance is a grant only an administrator gives on the user record.
 attributes:
   department: department
   region: region
-  pii_clearance: pii_clearance
 
 # When true, a user whose groups map to nothing cannot sign in at all.
 require_group: false

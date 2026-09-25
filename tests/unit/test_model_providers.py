@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -238,6 +239,17 @@ def test_public_provider_types_cannot_claim_internal_egress():
         ProviderConfig(kind="chat", type="openrouter", base_url="https://openrouter.ai/api/v1", api_key_env="K", egress="internal")
 
 
+def test_azure_openai_is_internal_only_with_an_explicit_private_link():
+    """m3: an Azure OpenAI resource is a public endpoint unless the config acknowledges a private endpoint."""
+    azure = {"kind": "chat", "type": "azure_openai", "base_url": "https://r.openai.azure.com", "api_version": "2024-10-21",
+             "egress": "internal"}
+    with pytest.raises(ValueError, match="private_link"):
+        ProviderConfig(**azure)
+    assert ProviderConfig(**azure, private_link=True).egress == "internal"
+    with pytest.raises(ValueError, match="private_link applies"):
+        ProviderConfig(kind="chat", type="openai_compatible", base_url="http://vllm:8000/v1", private_link=True)
+
+
 def test_keys_are_never_part_of_a_models_config():
     with pytest.raises(ValueError):
         ProviderConfig(kind="chat", base_url="https://openrouter.ai/api/v1", api_key="sk-live-123")
@@ -278,6 +290,30 @@ def test_bedrock_converse_mapping_with_a_client_double():
                                "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]}, 5)
     assert calls[0]["modelId"] == "anthropic.claude-sonnet-5-v1:0" and calls[0]["system"] == [{"text": "s"}]
     assert out["choices"][0]["message"]["content"] == "hi" and out["usage"] == {"prompt_tokens": 5, "completion_tokens": 1}
+
+
+def test_bedrock_endpoint_must_pass_the_egress_guard():
+    """m4: boto3 opens its own connection; its endpoint host is checked against the transport's allowlist first."""
+    calls = []
+
+    class Client:
+        meta = SimpleNamespace(endpoint_url="https://bedrock-runtime.eu-central-1.amazonaws.com")
+
+        def converse(self, **kw):
+            calls.append(kw)
+            return {"output": {"message": {"content": [{"text": "ok"}]}}, "usage": {}}
+
+    provider = ProviderConfig(kind="chat", type="bedrock", base_url="https://bedrock-runtime.eu-central-1.amazonaws.com")
+    adapter = BedrockAdapter(client_factory=lambda _p: Client())
+    payload = {"model": "anthropic/claude-sonnet-5", "messages": [{"role": "user", "content": "u"}]}
+    with pytest.raises(EgressBlocked, match="bedrock host"):
+        adapter.chat(HttpTransport(allowed_hosts={"vllm.internal"}), provider, None, payload, 5)  # air-gapped: internal only
+    assert not calls
+    ok = adapter.chat(HttpTransport(allowed_hosts={"bedrock-runtime.eu-central-1.amazonaws.com"}), provider, None, payload, 5)
+    assert ok["choices"][0]["message"]["content"] == "ok" and len(calls) == 1
+    Client.meta = SimpleNamespace(endpoint_url=None)  # an endpoint it cannot name is refused under a guard
+    with pytest.raises(EgressBlocked):
+        adapter.chat(HttpTransport(allowed_hosts={"bedrock-runtime.eu-central-1.amazonaws.com"}), provider, None, payload, 5)
 
 
 def test_example_provider_config_is_valid():

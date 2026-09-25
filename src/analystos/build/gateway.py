@@ -8,6 +8,9 @@ The QueryGateway stays read-only. The BuildGateway:
   version, requester and approver rights). A refusal invalidates the approval and is audited;
 * re-checks the target: a schema this workspace designated for this engine, never a source's
   staged schema or a system schema;
+* re-checks the data scope *now*: the requester's scope is resolved again (a deselected asset, a
+  column tagged restricted or PII since, a revoked membership or an ABAC rule all apply) and every
+  rendered model SQL and the dataset SQL go through the gateway validator against it;
 * re-checks the project statically (files and the manifest dbt parses from them) and re-hashes the
   files it wrote to disk against the approved hash;
 * runs dbt as the build identity (`SET ROLE` to the workspace build role, CREATE on the target
@@ -27,15 +30,29 @@ from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
 from analystos.build import lineage
-from analystos.build.project import check_files, check_manifest, project_hash
+from analystos.build.project import _render, check_files, check_manifest, project_hash
 from analystos.build.runner import Connection, DbtCoreRunner, read_project, write_profile, write_project
-from analystos.build.targets import ENGINES, build_role_for, check_identities, check_schema_name
+from analystos.build.targets import (
+    ENGINES,
+    build_role_for,
+    check_builder_credentials,
+    check_identities,
+    check_schema_name,
+)
 from analystos.connectors.naming import staging_schema_for
-from analystos.core.errors import AnalystOSError, ApprovalRequired, Conflict, Forbidden, NotFound, PolicyDenied
+from analystos.core.errors import (
+    AnalystOSError,
+    ApprovalRequired,
+    Conflict,
+    Forbidden,
+    NotFound,
+    PolicyDenied,
+    SQLRejected,
+)
 from analystos.core.ids import utcnow
 from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Approval, BuildJob, BuildTarget, Source
+from analystos.db.models import AnalysisRun, Approval, Artifact, BuildJob, BuildTarget, Source, User
 from analystos.events.bus import emit
 from analystos.governance.approvals import verify_for_execution
 from analystos.governance.audit import audit
@@ -83,9 +100,59 @@ def require_target(session: Any, workspace_id: str, engine: str, schema: str) ->
     return target
 
 
+def execution_scope_check(session: Any, job: BuildJob, run: AnalysisRun | None) -> set[str]:
+    """The data scope at execution time, not plan time: the run requester's scope resolved now
+    (narrowed to the run's start scope, as every run step is), then every model SQL of the approved
+    project, rendered, and the dataset SQL validated against it by the gateway validator. Returns the
+    `schema.table`s the build may read; raises PolicyDenied when anything left the scope."""
+    from analystos.gateway.validator import validate_sql
+    from analystos.governance.policy import resolve_scope
+
+    if run is None:
+        raise PolicyDenied("the build job's run no longer exists")
+    user = session.get(User, run.requested_by)
+    if user is None or not user.active:
+        raise PolicyDenied("the build's requester is no longer active")
+    try:
+        scope = resolve_scope(session, user, job.workspace_id, source_ids=(run.scope or {}).get("source_ids") or None,
+                              minimum_role="editor")
+    except (NotFound, Forbidden) as exc:
+        raise PolicyDenied(f"the build's requester no longer holds build rights here: {exc.message}") from exc
+    original = set((run.scope or {}).get("assets") or [])
+    if original:
+        scope.assets = [a for a in scope.assets if a in original]
+    scope.denied_columns = sorted(set(scope.denied_columns) | set((run.scope or {}).get("denied_columns") or []))
+    allowed = set(scope.assets)
+    files = dict(job.project_files or {})
+    models = {p[len("models/"):-4] for p in files if p.endswith(".sql")}
+    statements: list[tuple[str, str]] = []
+    for path, text in sorted(files.items()):
+        if not path.endswith(".sql"):
+            continue
+        problems: list[str] = []
+        sql = _render(path, text, models=models, allowed_sources=allowed, problems=problems)
+        if problems:
+            raise PolicyDenied("no longer in scope: " + "; ".join(problems[:4]))
+        if "source(" in text:  # a model reading source data (the time spine reads none)
+            statements.append((path, sql))
+    art = session.get(Artifact, job.artifact_id) if job.artifact_id else None
+    ds_id = (art.content or {}).get("dataset_artifact_id") if art is not None else None
+    dataset = session.get(Artifact, ds_id) if ds_id else None
+    if dataset is None or not (dataset.content or {}).get("sql"):
+        raise PolicyDenied("the build's dataset is gone; plan a new build")
+    statements.append(("dataset", dataset.content["sql"]))
+    for label, sql in statements:
+        try:
+            validate_sql(scope, sql, max_rows=1)
+        except SQLRejected as exc:
+            raise PolicyDenied(f"{label} is no longer in the requester's scope: {exc.message}") from exc
+    return allowed
+
+
 class BuildGateway:
     def __init__(self, settings: Any, runner: DbtCoreRunner | None = None) -> None:
         check_identities(settings)
+        check_builder_credentials(settings)
         self.settings = settings
         self.runner = runner or DbtCoreRunner(settings.dbt_executable, timeout_seconds=settings.build_timeout_seconds)
 
@@ -147,7 +214,8 @@ class BuildGateway:
                 # schema, relations, rollback), plan hash, policy version, requester and approver rights.
                 verify_for_execution(s, approval_id, payload=approval_payload(job), plan_hash=run.plan_hash if run else None)
                 target = require_target(s, job.workspace_id, job.engine, job.target_schema)
-                allowed = set(job.dry_run.get("allowed_sources") or [])
+                # Scope as of now, never the plan-time snapshot: only sources both approved and still readable.
+                allowed = set(job.dry_run.get("allowed_sources") or []) & execution_scope_check(s, job, run)
                 check_files(dict(job.project_files), allowed_sources=allowed)
                 bad = [r for r in job.relations if r.split(".", 1)[0] != job.target_schema]
                 if bad:

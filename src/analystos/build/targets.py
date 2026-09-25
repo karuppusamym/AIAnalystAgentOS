@@ -57,6 +57,21 @@ def check_identities(settings: Any) -> None:
         raise InvalidInput("analytics_builder_url must not point at the control-plane database")
 
 
+def check_builder_credentials(settings: Any) -> None:
+    """Outside development the build login must not carry the well-known development password (or
+    none): it can create relations in every designated target. Checked before the login is created
+    or altered and before any build runs."""
+    if getattr(settings, "env", "dev") == "dev":
+        return
+    from analystos.core.config import Settings
+
+    default = make_url(Settings.model_fields["analytics_builder_url"].default).password
+    password = make_url(settings.analytics_builder_url).password
+    if not password or password == default:
+        raise InvalidInput(f"ANALYSTOS_ANALYTICS_BUILDER_URL uses the development password in env={settings.env!r}: "
+                           "set it from a secret (Helm: secrets.existingSecret) before provisioning or running builds")
+
+
 def check_schema_name(schema: str, *, source_schemas: set[str] = frozenset()) -> None:
     """A designated target is a plain new schema: never a source's staged schema, a system schema or
     anything that looks like one."""
@@ -77,7 +92,8 @@ def _server16(cur: Any) -> bool:
 
 def ensure_builder_login(settings: Any, *, loader_url: str | None = None) -> bool:
     """Create the builder login if the cluster predates it (01-init.sql creates it on new clusters).
-    Returns whether it exists afterwards."""
+    Returns whether it exists afterwards. Refuses the development password outside development."""
+    check_builder_credentials(settings)
     builder = make_url(settings.analytics_builder_url)
     name, db = builder_login(settings), builder.database or ""
     with psycopg.connect(_pg(loader_url or settings.analytics_loader_url), autocommit=True, connect_timeout=5) as conn:

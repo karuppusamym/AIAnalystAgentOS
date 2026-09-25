@@ -158,3 +158,18 @@ def test_require_mode_refuses_when_isolation_is_impossible(monkeypatch):
     assert r.ok and r.network_isolated is False
     with pytest.raises(ValueError):
         run_python("result = 1", network="sometimes")
+
+
+def test_isolate_fallback_is_logged_and_recorded(monkeypatch, caplog):
+    """M5: a networked fallback under `isolate` is never silent: a warning every time, network_isolated False."""
+    import logging
+
+    monkeypatch.setattr(runner, "network_isolation_available", lambda: False)
+    with caplog.at_level(logging.WARNING, logger=runner.__name__):
+        r = run_python("result = 1", network="isolate")
+    assert r.ok and r.network_isolated is False
+    assert any("WITH network access" in rec.getMessage() for rec in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=runner.__name__):
+        run_python("result = 1", network="off")
+    assert not caplog.records  # `off` is an explicit development choice, not a fallback

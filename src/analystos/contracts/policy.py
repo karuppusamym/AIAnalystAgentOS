@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Decision = Literal["allow", "deny", "approval_required"]
 
@@ -20,7 +20,19 @@ class AttributeRule(BaseModel):
     assets: list[str] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
     column_tags: list[str] = Field(default_factory=list)
-    require: dict[str, list[str]] = Field(default_factory=dict)
+    require: dict[str, list[str]] = Field(default_factory=dict, validate_default=True)
+
+    @field_validator("require")
+    @classmethod
+    def _require_is_a_condition(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        """An empty `require` (or an attribute with no accepted value) is satisfied by everyone, or by
+        no one: either way the rule would silently do nothing or everything. Refuse it."""
+        if not value:
+            raise ValueError("attribute rule needs at least one required attribute")
+        empty = sorted(k for k, accepted in value.items() if not accepted)
+        if empty:
+            raise ValueError(f"attribute rule lists no accepted values for {', '.join(empty)}")
+        return value
 
 
 class WorkspacePolicyDoc(BaseModel):

@@ -34,7 +34,7 @@ def sso(control_db, monkeypatch, tmp_path):
         "platform_admin_groups: [aos-admins]\n"
         f"workspace_roles:\n  - {{group: itsm-viewers, workspace: '{ws_name}', role: viewer}}\n"
         f"  - {{group: itsm-analysts, workspace: {ws_id}, role: analyst}}\n"
-        "attributes: {department: department, pii_clearance: pii_clearance}\n")
+        "attributes: {department: department}\n")
     idp = FakeIdP()
     for key, value in {"ANALYSTOS_OIDC_ISSUER": ISSUER, "ANALYSTOS_OIDC_CLIENT_ID": CLIENT_ID,
                        "ANALYSTOS_OIDC_REDIRECT_URI": "http://testserver/api/auth/oidc/callback",
@@ -152,3 +152,57 @@ def test_abac_attributes_from_the_idp_narrow_the_scope(sso, analytics_plane):
     with session_scope() as s:
         scope = resolve_scope(s, s.get(User, token["user"]["id"]), ws_id)
         assert "hr.payroll" in scope.assets
+
+
+@pytest.mark.parametrize("claim", ["true", "false", True])
+def test_idp_claims_never_grant_or_revoke_pii_clearance(sso, claim):
+    """M1: whatever the IdP sends as pii_clearance (and even with a mapping that tried to map it), the
+    user gets no clearance; a clearance an administrator set survives every SSO login."""
+    from analystos.db.base import session_scope
+    from analystos.db.models import User
+    from analystos.governance.policy import has_pii_clearance
+    from analystos.security import oidc
+
+    client, idp, _ = sso
+    tag = f"{type(claim).__name__}-{str(claim).lower()}"
+    sub, email = f"idp-pii-{tag}", f"pii-{tag}@corp.test"
+    body = _sign_in(client, idp, {"sub": sub, "email": email, "groups": ["itsm-analysts"], "pii_clearance": claim}).json()
+    with session_scope() as s:
+        user = s.get(User, body["user"]["id"])
+        assert "pii_clearance" not in (user.attributes or {}) and not has_pii_clearance(user.attributes)
+        # a hand-built mapping that names the claim still cannot write it
+        oidc.provision(s, {"sub": sub, "email": email, "pii_clearance": True}, issuer=ISSUER,
+                       mapping=oidc.Mapping(attributes={"pii_clearance": "pii_clearance"}))
+        assert not has_pii_clearance(s.get(User, body["user"]["id"]).attributes)
+        user = s.get(User, body["user"]["id"])
+        user.attributes = {**(user.attributes or {}), "pii_clearance": True}  # the administrator grants it
+    _sign_in(client, idp, {"sub": sub, "email": email, "groups": ["itsm-analysts"], "pii_clearance": "false"})
+    with session_scope() as s:
+        assert has_pii_clearance(s.get(User, body["user"]["id"]).attributes)
+
+
+def test_idp_admin_group_never_elevates_an_email_linked_local_account(sso):
+    """m7: platform admin from groups applies to SSO-created accounts only; the skipped elevation is audited."""
+    from analystos.core.ids import new_id
+    from analystos.db.base import session_scope
+    from analystos.db.models import AuditEvent, User
+    from analystos.security.auth import hash_password
+
+    client, idp, _ = sso
+    email = f"local-{new_id('u')[-8:]}@corp.test"
+    with session_scope() as s:
+        s.add(User(id=new_id("usr"), email=email, name="Local", password_hash=hash_password("x" * 12), is_admin=False,
+                   attributes={}))
+    r = _sign_in(client, idp, {"sub": f"idp-{email}", "email": email, "email_verified": True, "groups": ["aos-admins"]})
+    assert r.status_code == 200, r.text
+    uid = r.json()["user"]["id"]
+    with session_scope() as s:
+        assert s.get(User, uid).is_admin is False
+        assert s.scalar(select(AuditEvent).where(AuditEvent.actor == f"user:{uid}",
+                                                 AuditEvent.action == "auth.sso_admin_not_elevated"))
+    # an SSO-created account follows the group, and the change is audited
+    r = _sign_in(client, idp, {"sub": "idp-sso-admin", "email": "sso-admin@corp.test", "groups": ["aos-admins"]})
+    uid = r.json()["user"]["id"]
+    with session_scope() as s:
+        assert s.get(User, uid).is_admin is True
+        assert s.scalar(select(AuditEvent).where(AuditEvent.actor == f"user:{uid}", AuditEvent.action == "auth.sso_admin_granted"))

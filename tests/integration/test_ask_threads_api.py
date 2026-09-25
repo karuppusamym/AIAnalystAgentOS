@@ -304,7 +304,23 @@ def test_capability_invoke_runs_read_only_and_holds_writes_for_approval(api, wor
                        json={"arguments": {"asset": "other.table"}, "approval_id": apr})
     assert changed.status_code == 409  # pending, and another payload in any case
     assert api.post(f"/api/approvals/{apr}/approve", headers=approver, json={}).status_code == 200
-    ran = api.post(f"/api/workspaces/{ws}/capabilities/skill.test_writer/invoke", headers=admin,
+    # the approval is bound to its requester: another editor holding the id is refused, and it is not consumed
+    from analystos.core.ids import new_id
+    from analystos.db.base import session_scope
+    from analystos.db.models import User
+    from analystos.security.auth import hash_password
+    from analystos.services.workspaces import add_member
+
+    other_email = f"editor-{new_id('u')[-8:]}@analystos.local"
+    with session_scope() as s:
+        s.add(User(id=new_id("usr"), email=other_email, name="Other editor", password_hash=hash_password(PASSWORD),
+                   is_admin=False, attributes={}))
+        s.flush()
+        add_member(s, s.scalar(select(User).where(User.email == "admin@analystos.local")), ws, other_email, "editor")
+    stolen = api.post(f"/api/workspaces/{ws}/capabilities/skill.test_writer/invoke", headers=_login(api, other_email),
+                      json={"arguments": {"asset": table}, "approval_id": apr})
+    assert stolen.status_code == 403 and "another user" in stolen.json()["error"]["message"], stolen.text
+    ran =api.post(f"/api/workspaces/{ws}/capabilities/skill.test_writer/invoke", headers=admin,
                    json={"arguments": {"asset": table}, "approval_id": apr})
     assert ran.status_code == 200 and ran.json()["status"] == "ok", ran.text
     again = api.post(f"/api/workspaces/{ws}/capabilities/skill.test_writer/invoke", headers=admin,
