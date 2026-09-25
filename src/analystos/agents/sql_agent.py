@@ -7,7 +7,7 @@ from typing import Any
 import sqlglot
 from sqlalchemy import select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, compact_json, llm_json, task_output
 from analystos.artifacts.registry import link, save_artifact
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
@@ -138,11 +138,54 @@ def _check_budget(ctx: Any) -> None:
         check_ask_budget(s, ctx.workspace.id, ctx.user.id, ctx.policy)
 
 
-def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, Any]:
-    """NL question -> governed SQL -> result. Repairs use the gateway's rejection message.
+def _result(result: Any) -> dict[str, Any]:
+    return {"query_id": result.query_id, "columns": result.columns, "rows": result.rows[:500], "row_count": result.row_count,
+            "truncated": result.truncated}
+
+
+def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Ladder rung L1 (P4-T05): answer from a verified query with no model call, or decline and ask
+    for a missing required parameter. None is a miss: the model path may answer."""
+    from analystos.llm.cache import estimate_tokens
+    from analystos.registries import verified_queries as vqr
+
+    with session_scope() as s:
+        hit = vqr.match(s, ctx.workspace.id, question, parameters)
+        if hit is None:
+            return None
+        entry = {"id": hit.entry.id, "name": hit.entry.name, "pattern": hit.pattern, "score": round(hit.score, 3)}
+        template, params, dialect = hit.entry.sql_template, list(hit.entry.parameters or []), hit.entry.dialect
+    avoided = estimate_tokens(compact_json({"question": question, "catalog": catalog_for_prompt(ctx)})) + 500
+    if hit.missing:
+        ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided,
+                               reason=f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}")
+        missing = [{k: p.get(k) for k in ("name", "type", "column", "values") if p.get(k) is not None} for p in hit.missing]
+        return {"status": "needs_input", "answered_by": "registry", "verified_query": entry, "parameters": hit.values,
+                "missing": missing, "sql": None, "model": None, "attempts": [], "result": None,
+                "explanation": f"This matches the verified query '{entry['name']}', which needs "
+                               f"{', '.join(p['name'] for p in hit.missing)}. Say which value to use; nothing was guessed."}
+    values = {p["name"]: vqr.coerce(p, hit.values[p["name"]]) for p in params}  # vocabulary spelling, typed
+    sql = vqr.render(template, params, values, dialect)
+    result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE, run_id=None, task_id=None)
+    ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=f"L1 registry: verified query {entry['name']}")
+    with session_scope() as s:
+        vqr.record_hit(s, entry["id"])
+    return {"status": "answered", "answered_by": "registry", "verified_query": entry, "parameters": values, "sql": sql,
+            "explanation": f"Answered by the verified query '{entry['name']}' (no model call).", "chart": None, "model": None,
+            "attempts": [], "result": _result(result)}
+
+
+def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
+        use_registry: bool = True) -> dict[str, Any]:
+    """NL question -> governed SQL -> result. Tool-first: the verified-query registry answers (or
+    declines) before any model is asked. Repairs use the gateway's rejection message.
     Gate and budget are checked before any model call, and the budget again before every attempt."""
     _authorize_ask(ctx)
     _check_budget(ctx)
+    if use_registry:
+        answered = ask_registry(ctx, question, parameters)
+        if answered is not None:
+            return answered
     catalog = catalog_for_prompt(ctx)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog},
@@ -157,9 +200,8 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, An
         try:
             result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
-            return {"sql": sql, "explanation": data.get("explanation"), "chart": data.get("chart"), "model": model,
-                    "attempts": attempts, "result": {"query_id": result.query_id, "columns": result.columns,
-                                                     "rows": result.rows[:500], "row_count": result.row_count, "truncated": result.truncated}}
+            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": data.get("explanation"),
+                    "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result)}
         except (SQLRejected, AnalystOSError) as exc:
             attempts.append({"sql": sql, "error": exc.message})
             if attempt == max_repairs:

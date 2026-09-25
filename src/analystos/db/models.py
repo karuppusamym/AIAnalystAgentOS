@@ -760,3 +760,60 @@ class McpUsage(Base):
     tool: Mapped[str] = mapped_column(String(80))
     day: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD (UTC)
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ------------------------------------------------------------------------------ registries (P4-T05)
+class VerifiedQuery(Base):
+    """A parameterised, verified query for Ask (ladder rung L1, ADR-0012). Promoted from a successful
+    Ask answer or a verified finding; `sql_template` holds `{{name}}` placeholders for `parameters`
+    (typed: enum over a profiled column's vocabulary, date, number, string). Executed through the
+    gateway under the asking user's scope, so a registry hit never widens what anyone can read."""
+
+    __tablename__ = "verified_query"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    patterns: Mapped[list[str]] = mapped_column(JSON, default=list)  # question phrasings (parameter values removed)
+    sql_template: Mapped[str] = mapped_column(Text)
+    parameters: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    dialect: Mapped[str] = mapped_column(String(40), default="postgres")
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type: ask|finding, query_id, insight_id, question}
+    spec: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # the AnalysisSpec of a promoted finding
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class RegisteredHypothesis(Base):
+    """The hypothesis registry (review C11): every tested hypothesis spec of a workspace, keyed by its
+    spec hash, with the claim identity of the method registry. Scheduled re-analysis replays it with
+    no model call, so "new" and "resolved" mean the evidence changed, not that the questions did."""
+
+    __tablename__ = "registered_hypothesis"
+    __table_args__ = (UniqueConstraint("workspace_id", "spec_hash"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    question: Mapped[str] = mapped_column(Text, default="")
+    statement: Mapped[str] = mapped_column(Text, default="")
+    method: Mapped[str] = mapped_column(String(60))
+    asset: Mapped[str] = mapped_column(String(300))
+    question_key: Mapped[str] = mapped_column(String(64), index=True)  # hash of the claim key without its top group
+    claim: Mapped[list[Any]] = mapped_column(JSON, default=list)  # last claim key (method registry), top group last
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    last_outcome: Mapped[str] = mapped_column(String(30), default="")  # verified | supported | rejected | inconclusive | ...
+    last_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    origin: Mapped[str] = mapped_column(String(20), default="agent")  # origin of the first registration
+    first_run_id: Mapped[str] = mapped_column(String(40))
+    last_run_id: Mapped[str] = mapped_column(String(40))
+    times_tested: Mapped[int] = mapped_column(Integer, default=0)
+    times_verified: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -105,6 +105,9 @@ def finalize(ctx: RunContext) -> dict:
         link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", ("artifact", art.id), run_id=ctx.run.id)
         for i in facts:
             link(s, ctx.workspace.id, ("artifact", art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
+        from analystos.registries.hypotheses import register_run
+
+        registered = register_run(s, run.id)  # the hypothesis registry scheduled re-analysis replays (P4-T05)
         origin = run.origin or {}
         if origin.get("previous_run_id"):
             from analystos.services.changes import diff_runs
@@ -112,7 +115,9 @@ def finalize(ctx: RunContext) -> dict:
             changes = diff_runs(s, origin["previous_run_id"], run.id)
             run.summary = {**run.summary, "changes": changes}
             ctx.say(f"Compared with run {origin['previous_run_id']}: {len(changes['new'])} new, {len(changes['persisting'])} persisting, "
-                    f"{len(changes['changed'])} changed, {len(changes['resolved'])} resolved findings.", kind="decision")
+                    f"{len(changes['changed'])} changed, {len(changes['resolved'])} resolved findings"
+                    f"{'; ' + str(len(changes['new_questions'])) + ' new questions (novelty round)' if changes.get('new_questions') else ''}.",
+                    kind="decision")
         graph = project_workspace(s, ctx.workspace.id)
         run.summary = {**run.summary, "graph_projection": graph}
         emit(ctx.workspace.id, "analysis.completed", {"verified_insights": len(facts), "published": bool(published)},
@@ -130,4 +135,5 @@ def finalize(ctx: RunContext) -> dict:
             report_id = art.id
             run = s.get(AnalysisRun, ctx.run.id)
             run.summary = {**(run.summary or {}), "report_artifact_id": report_id}
-    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id}
+    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
+            "registered_hypotheses": registered}

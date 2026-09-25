@@ -39,7 +39,7 @@ def _claims(session: Session, run_id: str) -> dict[tuple, dict[str, Any]]:
     for ins, hyp in rows:
         exp = session.scalar(select(Experiment).where(Experiment.hypothesis_id == hyp.id, Experiment.role == "primary"))
         hl = (exp.result or {}).get("highlights") if exp else {}
-        out[claim_key(hyp.spec, hl)] = {"code": ins.code, "title": ins.title, "finding": ins.finding, "id": ins.id,
+        out[claim_key(hyp.spec, hl)] = {"code": ins.code, "title": ins.title, "finding": ins.finding, "id": ins.id, "origin": hyp.origin,
                                         "effect": (exp.result or {}).get("effect_size") if exp else None, "highlights": hl}
     return out
 
@@ -58,7 +58,10 @@ def _tested(session: Session, run_id: str) -> set[tuple]:
 def diff_runs(session: Session, previous_run_id: str, run_id: str) -> dict[str, Any]:
     before, after = _claims(session, previous_run_id), _claims(session, run_id)
     tested_now = _tested(session, run_id)
-    new = [after[k] for k in after if k not in before]
+    # A finding of the opt-in novelty round answers a question no earlier run asked: a "new question",
+    # not a change in the evidence (review C11).
+    new = [after[k] for k in after if k not in before and after[k].get("origin") != "novelty"]
+    new_questions = [after[k] for k in after if k not in before and after[k].get("origin") == "novelty"]
     gone = [k for k in before if k not in after]
     # A previous finding is "resolved" only if the same question was tested again and no longer holds.
     resolved = [before[k] for k in gone if k[:-1] in tested_now]
@@ -76,4 +79,4 @@ def diff_runs(session: Session, previous_run_id: str, run_id: str) -> dict[str, 
         delta = (value - prev) / prev if isinstance(value, (int, float)) and isinstance(prev, (int, float)) and prev else None
         metrics.append({"name": name, "value": value, "previous_value": prev, "pct_change": None if delta is None else round(delta, 4)})
     return {"previous_run_id": previous_run_id, "new": new, "persisting": persisting, "changed": changed, "resolved": resolved,
-            "not_retested": not_retested, "metrics": metrics}
+            "not_retested": not_retested, "new_questions": new_questions, "metrics": metrics}

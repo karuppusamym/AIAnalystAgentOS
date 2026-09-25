@@ -133,7 +133,7 @@ def build_insights(ctx: RunContext) -> dict:
     from analystos.services.changes import claim_key
 
     with session_scope() as s:
-        carried = {h.id for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == ctx.run.id, Hypothesis.origin == "carried"))}
+        carried = {h.id for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == ctx.run.id, Hypothesis.origin.in_(("carried", "registry"))))}
     seen_claims: dict[tuple, str] = {}
     unique = []
     for c in sorted(candidates, key=lambda c: (c[0] not in carried, len(c[3].get("filters") or []), -(c[4].get("effect_size") or 0))):
