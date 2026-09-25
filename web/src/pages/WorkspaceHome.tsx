@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type Source, type WorkspaceDetail } from "../api";
-import { Card, ConfidenceBar, EmptyState, ErrorBox, Field, KeyValue, Loading, PageHeader, Stat, StatusBadge } from "../components/ui";
-import { fmtDate, fmtUsd } from "../lib/format";
+import { Card, ConfidenceBar, EmptyState, ErrorBox, Field, KeyValue, Loading, PageHeader, Stat, StatusBadge, Value } from "../components/ui";
+import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
-import { AUTONOMY_LEVELS } from "../lib/status";
+import { AUTONOMY_LEVELS, TERMINAL_RUN } from "../lib/status";
 
 export function WorkspaceHomePage() {
   const { wsId = "" } = useParams();
@@ -25,45 +26,48 @@ export function WorkspaceHomePage() {
       <PageHeader title={w.name} subtitle={w.description || undefined}
         actions={<span className="tag tag-info" title={level?.description}>Autonomy L{w.autonomy_level} · {level?.name}</span>} />
 
+      <WhatChanged wsId={wsId} verifiedFindings={insights.error || !insights.data ? undefined : insights.data.filter((i) => i.status === "verified").length}
+        runningRuns={runs.error ? undefined : runs.data?.filter((r) => !TERMINAL_RUN.has(r.status)).length} />
+
       <div className="grid-2">
         <Card title="Objective">
           <p>{w.objective || <span className="muted">No objective set.</span>}</p>
           <div className="stats-row">
-            <Stat label="Sources" value={w.counts.sources} />
-            <Stat label="Runs" value={w.counts.runs} />
-            <Stat label="Verified insights" value={w.counts.verified_insights} />
-            <Stat label="Datasets" value={w.counts.dataset} />
-            <Stat label="Metrics" value={w.counts.metric} />
-            <Stat label="Charts" value={w.counts.chart} />
-            <Stat label="Dashboards" value={w.counts.dashboard} />
+            <Stat label="Sources" value={<Value value={w.counts?.sources} format="int" />} />
+            <Stat label="Runs" value={<Value value={w.counts?.runs} format="int" />} />
+            <Stat label="Verified insights" value={<Value value={w.counts?.verified_insights} format="int" />} />
+            <Stat label="Datasets" value={<Value value={w.counts?.dataset} format="int" />} />
+            <Stat label="Metrics" value={<Value value={w.counts?.metric} format="int" />} />
+            <Stat label="Charts" value={<Value value={w.counts?.chart} format="int" />} />
+            <Stat label="Dashboards" value={<Value value={w.counts?.dashboard} format="int" />} />
           </div>
         </Card>
         <StartAnalysis ws={w} sources={sources.data ?? []} />
       </div>
 
       <div className="grid-2">
-        <Card title="Analysis runs" actions={<Link to={`/w/${wsId}/runs`} className="btn btn-sm btn-ghost">All runs</Link>}>
+        <Card title="Investigations" actions={<Link to={to.investigations(wsId)} className="btn btn-sm btn-ghost">All investigations</Link>}>
           <ErrorBox error={runs.error} />
           {runs.data?.length === 0 && <EmptyState title="No runs yet">Start an analysis once a source has selected tables.</EmptyState>}
           <ul className="list">
             {runs.data?.slice(0, 6).map((r) => (
               <li key={r.id} className="list-item">
-                <Link to={`/w/${wsId}/runs/${r.id}`} className="list-main">
+                <Link to={to.run(wsId, r.id)} className="list-main">
                   <span className="clamp-1">{r.objective}</span>
-                  <span className="muted small">{fmtDate(r.created_at)} · {r.tokens.toLocaleString()} tokens · {fmtUsd(r.cost_usd)}</span>
+                  <span className="muted small">{fmtDate(r.created_at)} · <Value value={r.tokens} format="int" suffix="tokens" /> · <Value value={r.cost_usd} format="usd" /></span>
                 </Link>
                 <StatusBadge status={r.status} />
               </li>
             ))}
           </ul>
         </Card>
-        <Card title="Key verified insights" actions={<Link to={`/w/${wsId}/insights`} className="btn btn-sm btn-ghost">All insights</Link>}>
+        <Card title="Key verified insights" actions={<Link to={to.findings(wsId)} className="btn btn-sm btn-ghost">All insights</Link>}>
           <ErrorBox error={insights.error} />
           {insights.data && verified.length === 0 && <EmptyState title="No verified insights yet" />}
           <ul className="list">
             {verified.map((i) => (
               <li key={i.id} className="list-item">
-                <Link to={`/w/${wsId}/insights/${i.id}`} className="list-main">
+                <Link to={to.findings(wsId, i.id)} className="list-main">
                   <span><strong>{i.code}</strong> {i.title}</span>
                   <span className="muted small clamp-2">{i.finding}</span>
                 </Link>
@@ -75,7 +79,7 @@ export function WorkspaceHomePage() {
       </div>
 
       <div className="grid-3">
-        <Card title="Sources" actions={<Link to={`/w/${wsId}/sources`} className="btn btn-sm btn-ghost">Manage</Link>}>
+        <Card title="Sources" actions={<Link to={to.sources(wsId)} className="btn btn-sm btn-ghost">Manage</Link>}>
           <ErrorBox error={sources.error} />
           {sources.data?.length === 0 && <EmptyState title="No sources">Add ServiceNow, PostgreSQL or a CSV upload.</EmptyState>}
           <ul className="list">
@@ -87,13 +91,13 @@ export function WorkspaceHomePage() {
             ))}
           </ul>
         </Card>
-        <Card title="Recent artifacts" actions={<Link to={`/w/${wsId}/studio`} className="btn btn-sm btn-ghost">Studio</Link>}>
+        <Card title="Recent artifacts" actions={<Link to={to.studio(wsId)} className="btn btn-sm btn-ghost">Studio</Link>}>
           <ErrorBox error={artifacts.error} />
           {artifacts.data?.length === 0 && <EmptyState title="No artifacts yet" />}
           <ul className="list">
             {artifacts.data?.slice(0, 8).map((a) => (
               <li key={a.id} className="list-item">
-                <Link to={`/w/${wsId}/studio?artifact=${a.id}`} className="list-main">
+                <Link to={to.studio(wsId, a.id)} className="list-main">
                   <span className="clamp-1">{a.name}</span><span className="muted small">{a.type} · v{a.version}</span>
                 </Link>
                 <StatusBadge status={a.status} />
@@ -101,7 +105,7 @@ export function WorkspaceHomePage() {
             ))}
           </ul>
         </Card>
-        <Card title="Members & policy" actions={<Link to={`/w/${wsId}/governance`} className="btn btn-sm btn-ghost">Edit</Link>}>
+        <Card title="Members & policy" actions={<Link to={to.governance(wsId)} className="btn btn-sm btn-ghost">Edit</Link>}>
           <p className="small">Your role: <strong>{w.role}</strong> · policy v{w.policy_version}</p>
           <ul className="list compact">
             {w.members.map((m) => (
@@ -109,16 +113,44 @@ export function WorkspaceHomePage() {
             ))}
           </ul>
           <KeyValue items={[
-            ["Max rows", w.policy.max_rows?.toLocaleString()],
+            ["Max rows", <Value key="mr" value={w.policy.max_rows} format="int" />],
             ["PII access", w.policy.pii_access],
             ["Publish to", (w.policy.publish_destinations ?? []).join(", ") || "—"],
             ["Publish approval", w.policy.publish_requires_approval ? "required" : "not required"],
-            ["Run budget", `${fmtUsd(w.policy.run_cost_budget_usd)} / ${(w.policy.run_token_budget ?? 0).toLocaleString()} tokens`],
+            ["Run budget", <span key="rb"><Value value={w.policy.run_cost_budget_usd} format="usd" /> / <Value value={w.policy.run_token_budget} format="int" suffix="tokens" /></span>],
             ["Restricted columns", String((w.policy.restricted_columns ?? []).length)],
           ]} />
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * Home: what needs attention. Each count is fetched on its own; a count that could not be loaded
+ * shows as unknown, never as 0 ("no open alerts" and "could not check alerts" are different facts).
+ */
+function WhatChanged({ wsId, verifiedFindings, runningRuns }: { wsId: string; verifiedFindings?: number; runningRuns?: number }) {
+  const alerts = useAsync(() => api.listAlerts(wsId, "open"), [wsId]);
+  const approvals = useAsync(() => api.listApprovals(wsId, "pending"), [wsId]);
+  const count = (s: { data?: unknown[]; error: string | null }) => (s.error || !s.data ? undefined : s.data.length);
+  return (
+    <Card title="What changed">
+      <div className="stats-row">
+        <Link to={to.monitoring(wsId, { tab: "alerts" })} className="stat-link">
+          <Stat label="Open alerts" value={<Value value={count(alerts)} format="int" unknownTitle={alerts.error ?? "Loading"} />} />
+        </Link>
+        <Link to={to.approvals(wsId)} className="stat-link">
+          <Stat label="Pending approvals" value={<Value value={count(approvals)} format="int" unknownTitle={approvals.error ?? "Loading"} />} />
+        </Link>
+        <Link to={to.findings(wsId)} className="stat-link">
+          <Stat label="Verified findings" value={<Value value={verifiedFindings} format="int" />} />
+        </Link>
+        <Link to={to.investigations(wsId)} className="stat-link">
+          <Stat label="Investigations in progress" value={<Value value={runningRuns} format="int" />} />
+        </Link>
+      </div>
+    </Card>
   );
 }
 
@@ -138,7 +170,7 @@ function StartAnalysis({ ws, sources }: { ws: WorkspaceDetail; sources: Source[]
       source_ids: sourceId ? [sourceId] : undefined,
       autonomy_level: level === "" ? undefined : Number(level),
     }));
-    if (run) nav(`/w/${ws.id}/runs/${run.id}`);
+    if (run) nav(to.run(ws.id, run.id));
   };
 
   return (

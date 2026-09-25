@@ -107,7 +107,7 @@ export function CrawlPanel({ wsId, source, refreshKey = 0, onFinished, pollMs = 
         <div className="table-wrap">
           <table className="table table-compact">
             <caption className="sr-only">Crawl history of {source.name}</caption>
-            <thead><tr><th>Status</th><th>Mode</th><th>Trigger</th><th>Started</th><th>Duration</th><th>Result</th><th /></tr></thead>
+            <thead><tr><th>Status</th><th>Mode</th><th>Trigger</th><th>Started</th><th>Duration</th><th>Result</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {crawls.map((c) => (
                 <tr key={c.id} className={c.id === selected ? "row-active" : undefined}>

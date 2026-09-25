@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type Alert, type Monitor } from "../api";
 import { EChart, canvasSupported } from "../components/Chart";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
@@ -29,7 +30,7 @@ export function MonitoringPage() {
   };
   return (
     <div className="page">
-      <PageHeader title="Monitoring"
+      <PageHeader title="Monitors & alerts"
         subtitle="Metric thresholds, drift, change points, forecast deviations and data quality — evaluated on a schedule, de-duplicated into alerts, triaged by JEV." />
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "monitors", label: `Monitors${monitors.data ? ` (${monitors.data.length})` : ""}` },
@@ -331,7 +332,7 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
     if (r === undefined) return;
     if (r.run_id) {
       onChanged({ ...a, investigation_run_id: r.run_id });
-      navigate(`/w/${wsId}/runs/${r.run_id}`);
+      navigate(to.run(wsId, r.run_id));
     } else {
       setNote("Investigation was not started (policy or autonomy does not allow it).");
     }
@@ -353,7 +354,7 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
           {typeof triage?.p_material === "number" && (
             <span title={triage.model ? `JEV triage by ${triage.model}` : "JEV triage"}><Tag tone="jev">p(material) {fmtPct(triage.p_material, 0)}</Tag></span>
           )}
-          {a.investigation_run_id && <Link to={`/w/${wsId}/runs/${a.investigation_run_id}`}>Investigation run</Link>}
+          {a.investigation_run_id && <Link to={to.run(wsId, a.investigation_run_id)}>Investigation run</Link>}
           {a.resolved_at && <span className="muted">resolved {fmtDate(a.resolved_at)}</span>}
         </div>
         <div className="form-actions">

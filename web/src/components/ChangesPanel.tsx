@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { to } from "../routes";
 import type { ChangedFinding, MetricDelta, RunChanges } from "../api";
 import { fmtNumber, fmtPct } from "../lib/format";
 import { Card, Tag } from "./ui";
@@ -20,7 +21,7 @@ export function deltaArrow(pct: number | null | undefined): { arrow: string; dir
 function FindingItem({ f, wsId, showPrev }: { f: ChangedFinding; wsId: string; showPrev: boolean }) {
   return (
     <li className="change-item">
-      {f.id ? <Link to={`/w/${wsId}/insights/${f.id}`}><strong>{f.code ? `${f.code} ` : ""}{f.title ?? "Finding"}</strong></Link>
+      {f.id ? <Link to={to.findings(wsId, f.id)}><strong>{f.code ? `${f.code} ` : ""}{f.title ?? "Finding"}</strong></Link>
         : <strong>{f.code ? `${f.code} ` : ""}{f.title ?? "Finding"}</strong>}
       {f.finding && <div className="small muted clamp-2">{f.finding}</div>}
       {showPrev && (f.effect !== undefined || f.previous_effect !== undefined) && (
@@ -54,8 +55,8 @@ export function ChangesPanel({ changes, wsId, reportArtifactId }: { changes: Run
   return (
     <Card title="What changed since the previous run"
       actions={<>
-        {changes.previous_run_id && <Link className="btn btn-xs btn-ghost" to={`/w/${wsId}/runs/${changes.previous_run_id}`}>Previous run</Link>}
-        {reportArtifactId && <Link className="btn btn-xs" to={`/w/${wsId}/reports?artifact=${reportArtifactId}`}>Generated report</Link>}
+        {changes.previous_run_id && <Link className="btn btn-xs btn-ghost" to={to.run(wsId, changes.previous_run_id)}>Previous run</Link>}
+        {reportArtifactId && <Link className="btn btn-xs" to={to.reports(wsId, reportArtifactId)}>Generated report</Link>}
       </>}>
       <div className="chip-row changes-counts" aria-label="Finding changes">
         {GROUPS.map((g) => <Tag key={g.key} tone={g.tone}>{g.label}: {(changes[g.key] ?? []).length}</Tag>)}

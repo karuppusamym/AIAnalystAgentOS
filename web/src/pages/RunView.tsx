@@ -1,12 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, subscribeRunEvents, type FeedbackResponse, type Publication, type RunEvent, type RunOrigin, type RunTask } from "../api";
 import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import { ChangesPanel } from "../components/ChangesPanel";
 import { InvestigationTree } from "../components/InvestigationTree";
 import { Markdown } from "../components/Markdown";
-import { Card, EmptyState, ErrorBox, Field, JsonView, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
-import { durationBetween, fmtDate, fmtPct, fmtTime, fmtUsd, shortHash } from "../lib/format";
+import { Card, EmptyState, ErrorBox, Field, JsonView, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
+import { durationBetween, fmtDate, fmtPct, fmtTime, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { TERMINAL_RUN } from "../lib/status";
 
@@ -81,7 +82,7 @@ export function RunViewPage() {
           <button type="button" className="btn btn-sm" onClick={() => doControl("pause")} disabled={terminal || r.status === "PAUSED" || control.busy}>Pause</button>
           <button type="button" className="btn btn-sm" onClick={() => doControl("resume")} disabled={terminal || r.status !== "PAUSED" || control.busy}>Resume</button>
           <button type="button" className="btn btn-sm btn-danger" onClick={() => doControl("cancel")} disabled={terminal || control.busy}>Cancel</button>
-          <Link to={`/w/${wsId}/runs/${runId}/console`} className="btn btn-sm btn-ghost">Agent console</Link>
+          <Link to={to.runConsole(wsId, runId)} className="btn btn-sm btn-ghost">Agent console</Link>
         </>}
       />
       <ErrorBox error={control.error} />
@@ -92,8 +93,8 @@ export function RunViewPage() {
         <KeyValue items={[
           ["Started", fmtDate(r.started_at ?? r.created_at)],
           ["Duration", durationBetween(r.started_at, r.finished_at)],
-          ["Tokens", r.tokens.toLocaleString()],
-          ["Cost", fmtUsd(r.cost_usd)],
+          ["Tokens", <Value key="t" value={r.tokens} format="int" />],
+          ["Cost", <Value key="c" value={r.cost_usd} format="usd" />],
           ["Tasks", `${r.tasks.filter((t) => t.status === "COMPLETED").length}/${r.tasks.length} done`],
           ["Hypotheses", String(r.hypotheses.length)],
           ["Findings", `${r.insights.filter((i) => i.verified).length} verified / ${r.insights.length}`],
@@ -102,7 +103,7 @@ export function RunViewPage() {
 
       {r.summary?.changes && <ChangesPanel changes={r.summary.changes} wsId={wsId} reportArtifactId={r.summary.report_artifact_id} />}
       {!r.summary?.changes && r.summary?.report_artifact_id && (
-        <Notice tone="info">A report was generated for this run: <Link to={`/w/${wsId}/reports?artifact=${r.summary.report_artifact_id}`}>open in Reports</Link>.</Notice>
+        <Notice tone="info">A report was generated for this run: <Link to={to.reports(wsId, r.summary.report_artifact_id)}>open in Reports</Link>.</Notice>
       )}
 
       {(r.summary?.summary_markdown || pub) && (
@@ -161,8 +162,8 @@ export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin 
     return (
       <span className="origin">
         <Tag tone="info">scheduled</Tag>{" "}
-        {origin.schedule_id && <Link className="small" to={`/w/${wsId}/schedules?schedule=${origin.schedule_id}`}>schedule</Link>}
-        {origin.previous_run_id && <> · <Link className="small" to={`/w/${wsId}/runs/${origin.previous_run_id}`}>previous run</Link></>}
+        {origin.schedule_id && <Link className="small" to={to.schedules(wsId, origin.schedule_id)}>schedule</Link>}
+        {origin.previous_run_id && <> · <Link className="small" to={to.run(wsId, origin.previous_run_id)}>previous run</Link></>}
         {origin.publish && <span className="muted small"> · publish: {origin.publish}</span>}
       </span>
     );
@@ -171,7 +172,7 @@ export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin 
     return (
       <span className="origin">
         <Tag tone="warning">{origin.automatic ? "alert investigation (automatic)" : "alert investigation"}</Tag>{" "}
-        {origin.alert_id && <Link className="small" to={`/w/${wsId}/monitoring?tab=alerts&alert=${origin.alert_id}`}>alert</Link>}
+        {origin.alert_id && <Link className="small" to={to.monitoring(wsId, { tab: "alerts", alert: origin.alert_id })}>alert</Link>}
       </span>
     );
   }
@@ -224,7 +225,7 @@ function TaskBoard({ tasks }: { tasks: RunTask[] }) {
       <div className="chip-row">{Object.entries(counts).map(([s, n]) => <StatusBadge key={s} status={s} label={`${s} · ${n}`} />)}</div>
       <div className="table-wrap">
         <table className="table table-compact">
-          <thead><tr><th className="num">#</th><th>Task</th><th>Agent</th><th>Status</th><th className="num">Attempts</th><th>Duration</th><th>Error</th><th /></tr></thead>
+          <thead><tr><th className="num">#</th><th>Task</th><th>Agent</th><th>Status</th><th className="num">Attempts</th><th>Duration</th><th>Error</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {sorted.map((t) => (
               <Fragment key={t.id}>
