@@ -135,3 +135,88 @@ air-gapped, `local_files_only`). The index records its provider; queries embed w
 configuration change never mixes vector spaces. `analystos knowledge reembed [--provider]
 [--dim]` moves the index, retyping `vector(n)` and rebuilding the HNSW index when the dimension
 changes. `context_entry.embedding` stays 256-d hashing.
+
+## Findings as Attested Computations (K04)
+
+Code: `knowledge/attested.py` (`AttestedComputation`, `attested_from_insight`, `write_findings`,
+`check_attested`). A **verified** insight becomes `findings/<insight-id>.md`,
+`type: Attested Computation` (OKF §10). An unverified one has nothing to attest (`InvalidInput`).
+
+| Frontmatter | Value |
+|---|---|
+| `runtime` (§10.2, required) | the gateway dialect of the primary query's source |
+| `parameters` | `[]` — a finding is a fixed computation; its AnalysisSpec is in `analystos.attestation.params` |
+| `executor` | `analystos://gateway/QueryGateway.execute`, receipt `[query_id, executed_sql, result_hash]` |
+| `attester` | `analystos://rev/reproducible_rerun` (the REV re-run compares result hashes) |
+| `generated` | `process:analystos-rev` at verification time |
+| `verified` | `process:analystos-rev` (machine-confirmed); a `human:<id>` approver makes it human-reviewed and `stable` |
+| `stale_after` (§5.5) | verification time + 90 days (`stale_days`) |
+| `sources` | one entry per governed query (`analystos://query/<id>`) and per asset read |
+| `analystos.attestation` | `method`, `params`, `spec_hash` (hypothesis registry hash), `plan_hash`, `run_id`, `query_hash` (`query_execution.fingerprint`), `result_hash`, `queries[]` (primary and verification, each with both hashes), `statistics` (`test`, `n`, `p_value`, `q_value` = BH-adjusted p, `effect_size`, `effect_label`), `q_value`, `effect_size`, `confidence`, `checks[]`, `verified_by[]`, `approved_by[]` |
+
+The body has `# Claim`, `# Computation` (one fenced SQL block, the executed statement), `# Evidence`
+and `# Caveats`. `AttestedComputation.from_document(render())` is lossless (tested). There is no
+upstream JSON Schema for OKF, so `check_attested` is this profile, self-checked.
+
+`POST /api/workspaces/{ws}/analysis/{run}/findings/attest` writes a run's verified findings into the
+workspace pack as drafts (curated documents kept, below); `GET /api/insights/{id}/attested` returns
+one without writing. Turning approved findings into drafts automatically is P4-K08.
+
+## Machine-written documents: the crawler invariants (K04, K06)
+
+`knowledge/drafts.write_drafts` is the one way crawlers, ingesters and the REV write into a
+workspace pack (one merge revision per call):
+
+* a document is **curated** when `generated.by` or any `verified[].by` is `human:…`, or the
+  `analystos` extension says `origin: user` / `reviewed: true` — it is kept byte for byte and
+  reported as `kept_curated`;
+* otherwise it is replaced, with `tags` = old ∪ new (tags only tighten);
+* identical content is not rewritten; machine documents carry no `generated.at` and no statistics,
+  so re-crawling unchanged metadata writes no revision.
+
+## Crawler output and sources (K06)
+
+Layout (spec v3 §6.1) and types written:
+
+| Path | `type` | From |
+|---|---|---|
+| `tables/<schema.table>.md` (+ `.columns-N.md` beyond 100 columns) | `Table` | every crawl (replaces the crawler's `context_entry` table rows) |
+| `sources/<source id>.md` | `Source` | every crawl |
+| `sources/<source id>.query-patterns.md` | `Query Patterns` | every crawl (facet `query_history`), or `POST …/knowledge/crawl/query-history` |
+| `dbt/<project>/{models,seeds,snapshots,sources}/<name>.md` | `dbt Model` / `dbt Source` / … | `POST …/knowledge/crawl/dbt-manifest` (manifest v12+) |
+| `bi/superset/{datasets,charts,dashboards}/<id>.md` | `BI Dataset` / `Chart` / `Dashboard` | `POST …/knowledge/crawl/superset` (GET-only) |
+| `documents/<name>.md` (+ `.part-N.md`) | `Document` | `POST …/knowledge/documents` (upload) |
+
+Everything is written `status: draft` (a reviewed table is `stable`, a deprecated one `deprecated`)
+with `analystos.origin` naming the source. Links between these documents always resolve inside the
+bundle (only documents written in the same call, or known to exist, are linked), so the pack still
+passes the publish policy.
+
+* **Value-free query history** (`skills/query_history.py`): statements from `query_execution`
+  (status `ok`, not the crawler's own) are parsed in memory with sqlglot; kept are tables read,
+  join paths (`ON` and implicit `WHERE a.x = b.y`), filtered columns with an operator class
+  (`=`, `<>`, `range`, `in`, `like`, `is null`), groupings and ordering. No literal is kept; the
+  audit is the OKF source with `usage_count` and `usage_window` (§5.1). Source-side query logs
+  (e.g. `pg_stat_statements`) are not read: that would be a data-touching step outside the
+  selected assets.
+* **dbt manifest**: descriptions, columns, tests (kind and column only — test arguments such as
+  `accepted_values` lists are values and are dropped), `depends_on`/`child_map` lineage as links and
+  as `table → transformed_into → table` lineage edges. Descriptions fill the catalog only where the
+  crawler precedence allows (never over user, model, source or reviewed text); a dbt `pii` tag or
+  `meta.contains_pii` adds `pii` to the column (tags only tighten).
+* **Superset metadata**: datasets (columns, metrics), charts (type, dataset, dashboards) and
+  dashboards (charts). Objects AnalystOS published for *other* workspaces (`aos_<ws>_`,
+  `aos-<ws>-`, `AnalystOS Analytics (<ws>)`) are never read in; `include` globs narrow further.
+  Chart params and virtual-dataset SQL are not copied (adhoc filters hold values).
+* **Documents**: `.md`, `.markdown`, `.txt`, `.pdf`, ≤ 10 MiB, type checked by extension and
+  content; an uploaded Markdown file's own frontmatter is dropped; credentials/e-mails/card numbers
+  redacted; instruction-like lines replaced; bundle-internal links reduced to text; PDFs through
+  `pypdf` when installed (`documents` extra, not added to the base install) or a built-in extractor
+  for simple-font PDFs (no CID/Type0 fonts; such a PDF is refused with a message).
+
+**Facet-level failure** (`services/facets.py`): after connect/discover/diff/apply, every crawl stage
+is a facet — `profile`, `relationships`, `glossary`, `enrich`, `knowledge`, `query_history`,
+`graph` (and `superset.datasets|charts|dashboards`, `dbt.documents|catalog|lineage` for the other
+sources). A failing facet is recorded in `crawl_run.stats.facets` (`status`, `code`, `error`) and
+`stats.failed_facets`, logged on the crawl, emitted as `crawl.facet_failed`, and the crawl still
+succeeds. Catalog-writing facets run in a savepoint so a half-done facet leaves nothing behind.

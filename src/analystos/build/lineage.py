@@ -4,7 +4,8 @@ OpenLineage run events per model, and the platform's own lineage edges.
 dbt Core does not emit OpenLineage by itself (that is the `openlineage-dbt` wrapper), so the events
 are derived from the artifacts dbt writes: one START and one COMPLETE/FAIL `RunEvent` per model,
 with its source inputs, its output relation and the output's schema facet. They validate against the
-OpenLineage 2-0-2 `RunEvent` shape and are stored on the build job for export (P4-K04).
+pinned OpenLineage 2-0-2 `RunEvent` and facet schemas (`evidence/schema`, P4-K04) and are stored on
+the build job for export.
 """
 from __future__ import annotations
 
@@ -15,10 +16,15 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from analystos.artifacts.registry import link
+from analystos.evidence.schemas import OL_RUN_EVENT as OL_SCHEMA
+from analystos.evidence.schemas import facet_schema_urls
 
-OL_SCHEMA = "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent"
 PRODUCER = "https://github.com/context2ai/analystos/build"
-_FACET = "https://openlineage.io/spec/facets/1-0-0/"
+
+
+def _facet(name: str, **fields: Any) -> dict[str, Any]:
+    """A facet stamped with the `_schemaURL` of its pinned schema (evidence/schema, P4-K04)."""
+    return {"_producer": PRODUCER, "_schemaURL": facet_schema_urls()[name], **fields}
 
 
 def manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -55,8 +61,7 @@ def run_results_summary(run_results: dict[str, Any]) -> dict[str, Any]:
 def _ol_dataset(namespace: str, database: str, schema: str, name: str, columns: list[str] | None = None) -> dict[str, Any]:
     ds: dict[str, Any] = {"namespace": namespace, "name": f"{database}.{schema}.{name}", "facets": {}}
     if columns:
-        ds["facets"]["schema"] = {"_producer": PRODUCER, "_schemaURL": _FACET + "SchemaDatasetFacet.json#/$defs/SchemaDatasetFacet",
-                                  "fields": [{"name": c} for c in columns]}
+        ds["facets"]["schema"] = _facet("SchemaDatasetFacet", fields=[{"name": c} for c in columns])
     return ds
 
 
@@ -71,11 +76,10 @@ def openlineage_events(*, job_id: str, workspace_id: str, manifest: dict[str, An
             continue
         run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"analystos:{job_id}:{uid}"))
         job = {"namespace": f"analystos:{workspace_id}", "name": f"{job_id}.{node.get('name')}",
-               "facets": {"jobType": {"_producer": PRODUCER, "_schemaURL": _FACET + "JobTypeJobFacet.json#/$defs/JobTypeJobFacet",
-                                      "processingType": "BATCH", "integration": "DBT", "jobType": "MODEL"}}}
+               "facets": {"jobType": _facet("JobTypeJobFacet", processingType="BATCH", integration="DBT", jobType="MODEL")}}
         code = node.get("compiled_code")
         if code:
-            job["facets"]["sql"] = {"_producer": PRODUCER, "_schemaURL": _FACET + "SQLJobFacet.json#/$defs/SQLJobFacet", "query": code}
+            job["facets"]["sql"] = _facet("SQLJobFacet", query=code)
         inputs = []
         for dep in (node.get("depends_on") or {}).get("nodes") or []:
             if dep in sources:

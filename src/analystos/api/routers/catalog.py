@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,6 +69,54 @@ def _run_quietly(crawl_id: str, user_id: str) -> None:
         crawler.run_crawl(crawl_id, user_id)
     except Exception:  # recorded on the crawl_run by run_crawl; logged here so nothing fails silently
         logging.getLogger(__name__).exception("background crawl %s failed", crawl_id)
+
+
+# ------------------------------------------------------------------------ crawler sources (P4-K06)
+class QueryHistoryIn(BaseModel):
+    source_ids: list[str] | None = None
+
+
+class SupersetCrawlIn(BaseModel):
+    include: list[str] | None = None  # glob patterns on dataset/chart/dashboard names
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/query-history")
+def crawl_query_history(workspace_id: str, body: QueryHistoryIn, user: User = Depends(current_user),
+                        session: Session = Depends(db)):
+    """Mine the workspace's governed query audit for join paths, columns, filters and groupings
+    (structure only, never values) into the knowledge pack."""
+    from analystos.services import knowledge_ingest
+
+    return knowledge_ingest.query_history(session, session.merge(user), workspace_id, source_ids=body.source_ids)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/dbt-manifest")
+async def crawl_dbt_manifest(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                             session: Session = Depends(db)):
+    """Ingest a dbt manifest.json (v12+): model and source documents, tests, lineage, catalog descriptions."""
+    from analystos.services import knowledge_ingest
+
+    data = await file.read(knowledge_ingest.MAX_MANIFEST_BYTES + 1)
+    return knowledge_ingest.ingest_dbt_manifest(session, session.merge(user), workspace_id, data)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/superset")
+def crawl_superset(workspace_id: str, body: SupersetCrawlIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    """Read Superset datasets, charts and dashboards (GET only) into the knowledge pack."""
+    from analystos.services import knowledge_ingest
+
+    return knowledge_ingest.superset_metadata(session, session.merge(user), workspace_id, include=body.include)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/documents")
+async def upload_knowledge_document(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                                    session: Session = Depends(db)):
+    """Upload a Markdown, text or PDF document; it becomes draft knowledge sections for review."""
+    from analystos.knowledge.documents import MAX_UPLOAD_BYTES
+    from analystos.services import knowledge_ingest
+
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    return knowledge_ingest.upload_document(session, session.merge(user), workspace_id, file.filename or "document", data)
 
 
 @router.get("/workspaces/{workspace_id}/crawls")

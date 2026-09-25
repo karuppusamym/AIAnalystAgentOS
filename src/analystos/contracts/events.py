@@ -19,6 +19,8 @@ EVENT_TYPES = {
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
     "ask.answered", "ask.promoted", "capability.invoked",
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
+    # Crawler sources and facet-level failure (P4-K06)
+    "crawl.facet_failed", "knowledge.ingested",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
