@@ -1,0 +1,896 @@
+{
+  "api": "http://localhost:8000",
+  "started_at": "2026-09-25T05:49:42.791462+00:00",
+  "checks": {
+    "1_workspace_created": true,
+    "2_servicenow_source_added": true,
+    "3_incident_and_change_selected": true,
+    "19_requirement_added_and_replanned": true,
+    "18_user_can_interrupt_before_publish": true,
+    "approval_requires_approver_role": true,
+    "4_context_loaded": true,
+    "5_datasets_profiled": true,
+    "6_quality_issues_identified": true,
+    "7_hypotheses_proposed": true,
+    "8_iterative_analysis": true,
+    "9_three_evidence_backed_findings": true,
+    "10_rev_verified": true,
+    "11_reusable_dataset": true,
+    "12_kpi_definitions": true,
+    "13_five_charts": true,
+    "14_executive_dashboard": true,
+    "15_operational_dashboard": true,
+    "16_published_to_superset": true,
+    "17_queries_artifacts_lineage_stored": true,
+    "20_evidence_inspectable": true,
+    "safety_restricted_column_rejected": true,
+    "safety_write_rejected": true,
+    "safety_control_plane_unreachable": true,
+    "safety_cross_workspace_isolation": true,
+    "jev_decisioning_used": true
+  },
+  "health": {
+    "ok": true,
+    "orchestrator": "temporal",
+    "checks": {
+      "postgres": {
+        "ok": true,
+        "ms": 3
+      },
+      "redis": {
+        "ok": true,
+        "ms": 5
+      },
+      "neo4j": {
+        "ok": true,
+        "ms": 2
+      },
+      "temporal": {
+        "ok": true,
+        "ms": 0
+      },
+      "superset": {
+        "ok": true,
+        "ms": 60
+      },
+      "models": {
+        "ok": true,
+        "ms": 0,
+        "chat": true,
+        "jev": true
+      }
+    }
+  },
+  "source": {
+    "discovered": [
+      "incident",
+      "change_request",
+      "sys_user_group",
+      "cmdb_ci"
+    ],
+    "loaded": [
+      {
+        "asset": "src_src_0793b800fbce.incident",
+        "row_count": 20000,
+        "schema": "src_src_0793b800fbce",
+        "table": "incident",
+        "columns": [
+          {
+            "name": "sys_id",
+            "type": "text"
+          },
+          {
+            "name": "number",
+            "type": "text"
+          },
+          {
+            "name": "opened_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "resolved_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "closed_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "priority",
+            "type": "bigint"
+          },
+          {
+            "name": "impact",
+            "type": "bigint"
+          },
+          {
+            "name": "urgency",
+            "type": "bigint"
+          },
+          {
+            "name": "state",
+            "type": "bigint"
+          },
+          {
+            "name": "category",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group_name",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci_name",
+            "type": "text"
+          },
+          {
+            "name": "caused_by",
+            "type": "text"
+          },
+          {
+            "name": "caused_by_name",
+            "type": "text"
+          },
+          {
+            "name": "reassignment_count",
+            "type": "bigint"
+          },
+          {
+            "name": "reopen_count",
+            "type": "bigint"
+          },
+          {
+            "name": "made_sla",
+            "type": "boolean"
+          },
+          {
+            "name": "contact_type",
+            "type": "text"
+          },
+          {
+            "name": "short_description",
+            "type": "text"
+          },
+          {
+            "name": "caller_id",
+            "type": "text"
+          },
+          {
+            "name": "caller_id_name",
+            "type": "text"
+          },
+          {
+            "name": "sys_updated_on",
+            "type": "timestamp"
+          }
+        ]
+      },
+      {
+        "asset": "src_src_0793b800fbce.change_request",
+        "row_count": 3000,
+        "schema": "src_src_0793b800fbce",
+        "table": "change_request",
+        "columns": [
+          {
+            "name": "sys_id",
+            "type": "text"
+          },
+          {
+            "name": "number",
+            "type": "text"
+          },
+          {
+            "name": "type",
+            "type": "text"
+          },
+          {
+            "name": "risk",
+            "type": "bigint"
+          },
+          {
+            "name": "state",
+            "type": "bigint"
+          },
+          {
+            "name": "start_date",
+            "type": "timestamp"
+          },
+          {
+            "name": "end_date",
+            "type": "timestamp"
+          },
+          {
+            "name": "assignment_group",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group_name",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci_name",
+            "type": "text"
+          },
+          {
+            "name": "close_code",
+            "type": "text"
+          },
+          {
+            "name": "short_description",
+            "type": "text"
+          },
+          {
+            "name": "sys_updated_on",
+            "type": "timestamp"
+          }
+        ]
+      }
+    ]
+  },
+  "redirect": {
+    "kind": "redirect",
+    "classified_by": "jev:typesafe/jev-1.13-20260917",
+    "consequential_p": 0.09,
+    "replan": {
+      "plan_version": 2,
+      "tasks_reset": 9,
+      "tasks_removed": 9,
+      "approvals_invalidated": 0
+    },
+    "interpretation": {
+      "filters": [
+        {
+          "asset": "src_src_0793b800fbce.incident",
+          "column": "category",
+          "op": "!=",
+          "value": "inquiry"
+        }
+      ],
+      "focus": [
+        "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures."
+      ],
+      "summary": "Exclude incidents categorized as inquiry from the analysis since they represent requests rather than operational failures.",
+      "interpreted_by": "anthropic/claude-sonnet-5"
+    },
+    "feedback_id": "fb_e9fd95c5134b"
+  },
+  "analyst_approve_attempt": {
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "forbidden",
+        "message": "role 'editor' cannot approve",
+        "retryable": false,
+        "details": {}
+      }
+    }
+  },
+  "approval": {
+    "id": "apr_06a5256f7276",
+    "workspace_id": "ws_de73506cd64e",
+    "run_id": "run_7f201bf634b0",
+    "action": "publish_dashboard",
+    "risk_tier": "high",
+    "destination": "superset",
+    "affected_assets": [
+      "aos_analyze_incident_and_change_da_f634b0",
+      "executive",
+      "operational"
+    ],
+    "payload_hash": "3c195011a09b2cd5e0c920a9b96b62d067164e3298a96406fb997668737aadd0",
+    "plan_hash": "7dad3c8e2b876c562de612d055600b25fdf805d036e88bdbd3cc50bdf2b039e8",
+    "policy_version": 1,
+    "requested_by": "usr_84234781ebd9",
+    "status": "approved",
+    "decided_by": "usr_6575847a9fd5",
+    "decided_at": "2026-09-25T05:54:14.743638+00:00",
+    "reason": "e2e demo",
+    "expires_at": "2026-09-28T05:54:09.569411+00:00",
+    "evidence": {
+      "charts": 10,
+      "policy": {
+        "details": {
+          "role": "editor",
+          "tool": null,
+          "agent": "publisher",
+          "action": "publish",
+          "purpose": "analysis",
+          "destination": "superset"
+        },
+        "reasons": [
+          "initial_release_requires_approval_for_external_side_effects"
+        ],
+        "decision": "approval_required",
+        "risk_tier": "high",
+        "policy_version": 1,
+        "effective_autonomy": 3
+      },
+      "metrics": 9,
+      "governance_review": {
+        "ok": true,
+        "problems": []
+      },
+      "jev_consequential": 0.98
+    },
+    "created_at": "2026-09-25T05:54:09.354284+00:00"
+  },
+  "run": {
+    "id": "run_7f201bf634b0",
+    "status": "COMPLETED",
+    "plan_version": 2,
+    "plan_hash": "7dad3c8e2b876c562de612d055600b25fdf805d036e88bdbd3cc50bdf2b039e8",
+    "cost_usd": 0.31860354999999985,
+    "tokens": 88657,
+    "summary": {
+      "published": true,
+      "publication": {
+        "urls": {
+          "executive": "http://localhost:8088/superset/dashboard/21/",
+          "operational": "http://localhost:8088/superset/dashboard/22/"
+        },
+        "status": "succeeded",
+        "external_ids": {
+          "charts": {
+            "finding_i_1": 140,
+            "finding_i_5": 141,
+            "detail_table": 143,
+            "trend_volume": 138,
+            "heat_dow_hour": 142,
+            "kpi_reopen_rate": 137,
+            "kpi_record_count": 134,
+            "kpi_sla_breach_rate": 135,
+            "trend_sla_breach_rate": 139,
+            "kpi_high_reassignment_incident_rate": 136
+          },
+          "metrics": {
+            "aos_analyze_incident_and_change_da_f634b0:reopen_rate": 45,
+            "aos_analyze_incident_and_change_da_f634b0:record_count": 42,
+            "aos_analyze_incident_and_change_da_f634b0:sla_breach_rate": 43,
+            "aos_analyze_incident_and_change_da_f634b0:avg_reopen_count": 47,
+            "aos_analyze_incident_and_change_da_f634b0:avg_reassignment_count": 46,
+            "aos_analyze_incident_and_change_da_f634b0:critical_incident_count": 48,
+            "aos_analyze_incident_and_change_da_f634b0:avg_reassignment_by_group": 50,
+            "aos_analyze_incident_and_change_da_f634b0:repeat_critical_incident_rate": 49,
+            "aos_analyze_incident_and_change_da_f634b0:high_reassignment_incident_rate": 44
+          },
+          "database": 11,
+          "datasets": {
+            "aos_analyze_incident_and_change_da_f634b0": 11
+          },
+          "dashboards": {
+            "executive": 21,
+            "operational": 22
+          },
+          "bundle_hash": "3c195011a09b2cd5e0c920a9b96b62d067164e3298a96406fb997668737aadd0",
+          "idempotency_key": "run_7f201bf634b0:3c195011a09b2cd5e0c920a9b96b62d0",
+          "database_created": true
+        },
+        "publication_id": "pub_4da461aa4a62"
+      },
+      "summary_source": "llm:google/gemini-3.5-flash-lite",
+      "graph_projection": {
+        "ok": true,
+        "edges": 199,
+        "relationships": 1
+      },
+      "summary_markdown": "- SLA breach concentration is strongly associated with high ticket reassignments (reassignment count = 3+ shows a 28.8% missed SLA rate versus 9.7% for count = 1).\n- Missed SLA rates vary by category, ranging from 12.0% in hardware to 19.3% in network, with the Network Operations assignment group reaching 22.1%.\n- Priority-1 records concentrate in specific segments: the top 3 CMDB CI name segments account for 46.7% of 694 priority-1 records (Gini 0.57).\n- Payments Gateway priority-1 incidents show severe assignment group concentration, with the top 3 groups accounting for 83.4% of 271 incidents (Gini 0.66).\n- Recommended next steps: Review configuration management for high-volume CMDB CI segments, investigate workflows in the network category and Network Operations group, and optimize routing to reduce excessive reassignments.",
+      "verified_insights": 5
+    },
+    "instructions": [
+      {
+        "at": "2026-09-25T05:50:48.686057+00:00",
+        "kind": "redirect",
+        "text": "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures.",
+        "feedback_id": "fb_e9fd95c5134b"
+      }
+    ],
+    "constraints": {
+      "focus": [
+        "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures."
+      ],
+      "filters": [
+        {
+          "op": "!=",
+          "asset": "src_src_0793b800fbce.incident",
+          "value": "inquiry",
+          "column": "category"
+        }
+      ]
+    }
+  },
+  "insights": [
+    {
+      "code": "I-1",
+      "title": "Priority-1 Record Concentration by CMDB CI Name",
+      "finding": "Among 694 priority-1 records distributed across 39 cmdb ci name segments, the top 3 segments account for 46.7% of the total volume, with a Gini coefficient of 0.57.",
+      "confidence": 0.95,
+      "queries": [
+        {
+          "id": "qry_aa8f317a3058",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(*) AS \"volume\" FROM (SELECT \"cmdb_ci_name\" AS \"segment\" FROM \"src_src_0793b800fbce\".\"incident\" WHERE \"priority\" = 1 AND \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"volume\" DESC NULLS LAST, \"segment\" LIMIT 5000",
+          "rows": 39,
+          "result_hash": "1c29783500d3a82ddd6707a7abd74089be0e7356ea75c8173e88d9b376a800ff"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ]
+      ],
+      "independent_model": {
+        "model": "openai/gpt-5.4-mini",
+        "review": {
+          "concerns": [
+            "Claim is descriptive; evidence supports concentration but not a causal interpretation",
+            "Uniform-segment null may be simplistic if segment sizes/exposure differ, but the stated hypothesis is about disproportionate share",
+            "p-values reported as 0.0 likely indicate rounding/underflow rather than literal zero"
+          ],
+          "supports": true,
+          "confidence": 0.98,
+          "suggested_caveat": "Among 694 priority-1 records in this filtered population, records are concentrated in a small number of cmdb ci name segments (top 3 = 46.7%, Gini \u2248 0.57); this supports the descriptive claim of disproportionate concentration, assuming the 39 segments are exhaustive and comparable."
+        }
+      },
+      "jev": {
+        "model": "typesafe/jev-1.13-20260917",
+        "p_supports": 0.76
+      }
+    },
+    {
+      "code": "I-2",
+      "title": "Missed SLA Rate Varies Across Category",
+      "finding": "The rate of missed SLA is associated with category across 16995 observations, ranging from 12.0% in the hardware segment to 19.3% in the network segment.",
+      "confidence": 0.95,
+      "queries": [
+        {
+          "id": "qry_c7c0e628dcb4",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT \"category\" AS \"segment\", CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_0793b800fbce\".\"incident\" WHERE \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000",
+          "rows": 4,
+          "result_hash": "15a2d22f0e2987d12e150707c2efc6e41e03a48b24caee1480af760b6c0fb946"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ]
+      ],
+      "independent_model": {
+        "model": "openai/gpt-5.4-mini",
+        "review": {
+          "concerns": [
+            "Effect size is small (Cramer's V\u22480.077), so the association is statistically significant but modest in magnitude",
+            "Percent range quoted (12.0% to 19.3%) is descriptive and may not reflect adjusted or causal effects",
+            "Generalization should be limited to the observed sample unless it is representative"
+          ],
+          "supports": true,
+          "confidence": 0.96,
+          "suggested_caveat": "In this sample of 16,995 observations, missed SLA rates differ by category, but the association is modest in size and should not be interpreted causally."
+        }
+      },
+      "jev": {
+        "model": "typesafe/jev-1.13-20260917",
+        "p_supports": 0.84
+      }
+    },
+    {
+      "code": "I-3",
+      "title": "Missed sla concentrates in assignment group name = Network Operations",
+      "finding": "Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 10.2% for assignment group name = Storage and Backup (2.2x).",
+      "confidence": 0.95,
+      "queries": [
+        {
+          "id": "qry_f6f762161df7",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT \"assignment_group_name\" AS \"segment\", CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_0793b800fbce\".\"incident\" WHERE \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000",
+          "rows": 11,
+          "result_hash": "c5f9119fbdbf9b36d32df549101afedc78493c224e216df25185214aad2df58a"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ]
+      ],
+      "independent_model": {
+        "model": "openai/gpt-5.4-mini",
+        "review": {
+          "concerns": [
+            "Association only; chi-square does not establish causality",
+            "Claim compares two groups but significance is for overall differences across 10 groups",
+            "Rounding in the claim (22.1% vs 10.2%, 2.2x) is slightly less precise than reported estimates (22.12% vs 10.25%, RR 2.158)",
+            "Cramer's V is small-to-moderate, so the practical impact may be limited despite statistical significance"
+          ],
+          "supports": true,
+          "confidence": 0.95,
+          "suggested_caveat": "Among 16,499 records, missed SLA rates differ significantly by assignment group; Network Operations has a higher rate than Storage and Backup, but this is an association, not evidence of causation."
+        }
+      },
+      "jev": {
+        "model": "typesafe/jev-1.13-20260917",
+        "p_supports": 0.88
+      }
+    },
+    {
+      "code": "I-4",
+      "title": "Missed sla concentrates in reassignment count = 3+",
+      "finding": "Records with reassignment count = 3+ have a missed SLA rate of 28.8% versus 9.7% for reassignment count = 1 (3.0x).",
+      "confidence": 0.95,
+      "queries": [
+        {
+          "id": "qry_ccfae4b5012c",
+          "sql": "SELECT \"segment\", \"segment_order\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT CASE WHEN \"reassignment_count\" IS NULL THEN NULL WHEN \"reassignment_count\" < 0.0 THEN '(<0)' WHEN \"reassignment_count\" < 1.0 THEN '0' WHEN \"reassignment_count\" < 2.0 THEN '1' WHEN \"reassignment_count\" < 3.0 THEN '2' ELSE '3+' END AS \"segment\", CASE WHEN \"reassignment_count\" IS NULL THEN NULL WHEN \"reassignment_count\" < 0.0 THEN -1 WHEN \"reassignment_count\" < 1.0 THEN 0 WHEN \"reassignment_count\" < 2.0 THEN 1 WHEN \"reassignment_count\" < 3.0 THEN 2 ELSE 3 END AS \"segment_or",
+          "rows": 4,
+          "result_hash": "0c673461691c86886877b124d3c0a9857912940cdc94c576a5a35210c0dd0bf6"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ]
+      ],
+      "independent_model": {
+        "model": "openai/gpt-5.4-mini",
+        "review": {
+          "concerns": [
+            "Chi-square test supports association, not causation",
+            "Claim generalizes only to the observed sample/population represented by the data",
+            "p-value is reported as 0.0, likely rounded underflow rather than exact zero"
+          ],
+          "supports": true,
+          "confidence": 0.95,
+          "suggested_caveat": "Association is strong and statistically significant, but this does not imply reassignment count causes missed SLA; interpretation should be limited to the analyzed dataset and context."
+        }
+      },
+      "jev": {
+        "model": "typesafe/jev-1.13-20260917",
+        "p_supports": 0.88
+      }
+    },
+    {
+      "code": "I-5",
+      "title": "Assignment Group Concentration in Payments Gateway Priority-1 Incidents",
+      "finding": "Among 271 priority-1 incidents tied to the Payments Gateway configuration item, the top 3 assignment groups account for 83.4% of the volume, with a Gini coefficient of 0.66.",
+      "confidence": 0.95,
+      "queries": [
+        {
+          "id": "qry_f93c1c870e5f",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(*) AS \"volume\" FROM (SELECT \"assignment_group_name\" AS \"segment\" FROM \"src_src_0793b800fbce\".\"incident\" WHERE \"category\" <> 'inquiry' AND \"priority\" = 1 AND \"cmdb_ci_name\" = 'Payments Gateway') AS \"d\" GROUP BY \"segment\" ORDER BY \"volume\" DESC NULLS LAST, \"segment\" LIMIT 5000",
+          "rows": 11,
+          "result_hash": "790237a9d8e219547ff761bac54c69042d4db8b7099631bce13a1ae1f45a4dab"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ]
+      ],
+      "independent_model": {
+        "model": "openai/gpt-5.4-mini",
+        "review": {
+          "concerns": [
+            "The p-value is reported as 0.0, which likely means below numerical precision rather than exactly zero.",
+            "Support is limited to the 271 priority-1 incidents for this specific configuration item and does not generalize beyond that filtered set."
+          ],
+          "supports": true,
+          "confidence": 0.98,
+          "suggested_caveat": "Among these 271 priority-1 incidents tied to the Payments Gateway configuration item, incident volume is highly concentrated in a few assignment groups; the reported p-value is effectively near zero rather than exactly zero."
+        }
+      },
+      "jev": {
+        "model": "typesafe/jev-1.13-20260917",
+        "p_supports": 0.88
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "repeat_critical_incident_rate",
+      "expr": "COUNT(CASE WHEN priority = 1 THEN 1 END) * 1.0 / COUNT(*)",
+      "value": 0.04083553986466608
+    },
+    {
+      "name": "record_count",
+      "expr": "COUNT(*)",
+      "value": 16995
+    },
+    {
+      "name": "avg_reassignment_count",
+      "expr": "AVG(\"reassignment_count\")",
+      "value": 1.337805236834363
+    },
+    {
+      "name": "avg_reopen_count",
+      "expr": "AVG(\"reopen_count\")",
+      "value": 0.052015298617240364
+    },
+    {
+      "name": "sla_breach_rate",
+      "expr": "AVG(CASE WHEN made_sla = false THEN 1.0 ELSE 0 END) * 100",
+      "value": 14.657252132980288
+    },
+    {
+      "name": "high_reassignment_incident_rate",
+      "expr": "AVG(CASE WHEN reassignment_count >= 3 THEN 1.0 ELSE 0 END) * 100",
+      "value": 16.581347455133862
+    },
+    {
+      "name": "reopen_rate",
+      "expr": "AVG(CASE WHEN reopen_count > 0 THEN 1.0 ELSE 0 END) * 100",
+      "value": 5.07796410709032
+    },
+    {
+      "name": "critical_incident_count",
+      "expr": "COUNT(CASE WHEN priority = 1 THEN 1 END)",
+      "value": 694
+    },
+    {
+      "name": "avg_reassignment_by_group",
+      "expr": "AVG(reassignment_count)",
+      "value": 1.337805236834363
+    }
+  ],
+  "charts": [
+    {
+      "key": "trend_sla_breach_rate",
+      "type": "line",
+      "external_id": "139"
+    },
+    {
+      "key": "detail_table",
+      "type": "table",
+      "external_id": "143"
+    },
+    {
+      "key": "kpi_record_count",
+      "type": "kpi",
+      "external_id": "134"
+    },
+    {
+      "key": "kpi_sla_breach_rate",
+      "type": "kpi",
+      "external_id": "135"
+    },
+    {
+      "key": "kpi_high_reassignment_incident_rate",
+      "type": "kpi",
+      "external_id": "136"
+    },
+    {
+      "key": "kpi_reopen_rate",
+      "type": "kpi",
+      "external_id": "137"
+    },
+    {
+      "key": "trend_volume",
+      "type": "line",
+      "external_id": "138"
+    },
+    {
+      "key": "heat_dow_hour",
+      "type": "heatmap",
+      "external_id": "142"
+    },
+    {
+      "key": "finding_i_5",
+      "type": "treemap",
+      "external_id": "141"
+    },
+    {
+      "key": "finding_i_1",
+      "type": "treemap",
+      "external_id": "140"
+    }
+  ],
+  "publication": {
+    "urls": {
+      "executive": "http://localhost:8088/superset/dashboard/21/",
+      "operational": "http://localhost:8088/superset/dashboard/22/"
+    },
+    "status": "succeeded",
+    "external_ids": {
+      "charts": {
+        "finding_i_1": 140,
+        "finding_i_5": 141,
+        "detail_table": 143,
+        "trend_volume": 138,
+        "heat_dow_hour": 142,
+        "kpi_reopen_rate": 137,
+        "kpi_record_count": 134,
+        "kpi_sla_breach_rate": 135,
+        "trend_sla_breach_rate": 139,
+        "kpi_high_reassignment_incident_rate": 136
+      },
+      "metrics": {
+        "aos_analyze_incident_and_change_da_f634b0:reopen_rate": 45,
+        "aos_analyze_incident_and_change_da_f634b0:record_count": 42,
+        "aos_analyze_incident_and_change_da_f634b0:sla_breach_rate": 43,
+        "aos_analyze_incident_and_change_da_f634b0:avg_reopen_count": 47,
+        "aos_analyze_incident_and_change_da_f634b0:avg_reassignment_count": 46,
+        "aos_analyze_incident_and_change_da_f634b0:critical_incident_count": 48,
+        "aos_analyze_incident_and_change_da_f634b0:avg_reassignment_by_group": 50,
+        "aos_analyze_incident_and_change_da_f634b0:repeat_critical_incident_rate": 49,
+        "aos_analyze_incident_and_change_da_f634b0:high_reassignment_incident_rate": 44
+      },
+      "database": 11,
+      "datasets": {
+        "aos_analyze_incident_and_change_da_f634b0": 11
+      },
+      "dashboards": {
+        "executive": 21,
+        "operational": 22
+      },
+      "bundle_hash": "3c195011a09b2cd5e0c920a9b96b62d067164e3298a96406fb997668737aadd0",
+      "idempotency_key": "run_7f201bf634b0:3c195011a09b2cd5e0c920a9b96b62d0",
+      "database_created": true
+    },
+    "publication_id": "pub_4da461aa4a62"
+  },
+  "safety_restricted_column": {
+    "error": {
+      "code": "sql_rejected",
+      "message": "Column src_src_0793b800fbce.incident.caller_id is restricted by policy and cannot be referenced. Remove it from the query.",
+      "retryable": false,
+      "details": {
+        "column": "src_src_0793b800fbce.incident.caller_id"
+      }
+    }
+  },
+  "approver_can_view_as_member": 200,
+  "model_usage": {
+    "model_calls": 41,
+    "jev_calls": 19,
+    "failed_calls": 1,
+    "cost_usd": 0.31860354999999985,
+    "purposes": [
+      "chart_selection",
+      "feedback_classification",
+      "feedback_interpretation",
+      "follow_up_generation",
+      "hypothesis_generation",
+      "hypothesis_priority",
+      "insight_narrative",
+      "planning",
+      "rev_second_opinion",
+      "risk_check",
+      "semantic_modeling",
+      "stop_check",
+      "summarization",
+      "verification"
+    ]
+  }
+}

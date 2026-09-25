@@ -41,10 +41,13 @@ def default_metrics(ds) -> list[MetricDef]:
 
 
 def _normalize(expr: str, dialect: str) -> str | None:
+    """Canonical form for duplicate detection: quoting, case and whitespace do not matter."""
     try:
         tree = sqlglot.parse_one(expr, read=dialect)
     except sqlglot.errors.ParseError:
         return None
+    for ident in tree.find_all(exp.Identifier):
+        ident.set("quoted", False)
     return tree.sql(dialect=dialect, normalize=True).lower()
 
 

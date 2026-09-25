@@ -21,6 +21,7 @@ def test_hypothesis(ctx: RunContext) -> dict:
     with session_scope() as s:
         h = s.get(Hypothesis, ctx.task.input["hypothesis_id"])
         h.status = "testing"
+        s.flush()
         s.expunge(h)
     spec = with_constraints(AnalysisSpec.model_validate(h.spec), ctx.run.constraints)
     run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))

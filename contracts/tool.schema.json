@@ -1,0 +1,131 @@
+{
+  "properties": {
+    "tool_id": {
+      "title": "Tool Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "input_schema": {
+      "additionalProperties": true,
+      "title": "Input Schema",
+      "type": "object"
+    },
+    "output_schema": {
+      "additionalProperties": true,
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "permission_scope": {
+      "default": "workspace",
+      "enum": [
+        "workspace",
+        "source",
+        "global"
+      ],
+      "title": "Permission Scope",
+      "type": "string"
+    },
+    "risk": {
+      "default": "low",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Risk",
+      "type": "string"
+    },
+    "cost_profile": {
+      "default": "low",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Cost Profile",
+      "type": "string"
+    },
+    "latency_profile": {
+      "default": "low",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Latency Profile",
+      "type": "string"
+    },
+    "approval_policy": {
+      "default": "none",
+      "enum": [
+        "none",
+        "publish_only",
+        "always"
+      ],
+      "title": "Approval Policy",
+      "type": "string"
+    },
+    "side_effects": {
+      "default": "none",
+      "enum": [
+        "none",
+        "internal_write",
+        "external_write"
+      ],
+      "title": "Side Effects",
+      "type": "string"
+    },
+    "runtime": {
+      "default": "in_process",
+      "enum": [
+        "in_process",
+        "sandbox",
+        "remote_api"
+      ],
+      "title": "Runtime",
+      "type": "string"
+    },
+    "min_role": {
+      "default": "analyst",
+      "enum": [
+        "viewer",
+        "analyst",
+        "editor",
+        "owner"
+      ],
+      "title": "Min Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_id",
+    "name",
+    "description",
+    "category"
+  ],
+  "title": "ToolSpec",
+  "type": "object"
+}

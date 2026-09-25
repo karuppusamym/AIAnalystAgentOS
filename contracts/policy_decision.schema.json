@@ -1,0 +1,50 @@
+{
+  "properties": {
+    "decision": {
+      "enum": [
+        "allow",
+        "deny",
+        "approval_required"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "risk_tier": {
+      "default": "low",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Risk Tier",
+      "type": "string"
+    },
+    "policy_version": {
+      "default": 1,
+      "title": "Policy Version",
+      "type": "integer"
+    },
+    "effective_autonomy": {
+      "default": 0,
+      "title": "Effective Autonomy",
+      "type": "integer"
+    },
+    "details": {
+      "additionalProperties": true,
+      "title": "Details",
+      "type": "object"
+    }
+  },
+  "required": [
+    "decision"
+  ],
+  "title": "PolicyDecision",
+  "type": "object"
+}

@@ -102,3 +102,16 @@ def test_jsonb_serializer_handles_numpy_and_non_finite():
 
     assert json.loads(json_dumps({"a": np.bool_(True), "b": float("nan"), "c": [np.float64("inf"), np.int64(2)]})) == \
         {"a": True, "b": None, "c": [None, 2]}
+
+
+def test_metric_duplicates_ignore_quoting_and_case():
+    from analystos.agents.semantic import _normalize
+
+    assert _normalize('AVG("reassignment_count")', "postgres") == _normalize("avg(reassignment_count)", "postgres")
+    assert _normalize("AVG(a)", "postgres") != _normalize("SUM(a)", "postgres")
+
+
+def test_template_keeps_acronyms():
+    stat = {"highlights": {"top_segment": "3+", "top_rate": 0.3, "baseline_segment": "1", "baseline_rate": 0.1, "rate_ratio": 3.0}}
+    title, _ = template_text(stat, spec(outcome={"type": "equals", "column": "made_sla", "value": False, "label": "missed SLA"}).model_dump())
+    assert title.startswith("Missed SLA")

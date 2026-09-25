@@ -51,6 +51,7 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id)
         run.workflow_id = wf
+        s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
     return run
 
@@ -80,6 +81,7 @@ def control(user: User, run_id: str, action: str) -> AnalysisRun:
             raise InvalidInput("action must be pause|resume|cancel")
         emit(run.workspace_id, "run.status", {"control": run.control, "requested_by": user.id}, run_id=run.id, session=s)
         audit(f"user:{user.id}", f"run.{action}", workspace_id=run.workspace_id, run_id=run.id, session=s)
+        s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
     signal_run(run_id)
     return run
@@ -129,6 +131,7 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
 
     with session_scope() as s:
         run = get_run_for(s, user, run_id, "analyst")
+        s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
     jev = JevDecisions(default_router())
     ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor")

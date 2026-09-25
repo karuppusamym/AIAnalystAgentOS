@@ -177,3 +177,23 @@ def test_expired_approval(world):
         aid = a.id
     with session_scope() as s, pytest.raises(Conflict, match="expired"):
         approvals.decide(s, aid, U(s, world["approver"]), approve=True)
+
+
+def test_pause_and_resume_persist(world, monkeypatch):
+    from analystos.db.models import AnalysisRun
+    from analystos.services import runs as run_svc
+
+    monkeypatch.setattr(run_svc, "signal_run", lambda run_id: None)
+    with session_scope() as s:
+        run = AnalysisRun(id=new_id("run"), workspace_id=world["ws"], objective="x" * 20, status="WAITING_USER",
+                          requested_by=world["owner"], scope={}, instructions=[], constraints={})
+        s.add(run)
+    with session_scope() as s:
+        user = U(s, world["analyst"])
+        s.expunge(user)
+    run_svc.control(user, run.id, "pause")
+    with session_scope() as s:
+        assert s.get(AnalysisRun, run.id).control == "pause"
+    run_svc.control(user, run.id, "resume")
+    with session_scope() as s:
+        assert s.get(AnalysisRun, run.id).control == "run"
