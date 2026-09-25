@@ -1,0 +1,17 @@
+AnalystOS {{ .Chart.AppVersion }} installed as {{ include "analystos.fullname" . }}.
+
+  API      service/{{ include "analystos.fullname" . }}-api:{{ .Values.api.service.port }}
+  Web      service/{{ include "analystos.fullname" . }}-web:{{ .Values.web.service.port }}
+  Workers  {{ range $name, $p := .Values.workers }}{{ $name }}({{ $p.queues }}) {{ end }}
+{{- if .Values.airGapped.enabled }}
+
+Air-gapped mode is ON: only `egress: internal` model providers are called, decisions run on
+rules/local_classifier, and the NetworkPolicy drops egress outside airGapped.allowedEgressCidrs.
+Apply the matching platform preset once:  POST /api/admin/settings/preset {"preset": "air_gapped"}
+{{- end }}
+{{- if .Values.oidc.enabled }}
+
+Single sign-on: {{ .Values.oidc.issuer }} (redirect URI {{ .Values.oidc.redirectUri }}).
+{{- end }}
+
+Credentials come from secret/{{ .Values.secrets.existingSecret }}; see docs/30-runbooks/03-self-hosted.md.

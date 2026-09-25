@@ -39,8 +39,11 @@ describe("Markdown", () => {
 
 describe("Login", () => {
   it("shows the API error message on failed login", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ error: { code: "unauthenticated", message: "invalid email or password", details: {} } }, 401),
+    // A fresh Response per call: the login screen also asks which sign-in methods exist (/api/auth/providers).
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/api/auth/providers")
+        ? jsonResponse({ password: true, oidc: { enabled: false, name: "SSO", login_url: null } })
+        : jsonResponse({ error: { code: "unauthenticated", message: "invalid email or password", details: {} } }, 401),
     );
     render(
       <AuthProvider>
@@ -51,9 +54,22 @@ describe("Login", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText("invalid email or password")).toBeTruthy();
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls.find(([u]) => String(u) === "/api/auth/login")!;
     expect(url).toBe("/api/auth/login");
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ email: "admin@analystos.local", password: "wrong" });
+  });
+
+  it("offers single sign-on when the API reports an identity provider", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      jsonResponse({ password: true, oidc: { enabled: true, name: "Corp SSO", login_url: "/api/auth/oidc/login" } }));
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={["/login"]}><AppRoutes /></MemoryRouter>
+      </AuthProvider>,
+    );
+    const link = await screen.findByRole("link", { name: "Sign in with Corp SSO" });
+    expect(link.getAttribute("href")).toBe("/api/auth/oidc/login?return_to=%2F");
+    expect(screen.getByLabelText("Password")).toBeTruthy();
   });
 
   it("redirects unauthenticated users to the login page", () => {

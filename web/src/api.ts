@@ -40,6 +40,12 @@ export interface LoginResponse {
   user: User;
 }
 
+/** What the login screen offers (GET /api/auth/providers). */
+export interface AuthProviders {
+  password: boolean;
+  oidc: { enabled: boolean; name: string; login_url: string | null };
+}
+
 export interface WorkspaceCounts {
   query: number;
   dataset: number;
@@ -1652,6 +1658,7 @@ export const api = {
   // auth
   login: (email: string, password: string) => post("/api/auth/login", { body: { email, password } }) as Promise<LoginResponse>,
   me: () => get("/api/auth/me", {}) as Promise<User>,
+  authProviders: () => get("/api/auth/providers", {}) as Promise<AuthProviders>,
   users: () => get("/api/users", {}) as Promise<UserSummary[]>,
 
   // workspaces

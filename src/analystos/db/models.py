@@ -48,6 +48,23 @@ class User(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class UserIdentity(Base):
+    """An external identity (OIDC issuer + subject) linked to a local user (SEC-001). Memberships the
+    IdP's groups granted are remembered so a later login can revoke exactly those, never a manual grant."""
+
+    __tablename__ = "user_identity"
+    __table_args__ = (UniqueConstraint("issuer", "subject"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), index=True)
+    issuer: Mapped[str] = mapped_column(String(500))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    managed_memberships: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)  # workspace id -> role granted by SSO
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
 class Workspace(Base):
     __tablename__ = "workspace"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

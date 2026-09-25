@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.platform import PRESETS, PlatformSettings
+from analystos.contracts.platform import PRESET_PATCHES, PRESETS, PlatformSettings
 from analystos.core.errors import Forbidden, InvalidInput, NotFound
 from analystos.db.base import session_scope
 from analystos.db.models import PlatformSetting, User
@@ -114,7 +114,8 @@ def apply_preset(session: Session, user: User, preset: str) -> dict[str, Any]:
     if preset not in PRESETS:
         raise InvalidInput(f"preset must be one of {sorted(PRESETS)}")
     # A preset is expressed as modes; per-purpose ladder overrides would shadow it, so it clears them.
-    return update(session, user, {"llm": {"purpose_modes": PRESETS[preset], "ladders": {}}}, note=f"preset {preset}")
+    patch = _deep_merge(PRESET_PATCHES.get(preset, {}), {"llm": {"purpose_modes": PRESETS[preset], "ladders": {}}})
+    return update(session, user, patch, note=f"preset {preset}")
 
 
 def history(session: Session, limit: int = 50) -> list[dict[str, Any]]:

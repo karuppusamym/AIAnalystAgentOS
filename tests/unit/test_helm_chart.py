@@ -1,0 +1,106 @@
+"""Helm chart (P4-S04): `helm lint` and `helm template` when a helm binary is available (PATH or
+ANALYSTOS_HELM); the value-level checks always run. No cluster and no network needed."""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+CHART = ROOT / "deploy" / "helm" / "analystos"
+HELM = os.environ.get("ANALYSTOS_HELM") or shutil.which("helm")
+needs_helm = pytest.mark.skipif(not HELM, reason="helm binary not available (set ANALYSTOS_HELM)")
+
+
+def _values(name: str = "values.yaml") -> dict:
+    return yaml.safe_load((CHART / name).read_text())
+
+
+def test_every_task_queue_has_a_worker_pool():
+    queues = set(yaml.safe_load((ROOT / "config" / "task_queues.yaml").read_text())["queues"])
+    for name in ("values.yaml", "values-ha.yaml"):
+        pools = _values(name)["workers"]
+        served = {q.strip() for p in pools.values() for q in p["queues"].split(",")}
+        assert served == queues, name
+
+
+def test_values_never_carry_credentials():
+    text = "\n".join((CHART / f).read_text() for f in ("values.yaml", "values-ha.yaml", "values-airgapped.yaml"))
+    for marker in (" sk-", "\"sk-", "password:", "PASSWORD=", "postgresql://", "postgresql+psycopg://"):
+        assert marker not in text, marker
+    assert _values()["secrets"]["existingSecret"]
+
+
+def _render(*files: str, sets: tuple[str, ...] = ()) -> list[dict]:
+    args = [HELM, "template", "t", str(CHART)]
+    for f in files:
+        args += ["-f", str(CHART / f)]
+    for s in sets:
+        args += ["--set", s]
+    out = subprocess.run(args, capture_output=True, text=True, timeout=60, check=True).stdout
+    return [d for d in yaml.safe_load_all(out) if d]
+
+
+def _kind(docs, kind):
+    return {d["metadata"]["name"]: d for d in docs if d["kind"] == kind}
+
+
+@needs_helm
+def test_helm_lint():
+    for extra in ((), ("-f", str(CHART / "values-ha.yaml")), ("-f", str(CHART / "values-ha.yaml"), "-f", str(CHART / "values-airgapped.yaml"))):
+        r = subprocess.run([HELM, "lint", str(CHART), *extra], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+@needs_helm
+def test_ha_render_has_probes_pdbs_and_one_deployment_per_pool():
+    docs = _render("values-ha.yaml")
+    deployments = _kind(docs, "Deployment")
+    pools = _values("values-ha.yaml")["workers"]
+    for name, pool in pools.items():
+        dep = deployments[f"t-analystos-worker-{name}"]
+        env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert {"name": "ANALYSTOS_WORKER_QUEUES", "value": pool["queues"]} in env
+    api = deployments["t-analystos-api"]["spec"]["template"]["spec"]
+    container = api["containers"][0]
+    assert {"readinessProbe", "livenessProbe", "startupProbe"} <= set(container)
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True and api["securityContext"]["runAsNonRoot"] is True
+    assert api["topologySpreadConstraints"]
+    pdbs = _kind(docs, "PodDisruptionBudget")
+    assert {"t-analystos-api", "t-analystos-worker-analysis", "t-analystos-worker-compute", "t-analystos-web",
+            "t-analystos-scheduler"} <= set(pdbs)
+    assert deployments["t-analystos-scheduler"]["spec"]["replicas"] == 2
+    assert "t-analystos-worker-compute" in _kind(docs, "HorizontalPodAutoscaler")
+    assert not _kind(docs, "Secret")  # credentials only by reference
+    job = _kind(docs, "Job")
+    assert job and next(iter(job.values()))["metadata"]["annotations"]["helm.sh/hook"] == "pre-install,pre-upgrade"
+
+
+@needs_helm
+def test_air_gapped_render_locks_egress_and_switches_models():
+    docs = _render("values-ha.yaml", "values-airgapped.yaml")
+    config = _kind(docs, "ConfigMap")["t-analystos-config"]["data"]
+    assert config["ANALYSTOS_AIR_GAPPED"] == "true"
+    assert config["ANALYSTOS_MODELS_CONFIG"] == "/app/config/models.airgapped.yaml"
+    assert config["ANALYSTOS_LOCAL_LLM_URL"].startswith("http://vllm")
+    assert config["ANALYSTOS_ENV"] == "production"
+    policy = next(iter(_kind(docs, "NetworkPolicy").values()))
+    assert "Egress" in policy["spec"]["policyTypes"]
+    cidrs = [b["ipBlock"]["cidr"] for rule in policy["spec"]["egress"] for b in rule.get("to", []) if "ipBlock" in b]
+    assert cidrs == ["10.0.0.0/8"]
+    image = _kind(docs, "Deployment")["t-analystos-api"]["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image.startswith("registry.internal:5000/")
+
+
+@needs_helm
+def test_oidc_values_render_the_mapping_and_require_the_issuer():
+    docs = _render(sets=("oidc.enabled=true", "oidc.issuer=https://idp.corp", "oidc.clientId=aos", "oidc.redirectUri=https://a/cb"))
+    config = _kind(docs, "ConfigMap")
+    assert config["t-analystos-config"]["data"]["ANALYSTOS_OIDC_MAPPING_FILE"] == "/etc/analystos/oidc.yaml"
+    assert "workspace_roles" in config["t-analystos-oidc"]["data"]["oidc.yaml"]
+    r = subprocess.run([HELM, "template", "t", str(CHART), "--set", "oidc.enabled=true"], capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "oidc.issuer is required" in r.stderr

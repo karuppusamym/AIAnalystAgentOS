@@ -1,0 +1,66 @@
+# Air-gapped model configuration (P4-S04, spec v3 §8). Use with
+#   ANALYSTOS_AIR_GAPPED=true  ANALYSTOS_MODELS_CONFIG=config/models.airgapped.yaml
+# and the `air_gapped` platform preset. Everything not restated here (ladders, routing, decisions) comes
+# from models.yaml. There is no OpenRouter and no TypeSafe provider: decision purposes answer from
+# rules / local_classifier, chat purposes from a local OpenAI-compatible server (vLLM, Ollama, TGI).
+extends: models.yaml
+
+providers:
+  local:
+    kind: chat
+    type: openai_compatible
+    egress: internal                      # the only kind of provider an air-gapped install may call
+    base_url: http://llm.analystos.svc:8000/v1   # vLLM service in the cluster; Ollama: http://ollama:11434/v1
+    base_url_env: ANALYSTOS_LOCAL_LLM_URL  # the Helm chart sets this from values (airgapped.localModel.url)
+    api_key_env: null                      # set to an env var name if the local server requires a key
+    region: on-prem
+    model_map:                             # allowlisted id -> the name the server serves the model under
+      qwen/qwen3-32b: qwen3-32b
+      meta-llama/llama-3.3-70b-instruct: llama-3.3-70b-instruct
+
+allowlist:
+  - qwen/qwen3-32b
+  - meta-llama/llama-3.3-70b-instruct
+
+prices_version: "local-2026-09-25"
+# Local inference has no per-token price; a zero price records cost_source=price_table (not missing_price).
+models:
+  qwen/qwen3-32b: {input_usd_per_mtok: 0.0, output_usd_per_mtok: 0.0}
+  meta-llama/llama-3.3-70b-instruct: {input_usd_per_mtok: 0.0, output_usd_per_mtok: 0.0}
+
+profiles:
+  reasoning_strong:
+    provider: local
+    models: [meta-llama/llama-3.3-70b-instruct, qwen/qwen3-32b]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 180
+  coding:
+    provider: local
+    models: [qwen/qwen3-32b, meta-llama/llama-3.3-70b-instruct]
+    temperature: 0.0
+    max_tokens: 2500
+    timeout_seconds: 180
+  analytical_reasoning:
+    provider: local
+    models: [meta-llama/llama-3.3-70b-instruct, qwen/qwen3-32b]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 180
+  low_cost:
+    provider: local
+    models: [qwen/qwen3-32b]
+    temperature: 0.2
+    max_tokens: 2000
+    timeout_seconds: 120
+  independent_model_family:            # verification from another family than the primary analyst profile
+    provider: local
+    models: [qwen/qwen3-32b]
+    temperature: 0.0
+    max_tokens: 2000
+    timeout_seconds: 180
+    exclude_families: [meta-llama]
+  decision:                            # no decision model offline: the provider is not configured, so the
+    provider: typesafe                 # router reports it unavailable and the DecisionService uses rules
+    models: []
+    timeout_seconds: 20

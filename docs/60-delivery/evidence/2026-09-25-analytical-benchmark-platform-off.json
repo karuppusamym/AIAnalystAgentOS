@@ -1,0 +1,542 @@
+{
+ "platform": {
+  "summary": {
+   "tier": "platform",
+   "replicates": 9,
+   "tested": 92,
+   "verified": 24,
+   "true_positive": 24,
+   "false_positive": 0,
+   "precision": 1.0,
+   "recall": 1.0,
+   "fdr": 0.0,
+   "null_fdr": 0.0,
+   "null_tests": 66,
+   "null_raw_rate": null,
+   "planted_found": 20,
+   "planted_total": 20,
+   "by_domain": {
+    "itsm": {
+     "replicates": 3,
+     "tested": 32,
+     "verified": 10,
+     "true_positive": 10,
+     "false_positive": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "fdr": 0.0,
+     "null_fdr": 0.0,
+     "null_tests": 21,
+     "null_raw_rate": null,
+     "planted_found": 8,
+     "planted_total": 8,
+     "seconds": 45.4
+    },
+    "sales": {
+     "replicates": 3,
+     "tested": 30,
+     "verified": 8,
+     "true_positive": 8,
+     "false_positive": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "fdr": 0.0,
+     "null_fdr": 0.0,
+     "null_tests": 21,
+     "null_raw_rate": null,
+     "planted_found": 6,
+     "planted_total": 6,
+     "seconds": 25.4
+    },
+    "finance": {
+     "replicates": 3,
+     "tested": 30,
+     "verified": 6,
+     "true_positive": 6,
+     "false_positive": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "fdr": 0.0,
+     "null_fdr": 0.0,
+     "null_tests": 24,
+     "null_raw_rate": null,
+     "planted_found": 6,
+     "planted_total": 6,
+     "seconds": 18.7
+    }
+   },
+   "missed": [],
+   "false_findings": [],
+   "incomplete": []
+  },
+  "replicates": [
+   {
+    "domain": "itsm",
+    "seed": 1,
+    "effects": true,
+    "tier": "platform",
+    "tested": 12,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 5,
+    "true_positive": 5,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "itsm_reassignment_sla": true,
+     "itsm_after_hours_resolution": true,
+     "itsm_network_resolution": true,
+     "itsm_p1_payments_gateway": true
+    },
+    "findings": [
+     {
+      "method": "numeric_by_segment",
+      "outcome": "opened_at->resolved_at",
+      "segment": "after_hours(opened_at)",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_after_hours_resolution",
+      "statement": "Resolution hours is higher for opened after hours = true",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "rate_by_segment",
+      "outcome": "made_sla",
+      "segment": "reassignment_count",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_reassignment_sla",
+      "statement": "Missed SLA concentrates in reassignment count = 3+",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "pareto",
+      "outcome": null,
+      "segment": "cmdb_ci_name",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_p1_payments_gateway",
+      "statement": "Volume is concentrated in few cmdb ci name values",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "driver_model",
+      "outcome": "made_sla",
+      "segment": null,
+      "top": null,
+      "truth": "true",
+      "planted": null,
+      "statement": "Missed SLA is driven mainly by reassignment count",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "opened_at->resolved_at",
+      "segment": "assignment_group_name",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_network_resolution",
+      "statement": "Resolution hours is higher for assignment group name = Network",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 20.7,
+    "run_id": "run_df2edf026cf9",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "itsm",
+    "seed": 2,
+    "effects": true,
+    "tier": "platform",
+    "tested": 12,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 5,
+    "true_positive": 5,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "itsm_reassignment_sla": true,
+     "itsm_after_hours_resolution": true,
+     "itsm_network_resolution": true,
+     "itsm_p1_payments_gateway": true
+    },
+    "findings": [
+     {
+      "method": "numeric_by_segment",
+      "outcome": "opened_at->resolved_at",
+      "segment": "after_hours(opened_at)",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_after_hours_resolution",
+      "statement": "Resolution hours is higher for opened after hours = true",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "rate_by_segment",
+      "outcome": "made_sla",
+      "segment": "reassignment_count",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_reassignment_sla",
+      "statement": "Missed SLA concentrates in reassignment count = 3+",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "pareto",
+      "outcome": null,
+      "segment": "cmdb_ci_name",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_p1_payments_gateway",
+      "statement": "Volume is concentrated in few cmdb ci name values",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "driver_model",
+      "outcome": "made_sla",
+      "segment": null,
+      "top": null,
+      "truth": "true",
+      "planted": null,
+      "statement": "Missed SLA is driven mainly by reassignment count",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "opened_at->resolved_at",
+      "segment": "assignment_group_name",
+      "top": null,
+      "truth": "true",
+      "planted": "itsm_network_resolution",
+      "statement": "Resolution hours is higher for assignment group name = Network",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 17.4,
+    "run_id": "run_abebb53bbe40",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "sales",
+    "seed": 1,
+    "effects": true,
+    "tier": "platform",
+    "tested": 11,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 4,
+    "true_positive": 4,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "sales_returns_by_channel": true,
+     "sales_value_by_segment": true,
+     "sales_shipping_by_region": true
+    },
+    "findings": [
+     {
+      "method": "rate_by_segment",
+      "outcome": "returned",
+      "segment": "channel",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_returns_by_channel",
+      "statement": "Returned concentrates in channel = marketplace",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "net_amount",
+      "segment": "customer_segment",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_value_by_segment",
+      "statement": "Net amount is higher for customer segment = Enterprise",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "shipping_days",
+      "segment": "sales_region",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_shipping_by_region",
+      "statement": "Shipping days is higher for sales region = APAC",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "driver_model",
+      "outcome": "returned",
+      "segment": null,
+      "top": null,
+      "truth": "true",
+      "planted": null,
+      "statement": "Returned is driven mainly by channel",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 9.0,
+    "run_id": "run_295454f55c0c",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "sales",
+    "seed": 2,
+    "effects": true,
+    "tier": "platform",
+    "tested": 11,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 4,
+    "true_positive": 4,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "sales_returns_by_channel": true,
+     "sales_value_by_segment": true,
+     "sales_shipping_by_region": true
+    },
+    "findings": [
+     {
+      "method": "numeric_by_segment",
+      "outcome": "shipping_days",
+      "segment": "sales_region",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_shipping_by_region",
+      "statement": "Shipping days is higher for sales region = APAC",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "driver_model",
+      "outcome": "returned",
+      "segment": null,
+      "top": null,
+      "truth": "true",
+      "planted": null,
+      "statement": "Returned is driven mainly by channel",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "rate_by_segment",
+      "outcome": "returned",
+      "segment": "channel",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_returns_by_channel",
+      "statement": "Returned concentrates in channel = marketplace",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "net_amount",
+      "segment": "customer_segment",
+      "top": null,
+      "truth": "true",
+      "planted": "sales_value_by_segment",
+      "statement": "Net amount is higher for customer segment = Enterprise",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 10.2,
+    "run_id": "run_4306070b3070",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "finance",
+    "seed": 1,
+    "effects": true,
+    "tier": "platform",
+    "tested": 11,
+    "null_tests": 8,
+    "null_raw_significant": 0,
+    "verified": 3,
+    "true_positive": 3,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "finance_amount_by_vendor": true,
+     "finance_late_by_unit": true,
+     "finance_days_by_unit": true
+    },
+    "findings": [
+     {
+      "method": "numeric_by_segment",
+      "outcome": "days_to_pay",
+      "segment": "business_unit",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_days_by_unit",
+      "statement": "Days to pay is higher for business unit = Public Sector",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "invoice_amount",
+      "segment": "vendor_category",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_amount_by_vendor",
+      "statement": "Invoice amount is higher for vendor category = IT services",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "rate_by_segment",
+      "outcome": "paid_late",
+      "segment": "business_unit",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_late_by_unit",
+      "statement": "Paid late concentrates in business unit = Retail",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 7.2,
+    "run_id": "run_00f9f7902dac",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "finance",
+    "seed": 2,
+    "effects": true,
+    "tier": "platform",
+    "tested": 11,
+    "null_tests": 8,
+    "null_raw_significant": 0,
+    "verified": 3,
+    "true_positive": 3,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {
+     "finance_amount_by_vendor": true,
+     "finance_late_by_unit": true,
+     "finance_days_by_unit": true
+    },
+    "findings": [
+     {
+      "method": "numeric_by_segment",
+      "outcome": "days_to_pay",
+      "segment": "business_unit",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_days_by_unit",
+      "statement": "Days to pay is higher for business unit = Public Sector",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "rate_by_segment",
+      "outcome": "paid_late",
+      "segment": "business_unit",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_late_by_unit",
+      "statement": "Paid late concentrates in business unit = Retail",
+      "p_value": null,
+      "p_adjusted": null
+     },
+     {
+      "method": "numeric_by_segment",
+      "outcome": "invoice_amount",
+      "segment": "vendor_category",
+      "top": null,
+      "truth": "true",
+      "planted": "finance_amount_by_vendor",
+      "statement": "Invoice amount is higher for vendor category = IT services",
+      "p_value": null,
+      "p_adjusted": null
+     }
+    ],
+    "seconds": 6.5,
+    "run_id": "run_08615617b0fb",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "itsm",
+    "seed": 101,
+    "effects": false,
+    "tier": "platform",
+    "tested": 8,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 0,
+    "true_positive": 0,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {},
+    "findings": [],
+    "seconds": 7.3,
+    "run_id": "run_e3f06f9a0473",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "sales",
+    "seed": 101,
+    "effects": false,
+    "tier": "platform",
+    "tested": 8,
+    "null_tests": 7,
+    "null_raw_significant": 0,
+    "verified": 0,
+    "true_positive": 0,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {},
+    "findings": [],
+    "seconds": 6.2,
+    "run_id": "run_0919098b665f",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   },
+   {
+    "domain": "finance",
+    "seed": 101,
+    "effects": false,
+    "tier": "platform",
+    "tested": 8,
+    "null_tests": 8,
+    "null_raw_significant": 0,
+    "verified": 0,
+    "true_positive": 0,
+    "false_positive": 0,
+    "unscored": 0,
+    "planted": {},
+    "findings": [],
+    "seconds": 5.0,
+    "run_id": "run_37283e918803",
+    "status": "COMPLETED",
+    "fdp": 0.0
+   }
+  ]
+ }
+}

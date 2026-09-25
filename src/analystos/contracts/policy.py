@@ -8,6 +8,21 @@ from pydantic import BaseModel, Field
 Decision = Literal["allow", "deny", "approval_required"]
 
 
+class AttributeRule(BaseModel):
+    """ABAC (SEC-003): data a caller may only see when their user attributes match. Attributes come
+    from the IdP (OIDC claims mapped in config/oidc.yaml) or an administrator. Rules only remove data
+    from a scope, never add: `assets` ("schema.table", "*.table") are dropped whole, `columns`
+    ("schema.table.column", "*.column") and columns carrying one of `column_tags` become denied.
+    `require` maps an attribute to its accepted values; every listed attribute must match (a user
+    attribute that is a list matches when any element does)."""
+
+    id: str = ""
+    assets: list[str] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    column_tags: list[str] = Field(default_factory=list)
+    require: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class WorkspacePolicyDoc(BaseModel):
     """Versioned per-workspace policy. Values here may only tighten the platform ceilings."""
 
@@ -22,7 +37,9 @@ class WorkspacePolicyDoc(BaseModel):
     workspace_monthly_cost_budget_usd: float = 50.0
     expensive_model_approval_usd: float = 1.0
     allowed_models: list[str] = Field(default_factory=list)  # empty = platform allowlist
-    allowed_providers: list[str] = Field(default_factory=lambda: ["openrouter", "typesafe"])
+    # Provider names from the models config; "internal" matches every provider declared `egress: internal`
+    # (a local model endpoint inside the installation, P4-S04).
+    allowed_providers: list[str] = Field(default_factory=lambda: ["openrouter", "typesafe", "internal"])
     data_residency: str | None = None  # informational until providers expose region metadata
     send_data_samples_to_models: bool = False  # only aggregates/stats/schema leave the platform by default
     # An extra review of every finding by a model of another family (spec v3 §4.2). Off by default: the
@@ -32,6 +49,7 @@ class WorkspacePolicyDoc(BaseModel):
     pii_columns: list[str] = Field(default_factory=list)
     pii_access: Literal["none", "restricted", "allowed"] = "restricted"
     tool_denylist: list[str] = Field(default_factory=list)
+    attribute_rules: list[AttributeRule] = Field(default_factory=list)  # ABAC; applied in resolve_scope
     publish_destinations: list[str] = Field(default_factory=lambda: ["superset"])
     publish_requires_approval: bool = True  # cannot be disabled in the MVP (enforced in code)
     separation_of_duties: bool = False

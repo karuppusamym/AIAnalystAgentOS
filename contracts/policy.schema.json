@@ -1,4 +1,49 @@
 {
+  "$defs": {
+    "AttributeRule": {
+      "description": "ABAC (SEC-003): data a caller may only see when their user attributes match. Attributes come\nfrom the IdP (OIDC claims mapped in config/oidc.yaml) or an administrator. Rules only remove data\nfrom a scope, never add: `assets` (\"schema.table\", \"*.table\") are dropped whole, `columns`\n(\"schema.table.column\", \"*.column\") and columns carrying one of `column_tags` become denied.\n`require` maps an attribute to its accepted values; every listed attribute must match (a user\nattribute that is a list matches when any element does).",
+      "properties": {
+        "id": {
+          "default": "",
+          "title": "Id",
+          "type": "string"
+        },
+        "assets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assets",
+          "type": "array"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "column_tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Tags",
+          "type": "array"
+        },
+        "require": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Require",
+          "type": "object"
+        }
+      },
+      "title": "AttributeRule",
+      "type": "object"
+    }
+  },
   "description": "Versioned per-workspace policy. Values here may only tighten the platform ceilings.",
   "properties": {
     "max_rows": {
@@ -111,6 +156,13 @@
         "type": "string"
       },
       "title": "Tool Denylist",
+      "type": "array"
+    },
+    "attribute_rules": {
+      "items": {
+        "$ref": "#/$defs/AttributeRule"
+      },
+      "title": "Attribute Rules",
       "type": "array"
     },
     "publish_destinations": {
