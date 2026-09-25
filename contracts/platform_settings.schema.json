@@ -48,6 +48,32 @@
       "title": "AnalysisSettings",
       "type": "object"
     },
+    "ContextSettings": {
+      "description": "Context compiler (P4-T03): per-purpose profiles; purposes without one get only their\nmandatory inputs. `min_relevance` is the share of objective terms a knowledge item must match\n(or a mapped in-scope column) before it may reach a prompt; below it the section says NO_MATCH.",
+      "properties": {
+        "compiler_enabled": {
+          "default": true,
+          "title": "Compiler Enabled",
+          "type": "boolean"
+        },
+        "min_relevance": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Relevance",
+          "type": "number"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PurposeProfile"
+          },
+          "title": "Profiles",
+          "type": "object"
+        }
+      },
+      "title": "ContextSettings",
+      "type": "object"
+    },
     "CrawlSettings": {
       "properties": {
         "default_mode": {
@@ -259,6 +285,80 @@
       "title": "MonitorSettings",
       "type": "object"
     },
+    "PurposeProfile": {
+      "description": "What the context compiler (P4-T03) gives one model purpose, and how much of it.\n\n`sections` are filled in order after the mandatory part (the caller's required inputs); each\nsection is cut in whole items and whatever does not fit is listed as omitted, never truncated.\n`referenced_only` restricts the catalog to the tables the objective/question/SQL names (SQL\ngeneration and repair). Budgets are characters of compact JSON (\u2248 3.6 chars per token).",
+      "properties": {
+        "sections": {
+          "items": {
+            "enum": [
+              "catalog",
+              "glossary",
+              "business_rules",
+              "metrics",
+              "prior_findings",
+              "negative_knowledge",
+              "episodes"
+            ],
+            "type": "string"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "catalog_detail": {
+          "default": "columns",
+          "enum": [
+            "names",
+            "columns",
+            "stats",
+            "profile"
+          ],
+          "title": "Catalog Detail",
+          "type": "string"
+        },
+        "referenced_only": {
+          "default": false,
+          "title": "Referenced Only",
+          "type": "boolean"
+        },
+        "drop_semantic_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Drop Semantic Types",
+          "type": "array"
+        },
+        "max_columns_per_table": {
+          "default": 30,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Columns Per Table",
+          "type": "integer"
+        },
+        "max_items_per_section": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Items Per Section",
+          "type": "integer"
+        },
+        "item_chars": {
+          "default": 240,
+          "maximum": 4000,
+          "minimum": 40,
+          "title": "Item Chars",
+          "type": "integer"
+        },
+        "max_chars": {
+          "default": 40000,
+          "maximum": 1500000,
+          "minimum": 1000,
+          "title": "Max Chars",
+          "type": "integer"
+        }
+      },
+      "title": "PurposeProfile",
+      "type": "object"
+    },
     "SourceSettings": {
       "properties": {
         "enabled_kinds": {
@@ -288,6 +388,9 @@
   "properties": {
     "llm": {
       "$ref": "#/$defs/LLMSettings"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextSettings"
     },
     "analysis": {
       "$ref": "#/$defs/AnalysisSettings"

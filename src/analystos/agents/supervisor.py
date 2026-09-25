@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from analystos.agents.common import catalog_for_prompt, llm_json, model_gate
+from analystos.agents.common import compile_for, llm_json, model_gate
 from analystos.artifacts.registry import link, save_artifact
 from analystos.context.service import add_entry
 from analystos.core.ids import utcnow
@@ -33,8 +33,8 @@ def build_plan(run_id: str, services: Services, playbook: Playbook | None = None
         if playbook is not None and not playbook.body.framing:
             raise LookupError("this playbook does not frame")
         ctx = _supervisor_ctx(run_id, services)
-        payload = {"objective": objective, "user_instructions": [i.get("text") for i in instructions],
-                   "catalog": catalog_for_prompt(ctx, include_values=False)}
+        payload = compile_for(ctx, "planning", {"objective": objective,
+                                                "user_instructions": [i.get("text") for i in instructions]})
         # Framing is optional: the lifecycle skeleton is valid without it, so `auto` skips the model.
         data, model = llm_json(ctx, "planning", "planning.v1", payload) \
             if model_gate(ctx, "planning", payload, deterministic_ok=True) else (None, "deterministic")

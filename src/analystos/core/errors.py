@@ -88,3 +88,11 @@ class LLMDisabled(ModelRouteUnavailable):
     Callers take their deterministic path; this is a decision, not an outage."""
 
     code, retryable = "llm_disabled", False
+
+
+class ContextOverBudget(AnalystOSError):
+    """The mandatory part of a prompt's context alone exceeds the purpose's budget (context
+    compiler, P4-T03). Callers take the deterministic path and record the refusal; the context is
+    never cut to make it fit."""
+
+    code, http_status = "context_over_budget", 422

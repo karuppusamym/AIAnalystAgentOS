@@ -326,6 +326,10 @@ class ModelCall(Base):
     # Replay (P4-C09): content addresses of the redacted request and response in model_payload.
     request_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     response_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Prompt caching (P4-T04): prompt tokens the provider served from its cache (share = / input_tokens).
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Context compiler receipts (P4-T03): the context items the prompt carried ("context used").
+    context_receipts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 

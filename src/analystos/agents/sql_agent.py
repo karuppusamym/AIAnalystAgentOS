@@ -7,7 +7,7 @@ from typing import Any
 import sqlglot
 from sqlalchemy import select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, compile_for, llm_json, task_output
 from analystos.artifacts.registry import link, save_artifact
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
@@ -143,9 +143,11 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, An
     Gate and budget are checked before any model call, and the budget again before every attempt."""
     _authorize_ask(ctx)
     _check_budget(ctx)
-    catalog = catalog_for_prompt(ctx)
+    catalog = catalog_for_prompt(ctx, objective=question, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
-    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog},
+    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1",
+                           compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
+                                       catalog=catalog, reference_text=question),
                            prompt_vars={"dialect": dialect})
     if not isinstance(data, dict) or not data.get("sql"):
         raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
@@ -164,8 +166,10 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, An
             attempts.append({"sql": sql, "error": exc.message})
             if attempt == max_repairs:
                 raise
-            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1", {"question": question, "dialect": dialect, "sql": sql,
-                                                                  "error": exc.message, "catalog": catalog})
+            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
+                              compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
+                                                              "error": exc.message}, objective=question, catalog=catalog,
+                                          reference_text=f"{sql}\n{exc.message}"))
             if not isinstance(fix, dict) or not fix.get("sql"):
                 raise
             sql = str(fix["sql"])

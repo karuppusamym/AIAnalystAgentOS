@@ -61,6 +61,8 @@ class CallContext:
     allowed_providers: list[str] | None = None  # workspace policy; None = unrestricted, [] = none allowed
     data_residency: str | None = None  # required provider/model region; unknown region fails closed
     expensive_model_approval_usd: float | None = None  # pre-call estimate above this needs an approval
+    knowledge_version: str | None = None  # workspace knowledge version (P4-T06): part of the L0 cache key
+    context_receipts: list[dict] | None = None  # what the context compiler put in the prompt (P4-T03)
 
     @classmethod
     def for_policy(cls, policy: Any, **kwargs: Any) -> CallContext:
@@ -89,6 +91,7 @@ class ModelResponse:
     latency_ms: int = 0
     attempts: int = 1
     cached: bool = False
+    cached_input_tokens: int = 0  # prompt tokens the provider served from its prompt cache (P4-T04)
 
 
 @dataclass
@@ -174,6 +177,70 @@ def _cooling_down(provider: str) -> bool:
         _PROVIDER_COOLDOWN.pop(provider, None)
         return False
     return True
+
+
+def cached_prompt_tokens(usage: dict | None) -> int:
+    """Prompt tokens served from the provider's prompt cache, from whichever usage field the
+    provider reports: OpenRouter/OpenAI `prompt_tokens_details.cached_tokens`, Anthropic
+    `cache_read_input_tokens`, DeepSeek `prompt_cache_hit_tokens`, Responses API
+    `input_tokens_details.cached_tokens`."""
+    usage = usage or {}
+    for parent, key in (("prompt_tokens_details", "cached_tokens"), ("input_tokens_details", "cached_tokens"),
+                        (None, "cache_read_input_tokens"), (None, "prompt_cache_hit_tokens")):
+        holder = usage.get(parent) if parent else usage
+        if isinstance(holder, dict) and holder.get(key) is not None:
+            try:
+                return int(holder[key])
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _parts(messages: list[dict[str, Any]]) -> list[tuple[str, list[tuple[str, bool]]]]:
+    """Consecutive messages of one role merged into one turn of (text, ends-a-stable-prefix) parts.
+    Wire content blocks are read back to text, so a wire payload and its logical request normalise
+    to the same turns."""
+    turns: list[tuple[str, list[tuple[str, bool]]]] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            parts = [(str(b.get("text") or ""), bool(b.get("cache_control"))) for b in content if isinstance(b, dict)]
+        else:
+            parts = [(str(content or ""), bool(m.get("cache")))]
+        if turns and turns[-1][0] == m["role"]:
+            turns[-1][1].extend(parts)
+        else:
+            turns.append((m["role"], parts))
+    return turns
+
+
+def normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Provider-independent form of a chat request: one `{role, content}` per turn, parts joined by
+    a blank line. Replay keys and comparisons use it, so a request with cache breakpoints and the
+    same request without them are the same request."""
+    return [{"role": role, "content": "\n\n".join(t for t, _ in parts)} for role, parts in _parts(messages)]
+
+
+def wire_messages(messages: list[dict[str, Any]], *, cache_control: bool) -> list[dict[str, Any]]:
+    """Messages as sent to the provider (P4-T04). Messages flagged `cache: True` end a stable prefix
+    (static system text, workspace header). With `cache_control` (model capability `prompt_cache`)
+    each such part becomes a text block with an ephemeral `cache_control` breakpoint (Anthropic
+    allows four; the last four are kept); otherwise the same ordered text is sent as plain strings,
+    which is what automatic prefix caching needs."""
+    turns = _parts(messages)
+    if not cache_control or not any(c for _, parts in turns for _, c in parts):
+        return normalize_messages(messages)
+    marks = [(ti, pi) for ti, (_, parts) in enumerate(turns) for pi, (_, c) in enumerate(parts) if c][-4:]
+    out: list[dict[str, Any]] = []
+    for ti, (role, parts) in enumerate(turns):
+        blocks = []
+        for pi, (text, _) in enumerate(parts):
+            block: dict[str, Any] = {"type": "text", "text": text}
+            if (ti, pi) in marks:
+                block["cache_control"] = {"type": "ephemeral"}
+            blocks.append(block)
+        out.append({"role": role, "content": blocks})
+    return out
 
 
 def parse_json_text(text: str) -> Any:
@@ -325,9 +392,10 @@ class ModelRouter:
             raise self._no_route(purpose, profile_name, profile, ctx)
         base_url, key = self._provider(profile)
         self.sink.check_budget(ctx, purpose)
-        safe_messages = [{"role": m["role"], "content": redact(m["content"])} for m in messages]
+        safe_messages = [{"role": m["role"], "content": redact(m["content"]), **({"cache": True} if m.get("cache") else {})}
+                         for m in messages]
         if json_output:
-            safe_messages[0] = {"role": safe_messages[0]["role"], "content": safe_messages[0]["content"] + JSON_INSTRUCTION}
+            safe_messages[0] = {**safe_messages[0], "content": safe_messages[0]["content"] + JSON_INSTRUCTION}
         request_hash = stable_hash({"purpose": purpose, "messages": safe_messages})
         request = {"kind": "chat", "purpose": purpose, "messages": safe_messages, "json_output": json_output,
                    "max_tokens": max_tokens, "temperature": profile.temperature}
@@ -342,8 +410,9 @@ class ModelRouter:
                                    output_tokens=max_tokens or profile.max_tokens, request_hash=request_hash, request=request)
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
-            cache_key = ResponseCache.key(purpose, models, {"m": safe_messages, "json": json_output, "max": max_tokens,
-                                                            "t": profile.temperature}, ctx.workspace_id)
+            cache_key = ResponseCache.key(purpose, models, {"m": normalize_messages(safe_messages), "json": json_output,
+                                                            "max": max_tokens, "t": profile.temperature}, ctx.workspace_id,
+                                          knowledge_version=ctx.knowledge_version)
             hit = self.cache.get(cache_key)
             if hit:
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
@@ -361,7 +430,8 @@ class ModelRouter:
         for model in models:
             for retry in range(self.max_retries + 1):
                 attempt += 1
-                payload: dict[str, Any] = {"model": model, "messages": safe_messages, "temperature": profile.temperature,
+                wire = wire_messages(safe_messages, cache_control=self.config.prompt_cache(model))
+                payload: dict[str, Any] = {"model": model, "messages": wire, "temperature": profile.temperature,
                                            "max_tokens": max_tokens or profile.max_tokens, "usage": {"include": True}}
                 if json_output:
                     payload["response_format"] = {"type": "json_object"}
@@ -377,7 +447,8 @@ class ModelRouter:
                     response = ModelResponse(text=text, data=data, model=str(body.get("model") or model), provider=profile.provider,
                                              input_tokens=int(usage.get("prompt_tokens") or 0),
                                              output_tokens=int(usage.get("completion_tokens") or 0),
-                                             cost_usd=float(usage.get("cost") or 0.0), latency_ms=latency, attempts=attempt)
+                                             cost_usd=float(usage.get("cost") or 0.0), latency_ms=latency, attempts=attempt,
+                                             cached_input_tokens=cached_prompt_tokens(usage))
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=response.model,
                                      status="ok", attempt=attempt, latency_ms=latency, input_tokens=response.input_tokens,
                                      output_tokens=response.output_tokens, cost_usd=response.cost_usd,
@@ -441,7 +512,8 @@ class ModelRouter:
         llm = self.settings
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
-            cache_key = ResponseCache.key(purpose, models, {"s": safe_state, "q": questions}, ctx.workspace_id)
+            cache_key = ResponseCache.key(purpose, models, {"s": safe_state, "q": questions}, ctx.workspace_id,
+                                          knowledge_version=ctx.knowledge_version)
             hit = self.cache.get(cache_key)
             if hit:
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
@@ -498,4 +570,5 @@ def _default_settings():
         return PlatformSettings()
 
 
-__all__ = ["JSON_INSTRUCTION", "ApprovalRequired", "BudgetExceeded", "CallContext", "DecisionResponse", "ModelResponse", "ModelRouter", "parse_json_text"]
+__all__ = ["JSON_INSTRUCTION", "ApprovalRequired", "BudgetExceeded", "CallContext", "DecisionResponse", "ModelResponse", "ModelRouter",
+           "cached_prompt_tokens", "normalize_messages", "parse_json_text", "wire_messages"]

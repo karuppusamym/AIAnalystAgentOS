@@ -24,7 +24,7 @@ from typing import Any
 
 from analystos.core.errors import ModelRouteUnavailable
 from analystos.core.ids import stable_hash
-from analystos.llm.router import JSON_INSTRUCTION, CallContext, ModelRouter, NullSink
+from analystos.llm.router import JSON_INSTRUCTION, CallContext, ModelRouter, NullSink, normalize_messages
 
 MAX_PAYLOAD_BYTES = 1_000_000  # uncompressed canonical JSON; prompts are already bounded by max_prompt_tokens
 
@@ -52,7 +52,9 @@ def decode_payload(body: bytes | None) -> Any:
 
 
 def chat_key(messages: list[dict[str, Any]]) -> str:
-    return stable_hash({"messages": messages})
+    """Keyed on the provider-independent form, so the recorded request (with `cache` flags) and
+    the wire payload (with `cache_control` blocks, P4-T04) of the same call match."""
+    return stable_hash({"messages": normalize_messages(messages)})
 
 
 def decision_key(state: dict[str, Any], questions: dict[str, Any]) -> str:

@@ -210,7 +210,7 @@ def test_ask_counts_every_attempt_and_stops_repairing_at_the_budget(world, monke
     from analystos.agents import sql_agent
 
     _policy(world, ask_queries_per_user_per_hour=2)
-    monkeypatch.setattr(sql_agent, "catalog_for_prompt", lambda ctx: "catalog")
+    monkeypatch.setattr(sql_agent, "catalog_for_prompt", lambda ctx, **kw: "catalog")
     model_calls: list[str] = []
 
     def fake_llm(ctx, purpose, prompt, payload, **kw):  # noqa: ANN001, ANN003, ANN202
