@@ -1,0 +1,78 @@
+# Model routing (§27). Agents ask for a PURPOSE; purposes map to PROFILES; profiles list models
+# in fallback order. Every model must be on the allowlist, and a workspace policy may narrow it
+# further. If no allowed model can serve a profile the call fails visibly (fail closed).
+providers:
+  openrouter:
+    kind: chat
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  typesafe:
+    # TypeSafe Jev: decision model served by the OpenRouter Decisions API. Returns typed answers
+    # (choice / noul / score) with probabilities instead of text.
+    kind: decision
+    base_url: https://openrouter.ai/api/alpha/decisions
+    api_key_env: OPENROUTER_API_KEY
+
+allowlist:
+  - anthropic/claude-sonnet-5
+  - anthropic/claude-opus-5
+  - openai/gpt-5.4
+  - openai/gpt-5.4-mini
+  - google/gemini-3.5-flash
+  - google/gemini-3.5-flash-lite
+  - deepseek/deepseek-v4-flash
+  - typesafe/jev-1.13
+
+profiles:
+  reasoning_strong:
+    models: [anthropic/claude-sonnet-5, openai/gpt-5.4]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 120
+  coding:
+    models: [anthropic/claude-sonnet-5, openai/gpt-5.4-mini]
+    temperature: 0.0
+    max_tokens: 2500
+    timeout_seconds: 90
+  analytical_reasoning:
+    models: [anthropic/claude-sonnet-5, google/gemini-3.5-flash]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 120
+  low_cost:
+    models: [google/gemini-3.5-flash-lite, deepseek/deepseek-v4-flash]
+    temperature: 0.2
+    max_tokens: 2000
+    timeout_seconds: 60
+  # Verification must come from a different model family than the primary analyst profile.
+  independent_model_family:
+    models: [openai/gpt-5.4-mini, google/gemini-3.5-flash]
+    temperature: 0.0
+    max_tokens: 2000
+    timeout_seconds: 90
+    exclude_families: [anthropic]
+  decision:
+    provider: typesafe
+    models: [typesafe/jev-1.13]  # pinned: aliases can shift verdicts
+    timeout_seconds: 20
+
+routing:
+  planning: reasoning_strong
+  hypothesis_generation: analytical_reasoning
+  follow_up_generation: analytical_reasoning
+  sql_generation: coding
+  sql_repair: coding
+  statistical_interpretation: analytical_reasoning
+  insight_narrative: low_cost
+  semantic_modeling: coding
+  dashboard_design: low_cost
+  feedback_interpretation: coding
+  summarization: low_cost
+  verification: independent_model_family
+  # JEV decision purposes
+  hypothesis_priority: decision
+  risk_check: decision
+  feedback_classification: decision
+  chart_selection: decision
+  rev_second_opinion: decision
+  stop_check: decision

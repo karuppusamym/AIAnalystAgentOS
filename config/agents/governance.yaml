@@ -1,0 +1,21 @@
+agent:
+  id: governance
+  version: '1.0'
+  name: Governance Agent
+  description: Reviews every externally visible artifact against access policy, restricted columns and destination
+    rules before publication; records the decision.
+  capabilities:
+  - policy_check
+  - publication_control
+  skills: []
+  tools:
+  - governance.review
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

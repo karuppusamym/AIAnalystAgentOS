@@ -1,0 +1,28 @@
+agent:
+  id: investigator
+  version: '1.0'
+  name: Investigation / Hypothesis Agent
+  description: Turns the objective into analytical questions and executable hypotheses, prioritises them (JEV scoring),
+    and proposes follow-up hypotheses from results.
+  capabilities:
+  - question_generation
+  - hypothesis_generation
+  - prioritisation
+  - follow_up
+  skills:
+  - root_cause_analysis
+  - segmentation
+  - trend_analysis
+  - pareto_analysis
+  tools:
+  - context.search
+  - artifact.write
+  model_profile: analytical_reasoning
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

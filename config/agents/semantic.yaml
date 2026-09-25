@@ -1,0 +1,24 @@
+agent:
+  id: semantic
+  version: '1.0'
+  name: Semantic Model Agent
+  description: Defines KPIs, measures and dimensions over the analytical dataset, validates each metric by executing
+    it, and flags duplicate or conflicting metrics.
+  capabilities:
+  - metric_definition
+  - dimension_definition
+  - metric_validation
+  skills:
+  - KPI_design
+  tools:
+  - sql.execute
+  - artifact.write
+  model_profile: coding
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

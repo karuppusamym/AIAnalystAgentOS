@@ -1,0 +1,75 @@
+"""Redis result cache for the query gateway.
+
+Key = sha256(fingerprint, scope hash, source version, max_rows): a result is only reused for the
+same normalized SQL, the same authorized scope (so a narrower scope never reads a wider one's
+cached rows), the same source data version and the same row cap. Values are JSON. Any Redis
+failure behaves as a miss and is logged as a warning; the cache never fails a query.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+
+from analystos.core.logging import get_logger
+
+KEY_PREFIX = "analystos:qcache:"
+
+_log = get_logger(__name__)
+
+
+def cache_key(fingerprint: str, scope_hash: str, source_version: str, max_rows: int) -> str:
+    material = "\x1f".join([fingerprint, scope_hash, source_version, str(int(max_rows))])
+    return KEY_PREFIX + hashlib.sha256(material.encode()).hexdigest()
+
+
+class QueryCache:
+    def __init__(self, settings: Any, *, client: Any | None = None, ttl_seconds: int | None = None) -> None:
+        self.ttl_seconds = int(ttl_seconds if ttl_seconds is not None else getattr(settings, "query_cache_ttl_seconds", 3600))
+        self._url = getattr(settings, "redis_url", None)
+        self._client = client
+
+    def _redis(self) -> Any:
+        if self._client is None:
+            import redis
+
+            self._client = redis.Redis.from_url(
+                self._url, socket_timeout=0.5, socket_connect_timeout=0.5, health_check_interval=30
+            )
+        return self._client
+
+    @staticmethod
+    def key(fingerprint: str, scope_hash: str, source_version: str, max_rows: int) -> str:
+        return cache_key(fingerprint, scope_hash, source_version, max_rows)
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        try:
+            raw = self._redis().get(key)
+        except Exception as exc:  # noqa: BLE001 - any cache failure is a miss
+            _log.warning("query cache get failed (%s); treating as miss", exc.__class__.__name__)
+            return None
+        if raw is None:
+            return None
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            _log.warning("query cache entry is not valid JSON; treating as miss")
+            return None
+        return value if isinstance(value, dict) else None
+
+    def set(self, key: str, value: dict[str, Any]) -> bool:
+        if self.ttl_seconds <= 0:
+            return False
+        try:
+            payload = json.dumps(value, separators=(",", ":"), default=str)
+            self._redis().set(key, payload, ex=self.ttl_seconds)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("query cache set failed (%s); continuing without cache", exc.__class__.__name__)
+            return False
+        return True
+
+    def delete(self, key: str) -> None:
+        try:
+            self._redis().delete(key)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("query cache delete failed (%s)", exc.__class__.__name__)

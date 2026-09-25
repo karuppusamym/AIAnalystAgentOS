@@ -1,0 +1,26 @@
+agent:
+  id: sql
+  version: '1.0'
+  name: SQL Engineer Agent
+  description: Compiles analysis specs to dialect SQL, answers ad-hoc questions with generated SQL, repairs rejected
+    SQL using gateway feedback, and builds reusable analytical datasets.
+  capabilities:
+  - sql_generation
+  - sql_repair
+  - dataset_building
+  - dialect_conversion
+  skills:
+  - query_optimization
+  - join_optimization
+  tools:
+  - sql.execute
+  - artifact.write
+  model_profile: coding
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: false
+  phase: mvp

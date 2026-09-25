@@ -1,0 +1,23 @@
+agent:
+  id: insight
+  version: '1.0'
+  name: Insight Analyst Agent
+  description: Converts supported, tested results into business findings with attached evidence, impact, caveats
+    and a numbers-guarded narrative.
+  capabilities:
+  - insight_generation
+  - impact_estimation
+  - narrative
+  skills:
+  - variance_analysis
+  tools:
+  - artifact.write
+  model_profile: low_cost
+  prompt_version: v1
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 3
+  verification_required: true
+  phase: mvp
