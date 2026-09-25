@@ -290,3 +290,18 @@ Migrations 0017 → 0020 (build gateway) → 0021 (Ask threads) → 0023 (user i
 | Sandbox network isolation | `sandbox/` | sandbox tests | ✅ | Falls back to not isolated under the chart's default seccomp; NetworkPolicy is the boundary |
 | Helm chart, offline bundle | `deploy/helm/analystos`, `scripts/bundle_images.sh` | `test_helm_chart.py` (skips without helm) | — | helm not in CI |
 | Analytical benchmark | `evaluation/`, `scripts/benchmark_analytical.py` | CI `--check` (precision/recall ≥ 0.90, FDR ≤ α) | ✅ deterministic + platform tiers (`evidence/2026-09-25-analytical-benchmark-*.md`) | No live-model report; effects well above materiality |
+
+## 2026-09-25 — Increment 4, wave 3 knowledge and wave 4 engines (K01, K02, K09, K10, E01, E03)
+
+Migration 0018 (knowledge packs) now follows 0023. The chain is 0017 → 0020 → 0021 → 0023 → 0018, and it has been checked up, down and up.
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| OKF knowledge packs, revisions, index | `knowledge/{okf,store,index,platform}.py` | `test_knowledge_okf.py`, `test_knowledge_pack.py` (reindex identity, HNSW, isolation) | ✅ seeded platform pack (27 documents) | `ts_rank_cd`, not BM25 |
+| OKF / Atlas bundle import and export | `knowledge/bundle.py` | real Atlas-exported sample, byte-identical round trip | — | No export API route |
+| Context providers | `knowledge/providers.py`, `mcp/client.py` | MCP SDK server + MOCK fixture | ❌ no live Atlas | External results not in prompts yet |
+| Embedding providers, re-embed | `knowledge/embeddings.py`, `scripts/benchmark_embeddings.py` | benchmark evidence | — | Default model chosen on the benchmark set |
+| Engine protocol, multi-dialect validator | `engines/`, `gateway/dialects.py` | `test_gateway_dialects.py` (286 cases) | ❌ no warehouse instance | Snowflake/BigQuery/Databricks/Trino stay staged |
+| Federated cross-source runs | `QueryGateway._execute_federated`, `skills/federation.py` | `test_federation.py`, `test_cross_source_runs.py` | ✅ Postgres + DuckDB file | Not yet a playbook step; no filter pushdown per leg |
+
+Evidence: `evidence/2026-09-25-knowledge-k01-k10.md`, `evidence/engines-federation-20260925.md`.
