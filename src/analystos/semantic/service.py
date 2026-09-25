@@ -296,6 +296,9 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
     audit(f"user:{approval.decided_by}", "semantic.metric.approved", workspace_id=row.workspace_id, target=row.id,
           decision="allow", details={"metric": row.name, "version": row.version, "approval_id": approval.id,
                                      "payload_hash": approval.payload_hash, "proposed_by": row.proposed_by}, session=session)
+    from analystos.knowledge.learning import draft_from_metric
+
+    draft_from_metric(session, row)  # P4-K08: the approved KPI becomes a knowledge draft for review
     return row
 
 

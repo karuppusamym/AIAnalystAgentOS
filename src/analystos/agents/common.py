@@ -186,7 +186,8 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     if sections and workspace_id:
         try:
             with session_scope() as s:
-                knowledge = load_knowledge(s, workspace_id, sections, run_id=getattr(run, "id", None))
+                knowledge = load_knowledge(s, workspace_id, sections, run_id=getattr(run, "id", None),
+                                           query=" ".join(x for x in (objective, reference_text) if x) or None)
         except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
             log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
     limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS

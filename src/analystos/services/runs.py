@@ -173,7 +173,7 @@ def _feedback_messages(router: Any, ctx: Any, run: AnalysisRun, system: str, tex
     knowledge: list = []
     if settings.context.compiler_enabled and any(x != "catalog" for x in profile.sections):
         with session_scope() as s:
-            knowledge = load_knowledge(s, run.workspace_id, profile.sections, run_id=run.id)
+            knowledge = load_knowledge(s, run.workspace_id, profile.sections, run_id=run.id, query=f"{text} {run.objective}")
     compiled = compile_context("feedback_interpretation", profile, objective=f"{text} {run.objective}",
                                required={"instruction": text, "objective": run.objective}, catalog=catalog,
                                knowledge=knowledge, limit_chars=int(settings.llm.max_prompt_tokens * 3.6) - len(system) - 200,
@@ -303,6 +303,13 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
 
             add_entry(s, workspace_id=run.workspace_id, kind="note", name=f"User context ({user.email})", body=text, origin="user")
             fb.applied = True
+        from analystos.knowledge.learning import draft_from_feedback
+
+        s.flush()
+        draft = draft_from_feedback(s, fb, objective=run.objective,
+                                    target=s.get(Insight, target_id) if kind == "reject_finding" and target_id else None)
+        if draft is not None:
+            result["knowledge_draft"] = draft.id  # P4-K08: corrections and redirects become drafts for review
         emit(run.workspace_id, "feedback.received", {"kind": kind, "text": text[:300], **{k: v for k, v in result.items() if k != "replan"}},
              run_id=run.id, actor=f"user:{user.id}", session=s)
         audit(f"user:{user.id}", "feedback.submitted", workspace_id=run.workspace_id, run_id=run.id, details=result, session=s)

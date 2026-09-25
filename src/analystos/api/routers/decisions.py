@@ -76,7 +76,13 @@ def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depend
                                          workspace_id=ins.workspace_id)
     audit(f"user:{user.id}", f"insight.{body.signal}", workspace_id=ins.workspace_id, run_id=ins.run_id, target=ins.id,
           session=session)
-    return {"insight": ins.id, "signal": body.signal, "labelled_decisions": labelled}
+    draft = None
+    if body.signal == "accept":  # P4-K08: an accepted, verified finding becomes a draft Attested Computation
+        from analystos.knowledge.learning import draft_from_finding
+
+        draft = draft_from_finding(session, ins, user_id=user.id)
+    return {"insight": ins.id, "signal": body.signal, "labelled_decisions": labelled,
+            "knowledge_draft": draft.id if draft is not None else None}
 
 
 @router.post("/feedback/{feedback_id}/correct")

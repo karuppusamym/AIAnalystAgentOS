@@ -340,6 +340,38 @@ class KnowledgeIndexState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class KnowledgeSuggestion(Base):
+    """A knowledge draft waiting for review (P4-K07/K08): proposed by a model (crawler enrichment) or
+    by the learning loop (an accepted finding, an approved KPI, a user correction). Every field
+    carries its own value, confidence and provenance. Nothing here reaches a prompt: an approval
+    writes the document into the workspace pack (a revision), a rejection writes negative
+    knowledge there instead. `subject` names what the draft is about (`asset:<id>`, `insight:<id>`,
+    `metric:<name>@v<n>`, `feedback:<id>`, ...)."""
+
+    __tablename__ = "knowledge_suggestion"
+    __table_args__ = (UniqueConstraint("workspace_id", "subject", "content_hash", name="uq_knowledge_suggestion_content"),
+                      Index("ix_knowledge_suggestion_queue", "workspace_id", "status", "created_at"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))  # term|definition|metric|rule|note|attested_computation|table_description|negative
+    subject: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(300))
+    path: Mapped[str] = mapped_column(String(500))  # the workspace-pack path an approval writes
+    fields: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {name: {value, confidence, provenance}}
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)  # the least confident field
+    origin: Mapped[str] = mapped_column(String(60))  # crawler.enrichment | learning.finding | learning.metric | learning.feedback
+    proposed_by: Mapped[str] = mapped_column(String(80))  # model:<id> | process:<name> | user:<id>
+    batch: Mapped[str | None] = mapped_column(String(80), nullable=True)  # crawl run, run, request that produced it
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|approved|rejected|superseded
+    content_hash: Mapped[str] = mapped_column(String(64))
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int | None] = mapped_column(Integer, nullable=True)  # workspace-pack revision the decision wrote
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AgentDefinition(Base):
     __tablename__ = "agent_definition"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)

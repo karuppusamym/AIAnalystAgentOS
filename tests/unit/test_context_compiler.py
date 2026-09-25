@@ -177,7 +177,7 @@ def _platform(**context):
 def test_llm_json_sends_compiled_context_in_cache_stable_order_with_receipts(monkeypatch):
     platform = _platform()
     monkeypatch.setattr("analystos.services.platform_settings.get", lambda: platform)
-    monkeypatch.setattr("analystos.context.compiler.load_knowledge", lambda s, ws, sections, run_id=None: knowledge())
+    monkeypatch.setattr("analystos.context.compiler.load_knowledge", lambda s, ws, sections, run_id=None, **kw: knowledge())
     monkeypatch.setattr(common, "session_scope", _null_session)
     sink, transport = Sink(), FakeTransport(chat=lambda p: chat_json({"hypotheses": []}))
     router = ModelRouter(transport=transport, sink=sink, api_key_lookup=KEY.get, max_retries=0,

@@ -1071,6 +1071,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/context-receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Context Receipts
+         * @description Per model call of a run: the purpose and the receipts of the context it carried.
+         */
+        get: operations["run_context_receipts_api_runs__run_id__context_receipts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schedules/{schedule_id}": {
         parameters: {
             query?: never;
@@ -1711,6 +1731,67 @@ export interface paths {
         get: operations["insights_api_workspaces__workspace_id__insights_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Context
+         * @description What the context compiler would send for `purpose` about `question` from this workspace's
+         *     knowledge (the catalog section is left out: it depends on a run's scope). No model is called.
+         */
+        post: operations["preview_context_api_workspaces__workspace_id__knowledge_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Suggestions
+         * @description The review queue: drafts with per-field value, confidence and provenance.
+         */
+        get: operations["list_suggestions_api_workspaces__workspace_id__knowledge_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/suggestions/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Review Suggestions
+         * @description Approve, edit-then-approve or reject drafts in one batch: one workspace-pack revision.
+         */
+        post: operations["review_suggestions_api_workspaces__workspace_id__knowledge_suggestions_review_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2519,6 +2600,16 @@ export interface components {
              */
             synonyms?: string[];
         };
+        /** ContextPreviewIn */
+        ContextPreviewIn: {
+            /**
+             * Purpose
+             * @default hypothesis_generation
+             */
+            purpose?: string;
+            /** Question */
+            question: string;
+        };
         /** CorrectionIn */
         CorrectionIn: {
             /** Kind */
@@ -2760,6 +2851,27 @@ export interface components {
             kind?: string;
             /** Run Id */
             run_id?: string | null;
+        };
+        /** ReviewDecision */
+        ReviewDecision: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "edit" | "reject";
+            /** Fields */
+            fields?: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** ReviewIn */
+        ReviewIn: {
+            /** Decisions */
+            decisions: components["schemas"]["ReviewDecision"][];
         };
         /** RollbackIn */
         RollbackIn: {
@@ -5192,6 +5304,40 @@ export interface operations {
             };
         };
     };
+    run_context_receipts_api_runs__run_id__context_receipts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_schedule_api_schedules__schedule_id__delete: {
         parameters: {
             query?: never;
@@ -6861,6 +7007,121 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_context_api_workspaces__workspace_id__knowledge_context_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_suggestions_api_workspaces__workspace_id__knowledge_suggestions_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                kind?: string | null;
+                origin?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_suggestions_api_workspaces__workspace_id__knowledge_suggestions_review_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
