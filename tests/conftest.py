@@ -17,7 +17,9 @@ os.environ.setdefault("ANALYSTOS_JWT_SECRET", "test-secret-test-secret-test-secr
 
 _DP_DB = os.environ.get("ANALYSTOS_TEST_DP_DB", "analystos_test_dp")
 TEST_SUFFIX = _DP_DB.removeprefix("analystos_test_dp").strip("_")
-ROLE_PREFIX = f"aostest_{TEST_SUFFIX}_" if TEST_SUFFIX else "aostest_"
+# Every session gets its own role namespace. A bare "aostest_" would make this session's cleanup
+# (LIKE 'aostest\_%') drop the roles of every parallel session using a suffix.
+ROLE_PREFIX = f"aostest_{TEST_SUFFIX or 'default'}_"
 ANALYTICS_DB = f"{_DP_DB}_analytics"
 _HOSTPORT = TEST_DB.split("@", 1)[1].rsplit("/", 1)[0]
 os.environ["ANALYSTOS_ANALYTICS_LOADER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}loader:loader@{_HOSTPORT}/{ANALYTICS_DB}"
