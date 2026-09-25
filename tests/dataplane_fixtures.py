@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from analystos.core.config import Settings
 from analystos.core.ids import new_id
 
-TEST_DB = "analystos_test_dp"
+TEST_DB = os.environ.get("ANALYSTOS_TEST_DP_DB", "analystos_test_dp")  # override per parallel test session
 ADMIN_URL = os.environ.get("ANALYSTOS_TEST_ADMIN_URL", "postgresql+psycopg://analystos:analystos@localhost:5432/analystos")
 
 
