@@ -5,8 +5,13 @@ Two call shapes:
   complete()  chat models via OpenRouter chat completions (text or JSON output)
   decide()    TypeSafe Jev via the OpenRouter Decisions API (typed choice/noul/score answers)
 
-The router never silently routes around policy: if the workspace allowlist removes every model
-of a profile, the call fails with ModelRouteUnavailable and the caller must degrade visibly.
+The router never silently routes around policy: if the workspace allowlist, provider list or
+data-residency rule removes every model of a profile, the call fails with ModelRouteUnavailable,
+and a call whose pre-call cost estimate exceeds the workspace approval threshold raises
+ApprovalRequired. Either way the caller must degrade visibly.
+
+Every call record carries the redacted request and the response (P4-C09) so a run can be
+reconstructed and re-executed offline with `analystos.llm.replay.ReplayTransport`.
 """
 from __future__ import annotations
 
@@ -20,7 +25,13 @@ from typing import Any, Protocol
 
 import httpx
 
-from analystos.core.errors import BudgetExceeded, LLMDisabled, ModelRouteUnavailable, UpstreamUnavailable
+from analystos.core.errors import (
+    ApprovalRequired,
+    BudgetExceeded,
+    LLMDisabled,
+    ModelRouteUnavailable,
+    UpstreamUnavailable,
+)
 from analystos.core.ids import stable_hash
 from analystos.core.logging import get_logger
 from analystos.llm.cache import ResponseCache, estimate_tokens
@@ -30,8 +41,15 @@ from analystos.llm.redaction import redact, redact_obj
 log = get_logger(__name__)
 
 
+JSON_INSTRUCTION = "\n\nRespond with a single valid JSON value only."
+
+
 @dataclass
 class CallContext:
+    """Who is calling and under which workspace policy. The policy travels with the call so the
+    router can enforce it without reading the database; fields left at None mean "no workspace
+    restriction" (platform-level calls such as admin checks)."""
+
     workspace_id: str | None = None
     run_id: str | None = None
     task_id: str | None = None
@@ -39,6 +57,23 @@ class CallContext:
     prompt_version: str | None = None
     allowed_models: list[str] = field(default_factory=list)  # workspace policy narrowing ([] = platform list)
     exclude_families: list[str] = field(default_factory=list)  # e.g. primary family, for verification
+    allowed_providers: list[str] | None = None  # workspace policy; None = unrestricted, [] = none allowed
+    data_residency: str | None = None  # required provider/model region; unknown region fails closed
+    expensive_model_approval_usd: float | None = None  # pre-call estimate above this needs an approval
+
+    @classmethod
+    def for_policy(cls, policy: Any, **kwargs: Any) -> CallContext:
+        """Context carrying every model-relevant field of a WorkspacePolicyDoc."""
+        return cls(**kwargs).with_policy(policy)
+
+    def with_policy(self, policy: Any) -> CallContext:
+        if policy is None:
+            return self
+        self.allowed_models = list(getattr(policy, "allowed_models", None) or self.allowed_models)
+        self.allowed_providers = list(policy.allowed_providers)
+        self.data_residency = policy.data_residency or None
+        self.expensive_model_approval_usd = policy.expensive_model_approval_usd
+        return self
 
 
 @dataclass
@@ -69,7 +104,9 @@ class DecisionResponse:
 class UsageSink(Protocol):
     def record(self, *, ctx: CallContext, purpose: str, profile: str, provider: str, model: str, status: str,
                attempt: int, latency_ms: int, input_tokens: int, output_tokens: int, cost_usd: float,
-               request_hash: str | None, error: str | None, tokens_saved: int = 0) -> None: ...
+               request_hash: str | None, error: str | None, tokens_saved: int = 0,
+               request: dict | None = None, response: dict | None = None) -> None:
+        """`request`/`response` are the redacted replay payloads (see analystos.llm.replay)."""
 
     def check_budget(self, ctx: CallContext, purpose: str) -> None:
         """Raise BudgetExceeded when the run/workspace budget is spent."""
@@ -189,7 +226,47 @@ class ModelRouter:
             allowed &= set(ctx.allowed_models)
         excluded = set(profile.exclude_families) | set(ctx.exclude_families)
         models = [m for m in profile.models if m in allowed and family(m) not in excluded]
+        if self._policy_block(profile, ctx):
+            models = []
+        elif ctx.data_residency:
+            want = ctx.data_residency.strip().lower()
+            models = [m for m in models if (self.config.region_of(m, profile.provider) or "").strip().lower() == want]
         return profile_name, profile, models
+
+    @staticmethod
+    def _policy_block(profile: ProfileConfig, ctx: CallContext) -> str | None:
+        if ctx.allowed_providers is not None and profile.provider not in ctx.allowed_providers:
+            return f"provider '{profile.provider}' is not in the workspace allowed_providers {ctx.allowed_providers}"
+        return None
+
+    def _no_route(self, purpose: str, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> ModelRouteUnavailable:
+        reason = self._policy_block(profile, ctx)
+        if reason is None and ctx.data_residency:
+            reason = (f"no model of profile {profile_name} has a known region matching the workspace data_residency "
+                      f"'{ctx.data_residency}' (unknown regions fail closed)")
+        return ModelRouteUnavailable(f"no allowed model for purpose '{purpose}' (profile {profile_name})"
+                                     + (f": {reason}" if reason else ""))
+
+    def _within_cost(self, purpose: str, profile_name: str, profile: ProfileConfig, models: list[str], ctx: CallContext,
+                     *, input_tokens: int, output_tokens: int, request_hash: str, request: dict) -> list[str]:
+        """Drop models whose pre-call estimate exceeds the workspace approval threshold. When none
+        remain the call needs an approval: raise ApprovalRequired instead of calling silently.
+        Models without price metadata cannot be estimated and are not held back."""
+        limit = ctx.expensive_model_approval_usd
+        if limit is None:
+            return models
+        estimates = {m: self.config.estimate_cost(m, input_tokens, output_tokens) for m in models}
+        within = [m for m in models if estimates[m] is None or estimates[m] <= limit]
+        if within:
+            return within
+        cheapest = min(models, key=lambda m: estimates[m] or 0.0)
+        message = (f"'{purpose}' is estimated at ${estimates[cheapest]:.4f} on {cheapest}, above the workspace "
+                   f"approval threshold ${limit:.4f} (expensive_model_approval_usd)")
+        self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=cheapest,
+                         status="approval_required", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                         request_hash=request_hash, error=message[:500], request=request)
+        raise ApprovalRequired(message, details={"purpose": purpose, "model": cheapest, "estimated_usd": estimates[cheapest],
+                                                 "limit_usd": limit, "decision": "approval_required"})
 
     def available(self, purpose: str, ctx: CallContext | None = None) -> bool:
         ctx = ctx or CallContext()
@@ -228,21 +305,24 @@ class ModelRouter:
             if downgraded:
                 profile_name, profile, models = low_name, low, downgraded
         if not models:
-            raise ModelRouteUnavailable(f"no allowed model for purpose '{purpose}' (profile {profile_name})")
+            raise self._no_route(purpose, profile_name, profile, ctx)
         base_url, key = self._provider(profile)
         self.sink.check_budget(ctx, purpose)
         safe_messages = [{"role": m["role"], "content": redact(m["content"])} for m in messages]
         if json_output:
-            safe_messages[0] = {"role": safe_messages[0]["role"],
-                                "content": safe_messages[0]["content"] + "\n\nRespond with a single valid JSON value only."}
+            safe_messages[0] = {"role": safe_messages[0]["role"], "content": safe_messages[0]["content"] + JSON_INSTRUCTION}
         request_hash = stable_hash({"purpose": purpose, "messages": safe_messages})
+        request = {"kind": "chat", "purpose": purpose, "messages": safe_messages, "json_output": json_output,
+                   "max_tokens": max_tokens, "temperature": profile.temperature}
         estimate = estimate_tokens("".join(m["content"] for m in safe_messages))
         if estimate > llm.max_prompt_tokens:
             self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model="-",
                              status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                              request_hash=request_hash, error=f"prompt ~{estimate} tokens > limit {llm.max_prompt_tokens}",
-                             tokens_saved=estimate)
+                             tokens_saved=estimate, request=request)
             raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}")
+        models = self._within_cost(purpose, profile_name, profile, models, ctx, input_tokens=estimate,
+                                   output_tokens=max_tokens or profile.max_tokens, request_hash=request_hash, request=request)
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
             cache_key = ResponseCache.key(purpose, models, {"m": safe_messages, "json": json_output, "max": max_tokens,
@@ -252,7 +332,8 @@ class ModelRouter:
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
                                  status="cache_hit", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                                  request_hash=request_hash, error=None,
-                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)))
+                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)),
+                                 request=request, response={"model": hit["model"], "text": redact(hit["text"]), "cached": True})
                 return ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
                                      cached=True)
         last_error: Exception | None = None
@@ -280,7 +361,8 @@ class ModelRouter:
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=response.model,
                                      status="ok", attempt=attempt, latency_ms=latency, input_tokens=response.input_tokens,
                                      output_tokens=response.output_tokens, cost_usd=response.cost_usd,
-                                     request_hash=request_hash, error=None)
+                                     request_hash=request_hash, error=None, request=request,
+                                     response={"model": response.model, "text": redact(text), "usage": usage})
                     if cache_key:
                         self.cache.set(cache_key, {"text": text, "data": data, "model": response.model,
                                                    "input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
@@ -290,7 +372,8 @@ class ModelRouter:
                     last_error = exc
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
                                      status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500])
+                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
+                                     request=request)
                     log.warning("model call failed purpose=%s model=%s attempt=%s: %s", purpose, model, attempt, exc)
                     if retry < self.max_retries:
                         time.sleep(min(0.5 * 2**retry, 4))
@@ -298,7 +381,8 @@ class ModelRouter:
                     last_error = exc
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
                                      status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500])
+                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
+                                     request=request)
                     break
         raise ModelRouteUnavailable(f"all models failed for purpose '{purpose}': {last_error}")
 
@@ -317,11 +401,15 @@ class ModelRouter:
             raise LLMDisabled(f"decision model for '{purpose}' is turned off by the administrator")
         profile_name, profile, models = self.candidates(purpose, ctx)
         if not models:
-            raise ModelRouteUnavailable(f"no allowed decision model for purpose '{purpose}'")
+            raise self._no_route(purpose, profile_name, profile, ctx)
         base_url, key = self._provider(profile)
         self.sink.check_budget(ctx, purpose)
         safe_state = redact_obj({k: (v[:4000] if isinstance(v, str) else v) for k, v in state.items()})
         request_hash = stable_hash({"purpose": purpose, "state": safe_state, "questions": questions})
+        request = {"kind": "decision", "purpose": purpose, "state": safe_state, "questions": questions}
+        models = self._within_cost(purpose, profile_name, profile, models, ctx,
+                                   input_tokens=estimate_tokens(json.dumps(request, default=str)),
+                                   output_tokens=profile.max_tokens, request_hash=request_hash, request=request)
         llm = self.settings
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
@@ -331,7 +419,9 @@ class ModelRouter:
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
                                  status="cache_hit", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                                  request_hash=request_hash, error=None,
-                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)))
+                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)),
+                                 request=request, response={"model": hit["model"], "answers": redact_obj(hit["answers"]),
+                                                            "cached": True})
                 return DecisionResponse(answers=hit["answers"], model=hit["model"], cached=True)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 2):
@@ -351,7 +441,8 @@ class ModelRouter:
                                           output_tokens=int(usage.get("output_tokens") or 0))
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=result.model,
                                  status="ok", attempt=attempt, latency_ms=latency, input_tokens=result.input_tokens,
-                                 output_tokens=result.output_tokens, cost_usd=result.cost_usd, request_hash=request_hash, error=None)
+                                 output_tokens=result.output_tokens, cost_usd=result.cost_usd, request_hash=request_hash, error=None,
+                                 request=request, response={"model": result.model, "answers": redact_obj(answers), "usage": usage})
                 if cache_key:
                     self.cache.set(cache_key, {"answers": answers, "model": result.model, "input_tokens": result.input_tokens,
                                                "output_tokens": result.output_tokens}, llm.cache_ttl_hours * 3600)
@@ -360,7 +451,8 @@ class ModelRouter:
                 last_error = exc
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=models[0],
                                  status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                 input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500])
+                                 input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
+                                 request=request)
                 if isinstance(exc, ModelRouteUnavailable):
                     break
                 time.sleep(min(0.5 * 2 ** (attempt - 1), 4))
@@ -378,4 +470,4 @@ def _default_settings():
         return PlatformSettings()
 
 
-__all__ = ["BudgetExceeded", "CallContext", "DecisionResponse", "ModelResponse", "ModelRouter", "parse_json_text"]
+__all__ = ["JSON_INSTRUCTION", "ApprovalRequired", "BudgetExceeded", "CallContext", "DecisionResponse", "ModelResponse", "ModelRouter", "parse_json_text"]

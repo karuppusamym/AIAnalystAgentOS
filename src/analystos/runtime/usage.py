@@ -2,23 +2,37 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from analystos.core.errors import BudgetExceeded
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, ModelCall, Workspace
+from analystos.db.models import AnalysisRun, ModelCall, ModelPayload, Workspace
 from analystos.governance.policy import load_policy
+from analystos.llm.replay import encode_payload
 from analystos.llm.router import CallContext
+
+
+def _store_payload(s, kind: str, value: dict | None) -> str | None:
+    """Content-addressed insert (idempotent): a retry re-sending the same request stores nothing new."""
+    if value is None:
+        return None
+    digest, body, size, truncated = encode_payload(value)
+    s.execute(pg_insert(ModelPayload).values(hash=digest, kind=kind, size_bytes=size, truncated=truncated, body=body)
+              .on_conflict_do_nothing(index_elements=["hash"]))
+    return digest
 
 
 class DbUsageSink:
     def record(self, *, ctx: CallContext, purpose, profile, provider, model, status, attempt, latency_ms,
-               input_tokens, output_tokens, cost_usd, request_hash, error, tokens_saved: int = 0) -> None:
+               input_tokens, output_tokens, cost_usd, request_hash, error, tokens_saved: int = 0,
+               request: dict | None = None, response: dict | None = None) -> None:
         with session_scope() as s:
             s.add(ModelCall(workspace_id=ctx.workspace_id, run_id=ctx.run_id, task_id=ctx.task_id, agent_id=ctx.agent_id,
                             purpose=purpose, profile=profile, provider=provider, model=model, prompt_version=ctx.prompt_version,
                             status=status, attempt=attempt, latency_ms=latency_ms, input_tokens=input_tokens,
                             output_tokens=output_tokens, cost_usd=cost_usd, request_hash=request_hash, error=error,
-                            tokens_saved=tokens_saved))
+                            tokens_saved=tokens_saved, request_ref=_store_payload(s, "request", request),
+                            response_ref=_store_payload(s, "response", response)))
             if ctx.run_id and (input_tokens or output_tokens or cost_usd):
                 s.execute(update(AnalysisRun).where(AnalysisRun.id == ctx.run_id).values(
                     tokens=AnalysisRun.tokens + input_tokens + output_tokens, cost_usd=AnalysisRun.cost_usd + cost_usd))

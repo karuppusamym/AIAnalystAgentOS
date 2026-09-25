@@ -297,6 +297,9 @@ def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
         v = (verdicts or {}).get(str(i))
         a["priority_score"] = round(v.value / 2, 3) if v else rank.get(a.get("priority", "medium"), 1.0) / 2
         a["priority_by"] = f"jev:{v.model}" if v else "rules"
+        # The decision itself, not only who made it (P4-C09): replay and audit need the probabilities.
+        a["priority_decision"] = {"score": v.value, "probabilities": v.probabilities, "confidence": v.confidence,
+                                  "model": v.model} if v else None
         a["priority"] = "high" if a["priority_score"] >= 0.7 else "medium" if a["priority_score"] >= 0.35 else "low"
     accepted.sort(key=lambda a: -a["priority_score"])
     return "jev" if verdicts else "rules"
@@ -324,7 +327,8 @@ def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key
                      depends_on=[round_key], optional=True, input={"hypothesis_id": h.id}, seq=60 + n,
                      from_version=ctx.task.plan_version)
             emit(run.workspace_id, "hypothesis.created", {"code": h.code, "statement": h.statement, "priority": h.priority,
-                                                          "priority_by": a.get("priority_by"), "method": spec["method"]},
+                                                          "priority_by": a.get("priority_by"),
+                                                          "priority_decision": a.get("priority_decision"), "method": spec["method"]},
                  run_id=run.id, session=s)
             link(s, run.workspace_id, ("objective", run.id), "asks", ("hypothesis", h.id), run_id=run.id)
             keys.append(key)

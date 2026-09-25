@@ -52,6 +52,15 @@ def default_gateway():
     return QueryGateway(settings, cache=cache, on_event=on_event)
 
 
+def workspace_call_ctx(workspace_id: str, **kwargs: Any) -> CallContext:
+    """CallContext for model calls outside a run step (feedback, monitors, crawler) that still
+    carries the workspace policy, so provider/residency/approval rules apply everywhere."""
+    with session_scope() as s:
+        workspace = s.get(Workspace, workspace_id)
+        policy = load_policy(s, workspace) if workspace else WorkspacePolicyDoc()
+    return CallContext.for_policy(policy, workspace_id=workspace_id, **kwargs)
+
+
 @dataclass
 class Services:
     router: ModelRouter
@@ -107,9 +116,11 @@ class RunContext:
                                  purpose="analysis", run_id=self.run.id, task_id=self.task.id)
 
     def call_ctx(self, *, exclude_families: list[str] | None = None) -> CallContext:
-        return CallContext(workspace_id=self.workspace.id, run_id=self.run.id, task_id=self.task.id, agent_id=self.agent.id,
-                           prompt_version=f"{self.agent.id}.{self.agent.prompt_version}",
-                           allowed_models=self.policy.allowed_models, exclude_families=exclude_families or [])
+        """Carries the workspace policy to the router. prompt_version here is the agent's default;
+        `agents.common.llm_json` replaces it with `<prompt name>@<text hash>` for the prompt it sends."""
+        return CallContext.for_policy(self.policy, workspace_id=self.workspace.id, run_id=self.run.id, task_id=self.task.id,
+                                      agent_id=self.agent.id, prompt_version=f"{self.agent.id}.{self.agent.prompt_version}",
+                                      exclude_families=exclude_families or [])
 
     @property
     def router(self) -> ModelRouter:

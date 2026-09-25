@@ -14,8 +14,7 @@ from analystos.db.models import AnalysisRun, Feedback, Hypothesis, Insight, User
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate, get_workspace, require_role, resolve_scope
-from analystos.llm.router import CallContext
-from analystos.runtime.context import default_router
+from analystos.runtime.context import default_router, workspace_call_ctx
 from analystos.runtime.engine import apply_replan
 from analystos.workflows.orchestrator import signal_run, start_run
 
@@ -155,8 +154,12 @@ def _vocabulary(run: AnalysisRun) -> dict[tuple[str, str], list[str]]:
 def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
     """Rules first (profiled category vocabulary), model when rules find nothing or admin mode is
     `always`; either way filters are validated against the run scope. Invalid filters are dropped."""
+    from analystos.agents.prompts import prompt, prompt_version_id
+
     router = default_router()
-    ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor", prompt_version="feedback_interpretation.v1")
+    system = prompt("feedback_interpretation.v1")
+    ctx = workspace_call_ctx(run.workspace_id, run_id=run.id, agent_id="supervisor",
+                             prompt_version=prompt_version_id("feedback_interpretation.v1", system))
     rule_filters = parse_redirect_rules(text, _vocabulary(run))
     mode = router.mode("feedback_interpretation")
     if rule_filters and mode in ("auto", "off"):
@@ -168,10 +171,8 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
                            "interpreted_by": "rules" if rule_filters else "none"}
     if not router.available("feedback_interpretation", ctx):
         return out
-    from analystos.agents.prompts import prompt
-
     try:
-        resp = router.complete_json("feedback_interpretation", prompt("feedback_interpretation.v1"),
+        resp = router.complete_json("feedback_interpretation", system,
                                     json.dumps({"instruction": text, "catalog": catalog, "objective": run.objective}), ctx=ctx)
     except Exception:
         return out
@@ -201,7 +202,7 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
         s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
     jev = JevDecisions(default_router())
-    ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor")
+    ctx = workspace_call_ctx(run.workspace_id, run_id=run.id, agent_id="supervisor")
     classified_by = "user"
     if kind is None:
         v = jev.choose("feedback_classification", {"feedback": text, "objective": run.objective},

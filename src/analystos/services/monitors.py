@@ -24,7 +24,6 @@ from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate as policy_evaluate
 from analystos.governance.policy import require_role, resolve_scope
-from analystos.llm.router import CallContext
 from analystos.services.notifications import notify
 
 log = get_logger(__name__)
@@ -271,13 +270,13 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
 def _triage(monitor: Monitor, workspace: Workspace, result: dict) -> tuple[str, dict | None]:
     """JEV materiality check. Escalate-only: it can raise severity, never lower it."""
     from analystos.llm.jev import JevDecisions
-    from analystos.runtime.context import default_router
+    from analystos.runtime.context import default_router, workspace_call_ctx
 
     severity = result.get("severity", "warning")
     verdict = JevDecisions(default_router()).probability(
         "alert_triage", {"objective": workspace.objective, "monitor": monitor.name, "signal": result.get("message", "")},
         "Is `signal` a material change for `objective` that an operations lead would want investigated now?",
-        ctx=CallContext(workspace_id=workspace.id, agent_id="monitor"))
+        ctx=workspace_call_ctx(workspace.id, agent_id="monitor"))
     if verdict is None:
         return severity, None
     from analystos.services.platform_settings import get as platform
