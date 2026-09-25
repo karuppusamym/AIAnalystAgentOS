@@ -1,0 +1,50 @@
+# Worker pool sizing for the AnalystOS Helm chart (P4-S01; the chart itself is P4-S04).
+# Values only: one Deployment per pool, each running `analystos worker` with ANALYSTOS_WORKER_QUEUES
+# set to its queue(s), so every pool scales on its own (replicas or an HPA on CPU / queue backlog).
+#
+# Per-process slots, executor type and activity timeouts are NOT set here: they are
+# config/task_queues.yaml, baked into the image. Keep `resources.limits.cpu` of the compute pool at
+# least its process-pool size (task_queues.yaml `compute.max_concurrent`, default 4).
+#
+# Queue names are <temporalQueuePrefix>-<workload>; every pool of one installation must share the prefix.
+temporalQueuePrefix: analystos
+
+workers:
+  analysis:            # I/O-bound agent steps (context, metadata, hypotheses, insights, verify, ...) + AnalysisWorkflow
+    queues: analysis
+    replicas: 2
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}
+  compute:             # CPU-bound statistics (profile, quality, test:*) in a process pool
+    queues: compute
+    replicas: 2
+    resources:
+      requests: {cpu: "2", memory: 3Gi}
+      limits: {cpu: "4", memory: 6Gi}
+    autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 12, targetCPUUtilizationPercentage: 75}
+  publish:             # BI side effects (Superset); few replicas keep the destination's rate limits honest
+    queues: publish
+    replicas: 1
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    autoscaling: {enabled: false}
+  crawl:               # metadata crawls (CrawlWorkflow + run_crawl)
+    queues: crawl
+    replicas: 1
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+    autoscaling: {enabled: false}
+  elt:                 # placeholder until ELT activities exist (P4-E*); answers queue_ping only
+    queues: elt
+    replicas: 0
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    autoscaling: {enabled: false}
+
+graph:
+  enabled: false       # ANALYSTOS_GRAPH_ENABLED; Neo4j is an optional projection (spec v3 §8)

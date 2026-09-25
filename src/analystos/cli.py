@@ -135,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
     parser.add_argument("--out", help="replay-run: write the JSON report to this file")
+    parser.add_argument("--queues", help="worker: comma-separated workloads to serve (analysis, compute, publish, crawl, elt; "
+                                         "default ANALYSTOS_WORKER_QUEUES or all)")
     args = parser.parse_args(argv)
     if args.command == "replay-run":
         if not args.run_id:
@@ -149,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "worker":
         from analystos.workflows.worker import run_worker
 
-        run_worker()
+        run_worker(args.queues)
     elif args.command == "scheduler":
         from analystos.services.schedules import run_scheduler
 

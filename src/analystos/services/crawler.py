@@ -16,7 +16,7 @@ Stages, each recorded on the crawl_run so the UI can show progress and a failed 
 9. enrich       optional: the model fills descriptions only where rules were not confident, in
                 screened, compact batches (crawl.llm_enrichment + purpose mode). Every avoided call
                 is accounted as tokens saved.
-10. publish     context-store entries (vector search) and the Neo4j projection
+10. publish     context-store entries (vector search) and the optional Neo4j projection
 
 Everything that touches data goes through QueryGateway with the caller's resolved scope; the
 crawler never opens a source connection except the connector's metadata/discovery calls.

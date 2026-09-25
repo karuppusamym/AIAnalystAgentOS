@@ -79,7 +79,7 @@ def build_context_package(session: Session, workspace_id: str, objective: str, a
                                     "business_name": c.business_name, "description": c.description, "tags": c.tags}
                                    for c in cols]})
     # 2 graph neighborhood
-    graph = neighborhood(assets, workspace_id)
+    graph = neighborhood(assets, workspace_id, session)
     # 3 vector search (+ Context2AI when configured)
     terms = search(session, workspace_id, objective, limit=12)
     external: list[dict] = []

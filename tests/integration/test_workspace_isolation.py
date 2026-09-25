@@ -197,16 +197,22 @@ def test_same_name_identified_edge_exists_in_two_workspaces(dp_session_factory, 
             {"from": ["dataset", "ds_shared_name"], "relation": "built_from", "to": ["table", "src_shared.incident"]}]
 
 
-def test_graph_neighbourhood_never_crosses_workspaces(dp_session_factory, two_workspaces):
+def test_graph_neighbourhood_never_crosses_workspaces(dp_session_factory, two_workspaces, monkeypatch):
     from analystos.artifacts.registry import link
+    from analystos.core.config import get_settings
     from analystos.graph import projection
 
+    monkeypatch.setenv("ANALYSTOS_GRAPH_ENABLED", "true")  # the projection is off by default (P4-S03)
+    get_settings.cache_clear()
     a, b = two_workspaces["a"]["ws"], two_workspaces["b"]["ws"]
     table = f"src_shared_{new_id('t')[-6:]}.incident"
     with dp_session_factory() as s:
         link(s, a, ("dataset", "ds_from_a"), "built_from", ("table", table))
         link(s, b, ("dataset", "ds_from_b"), "built_from", ("table", table))
         s.commit()
+    with dp_session_factory() as s:  # the Postgres neighbourhood (served when the graph is off) is workspace-pinned too
+        assert {r["id"] for r in projection.pg_neighborhood(s, [table], a)} == {"ds_from_a"}
+        assert {r["id"] for r in projection.pg_neighborhood(s, [table], b)} == {"ds_from_b"}
     try:
         with dp_session_factory() as s:
             ra = projection.project_workspace(s, a)
@@ -226,6 +232,7 @@ def test_graph_neighbourhood_never_crosses_workspaces(dp_session_factory, two_wo
                 g.run("MATCH (n:AOS) WHERE n.workspace_id IN $ws DETACH DELETE n", ws=[a, b])
         except Exception:  # noqa: BLE001 - Neo4j down: nothing was written
             pass
+        get_settings.cache_clear()
 
 
 def test_migration_0007_puts_workspace_in_the_lineage_key(dp_control_url):
