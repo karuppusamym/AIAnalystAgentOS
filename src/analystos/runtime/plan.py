@@ -52,12 +52,14 @@ def plan_hash(plan: dict[str, Any], *, constraints: dict[str, Any], scope_hash: 
     return stable_hash({"plan": plan, "constraints": constraints, "scope": scope_hash, "version": plan_version})
 
 
-def dep_satisfied(dep: str, tasks: dict[str, Any]) -> bool:
-    """True when the dependency is done. Pattern deps are done when every matching task is terminal."""
+def dep_satisfied(dep: str, tasks: dict[str, Any], waiting_key: str | None = None) -> bool:
+    """True when the dependency is done. Pattern deps are done when every matching task is terminal;
+    matching tasks that themselves wait on `waiting_key` are ignored (no self-cycles)."""
     ok_states = {"COMPLETED", "SKIPPED"}
     if dep.endswith(":*"):
         prefix = dep[:-1]
-        return all(t.status in ok_states | {"FAILED", "CANCELLED"} for k, t in tasks.items() if k.startswith(prefix))
+        return all(t.status in ok_states | {"FAILED", "CANCELLED"} for k, t in tasks.items()
+                   if k.startswith(prefix) and k != waiting_key and waiting_key not in (getattr(t, "depends_on", None) or []))
     task = tasks.get(dep)
     if task is None:
         return False

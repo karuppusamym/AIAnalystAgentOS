@@ -255,7 +255,11 @@ def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
 def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key: str) -> list[str]:
     keys = []
     with session_scope() as s:
-        run = s.get(AnalysisRun, ctx.run.id)
+        run = s.get(AnalysisRun, ctx.run.id, with_for_update=True)
+        if run.plan_version != ctx.task.plan_version:
+            from analystos.core.errors import RunCancelled
+
+            raise RunCancelled("plan changed while this task was running; hypotheses discarded")
         n = _next_code(s, run.id)
         for a in accepted:
             spec = a["spec"]
@@ -267,7 +271,8 @@ def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key
             s.flush()
             key = f"test:{h.code}"
             add_task(s, run, key=key, agent="data_scientist", title=f"Test {h.code}: {a['statement'][:120]}",
-                     depends_on=[round_key], optional=True, input={"hypothesis_id": h.id}, seq=60 + n)
+                     depends_on=[round_key], optional=True, input={"hypothesis_id": h.id}, seq=60 + n,
+                     from_version=ctx.task.plan_version)
             emit(run.workspace_id, "hypothesis.created", {"code": h.code, "statement": h.statement, "priority": h.priority,
                                                           "priority_by": a.get("priority_by"), "method": spec["method"]},
                  run_id=run.id, session=s)
@@ -302,10 +307,10 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     accepted = diverse_top(accepted, MAX_ROUND1)
     keys = _persist(ctx, accepted, iteration=1, round_key="hypotheses")
     with session_scope() as s:
-        run = s.get(AnalysisRun, ctx.run.id)
+        run = s.get(AnalysisRun, ctx.run.id, with_for_update=True)
         if ctx.policy.max_iterations > 1:
             add_task(s, run, key="followups:1", agent="investigator", title="Review results and propose follow-up hypotheses (round 2)",
-                     depends_on=["test:*"], optional=True, input={"round": 1}, seq=90)
+                     depends_on=["test:*"], optional=True, input={"round": 1}, seq=90, from_version=ctx.task.plan_version)
     ctx.say(f"Proposed {len(accepted)} hypotheses (source: {source}; priority by {by}); {len(rejected)} proposals rejected by validation.",
             kind="decision", data={"questions": (data or {}).get("questions") if isinstance(data, dict) else None})
     return {"hypotheses": len(accepted), "tasks": keys, "rejected": rejected, "source": source, "priority_by": by}
@@ -359,7 +364,8 @@ def follow_ups(ctx: RunContext) -> dict:
         if keys and round_no + 1 < ctx.policy.max_iterations:
             add_task(s, run, key=f"followups:{round_no + 1}", agent="investigator",
                      title=f"Review results and propose follow-up hypotheses (round {round_no + 2})",
-                     depends_on=["test:*"], optional=True, input={"round": round_no + 1}, seq=90 + round_no)
+                     depends_on=["test:*"], optional=True, input={"round": round_no + 1}, seq=90 + round_no,
+                     from_version=ctx.task.plan_version)
     ctx.say(f"Round {round_no + 1}: {len(keys)} follow-up hypotheses ({'llm:' + str(model) if props else 'deterministic drill-down'}).",
             kind="decision")
     return {"added": len(keys), "tasks": keys, "rejected": rejected}

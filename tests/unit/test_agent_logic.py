@@ -84,3 +84,21 @@ def test_wildcard_dependencies():
     assert dep_satisfied("test:*", tasks)
     assert not dep_satisfied("followups:*", tasks)
     assert dep_satisfied("nothing:*", tasks)
+
+
+def test_wildcard_ignores_tasks_waiting_on_the_waiter():
+    T = lambda s, deps=(): SimpleNamespace(status=s, input={}, depends_on=list(deps))  # noqa: E731
+    tasks = {"followups:1": T("NEW", ["test:*"]), "test:H-1": T("COMPLETED"), "test:H-9": T("NEW", ["followups:1"])}
+    assert dep_satisfied("test:*", tasks, "followups:1")
+    assert not dep_satisfied("test:*", tasks, "insights")
+
+
+def test_jsonb_serializer_handles_numpy_and_non_finite():
+    import json
+
+    import numpy as np
+
+    from analystos.db.base import json_dumps
+
+    assert json.loads(json_dumps({"a": np.bool_(True), "b": float("nan"), "c": [np.float64("inf"), np.int64(2)]})) == \
+        {"a": True, "b": None, "c": [None, 2]}

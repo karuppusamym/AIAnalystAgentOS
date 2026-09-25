@@ -169,6 +169,7 @@ def build_insights(ctx: RunContext) -> dict:
         caveats = ["Association in historical data; not proof of causation."] + list(stat.get("warnings") or [])[:3]
         if spec.get("filters"):
             caveats.append("Scoped to: " + ", ".join(f"{f['column']} {f['op']} {f.get('value')}" for f in spec["filters"]))
+        ctx.check_control()  # never write findings into a plan that was replaced while we ran
         with session_scope() as s:
             n = s.query(Insight).filter(Insight.run_id == ctx.run.id).count() + 1
             ins = Insight(id=new_id("ins"), workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=hid, code=f"I-{n}",

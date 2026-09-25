@@ -110,11 +110,23 @@ def agent_run(task_id: str, user: User = Depends(current_user), session: Session
             "queries": rows(session.scalars(select(QueryExecution).where(QueryExecution.task_id == task_id)))}
 
 
-@router.post("/workspaces/{workspace_id}/analysis/{run_id}/{action}")
-def control(workspace_id: str, run_id: str, action: str, user: User = Depends(current_user)):
-    if action not in ("pause", "resume", "cancel"):
-        raise NotFound("unknown action")
+def _control(run_id: str, action: str, user: User):
     return row(run_svc.control(user, run_id, action), exclude={"scope", "plan"})
+
+
+@router.post("/workspaces/{workspace_id}/analysis/{run_id}/pause")
+def pause(workspace_id: str, run_id: str, user: User = Depends(current_user)):
+    return _control(run_id, "pause", user)
+
+
+@router.post("/workspaces/{workspace_id}/analysis/{run_id}/resume")
+def resume(workspace_id: str, run_id: str, user: User = Depends(current_user)):
+    return _control(run_id, "resume", user)
+
+
+@router.post("/workspaces/{workspace_id}/analysis/{run_id}/cancel")
+def cancel(workspace_id: str, run_id: str, user: User = Depends(current_user)):
+    return _control(run_id, "cancel", user)
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/feedback")

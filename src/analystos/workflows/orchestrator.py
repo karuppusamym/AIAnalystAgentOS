@@ -49,8 +49,14 @@ def start_run(run_id: str) -> str:
     settings = get_settings()
     if settings.orchestrator == "temporal":
         async def go():
+            from temporalio.exceptions import WorkflowAlreadyStartedError
+
             client = await _temporal_client()
-            await client.start_workflow("AnalysisWorkflow", run_id, id=workflow_id(run_id), task_queue=settings.temporal_task_queue)
+            try:
+                await client.start_workflow("AnalysisWorkflow", run_id, id=workflow_id(run_id),
+                                            task_queue=settings.temporal_task_queue)
+            except WorkflowAlreadyStartedError:  # idempotent: the loop is alive, just wake it
+                await client.get_workflow_handle(workflow_id(run_id)).signal("nudge")
         _run(go())
         return workflow_id(run_id)
     threading.Thread(target=run_local, args=(run_id,), daemon=True, name=f"run-{run_id}").start()

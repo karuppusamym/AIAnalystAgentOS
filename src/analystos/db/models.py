@@ -388,7 +388,7 @@ class Insight(Base):
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     verification: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # REV record
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft|verified|failed_verification|rejected
-    narrative_source: Mapped[str] = mapped_column(String(20), default="template")  # llm | template
+    narrative_source: Mapped[str] = mapped_column(String(160), default="template")  # llm | template
     created_at: Mapped[datetime] = _ts()
 
 

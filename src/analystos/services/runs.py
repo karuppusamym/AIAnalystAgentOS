@@ -145,6 +145,7 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
     interpretation = _interpret_redirect(run, text) if kind in ("redirect", "deeper_analysis") else None
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id, with_for_update=True)
+        was_completed = run.status == "COMPLETED"  # its workflow has returned; a replan needs a new one
         fb = Feedback(id=new_id("fb"), workspace_id=run.workspace_id, run_id=run.id, user_id=user.id, kind=kind, text=text,
                       target_type=target_type, target_id=target_id, data={"interpretation": interpretation, **result})
         s.add(fb)
@@ -186,14 +187,8 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
         if run.status == "COMPLETED" and result.get("replan"):
             run.status = "RUNNING"
     if result.get("replan"):
-        with session_scope() as s:
-            restart = s.get(AnalysisRun, run_id).workflow_id is None
-        signal_run(run_id)
-        if restart:
+        if was_completed:
             start_run(run_id)
+        else:
+            signal_run(run_id)
     return result
-
-
-def restart_if_finished(run_id: str) -> None:
-    """A replanned COMPLETED run needs a fresh orchestration loop (the old workflow has returned)."""
-    start_run(run_id)

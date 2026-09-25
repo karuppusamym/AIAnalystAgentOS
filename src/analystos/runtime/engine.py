@@ -37,7 +37,11 @@ def set_run_status(session, run: AnalysisRun, status: str, **extra: Any) -> None
 
 
 def add_task(session, run: AnalysisRun, *, key: str, agent: str, title: str, depends_on: list[str],
-             optional: bool = False, input: dict | None = None, seq: int = 0) -> RunTask:
+             optional: bool = False, input: dict | None = None, seq: int = 0, from_version: int | None = None) -> RunTask:
+    """Add a task to the run's current plan. `from_version` is the plan version of the task doing the
+    adding; a task running under a superseded plan may not extend the new one."""
+    if from_version is not None and from_version != run.plan_version:
+        raise RunCancelled("plan changed while this task was running; not extending the new plan")
     existing = session.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == key))
     if existing:
         return existing
@@ -125,7 +129,7 @@ def get_state(run_id: str) -> dict:
                 continue
             if task.status not in ("NEW", "WAITING_USER"):
                 continue
-            if not all(dep_satisfied(d, tasks) for d in task.depends_on):
+            if not all(dep_satisfied(d, tasks, key) for d in task.depends_on):
                 continue
             gate = _approval_gate(s, task)
             if task.key == "publish" and not task.input.get("approval_id") and task.status == "NEW":
@@ -199,8 +203,12 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             if task is None:
                 return {"status": "discarded"}
             if run.plan_version != version or task.plan_version != version:
-                # replanned while running: discard and let the new plan version run it again
-                task.status, task.output, task.error = "NEW", {}, "discarded: plan changed while running"
+                # replanned while running: discard. Dynamic tasks of the old plan are removed; base
+                # tasks run again under the new plan version.
+                if key.startswith(DYNAMIC_PREFIXES):
+                    s.delete(task)
+                else:
+                    task.status, task.output, task.error = "NEW", {}, "discarded: plan changed while running"
                 return {"status": "discarded"}
             if status == "CANCELLED" and run.control != "cancel":
                 task.status, task.error = "NEW", None
