@@ -1,27 +1,37 @@
-agent:
-  id: visualization
-  version: '1.0'
-  name: Visualization Agent
-  description: Selects chart types from intent and data shape (rules + JEV choice), configures encodings, filters
-    and drill paths, and lays out executive and operational dashboards.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.visualization
+version: 1.0.0
+summary: Visualization Agent
+entry: python:analystos.agents.visualization:design
+determinism: deterministic
+side_effect: write_internal
+cost_class: query
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- chart_selection
+- dashboard_layout
+spec:
+  role: Visualization Agent
+  goal: Selects chart types from intent and data shape (rules + JEV choice), configures encodings, filters and drill
+    paths, and lays out executive and operational dashboards.
   capabilities:
-  - chart_selection
-  - dashboard_layout
-  skills:
-  - chart_selection
-  - dashboard_layout
-  - executive_dashboard
-  - operational_dashboard
+  - skill.chart_selection
+  - skill.dashboard_layout
+  - skill.native_filter_selection
   tools:
   - viz.chart
   - sql.execute
   - artifact.write
-  model_profile: low_cost
   prompt_version: v1
+  budget:
+    llm_calls: 0
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

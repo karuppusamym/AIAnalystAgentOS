@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -16,14 +17,21 @@ from analystos.graph.projection import project_workspace
 from analystos.runtime.context import RunContext, Services
 from analystos.runtime.plan import base_plan
 
+if TYPE_CHECKING:
+    from analystos.capabilities.playbook import Playbook
 
-def build_plan(run_id: str, services: Services) -> dict:
+
+def build_plan(run_id: str, services: Services, playbook: Playbook | None = None) -> dict:
+    """The run's playbook (default investigate.v1) instantiated for this objective, with the
+    supervisor's framing (questions, audience, focus) when the playbook asks for it."""
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id)
         objective, level, instructions = run.objective, run.autonomy_level, run.instructions
     framing: dict = {}
     # Framing needs the catalog, which needs a context; build a light pseudo-context for the supervisor.
     try:
+        if playbook is not None and not playbook.body.framing:
+            raise LookupError("this playbook does not frame")
         ctx = _supervisor_ctx(run_id, services)
         payload = {"objective": objective, "user_instructions": [i.get("text") for i in instructions],
                    "catalog": catalog_for_prompt(ctx, include_values=False)}
@@ -39,7 +47,7 @@ def build_plan(run_id: str, services: Services) -> dict:
     questions = [str(q) for q in (framing.get("questions") or [])][:8]
     audience = [a for a in (framing.get("audience") or ["executive", "operational"]) if a in ("executive", "operational")]
     return base_plan(objective, autonomy_level=level, questions=questions, audience=audience or ["executive", "operational"],
-                     focus=[str(f) for f in (framing.get("focus") or [])][:6])
+                     focus=[str(f) for f in (framing.get("focus") or [])][:6], playbook=playbook)
 
 
 def _supervisor_ctx(run_id: str, services: Services) -> RunContext:

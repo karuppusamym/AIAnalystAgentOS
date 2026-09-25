@@ -21,6 +21,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/capabilities/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reload Capabilities
+         * @description Rebuild the registry from every source and swap it in. A load that fails leaves the current
+         *     registry in place (the error lists every problem). Runs in flight keep the versions they bound.
+         *     Reloads this process; other processes (worker, scheduler) reload on their own call.
+         */
+        post: operations["reload_capabilities_api_admin_capabilities_reload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/mcp/clients": {
         parameters: {
             query?: never;
@@ -457,6 +479,43 @@ export interface paths {
         };
         /** Me */
         get: operations["me_api_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Capabilities
+         * @description Every registered capability, filtered by kind; with `workspace_id`, its enablement there.
+         */
+        get: operations["list_capabilities_api_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/capabilities/{capability_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Capability */
+        get: operations["get_capability_api_capabilities__capability_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1153,6 +1212,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/capabilities/{capability_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Capability Enabled */
+        put: operations["set_capability_enabled_api_workspaces__workspace_id__capabilities__capability_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/catalog": {
         parameters: {
             query?: never;
@@ -1690,6 +1766,11 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** EnableIn */
+        EnableIn: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** EnabledPatch */
         EnabledPatch: {
             /** Enabled */
@@ -1856,6 +1937,8 @@ export interface components {
             autonomy_level?: number | null;
             /** Objective */
             objective?: string | null;
+            /** Playbook */
+            playbook?: string | null;
             /** Source Ids */
             source_ids?: string[] | null;
         };
@@ -2036,6 +2119,38 @@ export interface operations {
             query?: {
                 limit?: number;
             };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reload_capabilities_api_admin_capabilities_reload_post: {
+        parameters: {
+            query?: never;
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
@@ -3054,6 +3169,75 @@ export interface operations {
                 "x-correlation-id"?: string | null;
             };
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_capabilities_api_capabilities_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+                workspace_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_capability_api_capabilities__capability_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                capability_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -4662,6 +4846,45 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_capability_enabled_api_workspaces__workspace_id__capabilities__capability_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                capability_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnableIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -168,6 +168,22 @@ steps:
 - `side_effect`: calls `verify_for_execution` immediately before acting, and checks cancel.
 - `replan_boundary`: controls what a redirect or a rejected finding resets.
 
+**As implemented (P4-X02, 2026-09-25).** The shipped `investigate.v1`
+(`src/analystos/capabilities/builtin/playbooks/investigate.v1.yaml`) differs from the sketch above
+where the v1 behaviour and hash required it:
+
+- Steps `use` agents only (`agent.metadata` with `behaviour: discover_relationships`, not a skill), and
+  carry the v1 `title`, because the plan dict and its hash are unchanged.
+- `approval_gate` has two forms. `payload: plan` (the `plan_approval` step, present `when:
+  "run.autonomy_level <= 2"`, `gates_roots: true`): the engine requests the approval and the step waits.
+  `payload: bundle, approval_for: publish`: the step's behaviour requests the approval and the named
+  `side_effect` step waits for it; a side effect with no approval is skipped.
+- `replan_boundary` is a list of `{trigger: redirect | finding_rejected, reset: self_and_downstream |
+  downstream}`.
+- Conditions (`when`, `skip_when: {if, reason}`) are one comparison `<path> <op> <literal>`, never code.
+- The plan hash is the v1 hash plus the sorted `id@version` refs the run bound; without bindings it is
+  exactly the v1 value (`tests/unit/test_playbooks.py` pins it).
+
 ### 3.4 Agents become declarative (changes v2 §6)
 
 An agent is a manifest. Python is optional: it is needed only for behaviour the generic runtime
@@ -197,6 +213,17 @@ The model never executes anything itself. Every manifest field is enforced; noth
 
 **Publishing an agent:** it must pass its eval set at a score of 0.8 or more (the DataPilot
 pattern). An audited override exists.
+
+**As implemented (P4-X03, 2026-09-25).** Agent manifests live in `config/agents/*.yaml` (and in packs
+or entry points); the body is `capabilities/agents.py:AgentBody`, and unknown fields fail the load.
+`entry: builtin:generic` selects the generic runtime (`agents/generic.py`); a `python:` entry (plus
+named `behaviours` a playbook step can select) keeps a Python behaviour. Enforced fields: `capabilities`
+(validated at load, bound into the plan hash, the only actions the generic runtime accepts), `tools`
+(tool gate), `model_purpose`/`model_purposes` (the only purposes `llm_json` routes for the agent),
+`budget` (`llm_calls`, `usd`, `queries`, `max_steps`, per task execution), `policies` (tighten the
+workspace policy: `pii_access`, `max_iterations`, `max_rows_extract`), `default_actions` (the rule
+path for `off`/`auto`) and `output`. Not implemented yet: `knowledge`, `output_contract` and the
+eval-set publishing gate.
 
 ### 3.5 Analysis methods as plugins (changes v2 §7)
 

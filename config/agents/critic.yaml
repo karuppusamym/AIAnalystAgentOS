@@ -1,27 +1,39 @@
-agent:
-  id: critic
-  version: '1.0'
-  name: REV Critic Agent
-  description: 'Reason -> Evaluate -> Verify: challenges each finding, checks method fit, sample size, multiple-testing-adjusted
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.critic
+version: 1.0.0
+summary: REV Critic Agent
+entry: python:analystos.agents.critic:verify_insights
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- verification
+- reproducibility
+- contradiction_detection
+spec:
+  role: REV Critic Agent
+  goal: 'Reason -> Evaluate -> Verify: challenges each finding, checks method fit, sample size, multiple-testing-adjusted
     significance and overreach, re-runs the query, applies an independent second method and records an independent-model-family
     opinion.'
   capabilities:
-  - verification
-  - reproducibility
-  - contradiction_detection
-  skills:
-  - significance_testing
-  - confidence_interval
+  - skill.verify_analysis
+  - skill.significance_testing
+  - skill.confidence_interval
   tools:
   - analysis.verify
   - sql.execute
   - artifact.write
-  model_profile: independent_model_family
+  model_purposes:
+  - verification
   prompt_version: v1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

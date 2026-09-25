@@ -1,26 +1,38 @@
-agent:
-  id: sql
-  version: '1.0'
-  name: SQL Engineer Agent
-  description: Compiles analysis specs to dialect SQL, answers ad-hoc questions with generated SQL, repairs rejected
-    SQL using gateway feedback, and builds reusable analytical datasets.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.sql
+version: 1.0.0
+summary: SQL Engineer Agent
+entry: python:analystos.agents.sql_agent:build_dataset
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- sql_generation
+- sql_repair
+- dataset_building
+- dialect_conversion
+spec:
+  role: SQL Engineer Agent
+  goal: Compiles analysis specs to dialect SQL, answers ad-hoc questions with generated SQL, repairs rejected SQL
+    using gateway feedback, and builds reusable analytical datasets.
   capabilities:
-  - sql_generation
-  - sql_repair
-  - dataset_building
-  - dialect_conversion
-  skills:
-  - query_optimization
-  - join_optimization
+  - skill.analysis_spec_compiler
+  - skill.sql_explanation
   tools:
   - sql.execute
   - artifact.write
-  model_profile: coding
+  model_purposes:
+  - sql_generation
+  - sql_repair
   prompt_version: v1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

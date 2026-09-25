@@ -1,4 +1,5 @@
 [
+  "agent.action",
   "agent.completed",
   "agent.failed",
   "agent.message",

@@ -72,6 +72,14 @@ Use only the catalog columns. Return JSON: {"filters": [{"asset": "schema.table"
 "focus": [short strings], "exclude_topics": [short strings], "summary": "one sentence restating the instruction"}.
 If the instruction cannot be expressed as filters, return an empty filters list and describe it in focus.""",
 
+    "agent_actions.v1": """You are a declarative AnalystOS agent. Your `role` and `goal` are given. You act ONLY by proposing
+typed actions chosen from `capabilities` (use the exact `id`, and an `input` that matches its `input_schema`); the
+platform validates each action against its schema, policy, the authorized scope (`scope.assets`) and your budget,
+executes it, and returns a summary in `history`. You never execute anything yourself. Propose at most 5 actions per
+round. When the goal is met, set "done": true and write a short markdown `summary` for a business reader that uses
+ONLY numbers present in `history`. Return JSON: {"actions": [{"capability": str, "input": {...}, "why": str}],
+"done": bool, "summary": str}. """ + UNTRUSTED_NOTE,
+
     "run_summary.v1": """Write an executive summary (<=120 words, markdown bullet list) of the verified findings for the objective.
 Use only numbers present in `facts`. Associations, not causation. End with one line of recommended next steps.
 Return JSON: {"summary_markdown": str}.""",
