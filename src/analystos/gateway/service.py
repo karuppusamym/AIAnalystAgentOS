@@ -268,7 +268,10 @@ class QueryGateway:
             raise
         self._persist(dict(audit, status="explained", row_count=0, duration_ms=int((time.perf_counter() - started) * 1000)),
                       strict=False)
-        return {"available": True, **plan_summary(rows[0][0] if rows and rows[0] else None)}
+        summary = plan_summary(rows[0][0] if rows and rows[0] else None)
+        shown = visible_relations(summary["relations"], scope.assets, validated.referenced_assets)
+        summary.update(relations=shown, relations_hidden=len(summary["relations"]) - len(shown))
+        return {"available": True, **summary}
 
     # ------------------------------------------------------------------ helpers
     def _load_source(self, scope: DataScope, validated: ValidatedSQL) -> dict[str, Any]:
@@ -493,6 +496,13 @@ class _SourceView:
 def _first_line(exc: BaseException | None) -> str:
     text_ = str(exc or "").strip()
     return text_.splitlines()[0][:500] if text_ else (exc.__class__.__name__ if exc else "error")
+
+
+def visible_relations(relations: list[str], assets: list[str], referenced: list[str]) -> list[str]:
+    """A plan can name relations the caller may not see (a view's base tables, catalog tables): only the
+    caller's own assets are shown, and a bare (unqualified) name only when this statement referenced it."""
+    full, bare = set(assets), {a.rsplit(".", 1)[-1] for a in referenced if a in assets}
+    return [r for r in relations if (r in full if "." in r else r in bare)]
 
 
 def plan_summary(raw: Any) -> dict[str, Any]:

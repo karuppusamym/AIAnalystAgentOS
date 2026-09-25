@@ -13,7 +13,10 @@ from analystos.core.config import get_settings
 
 ProviderType = Literal["openrouter", "openai_compatible", "azure_openai", "anthropic", "bedrock"]
 Egress = Literal["internet", "internal"]
-_PUBLIC_ONLY = ("openrouter", "anthropic", "bedrock")  # provider types that are always an outbound call
+# Provider types that are an outbound call to a public cloud endpoint. Azure OpenAI can be reached over a
+# private endpoint, but only an explicit `private_link: true` acknowledges that and allows `egress: internal`.
+_PUBLIC_ONLY = ("openrouter", "anthropic", "bedrock", "azure_openai")
+_PRIVATE_LINK_TYPES = ("azure_openai",)
 
 
 class ProviderConfig(BaseModel):
@@ -37,11 +40,16 @@ class ProviderConfig(BaseModel):
     anthropic_version: str = "2023-06-01"  # anthropic: the `anthropic-version` header
     aws_region: str | None = None  # bedrock
     region: str | None = None  # where the provider processes requests; None = unknown (fails a residency policy)
+    private_link: bool = False  # azure_openai: the endpoint is a private endpoint inside the network (allows internal)
 
     @model_validator(mode="after")
     def _check(self) -> ProviderConfig:
-        if self.type in _PUBLIC_ONLY and self.egress == "internal":
-            raise ValueError(f"a provider of type {self.type} is a public endpoint and cannot be declared egress: internal")
+        if self.type in _PUBLIC_ONLY and self.egress == "internal" and not (
+                self.private_link and self.type in _PRIVATE_LINK_TYPES):
+            hint = " without `private_link: true`" if self.type in _PRIVATE_LINK_TYPES else ""
+            raise ValueError(f"a provider of type {self.type} is a public endpoint and cannot be declared egress: internal{hint}")
+        if self.private_link and self.type not in _PRIVATE_LINK_TYPES:
+            raise ValueError(f"private_link applies to {', '.join(_PRIVATE_LINK_TYPES)} providers only")
         if self.type == "azure_openai" and not self.api_version:
             raise ValueError("azure_openai providers need api_version")
         return self

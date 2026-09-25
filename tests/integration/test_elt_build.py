@@ -261,6 +261,57 @@ def test_gateway_refuses_a_target_no_longer_designated(world):
                                                BuildTarget.schema_name == TARGET)).status = "active"
 
 
+def test_gateway_rechecks_the_data_scope_at_execution(world):
+    """Approved under one scope, executed under another: a column tagged restricted, or the asset
+    deselected, after approval refuses the build and invalidates the approval (not the plan-time list)."""
+    _runner_or_skip()
+    from analystos.build.gateway import BuildGateway
+    from analystos.core.config import get_settings
+    from analystos.core.errors import PolicyDenied
+    from analystos.db.base import session_scope
+    from analystos.db.models import Approval, AuditEvent, BuildJob, SourceAsset, SourceColumn
+
+    def asset():
+        with session_scope() as s:
+            return s.scalar(select(SourceAsset.id).where(SourceAsset.source_id == world["source"],
+                                                         SourceAsset.name == "incident"))
+
+    def refused(job_id, approval_id, match):
+        with pytest.raises(PolicyDenied, match=match):
+            BuildGateway(get_settings()).execute(job_id, approval_id, actor="test")
+        with session_scope() as s:
+            assert s.get(Approval, approval_id).status == "invalidated"
+            assert s.get(BuildJob, job_id).status == "refused"
+            assert s.scalar(select(AuditEvent).where(AuditEvent.action == "build.refused", AuditEvent.target == job_id))
+
+    asset_id = asset()
+    # a column the model reads is tagged restricted after approval
+    _, job_id, approval_id = _plan(world)
+    _approve(approval_id)
+    with session_scope() as s:
+        model = next(t for p, t in s.get(BuildJob, job_id).project_files.items() if p.endswith(".sql") and "source(" in t)
+        col = next(c for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset_id)
+                                        .order_by(SourceColumn.ordinal)) if f'"{c.name}"' in model or f" {c.name}" in model)
+        col_id, old_tags = col.id, list(col.tags or [])
+        col.tags = [*old_tags, "restricted"]
+    try:
+        refused(job_id, approval_id, "no longer in the requester's scope")
+    finally:
+        with session_scope() as s:
+            s.get(SourceColumn, col_id).tags = old_tags
+
+    # the asset is deselected after approval
+    _, job_id, approval_id = _plan(world)
+    _approve(approval_id)
+    with session_scope() as s:
+        s.get(SourceAsset, asset_id).selected = False
+    try:
+        refused(job_id, approval_id, "outside the run's scope|no longer in the requester's scope")
+    finally:
+        with session_scope() as s:
+            s.get(SourceAsset, asset_id).selected = True
+
+
 # ------------------------------------------------------------------------------ live dbt build
 def test_live_dbt_build_through_the_build_gateway(world):
     runner = _runner_or_skip()

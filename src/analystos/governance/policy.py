@@ -103,6 +103,12 @@ def _selected_assets(session: Session, source_ids: list[str]) -> tuple[dict[str,
     return assets, columns
 
 
+def has_pii_clearance(attributes: dict | None) -> bool:
+    """Strictly the boolean True an administrator set: a string such as "false" (or "true") from any
+    other path is not a clearance. Identity-provider claims can never set it (security/oidc.py)."""
+    return (attributes or {}).get("pii_clearance") is True
+
+
 def attributes_satisfy(attributes: dict | None, require: dict[str, list[str]]) -> bool:
     """Every required attribute present with an accepted value (list-valued attributes: any element)."""
     attributes = attributes or {}
@@ -153,7 +159,7 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
     if source_ids:
         sources = [s for s in sources if s.id in source_ids]
     pii_cleared = policy.pii_access == "allowed" or (
-        policy.pii_access == "restricted" and bool((user.attributes or {}).get("pii_clearance")))
+        policy.pii_access == "restricted" and has_pii_clearance(user.attributes))
     scope = DataScope(workspace_id=workspace_id, user_id=user.id, role=role, max_rows=policy.max_rows,
                       timeout_seconds=policy.query_timeout_seconds, policy_version=workspace.policy_version)
     assets_by_source, cols_by_asset = _selected_assets(session, [s.id for s in sources])

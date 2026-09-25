@@ -19,8 +19,9 @@ HTTP adapter goes through `transport.post`, so the transport's egress guard sees
 from __future__ import annotations
 
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
-from analystos.core.errors import ModelRouteUnavailable
+from analystos.core.errors import EgressBlocked, ModelRouteUnavailable
 from analystos.llm.config import ProviderConfig
 
 OPENROUTER_ONLY_FIELDS = ("usage",)  # `usage: {include: true}` is an OpenRouter extension
@@ -133,8 +134,22 @@ class BedrockAdapter:
             raise BedrockUnavailable("the bedrock provider needs boto3 (pip install boto3); it is not installed") from exc
         return boto3.client("bedrock-runtime", region_name=provider.aws_region)
 
+    @staticmethod
+    def check_egress(transport: Any, client: Any) -> None:
+        """boto3 opens its own connections, outside HttpTransport: the endpoint it will call must pass
+        the same egress guard (the configured provider hosts; internal ones only when air-gapped)."""
+        allowed = getattr(transport, "allowed_hosts", None)
+        if allowed is None:
+            return
+        endpoint = getattr(getattr(client, "meta", None), "endpoint_url", None) or ""
+        host = (urlsplit(endpoint).hostname or "").lower()
+        if host not in allowed:
+            raise EgressBlocked(f"model transport refused bedrock host '{host or 'unknown'}': not an allowed "
+                                f"provider endpoint (allowed: {', '.join(sorted(allowed)) or 'none'})")
+
     def chat(self, transport: Any, provider: ProviderConfig, api_key: str | None, payload: dict, timeout: float) -> dict:
         client = self._client(provider)
+        self.check_egress(transport, client)
         system = [{"text": _text(m.get("content"))} for m in payload["messages"] if m["role"] == "system"]
         messages = [{"role": m["role"], "content": [{"text": _text(m.get("content"))}]}
                     for m in payload["messages"] if m["role"] != "system"]

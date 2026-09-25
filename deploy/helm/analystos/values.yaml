@@ -26,12 +26,17 @@ config:
   corsOrigins: https://analystos.example.com
   orchestrator: temporal
   graphEnabled: false                # Neo4j is an optional projection (spec v3 §8)
-  sandboxNetwork: isolate            # isolate | require | off (sandbox children in an empty network namespace)
+  # Sandbox children (python.execute) in an empty network namespace. `require` (default) refuses to run
+  # the sandbox where the node cannot create one (typical under RuntimeDefault seccomp without
+  # unprivileged user namespaces), so a child never silently has the pod's network. `isolate` falls
+  # back to a networked child (logged, network_isolated=false): only with networkPolicy.enabled.
+  sandboxNetwork: require            # require | isolate | off
   extra: {}                          # any other ANALYSTOS_* setting, e.g. {ANALYSTOS_QUERY_MAX_ROWS: "20000"}
 
 secrets:
   # Name of a Secret holding at least ANALYSTOS_DATABASE_URL, ANALYSTOS_ANALYTICS_LOADER_URL,
-  # ANALYSTOS_ANALYTICS_READER_URL, ANALYSTOS_REDIS_URL, ANALYSTOS_JWT_SECRET, ANALYSTOS_BOOTSTRAP_ADMIN_PASSWORD,
+  # ANALYSTOS_ANALYTICS_READER_URL, ANALYSTOS_ANALYTICS_BUILDER_URL (the BuildGateway's login; outside
+  # env=dev its password must not be the development default, or provisioning and builds refuse), ANALYSTOS_REDIS_URL, ANALYSTOS_JWT_SECRET, ANALYSTOS_BOOTSTRAP_ADMIN_PASSWORD,
   # ANALYSTOS_SUPERSET_PASSWORD; optional OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY,
   # ANALYSTOS_OIDC_CLIENT_SECRET and source passwords referenced by `secret_ref: env:NAME`.
   existingSecret: analystos-secrets
@@ -61,7 +66,7 @@ oidc:
   mapping: |                         # config/oidc.yaml format: groups -> roles, claims -> ABAC attributes
     platform_admin_groups: []
     workspace_roles: []
-    attributes: {department: department, region: region, pii_clearance: pii_clearance}
+    attributes: {department: department, region: region}  # clearances are never IdP-mapped (platform-controlled)
     require_group: false
 
 migrations:
@@ -127,7 +132,10 @@ workers:
       limits: {cpu: "2", memory: 2Gi}
     autoscaling: {enabled: false}
     pdb: {enabled: false}
-  elt:                 # placeholder until ELT activities exist (P4-E*); answers queue_ping only
+  # ELT builds (P4-E04/E06) run dbt Core as a separate executable, which is NOT in the app image: the
+  # pool stays at 0 replicas (the queue answers queue_ping only) until an image with dbt
+  # (ANALYSTOS_DBT_EXECUTABLE) and ANALYSTOS_ANALYTICS_BUILDER_URL in the Secret is supplied.
+  elt:
     queues: elt
     replicas: 0
     resources:
@@ -160,7 +168,10 @@ ingress:
   tls: []                            # [{secretName: analystos-tls, hosts: [analystos.example.com]}]
 
 networkPolicy:
-  enabled: false                     # forced on when airGapped.enabled
+  # Forced on when airGapped.enabled. Off by default only because the chart cannot know the CIDRs of the
+  # external Postgres / Redis / model APIs; with sandboxNetwork=isolate turn it on (egress: DNS, the
+  # release's pods, airGapped.allowedEgressCidrs), else the sandbox fallback has the pod's network.
+  enabled: false
 
 serviceAccount:
   create: true

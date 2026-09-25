@@ -25,7 +25,8 @@ What this module does:
 * network (P4-S04): on Linux the child gets its own empty network namespace (`unshare(CLONE_NEWNET)`,
   or with a user namespace when unprivileged), so it has only a down loopback and no route anywhere.
   `ANALYSTOS_SANDBOX_NETWORK`: `isolate` (default) = when the kernel allows it, recorded on the result
-  as `network_isolated`; `require` = refuse to run where it is not possible; `off` = development only.
+  as `network_isolated` (a fallback to a networked child logs a warning every time); `require` = refuse
+  to run where it is not possible (the Helm chart's default); `off` = development only.
 
 What it does NOT do: syscall filtering, filesystem isolation beyond the working directory, or
 protection from interpreter / C-extension exploits. PRODUCTION MUST RUN THIS INSIDE A NETWORK-LESS,
@@ -38,6 +39,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -215,6 +217,7 @@ def _unshare_network() -> None:
 
 
 _NETNS: bool | None = None
+_log = logging.getLogger(__name__)
 
 
 def network_isolation_available() -> bool:
@@ -282,6 +285,11 @@ def run_python(code: str, *, inputs: dict[str, list[dict]] | None = None, timeou
     t0 = time.monotonic()
     mode = _network_mode(network)
     isolate = mode != "off" and network_isolation_available()
+    if mode == "isolate" and not isolate:
+        # Not silent: the child will have the pod's network. Only a NetworkPolicy around the pod bounds it.
+        _log.warning("sandbox network isolation unavailable on this host: the child runs WITH network access "
+                     "(network_isolated=false); set ANALYSTOS_SANDBOX_NETWORK=require to refuse instead, or enforce "
+                     "a NetworkPolicy on this pod")
     if mode == "require" and not isolate:
         return SandboxResult(ok=False, error="sandbox network isolation is required (ANALYSTOS_SANDBOX_NETWORK=require) "
                                              "but this host does not allow a private network namespace", network_isolated=False)

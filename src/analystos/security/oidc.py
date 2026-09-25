@@ -46,6 +46,14 @@ TX_AUDIENCE = "analystos-oidc-tx"
 TX_TTL_SECONDS = 600
 CLOCK_SKEW_SECONDS = 60
 UNUSABLE_PASSWORD = "!sso"  # not a bcrypt hash: password login can never succeed for an SSO-created user
+# Attributes only the platform (an administrator, or AnalystOS itself) sets. An IdP claim can never write
+# them: a clearance is a grant, and the IdP only narrows through ABAC. Any `*clearance*` attribute counts.
+PLATFORM_CONTROLLED_ATTRIBUTES = frozenset({"pii_clearance", "sso_managed", "is_admin"})
+
+
+def platform_controlled(attribute: str) -> bool:
+    name = attribute.strip().lower()
+    return name in PLATFORM_CONTROLLED_ATTRIBUTES or "clearance" in name
 
 
 # ----------------------------------------------------------------------------- configuration
@@ -73,6 +81,10 @@ def load_mapping(path: Path | None = None) -> Mapping:
         if g.get("role") not in ROLE_RANK:
             raise InvalidInput(f"oidc mapping: unknown role {g.get('role')!r} for group {g.get('group')!r}")
         grants.append(RoleGrant(group=str(g["group"]), workspace=str(g["workspace"]), role=str(g["role"])))
+    refused = sorted(str(k) for k in (data.get("attributes") or {}) if platform_controlled(str(k)))
+    if refused:
+        raise InvalidInput(f"oidc mapping: {', '.join(refused)} is platform-controlled and cannot come from an identity "
+                           "provider claim (clearances are granted by an administrator)")
     return Mapping(platform_admin_groups=[str(x) for x in data.get("platform_admin_groups") or []], workspace_roles=grants,
                    attributes={str(k): str(v) for k, v in (data.get("attributes") or {}).items()},
                    require_group=bool(data.get("require_group", False)))
@@ -104,7 +116,7 @@ def open_transaction(cookie: str | None, state: str | None) -> dict[str, Any]:
         tx = jwt.decode(cookie, get_settings().jwt_secret, algorithms=["HS256"], audience=TX_AUDIENCE)
     except jwt.PyJWTError as exc:
         raise Unauthenticated(f"sign-in session invalid: {exc}") from exc
-    if not secrets.compare_digest(str(tx.get("state", "")), state):
+    if not secrets.compare_digest(str(tx.get("state", "")).encode(), state.encode()):
         raise Unauthenticated("sign-in state mismatch")
     return tx
 
@@ -131,12 +143,12 @@ class OidcProvider:
     def __init__(self, *, issuer: str, client_id: str, client_secret: str | None, redirect_uri: str, scopes: str,
                  discovery_url: str | None = None, jwks_file: Path | None = None,
                  transport: httpx.BaseTransport | None = None) -> None:
-        self.issuer = issuer.rstrip("/")
+        self.issuer = issuer  # compared exactly: OIDC Discovery §4.3 and the `iss` claim are exact matches
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.scopes = scopes
-        self.discovery_url = discovery_url or f"{self.issuer}/.well-known/openid-configuration"
+        self.discovery_url = discovery_url or f"{issuer.rstrip('/')}/.well-known/openid-configuration"
         self.jwks_file = jwks_file
         self._http = httpx.Client(timeout=10, transport=transport)
         self._meta: dict[str, Any] | None = None
@@ -155,7 +167,7 @@ class OidcProvider:
     def metadata(self) -> dict[str, Any]:
         if self._meta is None:
             meta = self._get(self.discovery_url)
-            if str(meta.get("issuer", "")).rstrip("/") != self.issuer:
+            if meta.get("issuer") != self.issuer:
                 raise UpstreamUnavailable(f"discovery issuer {meta.get('issuer')!r} does not match {self.issuer!r}")
             for key in ("authorization_endpoint", "token_endpoint"):
                 if not meta.get(key):
@@ -223,7 +235,7 @@ class OidcProvider:
                                 leeway=CLOCK_SKEW_SECONDS, options={"require": ["exp", "iat", "iss", "aud", "sub"]})
         except jwt.PyJWTError as exc:
             raise Unauthenticated(f"ID token rejected: {exc}") from exc
-        if not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
+        if not secrets.compare_digest(str(claims.get("nonce", "")).encode(), nonce.encode()):
             raise Unauthenticated("ID token nonce mismatch")
         aud = claims.get("aud")
         if isinstance(aud, list) and len(aud) > 1 and claims.get("azp") != self.client_id:
@@ -274,7 +286,7 @@ def map_claims(claims: dict[str, Any], mapping: Mapping, *, groups_claim: str = 
         raise Unauthenticated("none of your identity provider groups is mapped to AnalystOS")
     attributes: dict[str, Any] = {"groups": groups}
     for attr, claim in mapping.attributes.items():
-        if claim in claims:
+        if claim in claims and not platform_controlled(attr):
             attributes[attr] = claims[claim]
     return MappedIdentity(subject=str(claims["sub"]), email=email, name=str(claims.get("name") or email.split("@")[0]),
                           groups=groups, is_admin=is_admin, roles=roles, attributes=attributes)
@@ -320,13 +332,20 @@ def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping:
         raise Unauthenticated("user inactive")
     attrs = dict(user.attributes or {})
     for key in [*mapping.attributes, "groups"]:
-        attrs.pop(key, None)  # IdP-sourced attributes are replaced wholesale: a revoked claim must disappear
-    attrs.update(ident.attributes)
+        if not platform_controlled(key):
+            attrs.pop(key, None)  # IdP-sourced attributes are replaced wholesale: a revoked claim must disappear
+    attrs.update({k: v for k, v in ident.attributes.items() if not platform_controlled(k)})
     user.attributes = attrs
-    if ident.is_admin:
-        user.is_admin = True
-    elif attrs.get("sso_managed"):
-        user.is_admin = False
+    # Platform admin follows the IdP groups only for accounts SSO created. A local account linked by
+    # email keeps the admin flag an administrator gave it: an IdP group neither grants nor removes it.
+    if attrs.get("sso_managed") and user.is_admin != ident.is_admin:
+        user.is_admin = ident.is_admin
+        audit(f"user:{user.id}", "auth.sso_admin_granted" if ident.is_admin else "auth.sso_admin_revoked",
+              target=issuer, decision="allow", details={"groups": ident.groups}, session=session)
+    elif not attrs.get("sso_managed") and ident.is_admin and not user.is_admin:
+        audit(f"user:{user.id}", "auth.sso_admin_not_elevated", target=issuer, decision="deny",
+              reasons=["platform_admin_from_groups_applies_to_sso_created_accounts_only"],
+              details={"groups": ident.groups}, session=session)
     managed = dict(link.managed_memberships or {})
     resolved = _workspace_ids(session, list(ident.roles))
     desired = {ws_id: ident.roles[key] for key, ws_id in resolved.items()}
@@ -357,6 +376,6 @@ def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping:
     return user
 
 
-__all__ = ["ALLOWED_ALGS", "TX_COOKIE", "Mapping", "OidcProvider", "RoleGrant", "enabled", "load_mapping", "map_claims",
-           "open_transaction", "pkce_pair", "provider", "provision", "safe_return_path", "seal_transaction",
-           "set_http_transport"]
+__all__ = ["ALLOWED_ALGS", "PLATFORM_CONTROLLED_ATTRIBUTES", "TX_COOKIE", "Mapping", "OidcProvider", "RoleGrant", "enabled",
+           "load_mapping", "map_claims", "open_transaction", "pkce_pair", "platform_controlled", "provider", "provision",
+           "safe_return_path", "seal_transaction", "set_http_transport"]
