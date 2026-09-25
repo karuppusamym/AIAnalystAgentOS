@@ -19,6 +19,7 @@ from typing import Any, Literal
 import httpx
 import pyarrow as pa
 
+from analystos.connectors import sampling
 from analystos.connectors.base import ConnectionTest, DiscoveredAsset, DiscoveredColumn
 from analystos.connectors.naming import sanitize_identifier
 from analystos.connectors.secrets import resolve_secret
@@ -159,6 +160,8 @@ class ServiceNowConnector:
         self._password = password
         self._client = http_client
         self._sleep = sleep
+        self.config = dict(config)
+        self.last_snapshot: dict[str, Any] | None = None  # set by extract(): what the snapshot is (P4-C12)
 
     # -- http ------------------------------------------------------------------------------
 
@@ -351,7 +354,10 @@ class ServiceNowConnector:
         table = asset.source_name
         if table not in self.tables:
             raise InvalidInput(f"Table {table!r} is not configured for this ServiceNow source")
-        limit = min(max_rows, self.max_rows)
+        spec = sampling.sampling_for(self.config, table, asset.name)
+        # ``full`` is bounded by the caller's (administrator's) hard limit, not the connector default
+        limit = max_rows if spec is not None and spec.method == "full" else min(max_rows, self.max_rows)
+        self.last_snapshot = None
         # Re-read the dictionary: asset metadata may have been rebuilt from the control plane,
         # which does not keep reference targets. The dictionary says which columns are raw
         # fields and which are derived display-value columns.
@@ -377,6 +383,8 @@ class ServiceNowConnector:
         fields = ",".join(wanted)
         offset = 0
         fetched = 0
+        total: int | None = None
+        exhausted = False
         while fetched < limit:
             page = min(self.page_size, limit - fetched)
             params = {
@@ -390,6 +398,7 @@ class ServiceNowConnector:
                 params["sysparm_display_value"] = "all"
             rows, total = self._table(table, params)
             if not rows:
+                exhausted = True
                 break
             arrays = []
             for c in asset.columns:
@@ -403,7 +412,13 @@ class ServiceNowConnector:
             fetched += len(rows)
             offset += len(rows)
             if len(rows) < page or (total is not None and offset >= total):
+                exhausted = True
                 break
+        # X-Total-Count says how many records the table holds; without it, hitting the cap means truncated
+        truncated = total > fetched if total is not None else not exhausted
+        self.last_snapshot = sampling.snapshot_record(
+            spec=spec, rows_staged=fetched, cap=limit, truncated=truncated, source_total_rows=total,
+            total_basis="x-total-count" if total is not None else "unavailable", population_rows=total)
 
     def sqlalchemy_url(self) -> str:
         raise InvalidInput("ServiceNow sources are staged; they have no SQL endpoint")

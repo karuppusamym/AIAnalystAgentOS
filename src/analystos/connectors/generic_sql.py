@@ -13,7 +13,8 @@ row-estimate strategy; this module does the work:
                 types, primary keys, foreign keys, comments and cheap row estimates; bounded by
                 ``config.max_tables`` (default 2000);
 * ``extract``   (staged kinds) streams the asset as Arrow batches of 10k rows over a read-only
-                session, bounded by ``max_rows``;
+                session, bounded by ``max_rows`` and chosen by the declared sampling strategy
+                (``connectors/sampling.py``), recording truncation and population in ``last_snapshot``;
 * ``sqlalchemy_url`` / ``query_url`` / ``session_statements`` (pushdown kinds) for the gateway.
 
 Staged assets get sanitized names (what the staging loader creates); pushdown assets keep their
@@ -37,9 +38,11 @@ import sqlalchemy as sa
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.reflection import ObjectKind
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import NullPool
 
 from analystos.connectors import kinds as catalog
+from analystos.connectors import sampling
 from analystos.connectors.base import ConnectionTest, DiscoveredAsset
 from analystos.connectors.naming import sanitize_identifier, unique_identifiers
 from analystos.connectors.secrets import resolve_secret
@@ -279,6 +282,7 @@ class GenericSQLConnector:
         self._engine: Engine | None = None
         self.truncated = False
         self.skipped: list[dict[str, str]] = []
+        self.last_snapshot: dict[str, Any] | None = None  # set by extract(): what the snapshot is (P4-C12)
 
     # -- identity / URLs -------------------------------------------------------------------
 
@@ -610,10 +614,17 @@ class GenericSQLConnector:
 
     def extract(self, asset: DiscoveredAsset, *, max_rows: int) -> Iterator[pa.RecordBatch]:
         """Stream up to ``max_rows`` rows of the asset in 10k-row Arrow batches (read-only session,
-        server-side cursor where the driver has one). Column names match discovery's staged names."""
+        server-side cursor where the driver has one). Column names match discovery's staged names.
+
+        Rows are chosen by the declared sampling strategy (``connectors/sampling.py``); one extra row
+        is read to know, not guess, whether the cap truncated the population. ``last_snapshot``
+        records what the snapshot is once the stream is exhausted."""
         if self.execution_mode != "staged":
             raise InvalidInput(f"{self.spec.label} sources in pushdown mode are queried in place; they are not staged")
         schema, table = self._locate(asset)
+        spec = sampling.sampling_for(self.config, asset.source_name, asset.name)
+        cap = max(0, int(max_rows))
+        self.last_snapshot = None
         engine = self._get_engine()
         with engine.connect() as conn:
             try:
@@ -629,16 +640,119 @@ class GenericSQLConnector:
             if missing:
                 raise InvalidInput(f"{asset.source_name} no longer has columns {missing}; rediscover the source")
             picked = [by_clean[c] for c in wanted]
-            tbl = sa.table(table, *[sa.column(name, type_) if type_ is not None else sa.column(name)
-                                    for name, type_, _ in picked], schema=schema)
-            stmt = sa.select(*[tbl.c[name] for name, _, _ in picked]).limit(max(0, int(max_rows)))
+            time_col = self._time_column(spec, asset, by_clean) if spec is not None and spec.method == "time_window" else None
+            ts_index = next((i for i, p in enumerate(picked) if p is time_col), None)
+            table_cols = picked + ([time_col] if time_col is not None and ts_index is None else [])
+            cols = [sa.column(name, type_) if type_ is not None else sa.column(name) for name, type_, _ in table_cols]
+            plain = sa.table(table, *[sa.column(name) for name, _, _ in table_cols], schema=schema)
+            params: dict[str, Any] = {}
+            where: list[Any] = []
+            order: list[Any] = []
+            if spec is not None and spec.method == "tablesample":
+                seed = spec.seed if spec.seed is not None else sampling.default_seed(asset.source_name)
+                clause = sampling.tablesample_sql(self.spec.sqlglot_dialect, spec.percent or 0, spec.sampler, seed=seed)
+                tbl = _SampledTable(table, *cols, schema=schema, suffix=clause.from_suffix)
+                if clause.where:
+                    where.append(text(clause.where))
+                params.update(seed=seed, sampler=clause.sampler, native=clause.native, repeatable=clause.repeatable)
+            else:
+                tbl = sa.table(table, *cols, schema=schema)
+            cutoff = None
+            if time_col is not None:
+                ts = tbl.c[time_col[0]]
+                end = datetime.now(UTC).replace(tzinfo=None) if spec.anchor == "now" else \
+                    conn.execute(sa.select(sa.func.max(plain.c[time_col[0]]))).scalar()
+                end = _coerce(end, "timestamp") if end is not None else None
+                cutoff = end - sampling.window_delta(spec.window or "") if end is not None else None
+                where.append(ts >= sa.bindparam("cutoff", cutoff, type_=ts.type) if cutoff is not None else sa.false())
+                order.append(ts.desc())
+                params.update(column=time_col[0], window_start=_iso(cutoff), window_end=_iso(end))
+            total, basis, population = self._population(conn, engine, schema, table, plain, spec, time_col, cutoff)
+            stmt = sa.select(*[tbl.c[name] for name, _, _ in picked])
+            for w in where:
+                stmt = stmt.where(w)
+            if order:
+                stmt = stmt.order_by(*order)
+            stmt = stmt.limit(cap + 1)
             normalized = [n for _, _, n in picked]
+            staged, truncated, last_ts = 0, False, None
             result = conn.execution_options(stream_results=True, max_row_buffer=CHUNK_ROWS).execute(stmt)
             try:
                 while True:
                     rows = result.fetchmany(CHUNK_ROWS)
                     if not rows:
                         break
-                    yield _rows_to_batch([tuple(r) for r in rows], wanted, normalized)
+                    if staged + len(rows) > cap:
+                        rows, truncated = rows[:cap - staged], True
+                    if rows:
+                        staged += len(rows)
+                        if ts_index is not None:
+                            last_ts = rows[-1][ts_index]
+                        yield _rows_to_batch([tuple(r) for r in rows], wanted, normalized)
+                    if truncated:
+                        break
             finally:
                 result.close()
+            if truncated and last_ts is not None:
+                params["effective_window_start"] = _iso(_coerce(last_ts, "timestamp"))
+            self.last_snapshot = sampling.snapshot_record(
+                spec=spec, rows_staged=staged, cap=cap, truncated=truncated, source_total_rows=total,
+                total_basis=basis, population_rows=population, **params)
+
+    def _time_column(self, spec: Any, asset: DiscoveredAsset, by_clean: dict[str, tuple[str, Any, str]]):  # noqa: ANN202
+        """The declared time_window column, by staged or origin name; it must be a date/timestamp."""
+        wanted = str(spec.column)
+        hit = by_clean.get(wanted) or next((o for o in by_clean.values() if o[0].lower() == wanted.lower()), None)
+        if hit is None:
+            raise InvalidInput(f"sampling column {wanted!r} is not a column of {asset.source_name}")
+        if hit[2] not in ("timestamp", "date"):
+            raise InvalidInput(f"sampling column {wanted!r} of {asset.source_name} is {hit[2]}, not a date or timestamp")
+        return hit
+
+    def _population(self, conn: Any, engine: Engine, schema: str, table: str, plain: Any, spec: Any,
+                    time_col: Any, cutoff: datetime | None) -> tuple[int | None, str, int | None]:
+        """(origin table rows, how they were measured, rows in the declared window). Exact COUNT(*)
+        unless the source asks for the catalog estimate; a failure is recorded as unavailable."""
+        total, basis = None, "unavailable"
+        if spec is not None and spec.count == "estimate" and self.spec.row_estimate != "none":
+            hit = self._row_estimates(engine, [(schema, table, "BASE TABLE", None)])
+            if hit and hit[0].get("row_count") is not None:
+                total, basis = int(hit[0]["row_count"]), f"estimate:{self.spec.row_estimate}"
+        if total is None:
+            try:
+                total, basis = int(conn.execute(sa.select(sa.func.count()).select_from(plain)).scalar() or 0), "count"
+            except Exception as exc:  # noqa: BLE001 - the snapshot still loads; its population is unknown
+                _log.info("%s row count for %s.%s unavailable: %s", self.kind, schema, table, exc.__class__.__name__)
+                conn.rollback()
+        population = total
+        if time_col is not None:
+            try:
+                population = int(conn.execute(
+                    sa.select(sa.func.count()).select_from(plain)
+                    .where(plain.c[time_col[0]] >= sa.bindparam("cutoff", cutoff, type_=time_col[1]))
+                ).scalar() or 0) if cutoff is not None else 0
+            except Exception as exc:  # noqa: BLE001
+                _log.info("%s window count for %s.%s unavailable: %s", self.kind, schema, table, exc.__class__.__name__)
+                conn.rollback()
+                population = None
+        return total, basis, population
+
+
+class _SampledTable(sa.sql.expression.TableClause):
+    """A table reference followed by a dialect sampling clause in FROM (only validated numbers)."""
+
+    inherit_cache = False
+
+    def __init__(self, name: str, *columns: Any, schema: str | None = None, suffix: str | None = None) -> None:
+        super().__init__(name, *columns, schema=schema)
+        self.sample_suffix = suffix
+
+
+@compiles(_SampledTable)
+def _compile_sampled(element: _SampledTable, compiler: Any, **kw: Any) -> str:
+    rendered = compiler.visit_table(element, **kw)
+    return f"{rendered} {element.sample_suffix}" if element.sample_suffix and kw.get("asfrom") else rendered
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if isinstance(value, (datetime, date)) else (None if value is None else str(value))

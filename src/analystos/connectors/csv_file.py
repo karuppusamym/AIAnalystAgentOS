@@ -16,6 +16,7 @@ from typing import Any, Literal
 import polars as pl
 import pyarrow as pa
 
+from analystos.connectors import sampling
 from analystos.connectors.base import ConnectionTest, DiscoveredAsset, DiscoveredColumn
 from analystos.connectors.naming import sanitize_identifier, unique_identifiers
 from analystos.core.config import REPO_ROOT
@@ -89,6 +90,8 @@ class CSVFileConnector:
         self.path = resolved
         self.delimiter = config.get("delimiter")
         self.sheet = config.get("sheet")
+        self.config = dict(config)
+        self.last_snapshot: dict[str, Any] | None = None  # set by extract(): what the snapshot is (P4-C12)
 
     # -- files -----------------------------------------------------------------------------
 
@@ -201,13 +204,21 @@ class CSVFileConnector:
             if normalized == "text" and dtype != pl.String:
                 e = e.cast(pl.String)
             exprs.append(e.alias(name))
-        df = lf.select(exprs).head(max_rows).collect()
+        spec = sampling.sampling_for(self.config, asset.source_name, asset.name)
+        self.last_snapshot = None
+        df = lf.select(exprs).head(max_rows + 1).collect()  # one extra row: truncation is known, not guessed
+        truncated = df.height > max_rows
+        df = df.head(max_rows)
         wanted = [c.name for c in asset.columns] or clean
         missing = [c for c in wanted if c not in df.columns]
         if missing:
             raise InvalidInput(f"File {file.name} no longer has columns {missing}; rediscover the source")
+        total = int(lf.select(pl.len()).collect().item()) if truncated else df.height
         table = df.select(wanted).to_arrow()
         yield from table.to_batches(max_chunksize=50_000)
+        self.last_snapshot = sampling.snapshot_record(
+            spec=spec, rows_staged=df.height, cap=max_rows, truncated=truncated, source_total_rows=total,
+            total_basis="count", population_rows=total)
 
     def sqlalchemy_url(self) -> str:
         raise InvalidInput("File sources are staged; they have no SQL endpoint")

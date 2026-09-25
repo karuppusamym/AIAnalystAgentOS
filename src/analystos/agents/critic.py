@@ -31,6 +31,14 @@ def _dump(v):
     return v.model_dump() if hasattr(v, "model_dump") else v
 
 
+def representative_population(ctx: RunContext, asset: str) -> dict:
+    """P4-C12: a claim is about the population sampled. Fails when the staged snapshot was truncated
+    without a declared sample (or by first_n); records the sampling method either way."""
+    from analystos.staging.snapshots import population_for
+
+    return population_for(asset, ctx.scope.asset_sources.get(asset)).check()
+
+
 def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
@@ -67,6 +75,7 @@ def verify_insights(ctx: RunContext) -> dict:
         checks.append({"check": "significance_after_bh", "passed": p_adj is not None and p_adj < alpha, "detail": f"q={p_adj} alpha={alpha}"})
         checks.append({"check": "effect_size", "passed": bool(stat_d.get("supported")),
                        "detail": f"{stat_d.get('effect_label')}={stat_d.get('effect_size')}"})
+        checks.append(representative_population(ctx, spec.asset))
         overreach = bool(CAUSAL.search(finding))
         if overreach:
             _, finding = template_text(stat_d, spec_d)
