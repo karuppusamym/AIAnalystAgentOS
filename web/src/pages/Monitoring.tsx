@@ -8,7 +8,7 @@ import { buildMonitorOption, DARK, LIGHT } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, usePrefersDark } from "../lib/hooks";
 import {
-  GRAINS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, monitorMessage, monitorOverlay,
+  GRAINS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, explainTriage, monitorMessage, monitorOverlay,
   validateMonitorForm, type MonitorFormState,
 } from "../lib/monitors";
 import { severityTone } from "../lib/status";
@@ -323,6 +323,7 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
   const [note, setNote] = useState<string | null>(null);
   const tone = severityTone(a.severity);
   const triage = a.data?.triage;
+  const explanation = explainTriage(a);
   const doAction = async (action: "acknowledge" | "resolve") => {
     const r = await act.run(() => api.alertAction(a.id, action));
     if (r) onChanged(r);
@@ -356,6 +357,10 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
           )}
           {a.investigation_run_id && <Link to={to.run(wsId, a.investigation_run_id)}>Investigation run</Link>}
           {a.resolved_at && <span className="muted">resolved {fmtDate(a.resolved_at)}</span>}
+        </div>
+        <div className="triage" aria-label="Triage explanation">
+          <p className="small triage-title"><strong>Why this severity</strong>{explanation.escalated && <Tag tone="jev">escalated by JEV</Tag>}</p>
+          <ul className="small">{explanation.lines.map((l) => <li key={l}>{l}</li>)}</ul>
         </div>
         <div className="form-actions">
           {a.status === "open" && (

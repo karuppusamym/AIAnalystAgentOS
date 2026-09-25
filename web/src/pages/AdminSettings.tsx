@@ -3,8 +3,8 @@
  * refuses non-admins, and the Admin page does not render these for them.
  */
 import { useId, useMemo, useState } from "react";
-import { api, type LLMMode, type PlatformSettings, type SettingsDocument, type SettingsVersion } from "../api";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StatusBadge, Tag, Value } from "../components/ui";
+import { api, type LLMMode, type PlatformSettings, type RungSpend, type SettingsDocument, type SettingsVersion } from "../api";
+import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StateView, StatusBadge, Tag, Value } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, type AsyncState } from "../lib/hooks";
 import {
@@ -417,8 +417,41 @@ export function TokenSavingsView() {
               </div>
             )}
           </Card>
+          <SpendBreakdown title="By rung" by={s.data?.by_rung} keyLabel="Rung"
+            missing="The server does not report the execution-ladder rung (L0 cache … L5 strong model) per call yet." />
+          <SpendBreakdown title="By model" by={s.data?.by_model} keyLabel="Model"
+            missing="Not in this report; the Usage tab lists calls and spend per provider and model." />
         </>
       )}
     </div>
+  );
+}
+
+/** Optional breakdowns: rendered when the server reports them, otherwise an explicit unknown state. */
+function SpendBreakdown({ title, by, keyLabel, missing }: { title: string; by: Record<string, RungSpend> | null | undefined; keyLabel: string; missing: string }) {
+  const rows = Object.entries(by ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <Card title={title}>
+      {!by ? <StateView kind="unknown" title={`${title.replace(/^By /, "Spend by ")} not reported`}>{missing}</StateView> : rows.length === 0 ? (
+        <EmptyState title="No model activity in this period" />
+      ) : (
+        <div className="table-wrap">
+          <table className="table table-compact">
+            <thead><tr><th>{keyLabel}</th><th className="num">Calls</th><th className="num">Tokens used</th><th className="num">Tokens saved</th><th className="num">Cost</th></tr></thead>
+            <tbody>
+              {rows.map(([k, r]) => (
+                <tr key={k}>
+                  <td><code>{k}</code></td>
+                  <td className="num"><Value value={r.calls} format="int" /></td>
+                  <td className="num"><Value value={r.tokens_used} format="int" /></td>
+                  <td className="num"><Value value={r.tokens_saved} format="int" /></td>
+                  <td className="num"><Value value={r.cost_usd} format="usd" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }

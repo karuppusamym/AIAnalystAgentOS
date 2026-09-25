@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { api, type WorkspaceDetail } from "../api";
 import { AutonomyPicker } from "../components/AutonomyPicker";
-import { Card, ErrorBox, Field, Loading, Notice, PageHeader } from "../components/ui";
+import { Card, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, Value } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
 import { AuditTable } from "./Admin";
 
@@ -27,6 +27,7 @@ export function GovernancePage() {
   return (
     <div className="page">
       <PageHeader title="Policy & members" subtitle={<>Your role: <strong>{ws.data.role}</strong>. Policy values may only tighten the platform ceilings; each save creates a new immutable version.</>} />
+      <PolicySummary ws={ws.data} />
       <div className="grid-2">
         <PolicyEditor ws={ws.data} onSaved={ws.reload} />
         <div className="stack">
@@ -36,6 +37,31 @@ export function GovernancePage() {
       </div>
       {ws.data.role === "owner" && <WorkspaceAudit wsId={wsId} />}
     </div>
+  );
+}
+
+const list = (v: unknown) => (Array.isArray(v) && v.length ? v.map(String).join(", ") : "none");
+
+/** The policy in words: what agents may read, spend and publish here. Unset values show as unknown. */
+function PolicySummary({ ws }: { ws: WorkspaceDetail }) {
+  const p = ws.policy ?? {};
+  return (
+    <Card title={`Effective policy · v${ws.policy_version}`}>
+      <KeyValue items={[
+        ["Max rows per query", <Value key="r" value={p.max_rows} format="int" />],
+        ["Run token budget", <Value key="t" value={p.run_token_budget} format="int" />],
+        ["Run cost budget", <Value key="c" value={p.run_cost_budget_usd} format="usd" />],
+        ["Monthly cost budget", <Value key="m" value={p.workspace_monthly_cost_budget_usd} format="usd" />],
+        ["PII access", p.pii_access ?? <Value key="p" value={null} />],
+        ["Restricted columns", list(p.restricted_columns)],
+        ["Publish destinations", list(p.publish_destinations)],
+        ["Publishing needs approval", p.publish_requires_approval === undefined ? <Value key="a" value={null} /> : p.publish_requires_approval ? "yes" : "no"],
+        ["Separation of duties", p.separation_of_duties === undefined ? <Value key="s" value={null} /> : p.separation_of_duties ? "yes" : "no"],
+        ["Denied tools", list(p.tool_denylist)],
+        ["Allowed models", list(p.allowed_models)],
+        ["Significance level (α)", <Value key="al" value={p.alpha} format="number" digits={3} />],
+      ]} />
+    </Card>
   );
 }
 

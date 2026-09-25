@@ -1,22 +1,25 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { to } from "../routes";
-import { api, subscribeRunEvents, type FeedbackResponse, type Publication, type RunEvent, type RunOrigin, type RunTask } from "../api";
+import { api, subscribeRunEvents, type ConsoleCost, type FeedbackResponse, type Publication, type RunDetail, type RunEvent, type RunOrigin, type RunTask,
+  type WorkspacePolicy } from "../api";
 import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import { ChangesPanel } from "../components/ChangesPanel";
+import { InvestigationBoard } from "../components/InvestigationBoard";
 import { InvestigationTree } from "../components/InvestigationTree";
 import { Markdown } from "../components/Markdown";
-import { Card, EmptyState, ErrorBox, Field, JsonView, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { durationBetween, fmtDate, fmtPct, fmtTime, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { TERMINAL_RUN } from "../lib/status";
 
+/** Chat kinds; rejecting a finding is done on its card, where the target is unambiguous. */
 const FEEDBACK_KINDS = [
   { id: "", label: "Auto-classify (JEV)" },
   { id: "redirect", label: "Redirect — change focus / filters" },
   { id: "add_context", label: "Add context — business definitions" },
-  { id: "reject_finding", label: "Reject finding" },
   { id: "deeper_analysis", label: "Deeper analysis" },
+  { id: "question", label: "Question about the results" },
 ];
 
 type StreamState = "connecting" | "open" | "reconnecting" | "closed";
@@ -26,7 +29,7 @@ export function RunViewPage() {
   const run = useAsync(() => api.getRun(wsId, runId), [wsId, runId]);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [stream, setStream] = useState<{ state: StreamState; error?: string }>({ state: "connecting" });
-  const [tab, setTab] = useState<"tree" | "tasks" | "events">("tree");
+  const [tab, setTab] = useState<"board" | "tree" | "tasks" | "events">("board");
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const control = useAction();
   const reload = run.reload;
@@ -117,30 +120,25 @@ export function RunViewPage() {
       <div className="run-grid">
         <div className="run-main">
           <Tabs value={tab} onChange={setTab} tabs={[
-            { id: "tree", label: `Investigation (${r.hypotheses.length})` },
+            { id: "board", label: `Board (${r.hypotheses.length})` },
+            { id: "tree", label: "Tree" },
             { id: "tasks", label: `Plan & tasks (${r.tasks.length})` },
             { id: "events", label: `Live events (${events.length})` },
           ]} />
           <div className="tab-panel card card-body" role="tabpanel">
+            {tab === "board" && <InvestigationBoard wsId={wsId} runId={runId} hypotheses={r.hypotheses} insights={r.insights} approvals={r.approvals}
+              readOnly={["FAILED", "CANCELLED", "REJECTED"].includes(r.status)} onChanged={() => void run.reload()} />}
             {tab === "tree" && <InvestigationTree wsId={wsId} objective={r.objective} hypotheses={r.hypotheses} insights={r.insights} />}
             {tab === "tasks" && <TaskBoard tasks={r.tasks} />}
             {tab === "events" && <EventFeed events={events} />}
           </div>
         </div>
         <aside className="run-side">
+          <CostMeter wsId={wsId} run={r} />
           <Card title={`Approvals${pending.length ? ` (${pending.length} pending)` : ""}`}>
             <ApprovalsPanel approvals={r.approvals} onDecided={() => void run.reload()} />
           </Card>
-          <FeedbackBox wsId={wsId} runId={runId} insights={r.insights.map((i) => ({ id: i.id, label: `${i.code} ${i.title}` }))}
-            disabled={["FAILED", "CANCELLED", "REJECTED"].includes(r.status)} onDone={() => void run.reload()} />
-          {(r.instructions?.length ?? 0) > 0 && (
-            <Card title="User instructions">
-              <ol className="small">
-                {r.instructions.map((ins, i) => <li key={i}><strong>{String(ins.kind)}</strong>: {String(ins.text)}</li>)}
-              </ol>
-              {r.constraints && Object.keys(r.constraints).length > 0 && <JsonView value={r.constraints} collapsed label="Compiled constraints" />}
-            </Card>
-          )}
+          <RedirectChat wsId={wsId} run={r} disabled={["FAILED", "CANCELLED", "REJECTED"].includes(r.status)} onDone={() => void run.reload()} />
           <Card title="Authorized scope">
             <KeyValue items={[
               ["Assets", ((r.scope.assets as string[] | undefined) ?? []).join(", ") || "—"],
@@ -258,8 +256,8 @@ function TaskDetail({ task }: { task: RunTask }) {
     <div className="task-detail">
       <p className="small muted">Depends on: {task.depends_on.join(", ") || "—"} · plan v{task.plan_version}</p>
       <div className="grid-2">
-        <JsonView value={task.input} collapsed label="Input" />
-        <JsonView value={task.output} collapsed label="Output" />
+        <TechnicalDetails value={task.input} label="Input (technical details)" />
+        <TechnicalDetails value={task.output} label="Output (technical details)" />
       </div>
       <ErrorBox error={detail.error} />
       {detail.data && (
@@ -295,29 +293,27 @@ function EventFeed({ events }: { events: RunEvent[] }) {
           <span className={`event-type type-${ev.type.split(".")[0]}`}>{ev.type}</span>
           <span className="event-text">{describeEvent(ev)}</span>
           {ev.actor && <span className="muted small">{ev.actor}</span>}
-          <details className="event-payload"><summary className="small">payload</summary><JsonView value={ev.payload} /></details>
+          <span className="event-payload"><TechnicalDetails value={ev.payload} label="payload" /></span>
         </li>
       ))}
     </ol>
   );
 }
 
-function FeedbackBox({ wsId, runId, insights, disabled, onDone }: {
-  wsId: string; runId: string; insights: { id: string; label: string }[]; disabled: boolean; onDone: () => void;
-}) {
+/**
+ * Redirect by chat: the run's instructions as a conversation, and a composer that sends feedback.
+ * JEV classifies the message when no kind is chosen; a redirect replans the run.
+ */
+function RedirectChat({ wsId, run, disabled, onDone }: { wsId: string; run: RunDetail; disabled: boolean; onDone: () => void }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("");
-  const [target, setTarget] = useState("");
   const [resp, setResp] = useState<FeedbackResponse | null>(null);
   const act = useAction();
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const r = await act.run(() => api.feedback(wsId, runId, {
-      text: text.trim(),
-      kind: kind || null,
-      target_type: kind === "reject_finding" ? "insight" : null,
-      target_id: kind === "reject_finding" ? target || null : null,
-    }));
+  const history = run.instructions ?? [];
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!text.trim()) return;
+    const r = await act.run(() => api.feedback(wsId, run.id, { text: text.trim(), kind: kind || null, target_type: null, target_id: null }));
     if (r) {
       setResp(r);
       setText("");
@@ -325,52 +321,103 @@ function FeedbackBox({ wsId, runId, insights, disabled, onDone }: {
     }
   };
   return (
-    <Card title="Feedback & redirect">
+    <Card title="Redirect the investigation">
+      <ol className="chat-log" aria-label="Instructions sent to this run">
+        {history.length === 0 && <li className="muted small">No instructions yet. Tell the agents what to focus on, exclude or explain.</li>}
+        {history.map((ins, i) => (
+          <li key={i} className="chat-msg chat-user">
+            <span className="chat-who">You</span> <Tag>{String(ins.kind ?? "feedback").replace(/_/g, " ")}</Tag>
+            <p>{String(ins.text ?? "")}</p>
+          </li>
+        ))}
+        {resp && (
+          <li className="chat-msg chat-agent" aria-live="polite">
+            <span className="chat-who">Supervisor</span>
+            <p className="small">
+              Read as <strong>{resp.kind.replace(/_/g, " ")}</strong> ({resp.classified_by}
+              {resp.consequential_p !== null ? `, p(side effect) ${fmtPct(resp.consequential_p, 0)}` : ""}).
+              {resp.interpretation && <> {resp.interpretation.summary}</>}
+              {resp.replan && <> Replanned to plan v{resp.replan.plan_version}.</>}
+            </p>
+            {resp.interpretation && resp.interpretation.filters.length > 0 && (
+              <ul className="small">{resp.interpretation.filters.map((f, i) => (
+                <li key={i}><code>{String(f.asset ?? "")}.{String(f.column)} {String(f.op)} {JSON.stringify(f.value)}</code></li>
+              ))}</ul>
+            )}
+            {resp.note && <Notice tone="warning">{resp.note}</Notice>}
+          </li>
+        )}
+      </ol>
       <form className="form" onSubmit={submit}>
-        <Field label="Instruction" htmlFor="fb-text">
-          <textarea id="fb-text" rows={3} value={text} onChange={(e) => setText(e.target.value)} required
-            placeholder="Focus on priority 1 incidents in the Network group; exclude auto-closed tickets." disabled={disabled} />
+        <Field label="Message" htmlFor="fb-text">
+          <textarea id="fb-text" rows={3} value={text} onChange={(e) => setText(e.target.value)} disabled={disabled}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void submit(); }}
+            placeholder="Focus on priority 1 incidents in the Network group; exclude auto-closed tickets." />
         </Field>
-        <Field label="Kind" htmlFor="fb-kind">
+        <Field label="Kind" htmlFor="fb-kind" hint="On auto, JEV classifies the message; it can flag side effects, never execute them.">
           <select id="fb-kind" value={kind} onChange={(e) => setKind(e.target.value)} disabled={disabled}>
             {FEEDBACK_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
           </select>
         </Field>
-        {kind === "reject_finding" && (
-          <Field label="Finding" htmlFor="fb-target">
-            <select id="fb-target" value={target} onChange={(e) => setTarget(e.target.value)} required>
-              <option value="">Choose a finding…</option>
-              {insights.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
-            </select>
-          </Field>
-        )}
         <ErrorBox error={act.error} />
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary btn-sm" disabled={act.busy || disabled || !text.trim()}>{act.busy ? "Sending…" : "Send feedback"}</button>
+          <button type="submit" className="btn btn-primary btn-sm" disabled={act.busy || disabled || !text.trim()}>{act.busy ? "Sending…" : "Send"}</button>
         </div>
       </form>
-      {resp && (
-        <div className="feedback-result">
-          <KeyValue items={[
-            ["Classified as", <strong key="k">{resp.kind}</strong>],
-            ["Classified by", resp.classified_by],
-            ["Consequential p", resp.consequential_p === null ? "—" : fmtPct(resp.consequential_p)],
-          ]} />
-          {resp.note && <Notice tone="warning">{resp.note}</Notice>}
-          {resp.interpretation && (
-            <div className="small">
-              <p><strong>Interpretation</strong> <span className="muted">({resp.interpretation.interpreted_by})</span>: {resp.interpretation.summary}</p>
-              {resp.interpretation.filters.length > 0 ? (
-                <ul>{resp.interpretation.filters.map((f, i) => <li key={i}><code>{String(f.asset ?? "")}.{String(f.column)} {String(f.op)} {JSON.stringify(f.value)}</code></li>)}</ul>
-              ) : <p className="muted">No structured filters (unmatched columns are dropped against the run scope).</p>}
-            </div>
-          )}
-          {resp.replan && (
-            <p className="small">Replanned to <strong>plan v{resp.replan.plan_version}</strong>; tasks reset: {JSON.stringify(resp.replan.tasks_reset)};
-              approvals invalidated: {JSON.stringify(resp.replan.approvals_invalidated)}.</p>
-          )}
+      {run.constraints && Object.keys(run.constraints).length > 0 && <TechnicalDetails value={run.constraints} label="Compiled constraints (technical details)" />}
+    </Card>
+  );
+}
+
+/**
+ * Live cost meter: tokens and spend against the workspace run budgets, tokens avoided by the
+ * cache and deterministic paths, and the ladder rungs when the server reports them. A missing
+ * number is unknown, never 0.
+ */
+function CostMeter({ wsId, run }: { wsId: string; run: RunDetail }) {
+  const policy = useAsync(() => api.getWorkspace(wsId).then((w) => w.policy as WorkspacePolicy), [wsId]);
+  const cost = useAsync<ConsoleCost | null>(() => api.console(wsId, run.id).then((c) => c.cost).catch(() => null), [wsId, run.id, run.tokens, run.status]);
+  const c = cost.data ?? null;
+  const rungs = c?.by_rung ? Object.entries(c.by_rung).sort(([a], [b]) => a.localeCompare(b)) : [];
+  return (
+    <Card title="Cost">
+      <Meter label="Tokens" value={run.tokens} max={policy.data?.run_token_budget} format="int" />
+      <Meter label="Spend" value={run.cost_usd} max={policy.data?.run_cost_budget_usd} format="usd" />
+      <KeyValue items={[
+        ["Tokens avoided", <Value key="s" value={c?.tokens_saved} format="int" />],
+        ["Cache hits", <Value key="h" value={c?.cache_hits} format="int" />],
+        ["Deterministic skips", <Value key="d" value={c?.deterministic_skips} format="int" />],
+        ["Model calls", <Value key="m" value={c?.model_calls} format="int" />],
+      ]} />
+      <h3 className="small">By rung</h3>
+      {rungs.length ? (
+        <ul className="rung-list small" aria-label="Spend by rung">
+          {rungs.map(([rung, v]) => (
+            <li key={rung}><code>{rung}</code> <Value value={v.calls} format="int" suffix="calls" /> · <Value value={v.cost_usd} format="usd" />
+              {v.tokens_saved !== undefined && <> · <Value value={v.tokens_saved} format="int" suffix="avoided" /></>}</li>
+          ))}
+        </ul>
+      ) : <p className="muted small">Rung breakdown not reported by this server.</p>}
+    </Card>
+  );
+}
+
+function Meter({ label, value, max, format }: { label: string; value: number | null | undefined; max: number | null | undefined; format: "int" | "usd" }) {
+  const known = typeof value === "number" && Number.isFinite(value);
+  const hasMax = typeof max === "number" && max > 0;
+  const pct = known && hasMax ? Math.min(100, (value / max) * 100) : null;
+  const tone = pct === null ? "neutral" : pct >= 90 ? "danger" : pct >= 70 ? "warning" : "success";
+  return (
+    <div className="meter">
+      <div className="meter-head small">
+        <span>{label}</span>
+        <span><Value value={value} format={format} />{hasMax && <span className="muted"> of <Value value={max} format={format} /></span>}</span>
+      </div>
+      {pct !== null && (
+        <div className="confidence-track" role="meter" aria-label={`${label} used of run budget`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+          <div className={`confidence-fill fill-${tone}`} style={{ width: `${pct}%` }} />
         </div>
       )}
-    </Card>
+    </div>
   );
 }
