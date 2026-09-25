@@ -66,7 +66,7 @@ def seed() -> None:
 
 
 def export_contracts() -> None:
-    from analystos.contracts import analysis, bi, platform, policy, registry
+    from analystos.contracts import analysis, bi, capability, platform, policy, registry
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)
@@ -74,7 +74,7 @@ def export_contracts() -> None:
               "data_scope": policy.DataScope, "policy_decision": policy.PolicyDecision, "analysis_spec": analysis.AnalysisSpec,
               "stat_result": analysis.StatResult, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
               "dataset": bi.DatasetDef, "publish_bundle": bi.PublishBundle,
-              "platform_settings": platform.PlatformSettings}
+              "platform_settings": platform.PlatformSettings, "capability": capability.CapabilityManifest}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES

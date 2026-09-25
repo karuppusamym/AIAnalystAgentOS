@@ -1,0 +1,201 @@
+{
+  "$defs": {
+    "Certification": {
+      "properties": {
+        "status": {
+          "default": "draft",
+          "enum": [
+            "draft",
+            "tested",
+            "certified",
+            "deprecated"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
+        }
+      },
+      "title": "Certification",
+      "type": "object"
+    },
+    "UiHints": {
+      "properties": {
+        "form": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "none",
+            "custom"
+          ],
+          "title": "Form",
+          "type": "string"
+        },
+        "renderer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Renderer"
+        }
+      },
+      "title": "UiHints",
+      "type": "object"
+    }
+  },
+  "description": "What a capability is and what it may do. Validated at load; unknown references fail the load.",
+  "properties": {
+    "apiVersion": {
+      "const": "analystos/v1",
+      "default": "analystos/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "Agent",
+        "Skill",
+        "Tool",
+        "Method",
+        "Connector",
+        "Engine",
+        "Publisher",
+        "DecisionPurpose",
+        "Detector",
+        "Crawler",
+        "KnowledgePack",
+        "Playbook",
+        "Renderer"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "entry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Entry"
+    },
+    "input_schema": {
+      "additionalProperties": true,
+      "title": "Input Schema",
+      "type": "object"
+    },
+    "output_schema": {
+      "additionalProperties": true,
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "determinism": {
+      "default": "deterministic",
+      "enum": [
+        "deterministic",
+        "seeded",
+        "model"
+      ],
+      "title": "Determinism",
+      "type": "string"
+    },
+    "side_effect": {
+      "default": "write_external",
+      "enum": [
+        "none",
+        "read_source",
+        "write_internal",
+        "write_external"
+      ],
+      "title": "Side Effect",
+      "type": "string"
+    },
+    "cost_class": {
+      "default": "free",
+      "enum": [
+        "free",
+        "query",
+        "compute",
+        "llm_small",
+        "llm_large"
+      ],
+      "title": "Cost Class",
+      "type": "string"
+    },
+    "permissions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Permissions",
+      "type": "array"
+    },
+    "requires": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Requires",
+      "type": "array"
+    },
+    "certification": {
+      "$ref": "#/$defs/Certification"
+    },
+    "ui": {
+      "$ref": "#/$defs/UiHints"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "spec": {
+      "additionalProperties": true,
+      "title": "Spec",
+      "type": "object"
+    },
+    "source": {
+      "default": "builtin",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "summary"
+  ],
+  "title": "CapabilityManifest",
+  "type": "object"
+}
