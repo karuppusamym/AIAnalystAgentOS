@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from analystos.contracts.analysis import Filter
@@ -95,13 +96,76 @@ FEEDBACK_KINDS = {"redirect": "Narrow or change what the analysis should focus o
                   "question": "Asks a question about the results"}
 
 
+_EXCLUDE = re.compile(r"\b(exclude|excluding|ignore|ignoring|without|remove|drop|except|not)\b", re.I)
+_INCLUDE = re.compile(r"\b(only|focus(?:ing)? on|just|restrict(?:ed)? to|limit(?:ed)? to|keep)\b", re.I)
+
+
+def parse_redirect_rules(text: str, vocab: dict[tuple[str, str], list[str]]) -> list[dict[str, Any]]:
+    """Deterministic redirect parsing: category values named in the instruction (from profiled
+    vocabularies) become filters; the nearest preceding verb decides include vs exclude."""
+    lowered = text.lower()
+    hits: dict[tuple[str, str], dict[str, list]] = {}
+    for (asset, column), values in vocab.items():
+        for value in values:
+            v = str(value)
+            if len(v) < 3:
+                continue
+            m = re.search(rf"(?<![\w]){re.escape(v.lower())}(?![\w])", lowered)
+            if not m:
+                continue
+            before = lowered[:m.start()]
+            last_ex = max((x.end() for x in _EXCLUDE.finditer(before)), default=-1)
+            last_in = max((x.end() for x in _INCLUDE.finditer(before)), default=-1)
+            if last_ex < 0 and last_in < 0:
+                continue
+            bucket = hits.setdefault((asset, column), {"in": [], "ex": []})
+            bucket["ex" if last_ex > last_in else "in"].append(value)
+    filters = []
+    for (asset, column), b in hits.items():
+        if b["in"]:
+            filters.append({"asset": asset, "column": column, "op": "=" if len(b["in"]) == 1 else "in",
+                            "value": b["in"][0] if len(b["in"]) == 1 else b["in"]})
+        for v in b["ex"]:
+            filters.append({"asset": asset, "column": column, "op": "!=", "value": v})
+    return filters
+
+
+def _vocabulary(run: AnalysisRun) -> dict[tuple[str, str], list[str]]:
+    from sqlalchemy import select
+
+    from analystos.db.models import SourceAsset, SourceColumn
+
+    denied = set(run.scope.get("denied_columns") or [])
+    out: dict[tuple[str, str], list[str]] = {}
+    with session_scope() as s:
+        for fq in run.scope.get("assets") or []:
+            schema, name = fq.split(".", 1)
+            asset = s.scalar(select(SourceAsset).where(SourceAsset.workspace_id == run.workspace_id,
+                                                       SourceAsset.schema_name == schema, SourceAsset.name == name))
+            if not asset:
+                continue
+            for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id)):
+                top = (c.profile or {}).get("top_values") or []
+                if f"{fq}.{c.name}" in denied or "pii" in (c.tags or []) or not top or (c.profile or {}).get("distinct", 999) > 60:
+                    continue
+                out[(fq, c.name)] = [t.get("value") for t in top if isinstance(t.get("value"), str)]
+    return out
+
+
 def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
-    """LLM -> structured filters, validated against the run scope. Invalid filters are dropped."""
+    """Rules first (profiled category vocabulary), model when rules find nothing or admin mode is
+    `always`; either way filters are validated against the run scope. Invalid filters are dropped."""
     router = default_router()
     ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor", prompt_version="feedback_interpretation.v1")
+    rule_filters = parse_redirect_rules(text, _vocabulary(run))
+    mode = router.mode("feedback_interpretation")
+    if rule_filters and mode in ("auto", "off"):
+        router.record_skip("feedback_interpretation", ctx, estimated_tokens=1500, reason=f"mode={mode}: rule parse")
+        return {"filters": rule_filters, "focus": [text], "summary": text, "interpreted_by": "rules"}
     catalog = [{"asset": a, "columns": [c for c in cols if f"{a}.{c}" not in set(run.scope.get("denied_columns") or [])]}
                for a, cols in (run.scope.get("columns") or {}).items()]
-    out: dict[str, Any] = {"filters": [], "focus": [text], "summary": text, "interpreted_by": "none"}
+    out: dict[str, Any] = {"filters": rule_filters, "focus": [text], "summary": text,
+                           "interpreted_by": "rules" if rule_filters else "none"}
     if not router.available("feedback_interpretation", ctx):
         return out
     from analystos.agents.prompts import prompt
@@ -112,6 +176,8 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
     except Exception:
         return out
     data = resp.data if isinstance(resp.data, dict) else {}
+    if not data.get("filters") and rule_filters:
+        return out
     valid = []
     for f in data.get("filters") or []:
         try:

@@ -139,17 +139,118 @@ def skills(_: User = Depends(current_user), session: Session = Depends(db)):
 
 @router.get("/admin/models")
 def models(_: User = Depends(current_user)):
+    """Effective routing after admin overrides: purpose -> mode, profile, candidate models, availability."""
+    from analystos.contracts.platform import DETERMINISTIC_CAPABLE
+    from analystos.llm.router import CallContext
     from analystos.runtime.context import default_router
 
     cfg = load_models_config()
     router_ = default_router()
-    return {**cfg.public_view(), "available": {p: router_.available(p) for p in cfg.routing}}
+    effective = {}
+    for purpose in cfg.routing:
+        profile, _, models = router_.candidates(purpose, CallContext())
+        effective[purpose] = {"profile": profile, "models": models, "mode": router_.mode(purpose),
+                              "available": router_.available(purpose), "deterministic_path": purpose in DETERMINISTIC_CAPABLE,
+                              "decision_model": cfg.profiles[cfg.routing[purpose]].provider == "typesafe"}
+    return {**cfg.public_view(), "effective": effective, "available": {p: v["available"] for p, v in effective.items()}}
+
+
+class SettingsPatch(BaseModel):
+    patch: dict
+    note: str = ""
+
+
+class PresetIn(BaseModel):
+    preset: str
+
+
+class RollbackIn(BaseModel):
+    version: int
+
+
+@router.get("/admin/settings")
+def get_settings_doc(_: User = Depends(admin_user)):
+    from analystos.contracts.platform import PRESETS, PlatformSettings
+    from analystos.services import platform_settings
+
+    version, settings = platform_settings.current()
+    return {"version": version, "settings": settings.model_dump(), "defaults": PlatformSettings().model_dump(),
+            "presets": {k: v for k, v in PRESETS.items()}, "schema": PlatformSettings.model_json_schema()}
+
+
+@router.put("/admin/settings")
+def put_settings(body: SettingsPatch, admin: User = Depends(admin_user), session: Session = Depends(db)):
+    from analystos.services import platform_settings
+
+    return platform_settings.update(session, session.merge(admin), body.patch, note=body.note)
+
+
+@router.post("/admin/settings/preset")
+def preset(body: PresetIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+    from analystos.services import platform_settings
+
+    return platform_settings.apply_preset(session, session.merge(admin), body.preset)
+
+
+@router.get("/admin/settings/history")
+def settings_history(_: User = Depends(admin_user), session: Session = Depends(db)):
+    from analystos.services import platform_settings
+
+    return platform_settings.history(session)
+
+
+@router.post("/admin/settings/rollback")
+def settings_rollback(body: RollbackIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+    from analystos.services import platform_settings
+
+    return platform_settings.rollback(session, session.merge(admin), body.version)
+
+
+@router.get("/admin/prompts")
+def prompts(_: User = Depends(admin_user)):
+    from analystos.agents.prompts import PROMPTS
+
+    return [{"name": k, "version": k.rsplit(".", 1)[-1], "text": v} for k, v in sorted(PROMPTS.items())]
+
+
+@router.get("/admin/token-savings")
+def token_savings(days: int = 30, _: User = Depends(admin_user), session: Session = Depends(db)):
+    """Tokens spent vs avoided (cache hits, deterministic skips, refused oversize prompts)."""
+    from datetime import timedelta
+
+    from analystos.core.ids import utcnow
+
+    since = utcnow() - timedelta(days=max(1, min(days, 365)))
+    rows = session.execute(select(ModelCall.purpose, ModelCall.status, func.count(),
+                                  func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0),
+                                  func.coalesce(func.sum(ModelCall.tokens_saved), 0), func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
+                           .where(ModelCall.created_at >= since).group_by(ModelCall.purpose, ModelCall.status)).all()
+    by_purpose: dict[str, dict] = {}
+    totals = {"calls": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0, "cache_hits": 0, "deterministic_skips": 0, "refused": 0}
+    for purpose, status, n, used, saved, cost in rows:
+        p = by_purpose.setdefault(purpose, {"calls": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0, "by_status": {}})
+        p["by_status"][status] = n
+        p["calls"] += n if status in ("ok", "error") else 0
+        p["tokens_used"] += int(used)
+        p["tokens_saved"] += int(saved)
+        p["cost_usd"] += float(cost)
+        totals["calls"] += n if status in ("ok", "error") else 0
+        totals["tokens_used"] += int(used)
+        totals["tokens_saved"] += int(saved)
+        totals["cost_usd"] += float(cost)
+        totals["cache_hits"] += n if status == "cache_hit" else 0
+        totals["deterministic_skips"] += n if status == "skipped" else 0
+        totals["refused"] += n if status == "refused" else 0
+    denom = totals["tokens_used"] + totals["tokens_saved"]
+    totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
+    return {"days": days, "totals": totals, "by_purpose": by_purpose}
 
 
 @router.get("/admin/usage")
 def usage(_: User = Depends(admin_user), session: Session = Depends(db)):
     by_model = session.execute(select(ModelCall.purpose, ModelCall.model, ModelCall.provider, func.count(), func.sum(ModelCall.cost_usd),
-                                      func.avg(ModelCall.latency_ms), func.count().filter(ModelCall.status != "ok"))
+                                      func.avg(ModelCall.latency_ms), func.count().filter(ModelCall.status == "error"))
+                               .where(ModelCall.status.in_(("ok", "error")))  # skips/cache hits/refusals: see /admin/token-savings
                                .group_by(ModelCall.purpose, ModelCall.model, ModelCall.provider)).all()
     q = session.execute(select(QueryExecution.status, func.count(), func.avg(QueryExecution.duration_ms)).group_by(QueryExecution.status)).all()
     return {"models": [{"purpose": p, "model": m, "provider": pr, "calls": c, "cost_usd": float(cost or 0), "avg_latency_ms": float(lat or 0),

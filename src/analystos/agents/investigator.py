@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, model_gate, task_output
 from analystos.artifacts.registry import link
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.core.ids import new_id, stable_hash
@@ -22,9 +22,8 @@ from analystos.db.models import AnalysisRun, Experiment, Hypothesis
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
+from analystos.services.platform_settings import get as platform
 
-MAX_ROUND1 = 8
-MAX_FOLLOWUPS = 3
 BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
 NUMERIC_OUT = {"column", "duration_hours"}
 
@@ -194,18 +193,58 @@ def heuristic_proposals(ctx: RunContext, types: dict[str, dict[str, str]]) -> li
                               "statement": f"Several operational factors jointly predict {outcome_bool.label}.", "priority": "medium",
                               "spec": {"method": "driver_model", "asset": fq, "outcome": outcome_bool.model_dump(),
                                        "drivers": [s.model_dump() for s in segments[:5]]}})
+        # Other outcomes (amounts, durations, rates) from crawler roles: breadth, not more of the same outcome.
+        proposals += _role_proposals(fq, visible, st, categorical, datetimes, has_trend=bool(starts))
         if proposals:
             break
     return proposals
 
 
+_MEASURE_ROLES = ("amount", "measure", "duration", "percent")
+
+
+def _role_proposals(fq: str, visible: list, st: dict[str, str | None], categorical: list[str], datetimes: list[str], *,
+                    has_trend: bool) -> list[dict[str, Any]]:
+    """Domain-neutral playbook from crawler column roles (skills/catalog): measures by segments and a
+    trend on the first event timestamp. Lets any database get rule-based hypotheses without a model."""
+    roles = {c.name: (c.semantics or {}).get("semantic_role") for c in visible}
+    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c]
+    segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:3]
+    out: list[dict[str, Any]] = []
+    for m in measures[:3]:
+        outcome = Derivation(type="column", column=m, label=humanize(m))
+        for seg in segs:
+            out.append({"question": f"Does {outcome.label} differ by {humanize(seg)}?",
+                        "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.", "priority": "medium",
+                        "spec": {"method": "numeric_by_segment", "asset": fq, "outcome": outcome.model_dump(),
+                                 "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
+    times = [c for c in datetimes if roles.get(c) in ("timestamp", "date")] or datetimes
+    if times and not has_trend:
+        out.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
+                    "priority": "low", "spec": {"method": "trend", "asset": fq,
+                                                "time": {"type": "date_trunc", "column": times[0], "grain": "month"}}})
+    return out
+
+
 def diverse_top(accepted: list[dict], limit: int) -> list[dict]:
-    """Best hypothesis of each method first (an analyst tests different kinds of explanation), then by score."""
+    """Best hypothesis of each method first (an analyst tests different kinds of explanation), then of each
+    outcome not yet covered (different questions before more of the same question), then by score."""
     picked, methods = [], set()
     for a in accepted:
         if a["spec"]["method"] not in methods:
             picked.append(a)
             methods.add(a["spec"]["method"])
+
+    def outcome(a: dict) -> str | None:
+        return ((a["spec"].get("outcome") or {}).get("column") or (a["spec"].get("outcome") or {}).get("end_column"))
+
+    covered = {outcome(a) for a in picked}
+    for a in accepted:
+        if len(picked) >= limit:
+            break
+        if a not in picked and outcome(a) not in covered:
+            picked.append(a)
+            covered.add(outcome(a))
     for a in accepted:
         if len(picked) >= limit:
             break
@@ -231,12 +270,23 @@ def _accept(ctx: RunContext, proposals: list[dict[str, Any]], types, *, origin: 
         if errors:
             rejected.append({"statement": p.get("statement"), "reason": "; ".join(errors[:3])})
             continue
-        h = stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"}))
-        if h in seen:
+        keys = identity_keys(spec)
+        if keys & seen:
             continue
-        seen.add(h)
+        seen |= keys
+        h = stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"}))
         accepted.append({**p, "spec": spec.model_dump(), "origin": p.get("origin", origin), "spec_hash": h})
     return accepted, rejected
+
+
+def identity_keys(spec: AnalysisSpec) -> set[str]:
+    """What makes two hypotheses the same test. A second driver model on the same outcome and population
+    re-answers the same question with a different feature list (seen live: three identical conclusions)."""
+    keys = {stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"}))}
+    if spec.method == "driver_model" and spec.outcome is not None:
+        filters = sorted(f"{f.column}{f.op}{f.value}" for f in spec.filters or [])
+        keys.add(stable_hash({"m": "driver_model", "o": spec.outcome.model_dump(), "f": filters}))
+    return keys
 
 
 def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
@@ -296,20 +346,27 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     # "resolved" means the evidence changed — not that a different question was asked this time.
     carried, rejected = _accept(ctx, carried_forward(ctx), types, origin="carried", seen=seen)
     payload["already_testing"] = [c["statement"] for c in carried]
-    data, model = llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
+    # Deterministic-first (admin: llm.purpose_modes.hypothesis_generation): the profile-driven playbook
+    # runs first; in `auto` mode the model is only asked when the playbook is not enough.
+    rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
+                               origin="heuristic", seen=set(seen))
+    enough = len(carried) + len(rules) >= platform().analysis.heuristic_hypotheses_sufficient
+    data, model = (llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
+                   if model_gate(ctx, "hypothesis_generation", payload, deterministic_ok=enough) else (None, "deterministic"))
     llm_props = [{**p, "origin": "agent"} for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
     accepted, rejected_llm = _accept(ctx, llm_props, types, origin="agent", seen=seen)
     rejected += rejected_llm
-    source = f"llm:{model}" if llm_props else f"heuristic ({model})"
-    if len(accepted) < 4:
+    source = f"llm:{model}" if llm_props else f"rules ({model})"
+    if len(accepted) < 4 or not llm_props:
         more, rej2 = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
                              origin="heuristic", seen=seen)
         accepted += more
         rejected += rej2
+    del rules, rej_rules
     for r in rejected:
         ctx.say(f"Dropped proposal '{(r.get('statement') or '')[:100]}': {r['reason']}", kind="decision")
     by = _prioritise(ctx, accepted)
-    accepted = diverse_top(accepted, max(MAX_ROUND1 - len(carried), 3))
+    accepted = diverse_top(accepted, max(platform().analysis.max_round1_hypotheses - len(carried), 3))
     for c in carried:
         c.update(priority="high", priority_score=1.0, priority_by="carried_forward")
     accepted = carried + accepted
@@ -365,14 +422,19 @@ def follow_ups(ctx: RunContext) -> dict:
         ctx.say(f"JEV stop check: P(objective answered)={stop.value:.2f} ≥ 0.85 — stopping iteration.", kind="decision")
         return {"added": 0, "stop": "jev_stop_check", "p": stop.value}
     types = semantic_types(ctx)
-    seen = {stable_hash(AnalysisSpec.model_validate(r["spec"]).model_dump(exclude={"min_group_size", "top_k"})) for r in results}
-    data, model = llm_json(ctx, "follow_up_generation", "follow_up_generation.v1",
-                           {"objective": ctx.run.objective, "results": results, "catalog": catalog_for_prompt(ctx),
-                            "constraints": ctx.run.constraints})
+    seen = set().union(*(identity_keys(AnalysisSpec.model_validate(r["spec"])) for r in results)) if results else set()
+    # Deterministic follow-ups: drill into supported findings, and continue each tested outcome across the
+    # dimensions it has not been broken down by yet (an analyst's KPI x dimension matrix).
+    roles = {f"{a.schema_name}.{a.name}.{c.name}": (c.semantics or {}).get("semantic_role") for a, cols in asset_rows(ctx) for c in cols}
+    drill = _drilldowns(supported, types) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
+    payload = {"objective": ctx.run.objective, "results": results, "catalog": catalog_for_prompt(ctx),
+               "constraints": ctx.run.constraints}
+    data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload)
+                   if model_gate(ctx, "follow_up_generation", payload, deterministic_ok=bool(drill)) else (None, "deterministic"))
     props = [p for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
     accepted, rejected = _accept(ctx, props, types, origin="agent", seen=seen)
-    if not accepted:  # deterministic drill-down: top segment of a supported rate finding, by another dimension
-        accepted, _ = _accept(ctx, _drilldowns(supported, types), types, origin="heuristic", seen=seen)
+    if not accepted:
+        accepted, _ = _accept(ctx, drill, types, origin="heuristic", seen=seen)
     codes = {r["code"]: r for r in results}
     with session_scope() as s:
         for a in accepted:
@@ -380,7 +442,7 @@ def follow_ups(ctx: RunContext) -> dict:
             if parent:
                 a["parent_id"] = s.scalar(select(Hypothesis.id).where(Hypothesis.run_id == ctx.run.id, Hypothesis.code == parent["code"]))
     _prioritise(ctx, accepted)
-    accepted = accepted[:MAX_FOLLOWUPS]
+    accepted = accepted[:platform().analysis.max_followups_per_round]
     keys = _persist(ctx, accepted, iteration=round_no + 1, round_key=ctx.task.key)
     with session_scope() as s:
         run = s.get(AnalysisRun, ctx.run.id)
@@ -403,7 +465,8 @@ def _drilldowns(supported: list[dict], types) -> list[dict]:
         seg = spec.get("segment") or {}
         if spec.get("method") != "rate_by_segment" or top is None or seg.get("type") != "column":
             continue
-        cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c != seg.get("column") and c.endswith("_name")]
+        cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c != seg.get("column")]
+        cats = [c for c in cats if c.endswith("_name")] + [c for c in cats if not c.endswith("_name")]  # display names first
         for other in cats[:1]:
             out.append({"question": f"Within {seg.get('label') or seg['column']} = {top}, does the outcome vary by {other}?",
                         "statement": f"Within {seg['column']} = {top}, the outcome rate differs across {other}.",
@@ -411,3 +474,42 @@ def _drilldowns(supported: list[dict], types) -> list[dict]:
                         "spec": {**spec, "segment": {"type": "column", "column": other, "label": other.replace('_', ' ')},
                                  "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=", "value": top}]}})
     return out
+
+
+_ROLE_WEIGHT = {"amount": 3, "duration": 3, "percent": 2, "flag": 2, "measure": 1}
+
+
+def _matrix_continuations(results: list[dict], types, denied: list[str], roles: dict[str, str | None] | None = None) -> list[dict]:
+    """For each outcome tested by segment, propose it by the next dimension it was not yet broken down by.
+    One per outcome per round, least-explored outcomes first and business measures (amounts, durations,
+    rates) before plain counts. Every test still goes through BH correction, so breadth adds no false positives."""
+    roles = roles or {}
+    tested: dict[tuple[str, str], set[str]] = {}
+    template: dict[tuple[str, str], dict] = {}
+    for r in results:
+        spec = r["spec"]
+        if spec.get("method") not in ("rate_by_segment", "numeric_by_segment") or spec.get("filters"):
+            continue
+        out = spec.get("outcome") or {}
+        key = (spec["asset"], stable_hash(out))
+        tested.setdefault(key, set()).add((spec.get("segment") or {}).get("column"))
+        template.setdefault(key, spec)
+    proposals = []
+    for key, spec in template.items():
+        asset = spec["asset"]
+        dims = [c for c, t in types.get(asset, {}).items()
+                if t == "categorical" and c not in tested[key] and f"{asset}.{c}" not in set(denied) and not _TEXTY.search(c)]
+        if not dims:
+            continue
+        nxt = dims[0]
+        outcome_col = (spec.get("outcome") or {}).get("column") or ""
+        label = (spec.get("outcome") or {}).get("label") or humanize(outcome_col or "outcome")
+        weight = _ROLE_WEIGHT.get(roles.get(f"{asset}.{outcome_col}") or "", 1)
+        proposals.append({"_order": (len(tested[key]), -weight),
+                          "question": f"Does {label} differ by {humanize(nxt)}?",
+                          "statement": f"{label[:1].upper() + label[1:]} differs materially across {humanize(nxt)}.",
+                          "priority": "medium",
+                          "spec": {**{k: v for k, v in spec.items() if k != "segment"},
+                                   "segment": {"type": "column", "column": nxt, "label": humanize(nxt)}}})
+    proposals.sort(key=lambda p: p.pop("_order"))
+    return proposals

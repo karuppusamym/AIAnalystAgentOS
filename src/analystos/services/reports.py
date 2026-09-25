@@ -74,7 +74,10 @@ def build_report_data(session: Session, run_id: str, kind: str = "executive", *,
 def generate_report(session: Session, run_id: str, *, kind: str = "executive", formats: tuple[str, ...] = ("html", "pdf", "xlsx"),
                     actor: str = "system", finalizing: bool = False) -> Artifact:
     from analystos.reports import render
+    from analystos.services.platform_settings import get as platform
 
+    if not platform().features.reports:
+        raise InvalidInput("report generation is turned off by the administrator")
     bad = [f for f in formats if f not in FORMATS]
     if bad or not formats:
         raise InvalidInput(f"formats must be within {FORMATS}")

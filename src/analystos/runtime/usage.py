@@ -12,12 +12,13 @@ from analystos.llm.router import CallContext
 
 class DbUsageSink:
     def record(self, *, ctx: CallContext, purpose, profile, provider, model, status, attempt, latency_ms,
-               input_tokens, output_tokens, cost_usd, request_hash, error) -> None:
+               input_tokens, output_tokens, cost_usd, request_hash, error, tokens_saved: int = 0) -> None:
         with session_scope() as s:
             s.add(ModelCall(workspace_id=ctx.workspace_id, run_id=ctx.run_id, task_id=ctx.task_id, agent_id=ctx.agent_id,
                             purpose=purpose, profile=profile, provider=provider, model=model, prompt_version=ctx.prompt_version,
                             status=status, attempt=attempt, latency_ms=latency_ms, input_tokens=input_tokens,
-                            output_tokens=output_tokens, cost_usd=cost_usd, request_hash=request_hash, error=error))
+                            output_tokens=output_tokens, cost_usd=cost_usd, request_hash=request_hash, error=error,
+                            tokens_saved=tokens_saved))
             if ctx.run_id and (input_tokens or output_tokens or cost_usd):
                 s.execute(update(AnalysisRun).where(AnalysisRun.id == ctx.run_id).values(
                     tokens=AnalysisRun.tokens + input_tokens + output_tokens, cost_usd=AnalysisRun.cost_usd + cost_usd))
@@ -41,3 +42,15 @@ class DbUsageSink:
                 ModelCall.created_at >= func.date_trunc("month", func.now()))) or 0.0
             if month_cost >= policy.workspace_monthly_cost_budget_usd:
                 raise BudgetExceeded(f"workspace monthly model budget ${policy.workspace_monthly_cost_budget_usd:.2f} exhausted")
+
+    def remaining_fraction(self, ctx: CallContext) -> float:
+        if not (ctx.workspace_id and ctx.run_id):
+            return 1.0
+        with session_scope() as s:
+            ws, run = s.get(Workspace, ctx.workspace_id), s.get(AnalysisRun, ctx.run_id)
+            if ws is None or run is None:
+                return 1.0
+            policy = load_policy(s, ws)
+            spent = max(run.cost_usd / policy.run_cost_budget_usd if policy.run_cost_budget_usd else 0,
+                        run.tokens / policy.run_token_budget if policy.run_token_budget else 0)
+            return max(0.0, 1.0 - spent)

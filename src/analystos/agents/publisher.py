@@ -26,7 +26,11 @@ from analystos.tools.registry import ToolRuntime, get_agent_spec
 
 def choose_destination(ctx: RunContext) -> str:
     from analystos.publishing.base import get_publisher
+    from analystos.services.platform_settings import get as platform
 
+    if not platform().features.superset_publishing:
+        ctx.say("Superset publishing is turned off by the administrator; using the local preview destination.", kind="decision")
+        return "preview"
     if "superset" in ctx.policy.publish_destinations:
         try:
             status = get_publisher("superset", get_settings()).test_connection()
@@ -112,6 +116,10 @@ def publish(ctx: RunContext) -> dict:
         run = s.get(AnalysisRun, ctx.run.id)
         # Re-verify immediately before the side effect: status, payload hash, plan hash, policy version, authorization.
         verify_for_execution(s, approval_id, payload=payload, plan_hash=run.plan_hash)
+    from analystos.services.platform_settings import get as platform
+
+    if destination == "superset" and not platform().features.superset_publishing:
+        raise PolicyDenied("Superset publishing was turned off by the administrator after this approval was granted")
     current = build_bundle(ctx, destination).model_dump()
     if stable_hash(current) != stable_hash(payload):
         with session_scope() as s:

@@ -25,7 +25,9 @@ from analystos.tools.registry import ToolRuntime, get_agent_spec
 
 @lru_cache
 def default_router() -> ModelRouter:
-    return ModelRouter(sink=DbUsageSink())
+    from analystos.llm.cache import ResponseCache
+
+    return ModelRouter(sink=DbUsageSink(), cache=ResponseCache(get_settings().redis_url))
 
 
 @lru_cache

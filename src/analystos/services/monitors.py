@@ -28,7 +28,7 @@ from analystos.llm.router import CallContext
 from analystos.services.notifications import notify
 
 log = get_logger(__name__)
-KINDS = {"metric_threshold", "metric_drift", "change_point", "data_quality"}
+KINDS = {"metric_threshold", "metric_drift", "change_point", "forecast_deviation", "data_quality"}
 OPS = {">": lambda a, b: a > b, ">=": lambda a, b: a >= b, "<": lambda a, b: a < b, "<=": lambda a, b: a <= b}
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
 
@@ -172,6 +172,22 @@ def _evaluate_metric(monitor: Monitor, series: dict) -> dict[str, Any]:
                    message=(f"{series['label']} shifted from {hl.get('before_mean', 0):.4g} to {hl.get('after_mean', 0):.4g} "
                             f"({(hl.get('shift_pct') or 0):+.1%}) starting {hl.get('change_period')}.") if hl.get("change_period")
                    else f"No recent regime change in {series['label']}.")
+    elif monitor.kind == "forecast_deviation":
+        from analystos.skills.forecast import forecast_deviation
+
+        history = pts[-int(cfg.get("history", 60)):]
+        stat = forecast_deviation([v for _, v in history], [p for p, _ in history], z=float(cfg.get("z", 2.5)),
+                                  seasonal_periods=cfg.get("seasonal_periods"))
+        hl = stat.highlights or {}
+        dev = hl.get("deviation_pct")
+        out.update(alert=bool(stat.supported), severity="critical" if abs(hl.get("z_score") or 0) >= 2 * float(cfg.get("z", 2.5))
+                   else "warning", expected=hl.get("expected"), lower=hl.get("lower"), upper=hl.get("upper"),
+                   z=hl.get("z_score"), direction=hl.get("direction"), pct_change=dev, forecast_method=hl.get("method"),
+                   warnings=stat.warnings,
+                   message=(f"{series['label']} was {latest:.4g} for {period}; the forecast from {len(history) - 1} prior periods "
+                            f"expected {hl.get('expected', 0):.4g} (interval {hl.get('lower', 0):.4g} to {hl.get('upper', 0):.4g})"
+                            + ("" if dev is None else f", {dev:+.1%}") + ".") if hl.get("expected") is not None
+                   else f"Not enough history to forecast {series['label']}.")
     return out
 
 
@@ -264,7 +280,9 @@ def _triage(monitor: Monitor, workspace: Workspace, result: dict) -> tuple[str, 
         ctx=CallContext(workspace_id=workspace.id, agent_id="monitor"))
     if verdict is None:
         return severity, None
-    if verdict.value >= 0.8 and SEVERITY_RANK[severity] < SEVERITY_RANK["critical"]:
+    from analystos.services.platform_settings import get as platform
+
+    if verdict.value >= platform().monitors.triage_escalate_probability and SEVERITY_RANK[severity] < SEVERITY_RANK["critical"]:
         severity = "critical"
     return severity, {"p_material": verdict.value, "model": verdict.model}
 
@@ -288,7 +306,10 @@ def _raise_alert(monitor: Monitor, owner: User, workspace: Workspace, result: di
         audit(f"monitor:{monitor.id}", "alert.raised", workspace_id=monitor.workspace_id, target=alert.id,
               details={"severity": severity, "triage": triage}, session=s)
         alert_id = alert.id
-    if monitor.auto_investigate and SEVERITY_RANK[severity] >= SEVERITY_RANK["warning"] and (triage is None or triage["p_material"] >= 0.5):
+    from analystos.services.platform_settings import get as platform
+
+    if platform().monitors.auto_investigation_enabled and monitor.auto_investigate and \
+            SEVERITY_RANK[severity] >= SEVERITY_RANK["warning"] and (triage is None or triage["p_material"] >= 0.5):
         start_investigation(alert_id, owner, automatic=True)
     return alert_id
 

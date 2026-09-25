@@ -59,3 +59,30 @@ def test_change_point_recent_shift():
     pts = [(f"w{i:02d}", 100.0 + (i % 3)) for i in range(20)] + [(f"w{i:02d}", 150.0 + (i % 3)) for i in range(20, 24)]
     r = _evaluate_metric(_mon("change_point", recent_periods=6), {"label": "Volume", "points": pts})
     assert r["alert"] and r["change_period"] == "w20"
+
+
+def test_rule_based_redirect_parsing():
+    from analystos.services.runs import parse_redirect_rules
+
+    vocab = {("s.incident", "category"): ["network", "software", "inquiry", "hardware"],
+             ("s.incident", "contact_type"): ["email", "phone", "self-service"]}
+    f = parse_redirect_rules("Exclude inquiry-category incidents; they are requests.", vocab)
+    assert f == [{"asset": "s.incident", "column": "category", "op": "!=", "value": "inquiry"}]
+    f = parse_redirect_rules("Focus only on software and hardware incidents raised by phone", vocab)
+    assert {"asset": "s.incident", "column": "category", "op": "in", "value": ["software", "hardware"]} in f
+    assert {"asset": "s.incident", "column": "contact_type", "op": "=", "value": "phone"} in f
+    assert parse_redirect_rules("Tell me more about the network", vocab) == []  # no verb -> no filter
+
+
+def test_forecast_deviation_monitor_follows_trend_and_flags_break():
+    # A steady upward trend is expected, not an anomaly (the median-drift check would flag it).
+    trend = [(f"2025-{i // 4 + 1:02d}-{(i % 4) * 7 + 1:02d}", 100 + 5 * i + (i % 3)) for i in range(24)]
+    quiet = _evaluate_metric(_mon("forecast_deviation", z=2.5), {"label": "Volume", "points": trend})
+    assert not quiet["alert"] and quiet["expected"] is not None
+    broken = trend[:-1] + [(trend[-1][0], 40)]
+    r = _evaluate_metric(_mon("forecast_deviation", z=2.5), {"label": "Volume", "points": broken})
+    assert r["alert"] and r["direction"] == "below" and r["pct_change"] < -0.5 and "expected" in r["message"]
+
+
+def test_schedule_accepts_crawl_kind():
+    validate("crawl", "0 3 * * *", "UTC", {"mode": "incremental"})

@@ -46,6 +46,29 @@ dev = [
   "types-PyYAML",
 ]
 sqlserver = ["pymssql>=2.3"]
+# Source drivers (config/source_kinds.yaml names the extra each kind needs).
+mysql = ["pymysql>=1.1"]
+oracle = ["oracledb>=2.0"]
+snowflake = ["snowflake-sqlalchemy>=1.6"]
+bigquery = ["sqlalchemy-bigquery>=1.11"]
+databricks = ["databricks-sqlalchemy>=2.0"]
+trino = ["trino>=0.330"]
+clickhouse = ["clickhouse-sqlalchemy>=0.3"]
+duckdb = ["duckdb-engine>=0.13"]
+redshift = ["sqlalchemy-redshift>=0.8", "psycopg2-binary>=2.9"]
+all-sources = [
+  "pymssql>=2.3",
+  "pymysql>=1.1",
+  "oracledb>=2.0",
+  "snowflake-sqlalchemy>=1.6",
+  "sqlalchemy-bigquery>=1.11",
+  "databricks-sqlalchemy>=2.0",
+  "trino>=0.330",
+  "clickhouse-sqlalchemy>=0.3",
+  "duckdb-engine>=0.13",
+  "sqlalchemy-redshift>=0.8",
+  "psycopg2-binary>=2.9",
+]
 
 [project.scripts]
 analystos = "analystos.cli:main"

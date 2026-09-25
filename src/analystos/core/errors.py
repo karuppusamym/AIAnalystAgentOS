@@ -74,3 +74,10 @@ class ModelRouteUnavailable(AnalystOSError):
 
 class RunCancelled(AnalystOSError):
     code, http_status = "run_cancelled", 409
+
+
+class LLMDisabled(ModelRouteUnavailable):
+    """An administrator set this purpose to `off` (or the prompt was refused as oversize).
+    Callers take their deterministic path; this is a decision, not an outage."""
+
+    code, retryable = "llm_disabled", False

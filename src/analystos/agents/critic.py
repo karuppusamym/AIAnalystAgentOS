@@ -21,6 +21,7 @@ from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
 from analystos.events.bus import emit
 from analystos.llm.config import family
 from analystos.runtime.context import RunContext
+from analystos.services.platform_settings import get as platform
 
 CAUSAL = re.compile(r"\b(causes?|caused|drives?|driven by|because|leads? to|results? in|due to)\b", re.I)
 MIN_N = 100
@@ -59,8 +60,9 @@ def verify_insights(ctx: RunContext) -> dict:
         min_group = min((g.get("n") or 0 for g in groups), default=stat_d.get("n") or 0)
         checks.append({"check": "method_fit", "passed": not any("expected" in w.lower() and "<5" in w for w in stat_d.get("warnings") or []),
                        "detail": f"{stat_d.get('test')} for {spec.method}; assumptions: {', '.join(stat_d.get('assumptions') or []) or 'n/a'}"})
-        checks.append({"check": "sample_size", "passed": (stat_d.get("n") or 0) >= MIN_N,
-                       "detail": f"n={stat_d.get('n')}, smallest group={min_group} (min {MIN_N})"})
+        min_n = max(MIN_N, platform().analysis.min_sample_size)  # the admin can raise the floor, never lower it
+        checks.append({"check": "sample_size", "passed": (stat_d.get("n") or 0) >= min_n,
+                       "detail": f"n={stat_d.get('n')}, smallest group={min_group} (min {min_n})"})
         p_adj = stat_d.get("p_adjusted", stat_d.get("p_value"))
         checks.append({"check": "significance_after_bh", "passed": p_adj is not None and p_adj < alpha, "detail": f"q={p_adj} alpha={alpha}"})
         checks.append({"check": "effect_size", "passed": bool(stat_d.get("supported")),

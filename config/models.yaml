@@ -68,6 +68,7 @@ routing:
   dashboard_design: low_cost
   feedback_interpretation: coding
   summarization: low_cost
+  metadata_enrichment: low_cost
   verification: independent_model_family
   # JEV decision purposes
   hypothesis_priority: decision

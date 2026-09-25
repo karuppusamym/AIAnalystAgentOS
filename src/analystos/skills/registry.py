@@ -6,7 +6,7 @@ import importlib
 from collections.abc import Callable
 from typing import Any
 
-CATEGORIES = ("data_understanding", "profiling", "analysis", "statistical", "ml", "bi", "engineering")
+CATEGORIES = ("data_understanding", "profiling", "analysis", "statistical", "ml", "bi", "engineering", "governance")
 _P = "analystos.skills"
 
 
@@ -23,6 +23,23 @@ SKILLS: list[dict[str, Any]] = [
     _s("column_semantics", "data_understanding",
        "Infer semantic type (id, numeric, categorical, boolean, datetime, text) from type, name and profile stats.",
        "profiling.infer_semantic_type"),
+    _s("semantic_inference", "data_understanding",
+       "Rule-based business name, table role (fact/dimension/bridge/event/reference/staging/audit), domain, "
+       "grain and column roles/units from names, types and references; zero LLM tokens, with confidence and evidence.",
+       "catalog.infer_table_semantics", covers=["column_role_inference"]),
+    _s("sql_explanation", "data_understanding",
+       "Explain a SQL statement from its parse tree (tables, joins, filters, grouping, aggregations) without a model.",
+       "sqlexplain.explain_sql"),
+    _s("crawl_diff", "data_understanding",
+       "Order-independent structural fingerprints and crawl diff: new, changed (added/removed/retyped columns), "
+       "unchanged, missing/deprecated (full crawls only) and rename candidates.", "catalog.diff_crawl"),
+    # governance
+    _s("pii_classification", "governance",
+       "PII category and sensitivity from column names, strengthened by sample-value patterns (email, phone, "
+       "Luhn-checked cards, SSN, IP); never echoes values.", "catalog.classify_pii"),
+    _s("glossary_linking", "governance",
+       "Link columns to glossary terms by explicit mapping or stemmed token overlap with names and synonyms.",
+       "catalog.link_glossary"),
     # profiling
     _s("dataset_profile", "profiling",
        "Pushdown profile of a table: counts, nulls, distinct, min/max/mean/stddev, percentiles, top values, "
@@ -73,6 +90,12 @@ SKILLS: list[dict[str, Any]] = [
        "stats.feature_importance"),
     _s("anomaly_detection", "ml", "Robust anomalies via median/MAD modified z-scores and IQR fences.",
        "stats.robust_anomalies"),
+    _s("forecasting", "ml",
+       "Holt-Winters forecast (additive damped trend, seasonality with >= 2 seasons) with seeded simulated "
+       "prediction intervals; naive/drift fallback for short series.", "forecast.forecast_series"),
+    _s("forecast_deviation", "ml",
+       "Flag the latest point(s) falling outside the forecast interval fitted on the preceding history.",
+       "forecast.forecast_deviation"),
     # bi
     _s("chart_selection", "bi", "Chart type from intent, dimension type, cardinality and metric count (§34).",
        "viz.choose_chart"),

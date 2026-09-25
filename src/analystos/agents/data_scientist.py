@@ -9,6 +9,7 @@ from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
+from analystos.services.platform_settings import get as platform
 
 
 def _dump(v):
@@ -27,7 +28,8 @@ def test_hypothesis(ctx: RunContext) -> dict:
     run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
     ctx.check_control()
     outcome = ctx.tools().invoke("analysis.run", {"hypothesis": h.code, "method": spec.method, "asset": spec.asset},
-                                 lambda: run_analysis(spec, run_sql, alpha=ctx.policy.alpha))
+                                 lambda: run_analysis(spec, run_sql, alpha=ctx.policy.alpha,
+                                                      sample_rows=platform().analysis.sample_rows))
     stat = _dump(outcome.stat)
     status = {True: "supported", False: "rejected"}.get(stat.get("supported"), "inconclusive")
     with session_scope() as s:

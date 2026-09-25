@@ -5,7 +5,7 @@ import re
 
 from sqlalchemy import select
 
-from analystos.agents.common import catalog_for_prompt, llm_json
+from analystos.agents.common import catalog_for_prompt, llm_json, model_gate
 from analystos.artifacts.registry import link, save_artifact
 from analystos.context.service import add_entry
 from analystos.core.ids import utcnow
@@ -25,9 +25,11 @@ def build_plan(run_id: str, services: Services) -> dict:
     # Framing needs the catalog, which needs a context; build a light pseudo-context for the supervisor.
     try:
         ctx = _supervisor_ctx(run_id, services)
-        data, model = llm_json(ctx, "planning", "planning.v1", {
-            "objective": objective, "user_instructions": [i.get("text") for i in instructions],
-            "catalog": catalog_for_prompt(ctx, include_values=False)})
+        payload = {"objective": objective, "user_instructions": [i.get("text") for i in instructions],
+                   "catalog": catalog_for_prompt(ctx, include_values=False)}
+        # Framing is optional: the lifecycle skeleton is valid without it, so `auto` skips the model.
+        data, model = llm_json(ctx, "planning", "planning.v1", payload) \
+            if model_gate(ctx, "planning", payload, deterministic_ok=True) else (None, "deterministic")
         if isinstance(data, dict):
             framing = data
             ctx.say(f"Framed the objective into {len(data.get('questions') or [])} analytical questions.", kind="decision",
@@ -70,7 +72,9 @@ def finalize(ctx: RunContext) -> dict:
         facts = [{"code": i.code, "title": i.title, "finding": i.finding, "confidence": i.confidence,
                   "impact": i.business_impact} for i in insights]
     summary_md, source = None, "template"
-    data, model = llm_json(ctx, "summarization", "run_summary.v1", {"objective": ctx.run.objective, "facts": facts})
+    payload = {"objective": ctx.run.objective, "facts": facts}
+    data, model = llm_json(ctx, "summarization", "run_summary.v1", payload) \
+        if model_gate(ctx, "summarization", payload, deterministic_ok=True) else (None, "deterministic")
     if isinstance(data, dict) and isinstance(data.get("summary_markdown"), str):
         allowed = {n for f in facts for n in _NUM.findall(str(f))}
         used = set(_NUM.findall(data["summary_markdown"]))

@@ -27,6 +27,8 @@ from analystos.services import sources as source_svc
 from analystos.services import workspaces as ws_svc
 
 router = APIRouter(prefix="/api", tags=["workspaces"])
+# Files and file databases (sqlite/duckdb kinds read them in place, inside the upload directory only).
+UPLOAD_EXTENSIONS = (".csv", ".parquet", ".xlsx", ".db", ".sqlite", ".sqlite3", ".duckdb")
 
 
 class WorkspaceIn(BaseModel):
@@ -153,8 +155,8 @@ def select_assets(workspace_id: str, source_id: str, body: Selection, user: User
 async def upload(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user), session: Session = Depends(db)):
     require_role(session, user, workspace_id, "editor")
     name = (file.filename or "upload.csv").replace("/", "_").replace("..", "_")
-    if not name.lower().endswith((".csv", ".parquet", ".xlsx")):
-        raise InvalidInput("only .csv, .parquet or .xlsx uploads")
+    if not name.lower().endswith(UPLOAD_EXTENSIONS):
+        raise InvalidInput(f"only {', '.join(UPLOAD_EXTENSIONS)} uploads")
     target = get_settings().upload_dir / workspace_id
     target.mkdir(parents=True, exist_ok=True)
     data = await file.read()

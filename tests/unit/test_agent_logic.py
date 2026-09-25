@@ -132,3 +132,69 @@ def test_claim_identity_distinguishes_driver_sets_and_filters():
     assert claim_key(dm(["a", "b"]), hl) == claim_key(dm(["b", "a"]), hl)
     assert claim_key(dm(["a", "b"]), hl) != claim_key(dm(["a", "c"]), hl)
     assert claim_key(dm(["a"], [{"column": "priority", "op": "=", "value": 1}]), hl) != claim_key(dm(["a"]), hl)
+
+
+def test_driver_model_title_names_the_driver_and_effect():
+    from analystos.contracts.analysis import AnalysisSpec as Spec
+
+    s = Spec.model_validate({"method": "driver_model", "asset": "s.orders",
+                             "outcome": {"type": "is_true", "column": "returned", "label": "returned"},
+                             "drivers": [{"type": "column", "column": "channel"}, {"type": "column", "column": "sales_region"}]})
+    stat = {"highlights": {"top_driver": "channel", "strongest_feature": "channel=marketplace", "strongest_odds_ratio": 3.25}}
+    title, text = template_text(stat, s.model_dump())
+    assert title == "Returned is driven mainly by channel" and "3.2x the odds" in text
+
+
+def test_second_driver_model_on_same_outcome_is_a_duplicate():
+    from analystos.agents.investigator import identity_keys
+
+    base = {"method": "driver_model", "asset": "s.orders", "outcome": {"type": "is_true", "column": "returned"}}
+    a = AnalysisSpec.model_validate({**base, "drivers": [{"type": "column", "column": "channel"},
+                                                          {"type": "column", "column": "sales_region"}]})
+    b = AnalysisSpec.model_validate({**base, "drivers": [{"type": "column", "column": "channel"},
+                                                          {"type": "column", "column": "net_amount"}]})
+    filtered = AnalysisSpec.model_validate({**base, "drivers": b.model_dump()["drivers"],
+                                            "filters": [{"column": "channel", "op": "=", "value": "web"}]})
+    assert identity_keys(a) & identity_keys(b) and not identity_keys(a) & identity_keys(filtered)
+
+
+def test_diverse_top_covers_each_outcome_before_repeating_one():
+    from analystos.agents.investigator import diverse_top
+
+    def h(method, outcome, score):
+        return {"spec": {"method": method, "outcome": {"column": outcome}}, "priority_score": score}
+
+    accepted = [h("rate_by_segment", "returned", 9), h("rate_by_segment", "returned", 8), h("rate_by_segment", "returned", 7),
+                h("numeric_by_segment", "net_amount", 5), h("numeric_by_segment", "shipping_days", 4)]
+    picked = diverse_top(accepted, 3)
+    assert {p["spec"]["outcome"]["column"] for p in picked} == {"returned", "net_amount", "shipping_days"}
+
+
+def test_matrix_continuation_breaks_each_outcome_down_by_the_next_dimension():
+    from analystos.agents.investigator import _matrix_continuations
+
+    types = {"s.orders": {"channel": "categorical", "sales_region": "categorical", "customer_segment": "categorical",
+                          "email": "categorical", "net_amount": "numeric", "notes_text": "categorical"}}
+    tested = [{"spec": {"method": "numeric_by_segment", "asset": "s.orders", "outcome": {"type": "column", "column": "net_amount"},
+                        "segment": {"type": "column", "column": "channel"}}},
+              {"spec": {"method": "numeric_by_segment", "asset": "s.orders", "outcome": {"type": "column", "column": "net_amount"},
+                        "segment": {"type": "column", "column": "sales_region"}}}]
+    [p] = _matrix_continuations(tested, types, denied=["s.orders.email"])
+    assert p["spec"]["segment"]["column"] == "customer_segment" and p["spec"]["outcome"]["column"] == "net_amount"
+    assert _matrix_continuations([{"spec": {**tested[0]["spec"], "filters": [{"column": "channel", "op": "=", "value": "web"}]}}],
+                                 types, denied=[]) == []  # drill-downs are not extended
+
+
+def test_matrix_continuation_prefers_least_explored_business_measures():
+    from analystos.agents.investigator import _matrix_continuations
+
+    types = {"s.o": {"channel": "categorical", "region": "categorical", "segment": "categorical"}}
+
+    def r(col, seg, typ="column"):
+        return {"spec": {"method": "numeric_by_segment", "asset": "s.o", "outcome": {"type": typ, "column": col},
+                         "segment": {"type": "column", "column": seg}}}
+
+    results = [r("quantity", "channel"), r("net_amount", "channel"), r("returned", "channel"), r("returned", "region")]
+    roles = {"s.o.quantity": "measure", "s.o.net_amount": "amount", "s.o.returned": "flag"}
+    order = [p["spec"]["outcome"]["column"] for p in _matrix_continuations(results, types, [], roles)]
+    assert order == ["net_amount", "quantity", "returned"]

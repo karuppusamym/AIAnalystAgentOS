@@ -50,6 +50,18 @@ BUILTIN_TOOLS: list[ToolSpec] = [
              description="Check an externally visible bundle against restricted columns, scope and destination policy."),
     ToolSpec(tool_id="preview.publish", name="Preview publish", category="bi_publishing", side_effects="internal_write",
              description="Validate a publish bundle and render it locally without an external BI tool."),
+    ToolSpec(tool_id="crawl.run", name="Metadata crawl", category="metadata", side_effects="internal_write", min_role="editor",
+             description="Full or incremental metadata crawl of a source: fingerprints, schema drift, deterministic semantics, "
+                         "PII classification, declared relationships, glossary links, context store and graph."),
+    ToolSpec(tool_id="metadata.enrich", name="Metadata enrichment", category="metadata", cost_profile="medium",
+             description="Optional model descriptions for tables the rules could not describe confidently; screened, batched, "
+                         "never overrides reviewed or user-written metadata."),
+    ToolSpec(tool_id="sql.explain", name="Explain SQL", category="sql",
+             description="Deterministic explanation of a SQL statement (tables, joins, filters, grouping, aggregations) and the "
+                         "gateway validator's verdict, without executing it."),
+    ToolSpec(tool_id="forecast.run", name="Forecast", category="statistics",
+             description="Exponential-smoothing forecast with simulated prediction intervals; deviation of the latest period "
+                         "from its forecast."),
     ToolSpec(tool_id="superset.publish", name="Publish to Superset", category="bi_publishing", risk="high",
              approval_policy="publish_only", side_effects="external_write", runtime="remote_api", min_role="editor",
              capabilities=["dataset", "chart", "dashboard", "filters"],
@@ -128,6 +140,8 @@ class ToolRuntime:
                 reasons.append("tool_not_registered_or_disabled")
             elif tool_id not in self.agent.tools:
                 reasons.append(f"tool_not_bound_to_agent_{self.agent.id}")
+            elif tool_id == "python.execute" and not _platform().features.python_sandbox:
+                reasons.append("python_sandbox_disabled_by_admin")
             decision = None
             if not reasons:
                 identity = self.identity.model_copy(update={"tool_id": tool_id, "agent_id": self.agent.id})
@@ -168,6 +182,12 @@ def _execution(rt: ToolRuntime, tool_id, status, inputs, output, decision, laten
     return ToolExecution(workspace_id=rt.identity.workspace_id, run_id=rt.identity.run_id, task_id=rt.identity.task_id,
                          agent_id=rt.agent.id, tool_id=tool_id, status=status, input=_summarize(inputs), output=out,
                          decision=decision, latency_ms=latency, error=error)
+
+
+def _platform():
+    from analystos.services.platform_settings import get
+
+    return get()
 
 
 def list_tools(session: Session) -> list[dict]:

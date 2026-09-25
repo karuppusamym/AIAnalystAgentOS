@@ -20,9 +20,10 @@ from typing import Any, Protocol
 
 import httpx
 
-from analystos.core.errors import BudgetExceeded, ModelRouteUnavailable, UpstreamUnavailable
+from analystos.core.errors import BudgetExceeded, LLMDisabled, ModelRouteUnavailable, UpstreamUnavailable
 from analystos.core.ids import stable_hash
 from analystos.core.logging import get_logger
+from analystos.llm.cache import ResponseCache, estimate_tokens
 from analystos.llm.config import ModelsConfig, ProfileConfig, family, load_models_config
 from analystos.llm.redaction import redact, redact_obj
 
@@ -51,6 +52,7 @@ class ModelResponse:
     cost_usd: float = 0.0
     latency_ms: int = 0
     attempts: int = 1
+    cached: bool = False
 
 
 @dataclass
@@ -61,15 +63,19 @@ class DecisionResponse:
     latency_ms: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached: bool = False
 
 
 class UsageSink(Protocol):
     def record(self, *, ctx: CallContext, purpose: str, profile: str, provider: str, model: str, status: str,
                attempt: int, latency_ms: int, input_tokens: int, output_tokens: int, cost_usd: float,
-               request_hash: str | None, error: str | None) -> None: ...
+               request_hash: str | None, error: str | None, tokens_saved: int = 0) -> None: ...
 
     def check_budget(self, ctx: CallContext, purpose: str) -> None:
         """Raise BudgetExceeded when the run/workspace budget is spent."""
+
+    def remaining_fraction(self, ctx: CallContext) -> float:
+        """Share of the run's budget still available (1.0 when unknown)."""
 
 
 class NullSink:
@@ -78,6 +84,9 @@ class NullSink:
 
     def check_budget(self, ctx: CallContext, purpose: str) -> None:
         return None
+
+    def remaining_fraction(self, ctx: CallContext) -> float:
+        return 1.0
 
 
 class Transport(Protocol):
@@ -131,17 +140,51 @@ def parse_json_text(text: str) -> Any:
 class ModelRouter:
     def __init__(self, config: ModelsConfig | None = None, *, sink: UsageSink | None = None,
                  transport: Transport | None = None, api_key_lookup: Callable[[str], str | None] | None = None,
-                 max_retries: int = 2) -> None:
+                 max_retries: int = 2, settings_provider: Callable[[], Any] | None = None,
+                 cache: ResponseCache | None = None) -> None:
         self.config = config or load_models_config()
         self.sink = sink or NullSink()
         self.transport = transport or HttpTransport()
         self.api_key_lookup = api_key_lookup or (lambda env: (os.getenv(env) or "").strip() or None)
         self.max_retries = max_retries
+        self.settings_provider = settings_provider or _default_settings
+        self.cache = cache if cache is not None else ResponseCache(None)
+
+    # ------------------------------------------------------------------ admin settings
+    @property
+    def settings(self):
+        return self.settings_provider().llm
+
+    def mode(self, purpose: str) -> str:
+        """off | auto | always (admin control plane). JEV purposes also honour the jev feature flag."""
+        platform = self.settings_provider()
+        if purpose in self.config.routing and self.config.routing[purpose] == "decision" and not platform.features.jev_decisions:
+            return "off"
+        return platform.llm.purpose_modes.get(purpose, "always")
+
+    def record_skip(self, purpose: str, ctx: CallContext | None, *, estimated_tokens: int, reason: str) -> None:
+        """Account for a model call avoided by a deterministic path (shown as tokens saved)."""
+        ctx = ctx or CallContext()
+        self.sink.record(ctx=ctx, purpose=purpose, profile="-", provider="deterministic", model="-", status="skipped",
+                         attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=None,
+                         error=reason[:200], tokens_saved=estimated_tokens)
 
     # ------------------------------------------------------------------ routing
     def candidates(self, purpose: str, ctx: CallContext) -> tuple[str, ProfileConfig, list[str]]:
-        profile_name, profile = self.config.profile_for(purpose)
-        allowed = set(self.config.allowlist)
+        llm = self.settings
+        override = llm.routing_overrides.get(purpose)
+        if override and override in self.config.profiles:
+            profile_name, profile = override, self.config.profiles[override]
+        else:
+            profile_name, profile = self.config.profile_for(purpose)
+        return self._resolve(profile_name, profile, ctx)
+
+    def _resolve(self, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> tuple[str, ProfileConfig, list[str]]:
+        """Admin profile models, then platform allowlist - disabled models, workspace allowlist, family exclusions."""
+        llm = self.settings
+        if llm.profile_models.get(profile_name):
+            profile = profile.model_copy(update={"models": list(llm.profile_models[profile_name])})
+        allowed = set(self.config.allowlist) - set(llm.disabled_models)
         if ctx.allowed_models:
             allowed &= set(ctx.allowed_models)
         excluded = set(profile.exclude_families) | set(ctx.exclude_families)
@@ -150,6 +193,8 @@ class ModelRouter:
 
     def available(self, purpose: str, ctx: CallContext | None = None) -> bool:
         ctx = ctx or CallContext()
+        if self.mode(purpose) == "off":
+            return False
         try:
             _, profile, models = self.candidates(purpose, ctx)
         except KeyError:
@@ -170,7 +215,18 @@ class ModelRouter:
     def complete(self, purpose: str, messages: list[dict[str, str]], *, ctx: CallContext | None = None,
                  json_output: bool = False, max_tokens: int | None = None) -> ModelResponse:
         ctx = ctx or CallContext()
+        if self.mode(purpose) == "off":
+            raise LLMDisabled(f"model use for '{purpose}' is turned off by the administrator")
         profile_name, profile, models = self.candidates(purpose, ctx)
+        llm = self.settings
+        if profile.provider != "typesafe" and profile_name != "low_cost" and not profile.exclude_families \
+                and "low_cost" in self.config.profiles \
+                and getattr(self.sink, "remaining_fraction", lambda _c: 1.0)(ctx) < llm.downgrade_below_budget_fraction:
+            # Budget nearly spent: finish the run on the cheapest profile instead of failing it. Same
+            # allowlists and exclusions as any call; never for independent-family verification.
+            low_name, low, downgraded = self._resolve("low_cost", self.config.profiles["low_cost"], ctx)
+            if downgraded:
+                profile_name, profile, models = low_name, low, downgraded
         if not models:
             raise ModelRouteUnavailable(f"no allowed model for purpose '{purpose}' (profile {profile_name})")
         base_url, key = self._provider(profile)
@@ -180,6 +236,25 @@ class ModelRouter:
             safe_messages[0] = {"role": safe_messages[0]["role"],
                                 "content": safe_messages[0]["content"] + "\n\nRespond with a single valid JSON value only."}
         request_hash = stable_hash({"purpose": purpose, "messages": safe_messages})
+        estimate = estimate_tokens("".join(m["content"] for m in safe_messages))
+        if estimate > llm.max_prompt_tokens:
+            self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model="-",
+                             status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                             request_hash=request_hash, error=f"prompt ~{estimate} tokens > limit {llm.max_prompt_tokens}",
+                             tokens_saved=estimate)
+            raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}")
+        cache_key = None
+        if llm.cache_enabled and purpose in llm.cacheable_purposes:
+            cache_key = ResponseCache.key(purpose, models, {"m": safe_messages, "json": json_output, "max": max_tokens,
+                                                            "t": profile.temperature}, ctx.workspace_id)
+            hit = self.cache.get(cache_key)
+            if hit:
+                self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
+                                 status="cache_hit", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                                 request_hash=request_hash, error=None,
+                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)))
+                return ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
+                                     cached=True)
         last_error: Exception | None = None
         attempt = 0
         for model in models:
@@ -206,6 +281,10 @@ class ModelRouter:
                                      status="ok", attempt=attempt, latency_ms=latency, input_tokens=response.input_tokens,
                                      output_tokens=response.output_tokens, cost_usd=response.cost_usd,
                                      request_hash=request_hash, error=None)
+                    if cache_key:
+                        self.cache.set(cache_key, {"text": text, "data": data, "model": response.model,
+                                                   "input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
+                                       llm.cache_ttl_hours * 3600)
                     return response
                 except (UpstreamUnavailable, json.JSONDecodeError, ValueError) as exc:
                     last_error = exc
@@ -234,6 +313,8 @@ class ModelRouter:
         """Typed decision via TypeSafe Jev. Only trusted, redacted text goes into `state`:
         objective, registry/catalog descriptions, computed statistics — never raw result rows."""
         ctx = ctx or CallContext()
+        if self.mode(purpose) == "off":
+            raise LLMDisabled(f"decision model for '{purpose}' is turned off by the administrator")
         profile_name, profile, models = self.candidates(purpose, ctx)
         if not models:
             raise ModelRouteUnavailable(f"no allowed decision model for purpose '{purpose}'")
@@ -241,6 +322,17 @@ class ModelRouter:
         self.sink.check_budget(ctx, purpose)
         safe_state = redact_obj({k: (v[:4000] if isinstance(v, str) else v) for k, v in state.items()})
         request_hash = stable_hash({"purpose": purpose, "state": safe_state, "questions": questions})
+        llm = self.settings
+        cache_key = None
+        if llm.cache_enabled and purpose in llm.cacheable_purposes:
+            cache_key = ResponseCache.key(purpose, models, {"s": safe_state, "q": questions}, ctx.workspace_id)
+            hit = self.cache.get(cache_key)
+            if hit:
+                self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
+                                 status="cache_hit", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                                 request_hash=request_hash, error=None,
+                                 tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)))
+                return DecisionResponse(answers=hit["answers"], model=hit["model"], cached=True)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 2):
             started = time.perf_counter()
@@ -260,6 +352,9 @@ class ModelRouter:
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=result.model,
                                  status="ok", attempt=attempt, latency_ms=latency, input_tokens=result.input_tokens,
                                  output_tokens=result.output_tokens, cost_usd=result.cost_usd, request_hash=request_hash, error=None)
+                if cache_key:
+                    self.cache.set(cache_key, {"answers": answers, "model": result.model, "input_tokens": result.input_tokens,
+                                               "output_tokens": result.output_tokens}, llm.cache_ttl_hours * 3600)
                 return result
             except (UpstreamUnavailable, ModelRouteUnavailable) as exc:
                 last_error = exc
@@ -270,6 +365,17 @@ class ModelRouter:
                     break
                 time.sleep(min(0.5 * 2 ** (attempt - 1), 4))
         raise ModelRouteUnavailable(f"decision model failed for purpose '{purpose}': {last_error}")
+
+
+def _default_settings():
+    try:
+        from analystos.services.platform_settings import get
+
+        return get()
+    except Exception:  # pragma: no cover - settings must never break model routing
+        from analystos.contracts.platform import PlatformSettings
+
+        return PlatformSettings()
 
 
 __all__ = ["BudgetExceeded", "CallContext", "DecisionResponse", "ModelResponse", "ModelRouter", "parse_json_text"]

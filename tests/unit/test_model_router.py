@@ -19,8 +19,13 @@ class Sink:
         return None
 
 
-def make(transport, sink=None):
-    return ModelRouter(transport=transport, sink=sink or Sink(), api_key_lookup=KEY.get, max_retries=0)
+def make(transport, sink=None, settings=None):
+    from analystos.contracts.platform import PlatformSettings
+    from analystos.llm.cache import ResponseCache
+
+    platform = settings or PlatformSettings()
+    return ModelRouter(transport=transport, sink=sink or Sink(), api_key_lookup=KEY.get, max_retries=0,
+                       settings_provider=lambda: platform, cache=ResponseCache(None))
 
 
 def test_json_completion_and_usage_recorded():
@@ -55,7 +60,9 @@ def test_verification_excludes_primary_family():
 
 
 def test_no_key_means_unavailable_not_silent_reroute():
-    r = ModelRouter(transport=FakeTransport(), sink=Sink(), api_key_lookup=lambda _: None)
+    from analystos.contracts.platform import PlatformSettings
+
+    r = ModelRouter(transport=FakeTransport(), sink=Sink(), api_key_lookup=lambda _: None, settings_provider=PlatformSettings)
     assert r.available("planning") is False
     with pytest.raises(ModelRouteUnavailable):
         r.complete("planning", [{"role": "user", "content": "x"}])
@@ -102,5 +109,96 @@ def test_jev_invalid_choice_is_ignored():
 
 
 def test_jev_unavailable_returns_none():
-    r = ModelRouter(transport=FakeTransport(), sink=Sink(), api_key_lookup=lambda _: None)
+    from analystos.contracts.platform import PlatformSettings
+
+    r = ModelRouter(transport=FakeTransport(), sink=Sink(), api_key_lookup=lambda _: None, settings_provider=PlatformSettings)
     assert JevDecisions(r).consequential("x") is None
+
+
+# ---------------------------------------------------------------- admin control plane + token economy
+from analystos.contracts.platform import PlatformSettings  # noqa: E402
+from analystos.core.errors import LLMDisabled  # noqa: E402
+
+
+def _settings(**llm):
+    s = PlatformSettings()
+    return s.model_copy(update={"llm": s.llm.model_copy(update=llm)})
+
+
+def test_purpose_off_is_a_decision_not_an_outage():
+    t = FakeTransport(chat=lambda p: chat_json({}))
+    r = make(t, settings=_settings(purpose_modes={"planning": "off"}))
+    assert r.available("planning") is False and r.mode("planning") == "off"
+    with pytest.raises(LLMDisabled):
+        r.complete_json("planning", "s", "u")
+    assert t.chat_calls == []
+
+
+def test_cache_hit_avoids_second_call_and_records_savings():
+    sink = Sink()
+    t = FakeTransport(chat=lambda p: chat_json({"a": 1}))
+    r = make(t, sink, settings=_settings(cacheable_purposes=["planning"]))
+    first = r.complete_json("planning", "same", "prompt")
+    second = r.complete_json("planning", "same", "prompt")
+    assert len(t.chat_calls) == 1 and second.cached and second.data == first.data
+    hit = sink.records[-1]
+    assert hit["status"] == "cache_hit" and hit["tokens_saved"] == 150
+
+
+def test_non_cacheable_purpose_is_not_cached():
+    t = FakeTransport(chat=lambda p: chat_json({"a": 1}))
+    r = make(t, settings=_settings(cacheable_purposes=[]))
+    r.complete_json("planning", "s", "u")
+    r.complete_json("planning", "s", "u")
+    assert len(t.chat_calls) == 2
+
+
+def test_oversize_prompt_refused_before_sending():
+    sink = Sink()
+    t = FakeTransport(chat=lambda p: chat_json({}))
+    r = make(t, sink, settings=_settings(max_prompt_tokens=50))
+    with pytest.raises(LLMDisabled, match="above the admin limit"):
+        r.complete_json("planning", "s", "x" * 1000)
+    assert t.chat_calls == [] and sink.records[-1]["status"] == "refused"
+
+
+def test_admin_routing_and_model_overrides():
+    t = FakeTransport(chat=lambda p: chat_json({}, model=p["model"]))
+    r = make(t, settings=_settings(routing_overrides={"planning": "low_cost"},
+                                   profile_models={"low_cost": ["deepseek/deepseek-v4-flash"]}))
+    assert r.complete_json("planning", "s", "u").model == "deepseek/deepseek-v4-flash"
+    r2 = make(t, settings=_settings(disabled_models=["anthropic/claude-sonnet-5"]))
+    _, _, models = r2.candidates("planning", CallContext())
+    assert "anthropic/claude-sonnet-5" not in models
+
+
+def test_budget_pressure_downgrades_to_low_cost():
+    class LowBudget(Sink):
+        def remaining_fraction(self, ctx):
+            return 0.1
+
+    t = FakeTransport(chat=lambda p: chat_json({}, model=p["model"]))
+    resp = make(t, LowBudget()).complete_json("planning", "s", "u")
+    assert resp.model == "google/gemini-3.5-flash-lite"
+
+
+def test_budget_downgrade_respects_workspace_allowlist_and_verification_family():
+    class LowBudget(Sink):
+        def remaining_fraction(self, ctx):
+            return 0.1
+
+    t = FakeTransport(chat=lambda p: chat_json({}, model=p["model"]))
+    # A workspace restricted to one provider never gets downgraded to another provider's model.
+    resp = make(t, LowBudget()).complete_json("planning", "s", "u", ctx=CallContext(allowed_models=["openai/gpt-5.4"]))
+    assert resp.model == "openai/gpt-5.4"
+    # Independent-family verification is never downgraded (the exclusion is the point of the call).
+    resp = make(t, LowBudget()).complete_json("verification", "s", "u", ctx=CallContext(exclude_families=["anthropic"]))
+    _, _, verification_models = make(t).candidates("verification", CallContext(exclude_families=["anthropic"]))
+    assert resp.model in verification_models
+
+
+def test_jev_feature_flag_turns_decisions_off():
+    s = PlatformSettings()
+    s = s.model_copy(update={"features": s.features.model_copy(update={"jev_decisions": False})})
+    r = make(FakeTransport(), settings=s)
+    assert r.mode("risk_check") == "off" and JevDecisions(r).consequential("publish") is None

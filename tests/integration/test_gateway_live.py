@@ -123,6 +123,21 @@ def test_cache_hit_on_second_call(dp_settings, dp_session_factory, dp_redis, ser
         client.delete(key)
 
 
+def test_retain_rows_false_stores_no_values(dp_settings, dp_session_factory, dp_redis, servicenow_scope) -> None:
+    """Crawler PII sampling: executed and audited, but no value lands in the audit preview or the cache."""
+    from analystos.gateway.cache import QueryCache
+    from analystos.gateway.service import QueryGateway
+
+    gw = QueryGateway(dp_settings, session_factory=dp_session_factory, cache=QueryCache(dp_settings))
+    sql = "SELECT DISTINCT category AS v FROM incident WHERE category IS NOT NULL"
+    first = gw.execute(servicenow_scope, sql, actor="crawler:test", purpose="crawl.pii_sample", retain_rows=False)
+    second = gw.execute(servicenow_scope, sql, actor="crawler:test", purpose="crawl.pii_sample", retain_rows=False)
+    assert first.rows and not second.cache_hit  # nothing was cached
+    row = _audit(dp_session_factory, first.query_id)
+    assert row.status == "ok" and row.row_count == len(first.rows) and row.result_hash == first.result_hash
+    assert row.result_preview == []
+
+
 def test_reader_cannot_write_even_if_validator_bypassed(dp_settings, staged_servicenow) -> None:
     schema = staged_servicenow["schema"]
     reader = create_engine(dp_settings.analytics_reader_url)

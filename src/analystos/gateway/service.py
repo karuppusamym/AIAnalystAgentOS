@@ -9,7 +9,10 @@ execute():
        staged sources  -> analytics DB with the READER identity only, READ ONLY transaction,
                           SET LOCAL statement_timeout;
        pushdown pg     -> connector.sqlalchemy_url(), READ ONLY transaction + statement_timeout;
-       pushdown tsql   -> connector URL with the driver query timeout;
+       pushdown tsql   -> connector URL with the driver query timeout, plus the source-kind
+                          catalog's session statements (connectors/kinds.py);
+     a connector whose catalog kind cannot be pushed down is refused (staged kinds only ever run
+     in the analytics DB);
   6. JSON-safe values, result hash, audit row (QueryExecution) for every attempt in its own short
      transaction, optional on_event("query.executed" | "query.rejected", payload).
 """
@@ -98,10 +101,11 @@ class _Runner:
         self.source_id = source_id
         self.dialect = scope.source_dialects.get(source_id, "postgres")
 
-    def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None) -> QueryResult:
+    def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None,
+                 retain_rows: bool = True) -> QueryResult:
         return self._gateway.execute(
             self._scope, sql, actor=self._actor, purpose=purpose, run_id=self._run_id, task_id=self._task_id,
-            max_rows=max_rows,
+            max_rows=max_rows, retain_rows=retain_rows,
         )
 
 
@@ -168,7 +172,12 @@ class QueryGateway:
         use_cache: bool = True,
         max_rows: int | None = None,
         timeout_seconds: int | None = None,
+        retain_rows: bool = True,
     ) -> QueryResult:
+        """`retain_rows=False` (e.g. crawler PII value sampling): the statement is validated, executed
+        and audited as usual, but no result value is stored anywhere — no audit preview, no result cache."""
+        if not retain_rows:
+            use_cache = False
         started = time.perf_counter()
         query_id = new_id("qry")
         eff_rows = min(x for x in (max_rows, scope.max_rows, self.settings.query_max_rows) if x is not None and x > 0)
@@ -226,7 +235,7 @@ class QueryGateway:
             raise err from exc
         truncated = len(rows) > eff_rows
         rows = rows[:eff_rows]
-        result = self._finish(audit, validated, columns, rows, truncated, started, cache_hit=False)
+        result = self._finish(audit, validated, columns, rows, truncated, started, cache_hit=False, retain_rows=retain_rows)
         if key is not None and self.cache is not None:
             self.cache.set(key, {
                 "columns": result.columns, "rows": result.rows, "truncated": result.truncated,
@@ -273,6 +282,10 @@ class QueryGateway:
         if source["execution_mode"] == "staged":
             return self._run_postgres(self.settings.analytics_reader_url, validated.executable_sql, max_rows, timeout)
         connector = self.connector_factory(_SourceView(source), self.settings)
+        if getattr(connector, "execution_mode", "pushdown") != "pushdown":
+            # The catalog does not allow this kind to be queried in place (e.g. a row marked
+            # pushdown for MySQL): refuse rather than send SQL the analysis compiler never targeted.
+            raise InvalidInput(f"Source {source['id']} ({source['kind']}) cannot be queried in place; stage it instead")
         dialect = getattr(connector, "dialect", "postgres")
         if dialect != validated.dialect:
             raise SQLRejected(f"Source {source['id']} expects {dialect} SQL")
@@ -280,7 +293,8 @@ class QueryGateway:
             return self._run_postgres(connector.sqlalchemy_url(), validated.executable_sql, max_rows, timeout)
         if dialect == "tsql":
             url = connector.query_url(timeout) if hasattr(connector, "query_url") else connector.sqlalchemy_url()
-            return self._run_generic(url, validated.executable_sql, max_rows)
+            session_sql = connector.session_statements(timeout) if hasattr(connector, "session_statements") else []
+            return self._run_generic(url, validated.executable_sql, max_rows, session_sql)
         raise InvalidInput(f"Unsupported pushdown dialect {dialect}")
 
     def _run_postgres(self, url: str, sql: str, max_rows: int, timeout: int) -> tuple[list[str], list[list[Any]]]:
@@ -320,13 +334,18 @@ class QueryGateway:
         rows = [[json_safe(v) for v in r] for r in raw_rows]
         return columns, rows
 
-    def _run_generic(self, url: str, sql: str, max_rows: int) -> tuple[list[str], list[list[Any]]]:
+    def _run_generic(self, url: str, sql: str, max_rows: int,
+                     session_sql: list[str] | tuple[str, ...] = ()) -> tuple[list[str], list[list[Any]]]:
+        """Non-postgres pushdown: the catalog's read-only/timeout session statements (if the kind
+        has any) run on the same connection first; the driver URL carries the query timeout."""
         engine = get_engine(url)
         try:
             with engine.connect() as conn:
                 dbapi = conn.connection
                 cur = dbapi.cursor()
                 try:
+                    for stmt in session_sql:
+                        cur.execute(stmt)
                     cur.execute(sql)
                     columns = [d[0] for d in (cur.description or [])]
                     raw_rows = cur.fetchmany(max_rows + 1)
@@ -347,11 +366,13 @@ class QueryGateway:
         return columns, [[json_safe(v) for v in r] for r in raw_rows]
 
     def _finish(self, audit: dict[str, Any], validated: ValidatedSQL, columns: list[str], rows: list[list[Any]],
-                truncated: bool, started: float, *, cache_hit: bool, hash_: str | None = None) -> QueryResult:
+                truncated: bool, started: float, *, cache_hit: bool, hash_: str | None = None,
+                retain_rows: bool = True) -> QueryResult:
         rhash = hash_ or result_hash(columns, rows)
         duration = int((time.perf_counter() - started) * 1000)
         record = dict(audit, status="ok", row_count=len(rows), truncated=truncated, columns=list(columns),
-                      result_hash=rhash, result_preview=rows[:PREVIEW_ROWS], cache_hit=cache_hit, duration_ms=duration)
+                      result_hash=rhash, result_preview=rows[:PREVIEW_ROWS] if retain_rows else [], cache_hit=cache_hit,
+                      duration_ms=duration)
         self._persist(record, strict=True)
         self._emit("query.executed", record)
         return QueryResult(

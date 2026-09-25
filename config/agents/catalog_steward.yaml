@@ -1,0 +1,35 @@
+agent:
+  id: catalog_steward
+  version: '1.0'
+  name: Catalog Steward Agent
+  description: Keeps the workspace catalog current for any database — incremental crawls, schema-drift detection,
+    deterministic business names, roles, domains and PII classification, declared relationships and glossary links —
+    and asks a model only for the tables its rules could not describe. Never overrides reviewed or owner metadata.
+  capabilities:
+  - metadata_crawl
+  - schema_drift_detection
+  - pii_classification
+  - glossary_linking
+  - metadata_enrichment
+  skills:
+  - crawl_diff
+  - semantic_inference
+  - pii_classification
+  - glossary_linking
+  - sql_explanation
+  tools:
+  - crawl.run
+  - metadata.read
+  - metadata.enrich
+  - profile.table
+  - sql.explain
+  - context.search
+  model_profile: low_cost
+  prompt_version: crawl-enrich-v1
+  policies:
+    max_rows_extract: 100000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 1
+  verification_required: false
+  phase: increment3

@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from analystos.agents.common import llm_json
+from analystos.agents.common import llm_json, model_gate
 from analystos.artifacts.registry import link
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
@@ -74,6 +74,13 @@ def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]
         title = f"{_cap(out) if out != 'volume' else 'Volume'} shows a significant trend"
         text = (f"Weekly {out} changed by {hl.get('pct_change', 0):.1f}% from first to last period" if isinstance(hl.get("pct_change"), (int, float))
                 else f"A significant trend was detected in {out}") + f"{scope}."
+    elif m == "driver_model" and hl.get("top_driver"):
+        title = f"{_cap(out)} is driven mainly by {hl['top_driver']}"
+        feature, odds = hl.get("strongest_feature"), hl.get("strongest_odds_ratio")
+        text = (f"Among the drivers tested, {hl['top_driver']} explains the most of {out}"
+                + (f"; {feature} has {odds:.1f}x the odds" if feature and isinstance(odds, (int, float)) else "")
+                + (f" (holdout AUC {hl['holdout_roc_auc']:.2f})" if isinstance(hl.get("holdout_roc_auc"), (int, float)) else "")
+                + f"{scope}.")
     else:
         title = f"{_cap(out)} is associated with {seg}"
         text = f"{stat.get('test')} indicates an association (effect {stat.get('effect_size')}, n={stat.get('n')}){scope}."
@@ -160,8 +167,9 @@ def build_insights(ctx: RunContext) -> dict:
         facts = facts_for(stat, spec)
         title, finding = template_text(stat, spec)
         source, action = "template", None
-        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1",
-                               {"hypothesis": statement, "method": spec.get("method"), "facts": facts})
+        payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
+        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload) \
+            if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
         if isinstance(data, dict) and isinstance(data.get("finding"), str) and _guard(data["finding"] + " " + str(data.get("title", "")), facts):
             title, finding, source = str(data.get("title") or title)[:200], data["finding"], f"llm:{model}"
             action = data.get("recommended_action")

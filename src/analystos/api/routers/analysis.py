@@ -144,9 +144,13 @@ def console(workspace_id: str, run_id: str, user: User = Depends(current_user), 
             "model_calls": rows(calls),
             "queries": rows(session.scalars(select(QueryExecution).where(QueryExecution.run_id == run_id)
                                             .order_by(QueryExecution.created_at)), exclude={"result_preview"}),
-            "cost": {"usd": run.cost_usd, "tokens": run.tokens, "model_calls": len(calls),
-                     "jev_calls": sum(1 for c in calls if c.provider == "typesafe"),
-                     "failed_calls": sum(1 for c in calls if c.status != "ok")}}
+            "cost": {"usd": run.cost_usd, "tokens": run.tokens,
+                     "model_calls": sum(1 for c in calls if c.status in ("ok", "error")),
+                     "jev_calls": sum(1 for c in calls if c.provider == "typesafe" and c.status in ("ok", "error")),
+                     "failed_calls": sum(1 for c in calls if c.status == "error"),
+                     "cache_hits": sum(1 for c in calls if c.status == "cache_hit"),
+                     "deterministic_skips": sum(1 for c in calls if c.status == "skipped"),
+                     "tokens_saved": sum(c.tokens_saved or 0 for c in calls)}}
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/events")
@@ -259,3 +263,26 @@ def query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), se
     scope = resolve_scope(session, session.merge(user), workspace_id)
     r = default_gateway().execute(scope, body.sql, actor=f"user:{user.id}", purpose="console", max_rows=body.max_rows)
     return r.model_dump()
+
+
+@router.post("/workspaces/{workspace_id}/query/explain")
+def explain_query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    """Deterministic explanation (no model, no execution) plus the gateway validator's verdict for this caller."""
+    from analystos.core.errors import AnalystOSError
+    from analystos.gateway.validator import validate_sql
+    from analystos.skills.sqlexplain import explain_sql
+
+    scope = resolve_scope(session, session.merge(user), workspace_id)
+    dialect = next(iter(scope.source_dialects.values()), "postgres")
+    out = explain_sql(body.sql, dialect)
+    try:
+        validate_sql(scope, body.sql, max_rows=body.max_rows or scope.max_rows)
+        out["gateway"] = {"accepted": True}
+    except AnalystOSError as exc:
+        out["gateway"] = {"accepted": False, "code": exc.code, "reason": exc.message}
+        from analystos.governance.audit import audit
+
+        # A rejected probe is audited like a rejected console query: explain must not be a silent scope oracle.
+        audit(f"user:{user.id}", "query.explain_rejected", workspace_id=workspace_id, decision="deny",
+              details={"code": exc.code, "reason": exc.message[:300], "sql": body.sql[:2000]}, session=session)
+    return out

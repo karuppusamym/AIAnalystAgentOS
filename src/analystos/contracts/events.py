@@ -10,6 +10,7 @@ EVENT_TYPES = {
     "agent.failed", "agent.message", "task.updated", "run.created", "run.status", "run.replanned",
     "approval.requested", "approval.completed", "approval.invalidated", "policy.denied", "feedback.received",
     "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
+    "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

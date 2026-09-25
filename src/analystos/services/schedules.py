@@ -28,7 +28,7 @@ from analystos.governance.policy import require_role
 from analystos.services.notifications import notify
 
 log = get_logger(__name__)
-KINDS = {"reanalysis": "analyst", "dataset_refresh": "editor", "report": "analyst", "monitor": "analyst"}
+KINDS = {"reanalysis": "analyst", "dataset_refresh": "editor", "report": "analyst", "monitor": "analyst", "crawl": "editor"}
 MIN_INTERVAL_SECONDS = 15 * 60
 
 
@@ -157,7 +157,8 @@ def execute(srun_id: str) -> None:
         s.flush()
         s.expunge_all()
     try:
-        result = {"dataset_refresh": _refresh, "reanalysis": _reanalysis, "report": _report, "monitor": _monitors}[kind](
+        result = {"dataset_refresh": _refresh, "reanalysis": _reanalysis, "report": _report, "monitor": _monitors,
+                  "crawl": _crawl}[kind](
             owner, workspace_id, schedule_id, srun_id, config)
     except AnalystOSError as exc:
         _finish(srun_id, "failed", error=f"{exc.code}: {exc.message}")
@@ -188,6 +189,28 @@ def _refresh(owner: User, workspace_id: str, schedule_id: str, srun_id: str, con
         if assets:
             loaded[source_id] = select_assets(owner, source_id, assets)["loaded"]
     return {"refreshed": loaded}
+
+
+def _crawl(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
+    """Crawl every registered source of the workspace (or config.source_ids); incremental by default."""
+    from analystos.services.crawler import crawl_source
+
+    with session_scope() as s:
+        stmt = select(Source.id).where(Source.workspace_id == workspace_id, Source.status.in_(("discovered", "ready")))
+        if config.get("source_ids"):
+            stmt = stmt.where(Source.id.in_(config["source_ids"]))
+        ids = list(s.scalars(stmt))
+    out: dict[str, Any] = {}
+    for sid in ids:
+        try:
+            res = crawl_source(owner, sid, mode=config.get("mode"), include=config.get("include"), exclude=config.get("exclude"),
+                               trigger="schedule", actor=f"schedule:{schedule_id}")
+            out[sid] = {"crawl_id": res["crawl_id"], **{k: res["stats"].get(k) for k in ("new", "changed", "deprecated", "profiled")}}
+        except AnalystOSError as exc:
+            out[sid] = {"error": exc.message}
+    if ids and all("error" in v for v in out.values()):
+        raise InvalidInput("every crawl failed: " + "; ".join(v["error"] for v in out.values())[:500])
+    return {"crawls": out}
 
 
 def _previous_run(workspace_id: str, schedule_id: str) -> str | None:

@@ -1,7 +1,9 @@
 """Source registration -> discovery -> asset selection -> sync (staged snapshot or pushdown ready)."""
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+import re
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.core.config import get_settings
@@ -13,21 +15,48 @@ from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import require_role
 
-KINDS = {"postgres", "sqlserver", "csv", "servicenow"}
-PII_HINTS = ("email", "phone", "caller", "ssn", "address", "birth", "first_name", "last_name", "user_name", "mobile")
+_CREDENTIAL_KEY = re.compile(r"pass(word|wd|phrase)?|pwd|secret|token|api_?key|private_?key|credential|auth", re.I)
+_URL_USERINFO = re.compile(r"://[^/@\s]+:[^/@\s]+@")
+
+
+def _credential_in_config(config: dict, depth: int = 0) -> bool:
+    """Any key that names a credential (any case/prefix) or any value embedding user:password@ in a URL."""
+    for k, v in (config or {}).items():
+        if _CREDENTIAL_KEY.search(str(k)):
+            return True
+        if isinstance(v, str) and _URL_USERINFO.search(v):
+            return True
+        if isinstance(v, dict) and depth < 3 and _credential_in_config(v, depth + 1):
+            return True
+    return False
 
 
 def register_source(session: Session, user: User, workspace_id: str, *, kind: str, name: str, config: dict,
                     secret_ref: str | None) -> Source:
+    """Any kind in config/source_kinds.yaml that the administrator has enabled. Pushdown only where the
+    kind supports a read-only session in a dialect the gateway validates, and the admin allows it."""
+    from analystos.connectors import kinds
+    from analystos.services.platform_settings import get as platform
+
     require_role(session, user, workspace_id, "editor")
-    if kind not in KINDS:
-        raise InvalidInput(f"kind must be one of {sorted(KINDS)}")
-    if any(k in (config or {}) for k in ("password", "secret", "token", "api_key")):
+    spec = kinds.get_kind(kind)
+    settings = platform().sources
+    if settings.enabled_kinds and spec.kind not in settings.enabled_kinds:
+        raise InvalidInput(f"source kind '{spec.kind}' is disabled by the administrator")
+    config = dict(config or {})
+    if _credential_in_config(config):
         raise InvalidInput("put credentials in a secret reference (env:NAME or file:/path), never in source config")
-    src = Source(id=new_id("src"), workspace_id=workspace_id, kind=kind, name=name, config=config or {}, secret_ref=secret_ref,
-                 status="registered", execution_mode="pushdown" if kind in ("postgres", "sqlserver") else "staged")
+    missing = [f for f in spec.required if config.get(f) in (None, "")]
+    if missing:
+        raise InvalidInput(f"{spec.label} needs: {', '.join(missing)}")
+    if spec.secret and spec.secret.required and not secret_ref:
+        raise InvalidInput(f"{spec.label} needs a secret reference (env:NAME or file:/path) for its {spec.secret.field}")
+    mode = kinds.execution_mode_for(spec.kind, config.pop("execution_mode", None) if settings.allow_pushdown else "staged")
+    src = Source(id=new_id("src"), workspace_id=workspace_id, kind=spec.kind, name=name, config=config, secret_ref=secret_ref,
+                 status="registered", execution_mode=mode)
     session.add(src)
-    audit(f"user:{user.id}", "source.registered", workspace_id=workspace_id, target=src.id, details={"kind": kind}, session=session)
+    audit(f"user:{user.id}", "source.registered", workspace_id=workspace_id, target=src.id,
+          details={"kind": spec.kind, "execution_mode": mode}, session=session)
     return src
 
 
@@ -40,46 +69,32 @@ def _source(session: Session, user: User, source_id: str, minimum: str = "editor
 
 
 def discover_source(user: User, source_id: str) -> dict:
-    from analystos.connectors.registry import build_connector
+    """Full metadata crawl without profiling (one code path with scheduled crawls).
+
+    The crawler keeps owner tags and reviewed descriptions; the previous implementation replaced
+    every column row on re-discovery, which silently dropped "restricted" tags."""
+    from analystos.services.crawler import crawl_source
 
     with session_scope() as s:
-        src = _source(s, user, source_id)
-        s.expunge(src)
-    connector = build_connector(src, get_settings())
-    test = connector.test()
-    if not test.ok:
-        with session_scope() as s:
-            row = s.get(Source, source_id)
-            row.status, row.last_error = "error", test.message
-        raise InvalidInput(f"connection failed: {test.message}")
-    assets = connector.discover()
-    from analystos.connectors.naming import staging_schema_for
-
-    schema_for_staged = staging_schema_for(source_id)
+        _source(s, user, source_id)
+    result = crawl_source(user, source_id, mode="full", profile=False)
     with session_scope() as s:
         row = s.get(Source, source_id)
-        existing = {(a.source_name): a for a in s.scalars(select(SourceAsset).where(SourceAsset.source_id == source_id))}
-        for a in assets:
-            schema = schema_for_staged if row.execution_mode == "staged" else (a.schema_name or "public")
-            asset = existing.get(a.source_name)
-            if asset is None:
-                asset = SourceAsset(id=new_id("ast"), source_id=source_id, workspace_id=row.workspace_id, schema_name=schema,
-                                    name=a.name, source_name=a.source_name, kind=a.kind, selected=False)
-                s.add(asset)
-                s.flush()
-            asset.row_count, asset.description, asset.business_name = a.row_count, a.description, a.business_name
-            asset.freshness_at = a.freshness_at
-            s.execute(delete(SourceColumn).where(SourceColumn.asset_id == asset.id))
-            for i, c in enumerate(a.columns):
-                tags = ["pii"] if any(h in c.name.lower() for h in PII_HINTS) and not c.name.endswith("_name") else []
-                s.add(SourceColumn(asset_id=asset.id, name=c.name, ordinal=i, data_type=c.data_type, nullable=c.nullable,
-                                   is_key=c.is_key, business_name=c.business_name, description=c.description, tags=tags,
-                                   profile={"references": c.references} if c.references else {}))
-        row.status, row.staging_schema, row.last_discovered_at, row.last_error = "discovered", \
-            schema_for_staged if row.execution_mode == "staged" else None, utcnow(), None
-        emit(row.workspace_id, "source.connected", {"source_id": source_id, "assets": len(assets), "latency_ms": test.latency_ms},
+        assets = []
+        for a in s.scalars(select(SourceAsset).where(SourceAsset.source_id == source_id, SourceAsset.lifecycle == "active")
+                           .order_by(SourceAsset.name)):
+            cols = s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))
+            assets.append({"source_name": a.source_name, "name": a.name, "schema_name": a.schema_name, "kind": a.kind,
+                           "row_count": a.row_count, "description": a.description, "business_name": a.business_name,
+                           "freshness_at": a.freshness_at, "semantics": a.semantics,
+                           "columns": [{"name": c.name, "data_type": c.data_type, "nullable": c.nullable, "is_key": c.is_key,
+                                        "description": c.description, "business_name": c.business_name, "tags": c.tags,
+                                        "references": (c.profile or {}).get("references")} for c in cols]})
+        emit(row.workspace_id, "source.connected", {"source_id": source_id, "assets": len(assets),
+                                                    "latency_ms": result["stats"].get("latency_ms")},
              actor=f"user:{user.id}", session=s)
-    return {"assets": [a.model_dump(mode="json") for a in assets], "test": test.model_dump()}
+    return {"assets": assets, "crawl_id": result["crawl_id"], "stats": result["stats"], "changes": result["changes"],
+            "test": {"ok": True, "message": "ok", "latency_ms": result["stats"].get("latency_ms", 0)}}
 
 
 def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
@@ -105,12 +120,15 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
         s.expunge(src)
     loaded = []
     if src.execution_mode == "staged":
+        from analystos.services.platform_settings import get as platform
+
+        platform_max = platform().sources.staged_max_rows
         settings = get_settings()
         connector = build_connector(src, settings)
         loader = StagingLoader(settings)
         for asset_id, source_name, name, schema, cols in selected:
             d = DiscoveredAsset(source_name=source_name, name=name, columns=cols, kind="api_table")
-            max_rows = int(src.config.get("max_rows") or 1_000_000)
+            max_rows = min(int(src.config.get("max_rows") or platform_max), platform_max)
             info = loader.load(source_id, d, connector.extract(d, max_rows=max_rows))
             loaded.append({"asset": f"{schema}.{name}", **info})
             with session_scope() as s:
@@ -138,7 +156,7 @@ def tag_column(session: Session, user: User, asset_id: str, column: str, tags: l
     allowed = {"pii", "restricted", "sensitive"}
     if set(tags) - allowed:
         raise InvalidInput(f"tags must be within {sorted(allowed)}")
-    col.tags = sorted(set(tags))
+    col.tags, col.tags_origin = sorted(set(tags)), "user"
     audit(f"user:{user.id}", "column.tagged", workspace_id=asset.workspace_id, target=f"{asset.schema_name}.{asset.name}.{column}",
           details={"tags": col.tags}, session=session)
     return col

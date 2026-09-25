@@ -8,12 +8,20 @@ from sqlalchemy.orm import Session
 from analystos.contracts.policy import DataScope, ExecutionIdentity, PolicyDecision, WorkspacePolicyDoc
 from analystos.contracts.registry import ToolSpec
 from analystos.core.config import get_settings
-from analystos.core.errors import Forbidden, NotFound
+from analystos.core.errors import AnalystOSError, Forbidden, NotFound
 from analystos.db.models import Source, SourceAsset, SourceColumn, User, Workspace, WorkspaceMember, WorkspacePolicy
 from analystos.governance.audit import audit
 from analystos.security.auth import APPROVER_ROLES, role_at_least
 
-SOURCE_DIALECT = {"postgres": "postgres", "sqlserver": "tsql", "servicenow": "postgres", "csv": "postgres"}
+
+def source_dialect(kind: str, execution_mode: str | None) -> str:
+    """Dialect the gateway validates a source's SQL in (config/source_kinds.yaml); staged -> postgres."""
+    from analystos.connectors.kinds import dialect_for
+
+    try:
+        return dialect_for(kind, execution_mode)
+    except AnalystOSError:
+        return "postgres"
 
 # Autonomy ceiling in the initial release (§39): publication, scheduling, external notification
 # and source mutation always need an approval regardless of workspace autonomy level.
@@ -87,7 +95,7 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
                       timeout_seconds=policy.query_timeout_seconds, policy_version=workspace.policy_version)
     for source in sources:
         scope.source_ids.append(source.id)
-        scope.source_dialects[source.id] = SOURCE_DIALECT.get(source.kind, "postgres")
+        scope.source_dialects[source.id] = source_dialect(source.kind, source.execution_mode)
         assets = session.scalars(select(SourceAsset).where(SourceAsset.source_id == source.id, SourceAsset.selected.is_(True)))
         for asset in assets:
             fq = f"{asset.schema_name}.{asset.name}"

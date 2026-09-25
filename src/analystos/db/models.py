@@ -118,6 +118,14 @@ class SourceAsset(Base):
     business_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Crawler state: structural fingerprint, lifecycle and deterministic semantics (role/domain/grain).
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lifecycle: Mapped[str] = mapped_column(String(20), default="active", server_default="active")  # active | deprecated
+    semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    description_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | model | user
+    business_name_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | model | user
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -136,6 +144,9 @@ class SourceColumn(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)  # pii, sensitive, restricted
     profile: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # role, unit, pii, glossary
+    # Tags set by a person are never removed by a crawl; crawler tags can only be added (tighten, never loosen).
+    tags_origin: Mapped[str] = mapped_column(String(20), default="crawler", server_default="crawler")  # crawler | user
 
 
 class Relationship(Base):
@@ -288,6 +299,7 @@ class ModelCall(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    tokens_saved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # cache hits and deterministic skips
     request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _ts()
@@ -598,3 +610,35 @@ class Notification(Base):
     link: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type, id}
     read_by: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = _ts()
+
+
+class PlatformSetting(Base):
+    """Append-only versions of the platform settings document (admin control plane)."""
+
+    __tablename__ = "platform_setting"
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document: Mapped[dict[str, Any]] = mapped_column(JSON)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class CrawlRun(Base):
+    """One metadata crawl of a source (META-005/006): what was seen, what changed, what it cost."""
+
+    __tablename__ = "crawl_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("source.id", ondelete="CASCADE"), index=True)
+    mode: Mapped[str] = mapped_column(String(20))  # full | incremental
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")  # manual | schedule
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | succeeded | failed
+    stage: Mapped[str] = mapped_column(String(40), default="discover")
+    options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    changes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # CrawlDiff summary
+    log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_by: Mapped[str] = mapped_column(String(80))
+    started_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

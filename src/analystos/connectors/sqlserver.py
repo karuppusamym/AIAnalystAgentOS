@@ -4,20 +4,19 @@ pymssql is an optional extra (``analystos[sqlserver]``); it is imported only whe
 opened. SQL Server has no per-transaction read-only switch, so the configured identity MUST be
 a least-privilege reader (db_datareader or explicit SELECT grants); the gateway's validator is the
 second line of defence and the query timeout is enforced by the driver.
+
+URL, include/exclude, max_tables and (for an explicitly staged source) extraction come from the
+generic SQL connector; discovery keeps the INFORMATION_SCHEMA/sys queries below (one round trip
+each, row counts from sys.dm_db_partition_stats when VIEW DATABASE STATE is granted).
 """
 from __future__ import annotations
 
-import time
-from collections.abc import Iterator
-from typing import Any, Literal
-
-import pyarrow as pa
-from sqlalchemy.engine import URL
+from typing import Any
 
 from analystos.connectors.base import ConnectionTest, DiscoveredAsset
-from analystos.connectors.secrets import resolve_secret
+from analystos.connectors.generic_sql import GenericSQLConnector, matches_filters
 from analystos.connectors.sql_metadata import build_assets
-from analystos.core.errors import InvalidInput, UpstreamUnavailable
+from analystos.core.errors import UpstreamUnavailable
 
 SYSTEM_SCHEMAS = {"sys", "INFORMATION_SCHEMA", "information_schema", "guest"}
 
@@ -95,45 +94,20 @@ def pymssql_available() -> bool:
     return True
 
 
-class SQLServerConnector:
-    kind = "sqlserver"
-    execution_mode: Literal["pushdown", "staged"] = "pushdown"
-    dialect = "tsql"
-
-    def __init__(self, config: dict[str, Any], secret_ref: str | None = None, *, password: str | None = None) -> None:
+class SQLServerConnector(GenericSQLConnector):
+    def __init__(self, config: dict[str, Any], secret_ref: str | None = None, *, password: str | None = None,
+                 **kwargs: Any) -> None:
+        config = dict(config or {})
+        if not config.get("schemas"):
+            config["schemas"] = ["dbo"]
+        if config.get("login_timeout") and not config.get("connect_timeout"):
+            config["connect_timeout"] = config["login_timeout"]
+        super().__init__("sqlserver", config, secret_ref, password=password, **kwargs)
         self.host = str(config.get("host") or "")
         self.port = int(config.get("port") or 1433)
         self.database = str(config.get("database") or "")
         self.username = str(config.get("username") or "")
-        schemas = config.get("schemas") or ["dbo"]
-        if isinstance(schemas, str):
-            schemas = [schemas]
-        self.schemas = [s for s in schemas if s not in SYSTEM_SCHEMAS]
-        self.login_timeout = int(config.get("login_timeout", 10))
-        if not (self.host and self.database and self.username):
-            raise InvalidInput("SQL Server source needs config.host, config.database and config.username")
-        if not self.schemas:
-            raise InvalidInput("SQL Server source needs at least one non-system schema in config.schemas")
-        self._secret_ref = secret_ref
-        self._password = password
-
-    def _url(self, query_timeout: int | None = None) -> URL:
-        password = self._password if self._password is not None else resolve_secret(self._secret_ref)
-        query = {"login_timeout": str(self.login_timeout)}
-        if query_timeout:
-            query["timeout"] = str(int(query_timeout))
-        return URL.create(
-            "mssql+pymssql",
-            username=self.username,
-            password=password,
-            host=self.host,
-            port=self.port,
-            database=self.database,
-            query=query,
-        )
-
-    def sqlalchemy_url(self) -> str:
-        return self._url().render_as_string(hide_password=False)
+        self.login_timeout = self.connect_timeout
 
     def _require_driver(self) -> None:
         if not pymssql_available():
@@ -141,39 +115,20 @@ class SQLServerConnector:
                 "SQL Server support needs the optional 'pymssql' driver: pip install 'analystos[sqlserver]'"
             )
 
-    def _engine(self):  # noqa: ANN202 - sqlalchemy Engine
-        from sqlalchemy import create_engine
-
-        self._require_driver()
-        return create_engine(self._url(), pool_pre_ping=True, pool_size=2, max_overflow=2)
-
     def test(self) -> ConnectionTest:
-        from sqlalchemy import text
-
-        started = time.perf_counter()
-        try:
-            engine = self._engine()
-            with engine.connect() as conn:
-                version = conn.execute(text("SELECT @@VERSION")).scalar_one()
-            engine.dispose()
-        except Exception as exc:  # noqa: BLE001
+        if not pymssql_available():
             return ConnectionTest(
                 ok=False,
-                message=f"Could not connect to {self.host}:{self.port}/{self.database}: {exc.__class__.__name__}",
-                latency_ms=int((time.perf_counter() - started) * 1000),
+                message="Could not connect: the optional 'pymssql' driver is missing (pip install 'analystos[sqlserver]')",
             )
-        return ConnectionTest(
-            ok=True,
-            message=f"Connected to {self.host}:{self.port}/{self.database}",
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            details={"version": str(version).splitlines()[0]},
-        )
+        return super().test()
 
     def discover(self) -> list[DiscoveredAsset]:
         from sqlalchemy import text
 
-        queries = catalog_queries(self.schemas)
-        engine = self._engine()
+        self._require_driver()
+        queries = catalog_queries(list(self.schemas or ["dbo"]))
+        engine = self._get_engine()
         try:
             with engine.connect() as conn:
                 rows = {k: [dict(r._mapping) for r in conn.execute(text(q))] for k, q in queries.items() if k != "row_counts"}
@@ -185,13 +140,7 @@ class SQLServerConnector:
             raise
         except Exception as exc:  # noqa: BLE001
             raise UpstreamUnavailable(f"SQL Server discovery failed: {exc.__class__.__name__}") from None
-        finally:
-            engine.dispose()
-        return build_assets(rows["tables"], rows["columns"], rows["primary_keys"], rows["foreign_keys"], counts)
-
-    def extract(self, asset: DiscoveredAsset, *, max_rows: int) -> Iterator[pa.RecordBatch]:
-        raise InvalidInput("SQL Server sources are queried in place (pushdown); they are not staged")
-
-    def query_url(self, timeout_seconds: int) -> str:
-        """URL with the driver-level query timeout (pymssql ``timeout``) the gateway uses."""
-        return self._url(query_timeout=timeout_seconds).render_as_string(hide_password=False)
+        tables = [t for t in rows["tables"] if matches_filters(t["schema"], t["table"], self.include, self.exclude)]
+        self.truncated = len(tables) > self.max_tables
+        assets = build_assets(tables[: self.max_tables], rows["columns"], rows["primary_keys"], rows["foreign_keys"], counts)
+        return self._staged_names(assets) if self.execution_mode == "staged" else assets

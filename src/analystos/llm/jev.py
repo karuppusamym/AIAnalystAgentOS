@@ -35,6 +35,11 @@ class JevDecisions:
         return self.router.available("risk_check")
 
     def _call(self, purpose: str, state: dict, questions: dict, ctx: CallContext | None) -> dict | None:
+        mode = self.router.mode(purpose)
+        if mode in ("off", "auto"):
+            # auto for a decision purpose = the deterministic rule decides (admin control plane)
+            self.router.record_skip(purpose, ctx, estimated_tokens=400, reason=f"mode={mode}: rule decision")
+            return None
         if not self.router.available(purpose, ctx):
             return None
         try:
