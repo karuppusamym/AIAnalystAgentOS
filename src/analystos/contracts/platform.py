@@ -53,6 +53,62 @@ class LLMSettings(BaseModel):
     catalog_max_tables: int = Field(12, ge=1, le=200)
 
 
+ContextSection = Literal["catalog", "glossary", "business_rules", "metrics", "prior_findings", "negative_knowledge", "episodes"]
+CatalogDetail = Literal["names", "columns", "stats", "profile"]
+
+
+class PurposeProfile(BaseModel):
+    """What the context compiler (P4-T03) gives one model purpose, and how much of it.
+
+    `sections` are filled in order after the mandatory part (the caller's required inputs); each
+    section is cut in whole items and whatever does not fit is listed as omitted, never truncated.
+    `referenced_only` restricts the catalog to the tables the objective/question/SQL names (SQL
+    generation and repair). Budgets are characters of compact JSON (≈ 3.6 chars per token)."""
+
+    sections: list[ContextSection] = Field(default_factory=list)
+    catalog_detail: CatalogDetail = "columns"
+    referenced_only: bool = False
+    drop_semantic_types: list[str] = Field(default_factory=list)  # e.g. raw ids, which hypothesis specs cannot use
+    max_columns_per_table: int = Field(30, ge=1, le=500)
+    max_items_per_section: int = Field(8, ge=0, le=100)
+    item_chars: int = Field(240, ge=40, le=4000)  # excerpt length of one knowledge item
+    max_chars: int = Field(40_000, ge=1_000, le=1_500_000)
+
+
+def _default_profiles() -> dict[str, PurposeProfile]:
+    knowledge: list[ContextSection] = ["glossary", "business_rules", "metrics"]
+    return {
+        "planning": PurposeProfile(sections=["catalog", "glossary", "business_rules"], catalog_detail="names",
+                                   drop_semantic_types=["id"], max_columns_per_table=20, max_items_per_section=4,
+                                   max_chars=16_000),
+        "hypothesis_generation": PurposeProfile(sections=["catalog", *knowledge, "prior_findings", "negative_knowledge"],
+                                                catalog_detail="stats", drop_semantic_types=["id"],
+                                                max_columns_per_table=30, max_chars=48_000),
+        "follow_up_generation": PurposeProfile(sections=["catalog", "negative_knowledge"], catalog_detail="stats",
+                                               drop_semantic_types=["id"], max_columns_per_table=24,
+                                               max_items_per_section=6, max_chars=40_000),
+        "sql_generation": PurposeProfile(sections=["catalog", "glossary", "metrics"], catalog_detail="profile",
+                                         referenced_only=True, max_columns_per_table=40, max_items_per_section=6,
+                                         max_chars=24_000),
+        "sql_repair": PurposeProfile(sections=["catalog"], catalog_detail="columns", referenced_only=True,
+                                     max_columns_per_table=60, max_chars=16_000),
+        "semantic_modeling": PurposeProfile(sections=["metrics", "glossary", "business_rules"], max_items_per_section=5,
+                                            max_chars=20_000),
+        "feedback_interpretation": PurposeProfile(sections=["catalog", "glossary"], catalog_detail="names",
+                                                  max_columns_per_table=60, max_items_per_section=5, max_chars=12_000),
+    }
+
+
+class ContextSettings(BaseModel):
+    """Context compiler (P4-T03): per-purpose profiles; purposes without one get only their
+    mandatory inputs. `min_relevance` is the share of objective terms a knowledge item must match
+    (or a mapped in-scope column) before it may reach a prompt; below it the section says NO_MATCH."""
+
+    compiler_enabled: bool = True
+    min_relevance: float = Field(0.15, ge=0.0, le=1.0)
+    profiles: dict[str, PurposeProfile] = Field(default_factory=_default_profiles)
+
+
 class AnalysisSettings(BaseModel):
     max_round1_hypotheses: int = Field(8, ge=1, le=30)
     max_followups_per_round: int = Field(3, ge=0, le=10)
@@ -113,6 +169,7 @@ class FeatureFlags(BaseModel):
 
 class PlatformSettings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    context: ContextSettings = Field(default_factory=ContextSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
     crawl: CrawlSettings = Field(default_factory=CrawlSettings)
     monitors: MonitorSettings = Field(default_factory=MonitorSettings)

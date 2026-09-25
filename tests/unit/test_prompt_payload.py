@@ -11,7 +11,7 @@ from analystos.agents.prompts import PROMPTS, prompt, prompt_version_id
 from analystos.contracts.platform import LLMSettings, PlatformSettings
 from analystos.contracts.policy import WorkspacePolicyDoc
 from analystos.llm.cache import ResponseCache
-from analystos.llm.router import CallContext, ModelRouter
+from analystos.llm.router import CallContext, ModelRouter, normalize_messages
 
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 
@@ -90,7 +90,7 @@ def test_llm_json_sends_valid_json_with_omissions_instead_of_truncating(monkeypa
     data, model = common.llm_json(_ctx(router), "hypothesis_generation", "hypothesis_generation.v1",
                                   {"objective": "resolution", "catalog": big_catalog()})
     assert data == {"hypotheses": []}
-    sent = transport.chat_calls[0]["messages"][1]["content"]
+    sent = normalize_messages(transport.chat_calls[0]["messages"])[1]["content"]
     parsed = json.loads(sent)
     assert parsed["omitted"]["catalog_tables"] and sink.records[-1]["status"] == "ok"
 
@@ -119,7 +119,7 @@ def test_llm_json_logs_real_prompt_version_and_sends_filled_dialect(monkeypatch)
     monkeypatch.setattr("analystos.services.platform_settings.get", lambda: platform)
     common.llm_json(_ctx(router), "sql_generation", "sql_generation.v1", {"question": "q", "catalog": []},
                     prompt_vars={"dialect": "tsql"})
-    system = transport.chat_calls[0]["messages"][0]["content"]
+    system = normalize_messages(transport.chat_calls[0]["messages"])[0]["content"]
     assert "in the tsql dialect" in system and "{dialect}" not in system
     expected = prompt_version_id("sql_generation.v1", prompt("sql_generation.v1", dialect="tsql"))
     assert sink.records[-1]["ctx"].prompt_version == expected

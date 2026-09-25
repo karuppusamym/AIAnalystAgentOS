@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from analystos import methods
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, model_gate, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, compile_for, llm_json, model_gate, task_output
 from analystos.artifacts.registry import link
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
@@ -293,19 +293,19 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     if replay is not None:
         return replay_hypotheses(ctx, replay)
     types = semantic_types(ctx)
-    context = task_output(ctx.run.id, "context")
     quality = task_output(ctx.run.id, "quality").get("issues") or []
-    payload = {"objective": ctx.run.objective, "questions": ctx.run.plan.get("questions"), "focus": ctx.run.plan.get("focus"),
-               "user_instructions": [i.get("text") for i in ctx.run.instructions],
-               "constraints": ctx.run.constraints, "catalog": catalog_for_prompt(ctx),
-               "resolved_terms": context.get("resolved_terms"),
-               "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
+    required = {"objective": ctx.run.objective, "questions": ctx.run.plan.get("questions"), "focus": ctx.run.plan.get("focus"),
+                "user_instructions": [i.get("text") for i in ctx.run.instructions],
+                "constraints": ctx.run.constraints,
+                # the context agent's resolved terms reach the prompt as the compiler's glossary section (with receipts)
+                "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
     seen: set[str] = set()
     packs = pack_registry.for_scope(ctx.scope, ctx.policy)
     # Recurring analysis: re-test every previously verified claim with the identical spec first, so
     # "resolved" means the evidence changed — not that a different question was asked this time.
     carried, rejected = _accept(ctx, carried_forward(ctx), types, origin="carried", seen=seen)
-    payload["already_testing"] = [c["statement"] for c in carried]
+    required["already_testing"] = [c["statement"] for c in carried]
+    payload = compile_for(ctx, "hypothesis_generation", required)
     # Deterministic-first (admin: llm.purpose_modes.hypothesis_generation): the profile-driven playbook
     # runs first; in `auto` mode the model is only asked when the playbook is not enough.
     rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types, packs)], types,
@@ -372,7 +372,7 @@ def replay_hypotheses(ctx: RunContext, settings: dict[str, Any]) -> dict:
         source = "rules (empty registry)"
     avoided = {"objective": ctx.run.objective, "catalog": catalog_for_prompt(ctx), "already_testing": [a["statement"] for a in accepted]}
     ctx.router.record_skip("hypothesis_generation", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(avoided)) + 500,
-                           reason=f"L1 registry: {len(accepted)} registered hypotheses replayed")
+                           reason=f"L1 registry: {len(accepted)} registered hypotheses replayed", rung="registry")
     novel: list[dict] = []
     if settings["novelty"]["enabled"]:
         novel, rejected_novel = _novelty_round(ctx, types, seen, settings["novelty"], avoided)
@@ -477,8 +477,8 @@ def follow_ups(ctx: RunContext) -> dict:
     roles = {f"{a.schema_name}.{a.name}.{c.name}": (c.semantics or {}).get("semantic_role") for a, cols in asset_rows(ctx) for c in cols}
     display = [p.templates["display_name"] for p in pack_registry.for_scope(ctx.scope, ctx.policy) if p.templates.get("display_name")]
     drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
-    payload = {"objective": ctx.run.objective, "results": results, "catalog": catalog_for_prompt(ctx),
-               "constraints": ctx.run.constraints}
+    payload = compile_for(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results,
+                                                        "constraints": ctx.run.constraints})
     data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload)
                    if model_gate(ctx, "follow_up_generation", payload, deterministic_ok=bool(drill)) else (None, "deterministic"))
     props = [p for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []

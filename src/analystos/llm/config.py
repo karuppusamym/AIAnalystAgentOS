@@ -24,6 +24,10 @@ class ModelMeta(BaseModel):
     region: str | None = None  # overrides the provider region; None = inherit (unknown if both are None)
     input_usd_per_mtok: float | None = None
     output_usd_per_mtok: float | None = None
+    # Provider prompt caching needs explicit breakpoints (Anthropic `cache_control`, also through
+    # OpenRouter). Families with automatic prefix caching (OpenAI, DeepSeek, Gemini) leave it false:
+    # the cache-stable prompt order is enough for them.
+    prompt_cache: bool = False
 
 
 class ProfileConfig(BaseModel):
@@ -51,6 +55,10 @@ class ModelsConfig(BaseModel):
             return meta.region
         cfg = self.providers.get(provider)
         return cfg.region if cfg else None
+
+    def prompt_cache(self, model: str) -> bool:
+        meta = self.models.get(model)
+        return bool(meta and meta.prompt_cache)
 
     def estimate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float | None:
         """Upper-bound USD estimate for one call, or None when the model has no price metadata."""

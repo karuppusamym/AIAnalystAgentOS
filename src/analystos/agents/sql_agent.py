@@ -7,7 +7,7 @@ from typing import Any
 import sqlglot
 from sqlalchemy import select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, compact_json, llm_json, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, compact_json, compile_for, llm_json, task_output
 from analystos.artifacts.registry import link, save_artifact
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
@@ -158,7 +158,8 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
     avoided = estimate_tokens(compact_json({"question": question, "catalog": catalog_for_prompt(ctx)})) + 500
     if hit.missing:
         ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided,
-                               reason=f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}")
+                               reason=f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}",
+                               rung="registry")
         missing = [{k: p.get(k) for k in ("name", "type", "column", "values") if p.get(k) is not None} for p in hit.missing]
         return {"status": "needs_input", "answered_by": "registry", "verified_query": entry, "parameters": hit.values,
                 "missing": missing, "sql": None, "model": None, "attempts": [], "result": None,
@@ -167,7 +168,8 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
     values = {p["name"]: vqr.coerce(p, hit.values[p["name"]]) for p in params}  # vocabulary spelling, typed
     sql = vqr.render(template, params, values, dialect)
     result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE, run_id=None, task_id=None)
-    ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=f"L1 registry: verified query {entry['name']}")
+    ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=f"L1 registry: verified query {entry['name']}",
+                           rung="registry")
     with session_scope() as s:
         vqr.record_hit(s, entry["id"])
     return {"status": "answered", "answered_by": "registry", "verified_query": entry, "parameters": values, "sql": sql,
@@ -186,9 +188,11 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
         answered = ask_registry(ctx, question, parameters)
         if answered is not None:
             return answered
-    catalog = catalog_for_prompt(ctx)
+    catalog = catalog_for_prompt(ctx, objective=question, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
-    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog},
+    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1",
+                           compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
+                                       catalog=catalog, reference_text=question),
                            prompt_vars={"dialect": dialect})
     if not isinstance(data, dict) or not data.get("sql"):
         raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
@@ -206,8 +210,10 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
             attempts.append({"sql": sql, "error": exc.message})
             if attempt == max_repairs:
                 raise
-            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1", {"question": question, "dialect": dialect, "sql": sql,
-                                                                  "error": exc.message, "catalog": catalog})
+            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
+                              compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
+                                                              "error": exc.message}, objective=question, catalog=catalog,
+                                          reference_text=f"{sql}\n{exc.message}"))
             if not isinstance(fix, dict) or not fix.get("sql"):
                 raise
             sql = str(fix["sql"])

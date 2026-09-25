@@ -13,7 +13,7 @@ from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, ModelCall, ModelPayload, Workspace
 from analystos.governance.policy import load_policy
 from analystos.llm.replay import encode_payload
-from analystos.llm.router import CallContext
+from analystos.llm.router import CallContext, cached_prompt_tokens
 from analystos.runtime import budget_counters
 from analystos.runtime.budget_counters import MONTH_TTL_SECONDS, RUN_TTL_SECONDS, BudgetCounters
 
@@ -64,7 +64,9 @@ class DbUsageSink:
                             tokens_saved=tokens_saved, request_ref=_store_payload(s, "request", request),
                             response_ref=_store_payload(s, "response", response),
                             answered_by=answered_by or ("rules" if status == "skipped" else "llm_large"),
-                            cost_source=cost_source))
+                            cost_source=cost_source,
+                            cached_input_tokens=cached_prompt_tokens((response or {}).get("usage")),
+                            context_receipts=ctx.context_receipts or None))
             if ctx.run_id and (input_tokens or output_tokens or cost_usd):
                 s.execute(update(AnalysisRun).where(AnalysisRun.id == ctx.run_id).values(
                     tokens=AnalysisRun.tokens + input_tokens + output_tokens, cost_usd=AnalysisRun.cost_usd + cost_usd))

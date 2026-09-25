@@ -31,9 +31,11 @@ allowlist:
 # /api/admin/token-savings; it is never silently counted as $0. Bump prices_version on every change.
 # `region` overrides the provider region; unset = unknown (fails closed under data_residency).
 prices_version: "2026-09-25"
+# `prompt_cache: true` = the router sends `cache_control` breakpoints after the stable prompt prefix
+# (static system text + workspace header, P4-T04); needed for Anthropic models, also via OpenRouter.
 models:
-  anthropic/claude-sonnet-5: {input_usd_per_mtok: 3.0, output_usd_per_mtok: 15.0}
-  anthropic/claude-opus-5: {input_usd_per_mtok: 5.0, output_usd_per_mtok: 25.0}
+  anthropic/claude-sonnet-5: {input_usd_per_mtok: 3.0, output_usd_per_mtok: 15.0, prompt_cache: true}
+  anthropic/claude-opus-5: {input_usd_per_mtok: 5.0, output_usd_per_mtok: 25.0, prompt_cache: true}
   openai/gpt-5.4: {input_usd_per_mtok: 2.5, output_usd_per_mtok: 15.0}
   openai/gpt-5.4-mini: {input_usd_per_mtok: 0.75, output_usd_per_mtok: 4.5}
   google/gemini-3.5-flash: {input_usd_per_mtok: 0.3, output_usd_per_mtok: 2.5}

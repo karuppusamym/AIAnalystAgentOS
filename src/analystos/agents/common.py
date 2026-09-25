@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from analystos.core.errors import AnalystOSError
+from analystos.core.errors import AnalystOSError, ContextOverBudget
 from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import RunTask, SourceAsset, SourceColumn
@@ -47,26 +47,32 @@ def objective_tokens(text: str | None) -> set[str]:
     return {w.strip(",.?").lower() for w in (text or "").split() if len(w) > 3}
 
 
-def column_rank(entry: dict[str, Any], tokens: set[str]) -> tuple[int, int]:
+def column_rank(entry: dict[str, Any] | str, tokens: set[str]) -> tuple[int, int]:
     """Sort key, most useful first: relevance to the objective, then analytical usefulness."""
+    if not isinstance(entry, dict):  # names-only catalog digest (context compiler)
+        entry = {"name": str(entry)}
     return -_relevance(entry.get("name", ""), entry.get("meaning", ""), tokens), _SEMANTIC_PRIORITY.get(entry.get("semantic_type") or "", 4)
 
 
 def table_relevance(table: dict[str, Any], tokens: set[str]) -> int:
-    return sum(_relevance(c.get("name", ""), c.get("meaning", ""), tokens) for c in table.get("columns") or [])
+    return sum(_relevance(c.get("name", ""), c.get("meaning", ""), tokens) if isinstance(c, dict) else _relevance(str(c), "", tokens)
+               for c in table.get("columns") or [])
 
 
-def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True) -> list[dict[str, Any]]:
+def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objective: str | None = None,
+                       capped: bool = True) -> list[dict[str, Any]]:
     """Schema-level catalog for prompts. Denied columns are removed. Category vocabularies (top
     values) are only included when the workspace policy allows data samples to reach models
     (`send_data_samples_to_models`, default false) and then only for low-cardinality, non-PII columns.
 
     Token economy (admin: llm.compact_prompts): tables and columns are ranked by relevance to the
-    objective and analytical usefulness, then capped; identifiers and free text go last."""
+    objective and analytical usefulness, then capped; identifiers and free text go last. The context
+    compiler asks for the uncapped catalog (`capped=False`) and applies its purpose profile's caps
+    itself, so what it leaves out is listed as omitted."""
     from analystos.services.platform_settings import get as platform
 
     llm = platform().llm
-    tokens = objective_tokens(ctx.run.objective) if ctx.run else set()
+    tokens = objective_tokens(objective if objective is not None else (ctx.run.objective if ctx.run else None))
     samples_allowed = bool(getattr(getattr(ctx, "policy", None), "send_data_samples_to_models", False))
     denied = set(ctx.scope.denied_columns)
     catalog = []
@@ -91,11 +97,11 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True) -> list[
             if include_values and samples_allowed and top and "pii" not in (c.tags or []) and (p.get("distinct") or 999) <= 40:
                 entry["values"] = [t.get("value") for t in top[:12]]
             entries.append(entry)
-        if llm.compact_prompts and len(entries) > llm.catalog_max_columns_per_table:
+        if capped and llm.compact_prompts and len(entries) > llm.catalog_max_columns_per_table:
             entries.sort(key=lambda e: column_rank(e, tokens))
             entries = entries[:llm.catalog_max_columns_per_table]
         catalog.append({"asset": fq, "business_name": asset.business_name, "row_count": asset.row_count, "columns": entries})
-    if llm.compact_prompts and len(catalog) > llm.catalog_max_tables:
+    if capped and llm.compact_prompts and len(catalog) > llm.catalog_max_tables:
         catalog.sort(key=lambda t: -table_relevance(t, tokens))
         catalog = catalog[:llm.catalog_max_tables]
     return catalog
@@ -108,7 +114,7 @@ def model_gate(ctx: RunContext, purpose: str, payload: Any, *, deterministic_ok:
 
     mode = ctx.router.mode(purpose)
     if mode == "off" or (mode == "auto" and deterministic_ok):
-        ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(payload)) + 500,
+        ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(_prompt_text(payload)) + 500,
                                reason=f"mode={mode}: deterministic result used")
         return False
     return True
@@ -116,6 +122,87 @@ def model_gate(ctx: RunContext, purpose: str, payload: Any, *, deterministic_ok:
 
 def compact_json(value: Any) -> str:
     return json.dumps(value, default=str, separators=(",", ":"), ensure_ascii=False)
+
+
+def _prompt_text(payload: Any) -> str:
+    from analystos.context.compiler import CompiledContext
+
+    if isinstance(payload, CompiledContext):
+        return compact_json(payload.header) + compact_json(payload.body)
+    return compact_json(payload)
+
+
+_SCOPE_CATALOG: Any = object()
+
+
+def context_header(ctx: Any) -> dict[str, Any]:
+    """Workspace header (P4-T04): stable per workspace and scope, so it sits in the cached prompt
+    prefix right after the static system text. Nothing objective- or run-specific goes here."""
+    header: dict[str, Any] = {}
+    workspace = getattr(ctx, "workspace", None)
+    if getattr(workspace, "name", None):
+        header["workspace"] = workspace.name
+    scope = getattr(ctx, "scope", None)
+    if scope is not None:
+        try:
+            from analystos.capabilities import packs
+
+            refs = sorted(p.ref for p in packs.for_scope(scope, getattr(ctx, "policy", None)))
+            if refs:
+                header["domain_packs"] = refs
+        except Exception as exc:  # the header is a convenience; a pack registry error must not block a call
+            log.warning("context header: domain packs unavailable: %s", exc)
+        dialects = sorted(set((getattr(scope, "source_dialects", None) or {}).values()))
+        if dialects:
+            header["dialects"] = dialects
+    return header
+
+
+def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: str | None = None,
+                catalog: Any = _SCOPE_CATALOG, reference_text: str | None = None) -> Any:
+    """Compile the prompt context for one model call (P4-T03) from the caller's mandatory inputs,
+    the authorized catalog and the workspace knowledge, under the purpose profile's budget.
+
+    Returns a CompiledContext for `llm_json`. When the mandatory part alone is over budget the
+    context comes back `refused` (never cut): `llm_json` then records the refusal and the caller
+    takes its deterministic path."""
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
+    from analystos.contracts.platform import PurposeProfile
+    from analystos.services.platform_settings import get as platform
+
+    settings = platform()
+    profile = settings.context.profiles.get(purpose) or PurposeProfile(max_chars=1_500_000)
+    run = getattr(ctx, "run", None)
+    if objective is None:
+        objective = getattr(run, "objective", None) or str(required.get("objective") or required.get("question") or "")
+    if catalog is _SCOPE_CATALOG:
+        catalog = (catalog_for_prompt(ctx, include_values=profile.catalog_detail == "profile", objective=objective, capped=False)
+                   if "catalog" in profile.sections else None)
+    if not settings.context.compiler_enabled:  # admin kill switch: the increment-3 payload, fit_payload only
+        return CompiledContext(purpose=purpose, header={}, body={**required, **({"catalog": catalog} if catalog else {})})
+    knowledge: list = []
+    sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    if sections and workspace_id:
+        try:
+            with session_scope() as s:
+                knowledge = load_knowledge(s, workspace_id, sections, run_id=getattr(run, "id", None))
+        except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
+            log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
+    limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
+    generic = {w for a in (getattr(getattr(ctx, "scope", None), "assets", None) or []) for w in terms(a.split(".")[-1])}
+    try:
+        return compile_context(purpose, profile, objective=objective, required=required, catalog=catalog,
+                               knowledge=knowledge, header=context_header(ctx), reference_text=reference_text,
+                               limit_chars=max(2_000, limit), min_relevance=settings.context.min_relevance,
+                               generic_terms=generic)
+    except ContextOverBudget as exc:
+        return CompiledContext(purpose=purpose, header={}, body=dict(required), refused=exc.message,
+                               budget_chars=int(exc.details.get("budget_chars") or 0),
+                               mandatory_chars=int(exc.details.get("mandatory_chars") or 0))
+
+
+_SYSTEM_RESERVE_CHARS = 8_000  # room for the static system text inside max_prompt_tokens (fit_payload re-checks exactly)
 
 
 def _size(value: Any) -> int:
@@ -134,6 +221,8 @@ def fit_payload(payload: dict[str, Any], *, max_chars: int, objective: str | Non
     tokens = objective_tokens(objective if objective is not None else str(payload.get("objective") or payload.get("question") or ""))
     out = dict(payload)
     omitted: dict[str, Any] = {"reason": f"prompt budget {max_chars} chars"}
+    if isinstance(out.get("omitted"), dict):  # the context compiler's own omissions are kept
+        omitted.update({k: v for k, v in out["omitted"].items() if k != "reason"})
     out["omitted"] = omitted
 
     def exact() -> int:
@@ -175,8 +264,9 @@ def fit_payload(payload: dict[str, Any], *, max_chars: int, objective: str | Non
                     continue
                 table["columns"].remove(col)
                 asset = str(table.get("asset"))
-                size += _size(col.get("name")) - _size(col) + (0 if asset in dropped_cols else _size(asset) + 3)
-                dropped_cols.setdefault(asset, []).append(col.get("name"))
+                name = col.get("name") if isinstance(col, dict) else col
+                size += _size(name) - _size(col) + (0 if asset in dropped_cols else _size(asset) + 3)
+                dropped_cols.setdefault(asset, []).append(name)
                 if size <= max_chars:
                     size = exact()
             size = exact()
@@ -216,45 +306,84 @@ def _agent_refusal(ctx: Any, purpose: str) -> tuple[str, str] | None:
     return None
 
 
-def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: dict[str, Any], *,
+def _record_context_refusal(ctx: Any, purpose: str, call: Any, reason: str, estimated: int) -> None:
+    """A compiler refusal is a model call that did not happen: record it like the router's own
+    oversize refusal (status `refused`), so it shows in the call log and the savings ledger."""
+    sink = getattr(ctx.router, "sink", None)
+    if sink is not None:
+        sink.record(ctx=call, purpose=purpose, profile="-", provider="context_compiler", model="-", status="refused",
+                    attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=None,
+                    error=reason[:500], tokens_saved=estimated)
+
+
+def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
              prompt_vars: dict[str, str] | None = None) -> tuple[Any | None, str | None]:
     """Call a chat model for JSON. Returns (data, model) or (None, reason) — callers degrade visibly.
 
-    The call context carries the workspace policy (provider list, residency, approval threshold)
-    and `prompt_version = <name>@<hash of the exact system text>`; the payload is fitted to the
-    admin prompt limit by dropping whole entries (fit_payload), never by cutting the JSON."""
+    `payload` is a CompiledContext (`compile_for`, P4-T03) or, for purposes without run context
+    (narrative, verification, summary), a plain dict. The prompt is laid out for provider prompt
+    caching (P4-T04): static system text (with the method vocabulary) → workspace header → the
+    volatile compiled context last; the first two are marked as the stable prefix.
+
+    The call context carries the workspace policy (provider list, residency, approval threshold),
+    `prompt_version = <name>@<hash of the exact system text>`, the compiler's receipts and the
+    workspace knowledge version (L0 cache key, P4-T06); the volatile part is fitted to the admin
+    prompt limit by dropping whole entries (fit_payload, the final guard), never by cutting JSON."""
     import dataclasses
 
     from analystos.agents.prompts import prompt, prompt_version_id
+    from analystos.context.compiler import CompiledContext
     from analystos.llm.cache import estimate_tokens
     from analystos.services.platform_settings import get as platform
 
+    compiled = payload if isinstance(payload, CompiledContext) else None
+    body: dict[str, Any] = compiled.body if compiled is not None else payload
     if ctx.router.mode(purpose) == "off":
         model_gate(ctx, purpose, payload, deterministic_ok=True)  # records the avoided call
         return None, "llm_off"
     refused = _agent_refusal(ctx, purpose)
     if refused:
         ctx.say(refused[1], kind="decision")
-        ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(payload)) + 500,
+        ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(_prompt_text(payload)) + 500,
                                reason=refused[1][:200])
         return None, refused[0]
     system = prompt(prompt_name, **(prompt_vars or {}))
     call = dataclasses.replace(ctx.call_ctx(exclude_families=exclude_families), prompt_version=prompt_version_id(prompt_name, system))
     call.with_policy(getattr(ctx, "policy", None))
+    if compiled is not None and compiled.refused:
+        message = (f"Context for {purpose} not sent: {compiled.refused} (mandatory {compiled.mandatory_chars} chars > "
+                   f"budget {compiled.budget_chars}); using the deterministic path.")
+        ctx.say(message, kind="decision", data={"purpose": purpose, "mandatory_chars": compiled.mandatory_chars,
+                                                "budget_chars": compiled.budget_chars})
+        _record_context_refusal(ctx, purpose, call, message, estimate_tokens(compact_json(body)) + len(system) // 4)
+        return None, "context_over_budget"
     if not ctx.router.available(purpose, call):
         return None, "llm_unavailable"
-    budget = int(platform().llm.max_prompt_tokens * 3.6) - len(system) - 200  # inverse of estimate_tokens, minus margin
+    llm = platform().llm
+    if call.knowledge_version is None and call.workspace_id and llm.cache_enabled and purpose in llm.cacheable_purposes:
+        from analystos.context.version import workspace_knowledge_version
+
+        call.knowledge_version = workspace_knowledge_version(call.workspace_id, policy=getattr(ctx, "policy", None))
+    header = compiled.header if compiled is not None else {}
+    header_text = compact_json({"workspace_context": header}) if header else ""
+    budget = int(llm.max_prompt_tokens * 3.6) - len(system) - len(header_text) - 200  # inverse of estimate_tokens, minus margin
     run = getattr(ctx, "run", None)
-    fitted = fit_payload(payload, max_chars=max(2_000, budget), objective=run.objective if run else None)
-    if fitted is not payload:
+    fitted = fit_payload(body, max_chars=max(2_000, budget), objective=run.objective if run else None)
+    if fitted is not body:
         ctx.say(f"Prompt for {purpose} trimmed to fit the model budget (~{estimate_tokens(compact_json(fitted))} tokens); "
                 f"omitted: {compact_json({k: v for k, v in fitted['omitted'].items() if k != 'reason'})[:300]}", kind="decision")
+    if compiled is not None:
+        call.context_receipts = compiled.receipts
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system, "cache": True}]
+    if header_text:
+        messages.append({"role": "user", "content": header_text, "cache": True})
+    messages.append({"role": "user", "content": compact_json(fitted)})
     spend = getattr(ctx, "spend", None)
     if spend is not None:
         spend("llm_calls")
     try:
-        response = ctx.router.complete_json(purpose, system, compact_json(fitted), ctx=call, max_tokens=max_tokens)
+        response = ctx.router.complete(purpose, messages, ctx=call, json_output=True, max_tokens=max_tokens)
         if spend is not None:
             spend("usd", response.cost_usd)
         return response.data, response.model

@@ -43,6 +43,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent Decisions */
+        get: operations["recent_decisions_api_admin_decisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/decisions/backends/{purpose}/{backend}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Backend State */
+        post: operations["set_backend_state_api_admin_decisions_backends__purpose___backend__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/decisions/calibration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calibration Report */
+        get: operations["calibration_report_api_admin_decisions_calibration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/decisions/calibration/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Calibration */
+        post: operations["run_calibration_api_admin_decisions_calibration_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/mcp/clients": {
         parameters: {
             query?: never;
@@ -609,6 +677,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback/{feedback_id}/correct": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Correct Feedback
+         * @description The user says what kind the feedback really was. Recorded to calibrate feedback_classification;
+         *     submit the feedback again with an explicit kind to act on it.
+         */
+        post: operations["correct_feedback_api_feedback__feedback_id__correct_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -680,6 +769,26 @@ export interface paths {
         get: operations["get_insight_api_insights__insight_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/insights/{insight_id}/outcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finding Outcome
+         * @description Accept or dismiss a finding (a rejection goes through run feedback, which also replans).
+         */
+        post: operations["finding_outcome_api_insights__insight_id__outcome_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1795,10 +1904,28 @@ export interface components {
             /** Reviewed */
             reviewed?: boolean | null;
         };
+        /** BackendStateIn */
+        BackendStateIn: {
+            /** Downgraded */
+            downgraded: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note?: string;
+        };
         /** Body_upload_api_workspaces__workspace_id__uploads_post */
         Body_upload_api_workspaces__workspace_id__uploads_post: {
             /** File */
             file: string;
+        };
+        /** CalibrateIn */
+        CalibrateIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run?: boolean;
         };
         /** ClassifyIn */
         ClassifyIn: {
@@ -1831,6 +1958,11 @@ export interface components {
              * @default []
              */
             synonyms?: string[];
+        };
+        /** CorrectionIn */
+        CorrectionIn: {
+            /** Kind */
+            kind: string;
         };
         /** CrawlIn */
         CrawlIn: {
@@ -1874,6 +2006,14 @@ export interface components {
             target_type?: string | null;
             /** Text */
             text: string;
+        };
+        /** FindingOutcomeIn */
+        FindingOutcomeIn: {
+            /**
+             * Signal
+             * @enum {string}
+             */
+            signal: "accept" | "dismiss";
         };
         /** GrantIn */
         GrantIn: {
@@ -2281,6 +2421,150 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recent_decisions_api_admin_decisions_get: {
+        parameters: {
+            query?: {
+                purpose?: string | null;
+                run_id?: string | null;
+                backend?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_backend_state_api_admin_decisions_backends__purpose___backend__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                purpose: string;
+                backend: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackendStateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calibration_report_api_admin_decisions_calibration_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_calibration_api_admin_decisions_calibration_run_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CalibrateIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3556,6 +3840,44 @@ export interface operations {
             };
         };
     };
+    correct_feedback_api_feedback__feedback_id__correct_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                feedback_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorrectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -3665,6 +3987,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finding_outcome_api_insights__insight_id__outcome_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                insight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FindingOutcomeIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

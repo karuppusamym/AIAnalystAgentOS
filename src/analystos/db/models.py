@@ -334,6 +334,10 @@ class ModelCall(Base):
     answered_by: Mapped[str] = mapped_column(String(20), default="llm_large", server_default="llm_large")
     # P4-T07: provider | price_table@<prices_version> | missing_price | none (no billable call).
     cost_source: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # Prompt caching (P4-T04): prompt tokens the provider served from its cache (share = / input_tokens).
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Context compiler receipts (P4-T03): the context items the prompt carried ("context used").
+    context_receipts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
 
     __table_args__ = (Index("ix_model_call_created_purpose_rung", "created_at", "purpose", "answered_by"),)

@@ -75,7 +75,7 @@ class _Inner:
     def available(self, purpose, ctx=None):
         return True
 
-    def record_skip(self, purpose, ctx, *, estimated_tokens, reason):
+    def record_skip(self, purpose, ctx, *, estimated_tokens, reason, rung="rules"):
         self.skips.append((purpose, reason))
 
     def complete_json(self, purpose, *a, **k):

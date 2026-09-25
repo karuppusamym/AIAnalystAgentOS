@@ -69,8 +69,8 @@ class ReplayRouter:
     def available(self, purpose: str, ctx: Any = None) -> bool:
         return purpose in self._allowed and self._inner.available(purpose, ctx)
 
-    def record_skip(self, purpose: str, ctx: Any, *, estimated_tokens: int, reason: str) -> None:
-        self._inner.record_skip(purpose, ctx, estimated_tokens=estimated_tokens, reason=f"registry replay: {reason}"[:200])
+    def record_skip(self, purpose: str, ctx: Any, *, estimated_tokens: int, reason: str, rung: str = "rules") -> None:
+        self._inner.record_skip(purpose, ctx, estimated_tokens=estimated_tokens, reason=f"registry replay: {reason}"[:200], rung=rung)
 
     def _guard(self, purpose: str) -> None:
         if purpose not in self._allowed:

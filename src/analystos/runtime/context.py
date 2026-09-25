@@ -61,6 +61,10 @@ def workspace_call_ctx(workspace_id: str, **kwargs: Any) -> CallContext:
     with session_scope() as s:
         workspace = s.get(Workspace, workspace_id)
         policy = load_policy(s, workspace) if workspace else WorkspacePolicyDoc()
+    if "knowledge_version" not in kwargs:
+        from analystos.context.version import workspace_knowledge_version
+
+        kwargs["knowledge_version"] = workspace_knowledge_version(workspace_id, policy=policy)
     return CallContext.for_policy(policy, workspace_id=workspace_id, **kwargs)
 
 
@@ -172,7 +176,19 @@ class RunContext:
         `agents.common.llm_json` replaces it with `<prompt name>@<text hash>` for the prompt it sends."""
         return CallContext.for_policy(self.policy, workspace_id=self.workspace.id, run_id=self.run.id, task_id=self.task.id,
                                       agent_id=self.agent.id, prompt_version=f"{self.agent.id}.{self.agent.prompt_version}",
-                                      exclude_families=exclude_families or [])
+                                      exclude_families=exclude_families or [], knowledge_version=self.knowledge_version)
+
+    @property
+    def knowledge_version(self) -> str | None:
+        """Workspace knowledge version for the L0 cache key (P4-T06), once per step: the context is
+        rebuilt for every step, so an edit applies from the next step on."""
+        if "_kv" not in self.__dict__:
+            from analystos.capabilities import packs
+            from analystos.context.version import workspace_knowledge_version
+
+            self.__dict__["_kv"] = workspace_knowledge_version(
+                self.workspace.id, pack_refs=[p.ref for p in packs.for_scope(self.scope, self.policy)])
+        return self.__dict__["_kv"]
 
     @property
     def router(self) -> ModelRouter:

@@ -33,9 +33,14 @@ class ResponseCache:
                 self._redis = None
 
     @staticmethod
-    def key(purpose: str, models: list[str], payload: Any, workspace_id: str | None = None) -> str:
-        """Scoped per workspace so its entries can be found and purged (retention, deletion)."""
-        return f"aos:llm:{workspace_id or '-'}:{purpose}:{stable_hash({'models': models, 'payload': payload})}"
+    def key(purpose: str, models: list[str], payload: Any, workspace_id: str | None = None,
+            knowledge_version: str | None = None) -> str:
+        """Scoped per workspace so its entries can be found and purged (retention, deletion). The
+        workspace knowledge version (P4-T06) is part of the hash, so a knowledge edit misses."""
+        material = {'models': models, 'payload': payload}
+        if knowledge_version:
+            material['knowledge'] = knowledge_version
+        return f"aos:llm:{workspace_id or '-'}:{purpose}:{stable_hash(material)}"
 
     def get(self, key: str) -> dict | None:
         raw = None
