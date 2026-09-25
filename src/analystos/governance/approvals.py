@@ -20,6 +20,9 @@ from analystos.governance.audit import audit
 from analystos.governance.policy import load_policy, member_role
 from analystos.security.auth import APPROVER_ROLES, role_at_least
 
+# Actions whose approver must differ from the requester whatever the workspace policy says (P4-K03).
+ALWAYS_SEPARATE_DUTIES = {"semantic_metric.approve"}
+
 
 def request_approval(session: Session, *, workspace_id: str, run_id: str | None, action: str, payload: dict[str, Any],
                      plan_hash: str | None, policy_version: int, requested_by: str, risk_tier: str,
@@ -61,7 +64,7 @@ def decide(session: Session, approval_id: str, user: User, *, approve: bool, rea
         raise Conflict("approval expired")
     ws = session.get(Workspace, approval.workspace_id)
     policy = load_policy(session, ws)
-    if policy.separation_of_duties and approval.requested_by == user.id:
+    if (policy.separation_of_duties or approval.action in ALWAYS_SEPARATE_DUTIES) and approval.requested_by == user.id:
         audit(f"user:{user.id}", "approval.self_approval_blocked", workspace_id=approval.workspace_id,
               target=approval.id, decision="deny", reasons=["separation_of_duties"], session=session)
         raise Forbidden("separation of duties: the requester cannot approve their own action")

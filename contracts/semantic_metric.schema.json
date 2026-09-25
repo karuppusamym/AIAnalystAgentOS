@@ -1,0 +1,168 @@
+{
+  "$defs": {
+    "DialectExpression": {
+      "properties": {
+        "dialect": {
+          "default": "ANSI_SQL",
+          "title": "Dialect",
+          "type": "string"
+        },
+        "expression": {
+          "title": "Expression",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "title": "DialectExpression",
+      "type": "object"
+    }
+  },
+  "description": "One KPI definition. `expressions[0]` is the primary expression (what the platform executes).",
+  "properties": {
+    "name": {
+      "maxLength": 120,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "expressions": {
+      "items": {
+        "$ref": "#/$defs/DialectExpression"
+      },
+      "minItems": 1,
+      "title": "Expressions",
+      "type": "array"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "ai_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ai Context"
+    },
+    "custom_extensions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Custom Extensions",
+      "type": "array"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Display Name"
+    },
+    "format": {
+      "anyOf": [
+        {
+          "enum": [
+            "number",
+            "percent",
+            "hours",
+            "currency"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Format"
+    },
+    "grain": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Grain"
+    },
+    "filters": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Filters",
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "source_columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Columns",
+      "type": "array"
+    },
+    "dataset": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dataset"
+    },
+    "datatype": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Datatype"
+    }
+  },
+  "required": [
+    "name",
+    "expressions"
+  ],
+  "title": "SemanticMetricDef",
+  "type": "object"
+}

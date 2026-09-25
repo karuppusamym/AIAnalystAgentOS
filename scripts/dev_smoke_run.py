@@ -39,7 +39,7 @@ def main() -> int:
         admin = s.scalar(select(User).where(User.email == settings.bootstrap_admin_email))
         ws = create_workspace(s, admin, name=f"ServiceNow smoke {time.strftime('%H:%M:%S')}",
                               objective="Identify the drivers of SLA breaches and recurring operational problems in IT incidents",
-                              autonomy_level=3)
+                              autonomy_level=3, policy={"require_approved_metrics": False})  # smoke run: no KPI review
         s.flush()
         add_member(s, admin, ws.id, "approver@analystos.local", "approver")
         src = register_source(s, admin, ws.id, kind="servicenow", name="ServiceNow (mock)",

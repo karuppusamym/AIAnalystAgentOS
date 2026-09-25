@@ -1,0 +1,94 @@
+version: 2
+models:
+  - name: metricflow_time_spine
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+semantic_models:
+  - name: orders
+    description: One row per order.
+    model: ref('fct_orders')
+    defaults:
+      agg_time_dimension: ordered_at
+    entities:
+      - name: order_id
+        type: primary
+      - name: customer
+        type: foreign
+        expr: customer_id
+    dimensions:
+      - name: ordered_at
+        type: time
+        type_params:
+          time_granularity: day
+      - name: channel
+        type: categorical
+        description: Sales channel.
+    measures:
+      - name: order_total
+        agg: sum
+        expr: amount
+      - name: order_count
+        agg: count
+        expr: order_id
+      - name: returned_orders
+        agg: sum_boolean
+        expr: is_returned
+  - name: customers
+    description: One row per customer.
+    model: ref('dim_customers')
+    entities:
+      - name: customer
+        type: primary
+        expr: customer_id
+    dimensions:
+      - name: region
+        type: categorical
+      - name: signed_up_at
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: customer_count
+        agg: count_distinct
+        expr: customer_id
+        agg_time_dimension: signed_up_at
+metrics:
+  - name: net_revenue
+    label: Net revenue
+    description: Sum of order amounts.
+    type: simple
+    type_params:
+      measure: order_total
+  - name: orders
+    label: Orders
+    type: simple
+    type_params:
+      measure: order_count
+  - name: returned
+    label: Returned orders
+    type: simple
+    type_params:
+      measure: returned_orders
+  - name: return_rate
+    label: Return rate
+    description: Share of orders returned.
+    type: ratio
+    type_params:
+      numerator: returned
+      denominator: orders
+  - name: average_order_value
+    label: Average order value
+    type: derived
+    type_params:
+      expr: net_revenue / orders
+      metrics:
+        - name: net_revenue
+        - name: orders
+  - name: customers_total
+    label: Customers
+    type: simple
+    type_params:
+      measure: customer_count
