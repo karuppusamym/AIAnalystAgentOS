@@ -3,6 +3,23 @@
 **Current level: Prototype.** Assessed 2026-09-25 against the evidence in the
 [capability register](02-capability-register.md).
 
+The [2026-09-25 design review](04-design-review.md) adds implementation gates in tracker P4–P6.
+Writing that design does not change this readiness level or certify new capabilities.
+
+## Gates added by the design review
+
+Before a shared controlled pilot, close workspace-path consistency and stream access-revocation
+gaps (P4-01), prove destination/compute isolation (P4-02), and deliver the versioned evidence
+checks required for the pilot's claims (P4-03). The remaining P4 workflow/API/evaluation work and
+P4-09 pilot review establish the supported task envelope and operational readiness.
+
+ML training, scoring and managed engineering outputs need their respective P5/P6 end-to-end
+evidence before being advertised. The [evaluation plan](05-evaluation-plan.md) defines proposed
+targets, not attained scores. Connector availability, connector certification, completed feature
+implementation and release readiness are separate claims.
+
+## Existing readiness assessment
+
 | Level | Requirement | State |
 |---|---|---|
 | Prototype | Synthetic or approved non-sensitive data | ✅ Synthetic ServiceNow-shaped data (seeded generator + Table-API mock) |

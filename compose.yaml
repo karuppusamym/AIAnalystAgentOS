@@ -15,7 +15,10 @@ x-app-env: &app-env
   ANALYSTOS_GRAPH_ENABLED: ${ANALYSTOS_GRAPH_ENABLED:-false}
   ANALYSTOS_TEMPORAL_ADDRESS: temporal:7233
   ANALYSTOS_SUPERSET_URL: http://superset:8088
+  ANALYSTOS_SUPERSET_PUBLIC_URL: http://localhost:8088
   ANALYSTOS_SERVICENOW_MOCK_URL: http://servicenow-mock:8090
+  # Development credential for the bundled synthetic ServiceNow source.
+  SERVICENOW_PASSWORD: ${SERVICENOW_PASSWORD:-admin}
   ANALYSTOS_JWT_SECRET: ${ANALYSTOS_JWT_SECRET:-dev-only-change-me-please-32bytes!!}
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
 

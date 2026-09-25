@@ -3,10 +3,11 @@
 Status vocabulary: **Done** (code + automated test, and live evidence where the row needs it) ·
 **Done (mock)** (built and tested only against a mock/synthetic system — not certified) ·
 **Partial** (usable, with a named gap) · **Not started** · **Phase N** (deliberately out of this release).
-Evidence lives in the [capability register](02-capability-register.md). IDs are spec v1 §60 IDs.
-Last reconciled: 2026-09-25, after increment 3 live evidence. Status was corrected the same day by
-the [architecture review](../70-reviews/2026-09-25-architecture-review.md), which also added
-increment 4.
+Evidence lives in the [capability register](02-capability-register.md). Phase-table IDs are spec
+v1 §60 IDs; P4–P6 are delivery IDs for the platform and workspace extensions, mapped below.
+Last reconciled: 2026-09-25, after increment 4 wave 3 evidence and the parallel workspace design
+review. The [architecture review](../70-reviews/2026-09-25-architecture-review.md) records the
+platform workstream; the [workspace review](04-design-review.md) records its remaining scope.
 
 ## P. Current execution queue
 
@@ -77,7 +78,67 @@ Findings from the live runs and the governance review that changed the design (k
 - **Tag-wiping re-discovery.** `discover_source` used to drop owner `restricted` tags on every
   re-discovery. It now runs through the crawler, which never removes tags.
 
-### Increment 4 — Platform re-architecture (proposed 2026-09-25)
+### Workspace and trust workstream — proposed scope alongside increment 4
+
+Design: [review](04-design-review.md), [target spec](../00-intent/03-workspace-data-team-spec.md),
+[UX](../10-architecture/02-workbench-ux.md), [API](../20-contracts/02-workbench-api.md),
+[ADR-0011](../10-architecture/adr/0011-workspace-workflows-and-evidence.md).
+The design is written; the rows below track remaining end-to-end acceptance work and may overlap
+platform capabilities delivered in increment 4. They are **Not started** as complete workflows.
+P0 blocks the shared pilot or stronger trust claims. Owners are responsibility roles pending named assignment.
+Dependencies constrain shipping; independent design/implementation may proceed together.
+
+| ID | Priority / owner | Scope and mapping | Depends on | Status | Required acceptance evidence |
+|---|---|---|---|---|---|
+| P4-01 | P0 / API | Workspace-bound run routes; SSE revocation and expiry (SEC-002, UI-003) | — | Not started | Tests for mismatched URL/run under one and dual memberships; token expiry and mid-stream revocation; no further denied payloads |
+| P4-02 | P0 / Platform | BI workspace isolation and container sandbox (SEC-007, GOV-002, DEX-003..005) | — | Not started | Live direct-BI cross-workspace denial and isolated worker probes; network/filesystem/resource restrictions; gate unavailable isolation |
+| P4-03 | P0 / Analytics | Typed fact bindings, evidence dimensions, discovery/confirmation rules, data-version manifest (INS-001..003, ANA-001..015) | — | Not started | Swapped-group/unit/direction adversarial tests; missing-evidence refusal; snapshot-change handling; method-specific null/power/selection evaluation; legacy badge migration |
+| P4-04 | P1 / Product + API | Workspace brief, readiness assessment and capability registry (WSP-002, CTX-004, META-005) | P4-01 | Not started | Unfamiliar-schema cases; provenance/revision tests; unsupported and missing-label tasks cannot execute; scoped memory retrieval |
+| P4-05 | P1 / Data | Reviewed entity/grain/join definitions, metric versions and semantic approval (SEM-001..005; replaces N-1) | P4-04 | Not started | Fanout and denominator reconciliation, conflicting/duplicate metric detection, stale-definition invalidation, ownership approval and lineage; live analyst workflow |
+| P4-06 | P1 / API + Runtime | Typed work orders, idempotency, revision checks, cursor APIs, generated client, dispatch outbox and resource budgets (AGT-001, FND-010/014, QRY-006) | P4-01, P4-04 | Not started | Duplicate requests, crash-before/after-dispatch, reconciliation, competing budget reservations, cancellation, pagination and old-client compatibility |
+| P4-07 | P1 / UI | Guided onboarding and workbench, evidence drawer, glossary/column curation, working preview filters (UI-001..008) | P4-03..06 | Not started | Real-API browser journeys for analyst/viewer/approver, keyboard and narrow layouts, reconnect and stale edits; no simulated filter changes |
+| P4-08 | P1 / Evaluation | Held-out corpus and practitioner baseline, accepted-output cost/latency (v1 §56, OPS-003..004) | —; full gate after P4-03..07 | Not started | Versioned suite, all failures/abstentions, per-domain results and paired baseline as defined in evaluation plan; dated live evidence |
+| P4-09 | P1 / Platform + Product | Controlled-pilot identity, named owners, connector certification and recovery (SEC-001..003, OPS-001..005; N-5) | P4-01..02, P4-08 | Not started | Named pilot scope; SSO/role mapping, recovery drill, observable failures, pilot-source certification and readiness review |
+
+Exit: one complete analyst workflow on unfamiliar approved data, with reviewed business
+semantics, trustworthy evidence, recovery and recorded pilot outcomes. This does not complete
+all Phase-4 enterprise capabilities or imply general ML/engineering support.
+
+### Increment 5 — Reproducible tabular ML and forecasting
+
+| ID | Priority / owner | Scope | Depends on | Status | Required acceptance evidence |
+|---|---|---|---|---|---|
+| P5-01 | P1 / ML + Runtime | MLSpec, target/feature availability, immutable splits, baseline, bounded experiments and isolated compute | P4-02..06 | Not started | Leakage, grouped/time split and feature-parity cases; deterministic manifests and hard trial/resource caps |
+| P5-02 | P1 / ML + Evaluation | Untouched holdout, backtesting, uncertainty/slices, model card and registry versions | P5-01, P4-08 | Not started | Baseline and candidate evaluated on identical splits; null/no-improvement cases abstain; sealed evaluation report |
+| P5-03 | P1 / ML + UI | Experiment/model UX, approved batch scoring, label-aware performance monitoring and rollback | P5-02, P4-07, P4-09 | Not started | Live train → evaluate → approve → score → monitor workflow; duplicate scoring and rollback; schema drift/refused promotion; no silent retraining promotion |
+
+Scope: tabular classification/regression and batch forecasts (v1 §14.5, §21.3/4). Online serving,
+deep learning and generalized causal inference remain deferred. Existing driver/forecast skills
+are not reclassified as a completed ML lifecycle.
+
+### Increment 6 — Tested engineering pipelines and managed outputs
+
+| ID | Priority / owner | Scope and mapping | Depends on | Status | Required acceptance evidence |
+|---|---|---|---|---|---|
+| P6-01 | P1 / Data engineering | PipelineSpec, contracts, typed transformations, governed cross-source staging joins (INT-001..003, INT-005, TRN-001; N-4 subset) | P4-02..06 | Not started | Per-source scope/snapshot manifest, dry-run SQL, key/fanout/unmatched-row checks and reconciled virtual output |
+| P6-02 | P1 / Data engineering + Evaluation | Watermarks, late data, updates/deletes, deduplication, replay and backfill (TRN-003) | P6-01, P4-08 | Not started | Reference full rebuild equals incremental/retried output within declared tolerances; overlapping schedules and crash recovery |
+| P6-03 | P1 / Platform + UI | Dedicated managed writer, approval, atomic promotion/rollback, pipeline workbench and operational alerts (TRN-002) | P6-02, P4-07, P4-09 | Not started | Live build → test → approve → materialize → fail/recover; invalid output never replaces good version; source mutation remains denied |
+
+Increment numbers indicate product sequencing, not a dependency of engineering on ML. P6 may
+move ahead of P5 when the chosen pilot's job demands it, after shared P4 foundations pass.
+
+### Retained follow-ons
+
+| ID | Scope | Status | Rationale / dependency |
+|---|---|---|---|
+| N-2 | Existing-dashboard mode (BI-011/012) | Not started | Build on inspect_dashboard after semantic/evidence versions stabilize |
+| N-3 | Approved external email/webhook delivery | Not started | Completes SCH-003 delivery after destination authorization/retry contracts |
+| N-6-font | Bundled Unicode PDF font | Not started | Original N-6 sandbox scope moved to P4-02; font remains a report correctness gap |
+| N-7 | General entity matching (INT-004) and Trino federation (TRN-004) | Phase 2 | P6 starts with reviewed join keys and bounded staging; matching/federation need their own validation and connector evidence |
+
+N-1, N-4 and N-5 are mapped into P4/P6 above; the platform workstream also tracks related pieces.
+
+### Increment 4 — Platform re-architecture (2026-09-25)
 
 **Sources:**
 
