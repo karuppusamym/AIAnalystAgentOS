@@ -16,6 +16,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -302,6 +303,9 @@ class ModelCall(Base):
     tokens_saved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # cache hits and deterministic skips
     request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Replay (P4-C09): content addresses of the redacted request and response in model_payload.
+    request_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    response_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -642,3 +646,21 @@ class CrawlRun(Base):
     started_by: Mapped[str] = mapped_column(String(80))
     started_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ModelPayload(Base):
+    """Redacted model request/response bodies, content-addressed (P4-C09).
+
+    A separate table rather than two JSON columns on model_call because the same body recurs:
+    every retry and fallback attempt re-sends the identical request, cache hits repeat a stored
+    response, and scheduled re-runs resend the same catalog. Addressing by sha256 of the canonical
+    JSON stores each body once. Bodies are zlib-compressed and capped (llm/replay.py MAX_PAYLOAD_BYTES);
+    an over-cap body is replaced by a stub and marked truncated, never cut mid-JSON."""
+
+    __tablename__ = "model_payload"
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # request | response
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)  # uncompressed canonical JSON size
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    body: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = _ts()

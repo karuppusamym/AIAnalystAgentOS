@@ -123,7 +123,8 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, An
     """NL question -> governed SQL -> result. Repairs use the gateway's rejection message."""
     catalog = catalog_for_prompt(ctx)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
-    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog})
+    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog},
+                           prompt_vars={"dialect": dialect})
     if not isinstance(data, dict) or not data.get("sql"):
         raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
     attempts = []

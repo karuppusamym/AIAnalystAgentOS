@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts"""
+"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts | replay-run"""
 from __future__ import annotations
 
 import argparse
@@ -83,10 +83,39 @@ def export_contracts() -> None:
     print(f"wrote {len(models) + 1} contract files to {out}")
 
 
+def replay_run(run_id: str, *, check: bool, out: str | None) -> int:
+    """Reconstruct a run's model inputs/outputs from storage; with --check, re-execute every
+    recorded call offline through the router (ReplayTransport) and compare with the recording."""
+    from analystos.llm.replay import run_report
+
+    report = run_report(run_id, check=check)
+    text = json.dumps(report, indent=2, default=str)
+    if out:
+        from pathlib import Path
+
+        Path(out).write_text(text + "\n")
+        print(f"wrote {report['summary']['calls']} model calls of run {run_id} to {out}")
+    else:
+        print(text)
+    if check:
+        replay = report["replay"]
+        print(f"replay: {replay['matched']}/{replay['checked']} calls reproduced offline, "
+              f"{len(replay['mismatches'])} mismatches", file=sys.stderr)
+        return 1 if replay["mismatches"] else 0
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
-    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts"])
+    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts", "replay-run"])
+    parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
+    parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
+    parser.add_argument("--out", help="replay-run: write the JSON report to this file")
     args = parser.parse_args(argv)
+    if args.command == "replay-run":
+        if not args.run_id:
+            parser.error("replay-run needs a run id")
+        return replay_run(args.run_id, check=args.check, out=args.out)
     if args.command == "migrate":
         migrate()
     elif args.command == "seed":

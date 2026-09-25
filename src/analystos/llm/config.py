@@ -14,6 +14,16 @@ class ProviderConfig(BaseModel):
     kind: str
     base_url: str
     api_key_env: str
+    region: str | None = None  # where the provider processes requests; None = unknown (fails a residency policy)
+
+
+class ModelMeta(BaseModel):
+    """Optional per-model metadata. Prices are list-price estimates used only for the pre-call
+    approval check (policy.expensive_model_approval_usd); billed cost is always the provider's."""
+
+    region: str | None = None  # overrides the provider region; None = inherit (unknown if both are None)
+    input_usd_per_mtok: float | None = None
+    output_usd_per_mtok: float | None = None
 
 
 class ProfileConfig(BaseModel):
@@ -30,6 +40,21 @@ class ModelsConfig(BaseModel):
     allowlist: list[str]
     profiles: dict[str, ProfileConfig]
     routing: dict[str, str]
+    models: dict[str, ModelMeta] = Field(default_factory=dict)
+
+    def region_of(self, model: str, provider: str) -> str | None:
+        meta = self.models.get(model)
+        if meta and meta.region:
+            return meta.region
+        cfg = self.providers.get(provider)
+        return cfg.region if cfg else None
+
+    def estimate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float | None:
+        """Upper-bound USD estimate for one call, or None when the model has no price metadata."""
+        meta = self.models.get(model)
+        if meta is None or meta.input_usd_per_mtok is None or meta.output_usd_per_mtok is None:
+            return None
+        return (input_tokens * meta.input_usd_per_mtok + output_tokens * meta.output_usd_per_mtok) / 1_000_000
 
     def profile_for(self, purpose: str) -> tuple[str, ProfileConfig]:
         name = self.routing.get(purpose)
@@ -42,7 +67,8 @@ class ModelsConfig(BaseModel):
             "allowlist": self.allowlist,
             "profiles": {k: v.model_dump() for k, v in self.profiles.items()},
             "routing": self.routing,
-            "providers": {k: {"kind": v.kind, "base_url": v.base_url} for k, v in self.providers.items()},
+            "providers": {k: {"kind": v.kind, "base_url": v.base_url, "region": v.region} for k, v in self.providers.items()},
+            "models": {k: v.model_dump() for k, v in self.models.items()},
         }
 
 
