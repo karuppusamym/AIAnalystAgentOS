@@ -1,11 +1,15 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useId, useMemo, useState, type FormEvent } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api, type Asset, type DiscoveredAsset, type Source, type SourceColumn } from "../api";
+import { CrawlPanel } from "../components/CrawlPanel";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
+import { crawlStatsSummary } from "../lib/crawls";
 import { fmtDate, fmtNumber, fmtPct, fmtValue } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
-
-const splitList = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+import {
+  NUMBER_FIELDS, buildSourceConfig, defaultKind, executionModeText, fieldHint, fieldLabel, groupKinds, suggestedSecretRef,
+  validateSourceForm, type SourceFormErrors,
+} from "../lib/sourceKinds";
 const TOGGLE_TAGS = ["pii", "restricted", "sensitive"] as const;
 
 export function SourcesPage() {
@@ -25,12 +29,13 @@ export function SourcesPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Sources & data explorer" subtitle="Connect sources, discover tables, select what agents may analyse, and tag sensitive columns."
+      <PageHeader title="Sources & data explorer"
+        subtitle={<>Connect sources, crawl their metadata, select what agents may analyse, and tag sensitive columns. Curate descriptions in the <Link to={`/w/${encodeURIComponent(wsId)}/catalog`}>Catalog</Link>.</>}
         actions={<button type="button" className="btn btn-primary" onClick={() => setShowAdd((s) => !s)}>{showAdd ? "Close" : "Add source"}</button>} />
       {showAdd && <AddSource wsId={wsId} onAdded={() => { setShowAdd(false); reloadAll(); }} />}
       <ErrorBox error={sources.error} onRetry={sources.reload} />
       {sources.loading && !sources.data && <Loading />}
-      {sources.data?.length === 0 && <EmptyState title="No sources yet">Add a ServiceNow instance, a PostgreSQL database or upload a CSV.</EmptyState>}
+      {sources.data?.length === 0 && <EmptyState title="No sources yet">Add a database, warehouse, file or ServiceNow instance.</EmptyState>}
       {sources.data?.map((s) => (
         <SourceCard key={s.id} wsId={wsId} source={s} assets={(assets.data ?? []).filter((a) => a.source_id === s.id)}
           onChanged={reloadAll} onOpenAsset={setActiveAsset} activeAsset={activeAsset} />
@@ -72,6 +77,7 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
   const [selected, setSelected] = useState<Set<string>>(() => new Set(assets.filter((a) => a.selected).map((a) => a.name)));
   const [dirty, setDirty] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [crawlKey, setCrawlKey] = useState(0);
   const discoverAct = useAction();
   const selectAct = useAction();
 
@@ -94,7 +100,9 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
     const r = await discoverAct.run(() => api.discover(wsId, source.id));
     if (r) {
       setDiscovered(r.assets);
-      setResult(`Discovered ${r.assets.length} assets.`);
+      const summary = crawlStatsSummary(r.stats);
+      setResult(`Discovered ${r.assets.length} assets${summary ? ` (${summary})` : ""}.`);
+      setCrawlKey((k) => k + 1);
       onChanged();
     }
   };
@@ -159,6 +167,7 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
           </div>
         </>
       )}
+      <CrawlPanel wsId={wsId} source={source} refreshKey={crawlKey} onFinished={onChanged} />
     </Card>
   );
 }
@@ -213,111 +222,149 @@ function AssetDetail({ asset, onTagged, onClose }: { asset: Asset; onTagged: (c:
   );
 }
 
-function AddSource({ wsId, onAdded }: { wsId: string; onAdded: () => void }) {
-  const [kind, setKind] = useState<"servicenow" | "postgres" | "csv">("servicenow");
+export function AddSource({ wsId, onAdded }: { wsId: string; onAdded: () => void }) {
+  const id = useId();
+  const kinds = useAsync(() => api.sourceKinds(), []);
+  const [kindId, setKindId] = useState("");
   const [name, setName] = useState("");
-  const [secretRef, setSecretRef] = useState("env:SERVICENOW_PASSWORD");
-  // servicenow
-  const [instanceUrl, setInstanceUrl] = useState("");
-  const [username, setUsername] = useState("");
-  const [tables, setTables] = useState("incident, problem, change_request");
-  const [pageSize, setPageSize] = useState(1000);
-  const [maxRows, setMaxRows] = useState(200000);
-  // postgres
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState(5432);
-  const [database, setDatabase] = useState("");
-  const [schemas, setSchemas] = useState("public");
-  // csv
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [secretRef, setSecretRef] = useState("");
+  const [mode, setMode] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [errors, setErrors] = useState<SourceFormErrors>({});
   const act = useAction();
 
-  const changeKind = (k: typeof kind) => {
-    setKind(k);
-    setSecretRef(k === "servicenow" ? "env:SERVICENOW_PASSWORD" : k === "postgres" ? "env:POSTGRES_SOURCE_PASSWORD" : "");
+  const all = kinds.data ?? [];
+  const groups = useMemo(() => groupKinds(all), [all]);
+  const kind = all.find((k) => k.kind === (kindId || defaultKind(all))) ?? null;
+
+  const chooseKind = (k: string) => {
+    const spec = all.find((x) => x.kind === k);
+    setKindId(k);
+    setValues(spec?.default_port ? { port: String(spec.default_port) } : {});
+    setSecretRef(spec ? suggestedSecretRef(spec) : "");
+    setMode("");
+    setFile(null);
+    setErrors({});
   };
+  // First render with the catalog loaded: seed the defaults of the default kind.
+  if (kind && !kindId) chooseKind(kind.kind);
+
+  const acceptsUpload = !!kind && kind.category === "file" && kind.required.includes("path");
+  const setValue = (f: string, v: string) => setValues((prev) => ({ ...prev, [f]: v }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!kind) return;
+    const effective = acceptsUpload && file ? { ...values, path: values.path || "(upload)" } : values;
+    const errs = validateSourceForm(kind, name || file?.name || "", effective, kind.secret_field ? secretRef : "");
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
     const ok = await act.run(async () => {
-      let config: Record<string, unknown>;
-      if (kind === "servicenow") {
-        config = { instance_url: instanceUrl.trim(), username: username.trim(), tables: splitList(tables), page_size: pageSize, max_rows: maxRows };
-      } else if (kind === "postgres") {
-        config = { host: host.trim(), port, database: database.trim(), username: username.trim(), schemas: splitList(schemas) };
-      } else {
-        if (!file) throw new Error("choose a .csv, .parquet or .xlsx file");
+      let vals = values;
+      if (acceptsUpload && file) {
         const up = await api.upload(wsId, file);
-        config = { path: up.path };
+        vals = { ...values, path: up.path };
       }
-      if (!instanceUrl.trim() && kind === "servicenow") delete config.instance_url; // server falls back to the configured mock
-      return api.addSource(wsId, { kind, name: name.trim() || (file?.name ?? kind), config, secret_ref: secretRef.trim() || null });
+      const config = buildSourceConfig(kind, vals, mode || undefined);
+      return api.addSource(wsId, {
+        kind: kind.kind, name: name.trim() || (file?.name ?? kind.label), config,
+        secret_ref: kind.secret_field ? secretRef.trim() || null : null,
+      });
     });
     if (ok) onAdded();
   };
 
+  const err = (k: string) => errors[k] && <div className="field-error" role="alert">{errors[k]}</div>;
+  const fieldInput = (f: string, required: boolean) => (
+    <Field key={f} label={`${fieldLabel(f)}${required ? " *" : ""}`} htmlFor={`${id}-${f}`} hint={fieldHint(f)}>
+      <input id={`${id}-${f}`} value={values[f] ?? ""} onChange={(e) => setValue(f, e.target.value)} aria-invalid={!!errors[f]}
+        aria-required={required || undefined} inputMode={NUMBER_FIELDS.has(f) ? "numeric" : undefined}
+        type={f === "instance_url" ? "url" : "text"} autoComplete="off" spellCheck={false} />
+      {err(f)}
+    </Field>
+  );
+
   return (
     <Card title="Add source">
-      <form className="form" onSubmit={submit}>
-        <div className="form-row">
-          <Field label="Kind" htmlFor="src-kind">
-            <select id="src-kind" value={kind} onChange={(e) => changeKind(e.target.value as typeof kind)}>
-              <option value="servicenow">ServiceNow</option>
-              <option value="postgres">PostgreSQL</option>
-              <option value="csv">File upload (CSV / Parquet / XLSX)</option>
-            </select>
-          </Field>
-          <Field label="Name" htmlFor="src-name">
-            <input id="src-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Production ITSM" />
-          </Field>
-        </div>
-        {kind === "servicenow" && (
-          <>
-            <div className="form-row">
-              <Field label="Instance URL" htmlFor="sn-url" hint="Leave empty to use the configured demo/mock instance.">
-                <input id="sn-url" type="url" value={instanceUrl} onChange={(e) => setInstanceUrl(e.target.value)} placeholder="https://example.service-now.com" />
-              </Field>
-              <Field label="Username" htmlFor="sn-user"><input id="sn-user" value={username} onChange={(e) => setUsername(e.target.value)} /></Field>
-            </div>
-            <Field label="Tables" htmlFor="sn-tables" hint="Comma separated.">
-              <input id="sn-tables" value={tables} onChange={(e) => setTables(e.target.value)} />
+      <ErrorBox error={kinds.error} onRetry={kinds.reload} />
+      {kinds.loading && !kinds.data && <Loading label="Loading source kinds…" />}
+      {kind && (
+        <form className="form" onSubmit={submit} noValidate aria-label="Add source">
+          <div className="form-row">
+            <Field label="Kind" htmlFor={`${id}-kind`} hint={kind.docs || undefined}>
+              <select id={`${id}-kind`} value={kind.kind} onChange={(e) => chooseKind(e.target.value)}>
+                {groups.map((g) => (
+                  <optgroup key={g.category} label={g.label}>
+                    {g.kinds.map((k) => (
+                      <option key={k.kind} value={k.kind} disabled={!k.enabled}>
+                        {k.label}{!k.enabled ? " (disabled by admin)" : !k.driver_installed ? " (driver not installed)" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
             </Field>
+            <Field label="Name *" htmlFor={`${id}-name`}>
+              <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} placeholder="Production ITSM" aria-invalid={!!errors.name} />
+              {err("name")}
+            </Field>
+          </div>
+          <div className="chip-row" aria-label="Kind details">
+            <Tag tone={kind.execution_mode === "pushdown" ? "info" : "neutral"}>{kind.execution_mode}</Tag>
+            <span className="muted small">{executionModeText(kind.execution_mode)} Dialect <code>{kind.dialect}</code>.</span>
+            {kind.driver_installed ? <Tag tone="success">driver installed</Tag> : <Tag tone="warning">driver missing</Tag>}
+          </div>
+          {!kind.enabled && <Notice tone="warning">This kind is disabled by the platform administrator.</Notice>}
+          {!kind.driver_installed && (
+            <Notice tone="warning">
+              The driver for {kind.label} is not installed on the server, so connecting will fail until it is.
+              {kind.install_hint && <> Install it with <code>{kind.install_hint}</code>.</>}
+            </Notice>
+          )}
+          {kind.required.length > 0 && <div className="form-row">{kind.required.filter((f) => !(acceptsUpload && f === "path")).map((f) => fieldInput(f, true))}</div>}
+          {acceptsUpload && (
             <div className="form-row">
-              <Field label="Page size" htmlFor="sn-page"><input id="sn-page" type="number" min={1} max={10000} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} /></Field>
-              <Field label="Max rows" htmlFor="sn-max"><input id="sn-max" type="number" min={1} value={maxRows} onChange={(e) => setMaxRows(Number(e.target.value))} /></Field>
+              <Field label="Upload a file" htmlFor={`${id}-file`} hint="Uploaded to the workspace (max 200 MB) and registered with config.path.">
+                <input id={`${id}-file`} type="file" accept=".csv,.parquet,.xlsx,.db,.sqlite,.sqlite3,.duckdb"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              </Field>
+              <Field label={`…or a server path${file ? "" : " *"}`} htmlFor={`${id}-path`}>
+                <input id={`${id}-path`} value={values.path ?? ""} onChange={(e) => setValue("path", e.target.value)} disabled={!!file}
+                  aria-invalid={!!errors.path} autoComplete="off" />
+                {err("path")}
+              </Field>
             </div>
-          </>
-        )}
-        {kind === "postgres" && (
-          <>
-            <div className="form-row">
-              <Field label="Host" htmlFor="pg-host"><input id="pg-host" required value={host} onChange={(e) => setHost(e.target.value)} /></Field>
-              <Field label="Port" htmlFor="pg-port"><input id="pg-port" type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} /></Field>
-            </div>
-            <div className="form-row">
-              <Field label="Database" htmlFor="pg-db"><input id="pg-db" required value={database} onChange={(e) => setDatabase(e.target.value)} /></Field>
-              <Field label="Username" htmlFor="pg-user"><input id="pg-user" required value={username} onChange={(e) => setUsername(e.target.value)} /></Field>
-            </div>
-            <Field label="Schemas" htmlFor="pg-schemas" hint="Comma separated."><input id="pg-schemas" value={schemas} onChange={(e) => setSchemas(e.target.value)} /></Field>
-          </>
-        )}
-        {kind === "csv" && (
-          <Field label="File" htmlFor="csv-file" hint="Uploaded to the workspace (max 200 MB), then registered with config.path.">
-            <input id="csv-file" type="file" accept=".csv,.parquet,.xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </Field>
-        )}
-        {kind !== "csv" && (
-          <Field label="Secret reference" htmlFor="src-secret"
-            hint={<>A reference, never the secret itself: <code>env:NAME</code> or <code>file:/path</code>. The server resolves it at connect time.</>}>
-            <input id="src-secret" value={secretRef} onChange={(e) => setSecretRef(e.target.value)} placeholder="env:SERVICENOW_PASSWORD"
-              pattern="^(env:[A-Za-z_][A-Za-z0-9_]*|file:/.+)?$" autoComplete="off" />
-          </Field>
-        )}
-        <ErrorBox error={act.error} />
-        <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={act.busy}>{act.busy ? "Adding…" : "Add source"}</button>
-        </div>
-      </form>
+          )}
+          {kind.optional.length > 0 && (
+            <details className="optional-fields">
+              <summary className="small">Optional settings ({kind.optional.length})</summary>
+              <div className="form-row">{kind.optional.map((f) => fieldInput(f, false))}</div>
+            </details>
+          )}
+          {kind.execution_mode === "pushdown" && (
+            <Field label="Execution mode" htmlFor={`${id}-mode`} hint="Pushdown needs the administrator to allow it; otherwise the source is staged.">
+              <select id={`${id}-mode`} value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="">Pushdown (default)</option>
+                <option value="staged">Staged snapshot</option>
+              </select>
+            </Field>
+          )}
+          {kind.secret_field ? (
+            <Field label={`Secret reference (${kind.secret_field})`} htmlFor={`${id}-secret`}
+              hint={<>A reference, never the secret itself: <code>env:NAME</code> or <code>file:/path</code>. The server resolves it at connect
+                time. Secrets never go in config.</>}>
+              <input id={`${id}-secret`} value={secretRef} onChange={(e) => setSecretRef(e.target.value)} placeholder="env:NAME"
+                autoComplete="off" spellCheck={false} aria-invalid={!!errors.secret_ref} />
+              {err("secret_ref")}
+            </Field>
+          ) : <p className="muted small">This kind needs no credential.</p>}
+          <ErrorBox error={act.error} />
+          <div className="form-actions">
+            <button type="submit" className="btn btn-primary" disabled={act.busy || !kind.enabled}>{act.busy ? "Adding…" : "Add source"}</button>
+          </div>
+        </form>
+      )}
     </Card>
   );
 }

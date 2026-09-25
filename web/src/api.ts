@@ -167,6 +167,9 @@ export interface DiscoveredAsset {
 export interface DiscoverResponse {
   assets: DiscoveredAsset[];
   test: Dict;
+  crawl_id?: string;
+  stats?: CrawlStats;
+  changes?: CrawlChanges;
 }
 
 export interface Relationship {
@@ -594,12 +597,23 @@ export interface ModelProfile {
   exclude_families: string[];
 }
 
+export interface EffectiveRoute {
+  profile: string;
+  models: string[];
+  mode: LLMMode;
+  available: boolean;
+  /** A rule-based path exists: "off"/"auto" still produce a result without a model. */
+  deterministic_path: boolean;
+  decision_model: boolean;
+}
+
 export interface ModelsView {
   allowlist: string[];
   profiles: Record<string, ModelProfile>;
   routing: Record<string, string>;
   providers: Record<string, { kind: string; base_url: string }>;
   available: Record<string, boolean>;
+  effective?: Record<string, EffectiveRoute>;
 }
 
 export interface Usage {
@@ -621,7 +635,7 @@ export interface AuditEvent {
 }
 
 // ----------------------------------------------------------------------------------- continuous (phase 3)
-export type ScheduleKind = "reanalysis" | "dataset_refresh" | "report" | "monitor";
+export type ScheduleKind = "reanalysis" | "dataset_refresh" | "report" | "monitor" | "crawl";
 export type ReportKind = "executive" | "operational" | "statistical" | "exception" | "weekly_summary";
 export type ReportFormat = "md" | "html" | "pdf" | "xlsx";
 
@@ -641,6 +655,9 @@ export interface ScheduleConfig {
   run_id?: string;
   monitor_ids?: string[];
   source_ids?: string[];
+  mode?: "full" | "incremental";
+  include?: string[];
+  exclude?: string[];
   [k: string]: unknown;
 }
 
@@ -649,6 +666,8 @@ export interface ScheduleRunResult {
   previous_run_id?: string | null;
   report_artifact_id?: string | null;
   changes?: { new?: number; persisting?: number; changed?: number; resolved?: number };
+  /** crawl schedules: per source id, the crawl id and headline counts, or an error. */
+  crawls?: Record<string, { crawl_id?: string; new?: number; changed?: number; deprecated?: number; profiled?: number; error?: string }>;
   [k: string]: unknown;
 }
 
@@ -690,7 +709,7 @@ export interface ScheduleInput {
   config: ScheduleConfig;
 }
 
-export type MonitorKind = "metric_threshold" | "metric_drift" | "change_point" | "data_quality";
+export type MonitorKind = "metric_threshold" | "metric_drift" | "change_point" | "forecast_deviation" | "data_quality";
 
 export interface MonitorConfig {
   metric?: string;
@@ -701,6 +720,10 @@ export interface MonitorConfig {
   lookback?: number;
   z_threshold?: number;
   recent_periods?: number;
+  /** forecast_deviation: interval width in standard deviations, fitted history length, optional season length. */
+  z?: number;
+  history?: number;
+  seasonal_periods?: number;
   assets?: string[];
   [k: string]: unknown;
 }
@@ -836,6 +859,280 @@ export interface ReportContent {
 export interface DownloadedFile {
   blob: Blob;
   filename: string;
+}
+
+
+// ----------------------------------------------------------------------------------- catalog & crawls (increment 3)
+export type SourceCategory = "database" | "warehouse" | "lakehouse" | "engine" | "file" | "api";
+
+/** One connectable kind (GET /api/source-kinds, from config/source_kinds.yaml). */
+export interface SourceKindInfo {
+  kind: string;
+  label: string;
+  category: SourceCategory | string;
+  required: string[];
+  optional: string[];
+  default_port: number | null;
+  docs: string;
+  /** The credential's name; it is always supplied through secret_ref, never in config. */
+  secret_field: string | null;
+  execution_mode: "pushdown" | "staged" | string;
+  dialect: string;
+  driver_installed: boolean;
+  install_hint: string | null;
+  enabled: boolean;
+}
+
+export interface SourceInput {
+  kind: string;
+  name: string;
+  config: Dict;
+  secret_ref?: string | null;
+}
+
+export interface RetypedColumn {
+  name: string;
+  previous_type: string;
+  current_type: string;
+}
+
+export interface AssetChange {
+  key: string;
+  previous_fingerprint?: string | null;
+  fingerprint?: string;
+  added: string[];
+  removed: string[];
+  retyped: RetypedColumn[];
+  attributes_changed: boolean;
+}
+
+export interface RenameCandidate {
+  previous_key: string;
+  current_key: string;
+  similarity: number;
+}
+
+export interface CrawlChanges {
+  new?: string[];
+  changed?: AssetChange[];
+  missing?: string[];
+  deprecated?: string[];
+  rename_candidates?: RenameCandidate[];
+}
+
+export interface CrawlStats {
+  discovered?: number;
+  in_scope?: number;
+  truncated?: number;
+  new?: number;
+  changed?: number;
+  unchanged?: number;
+  missing?: number;
+  deprecated?: number;
+  renamed?: number;
+  profiled?: number;
+  tokens_saved?: number;
+  model_calls?: number;
+  [k: string]: unknown;
+}
+
+export interface CrawlLogEntry {
+  at: string;
+  stage: string;
+  message: string;
+  [k: string]: unknown;
+}
+
+export interface Crawl {
+  id: string;
+  source_id: string;
+  workspace_id: string;
+  mode: "full" | "incremental" | string;
+  trigger: string;
+  status: "running" | "succeeded" | "failed" | string;
+  stage: string | null;
+  options: { include?: string[]; exclude?: string[]; profile?: boolean; enrich?: boolean; [k: string]: unknown };
+  stats: CrawlStats;
+  changes: CrawlChanges;
+  log: CrawlLogEntry[];
+  error: string | null;
+  started_by: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface CrawlInput {
+  mode?: "full" | "incremental";
+  include?: string[];
+  exclude?: string[];
+  profile?: boolean;
+  enrich?: boolean;
+}
+
+export interface PiiInfo {
+  category: string | null;
+  sensitivity: string;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface GlossaryLink {
+  term_id: string;
+  term: string | null;
+  score?: number;
+  reason?: string;
+}
+
+export interface CatalogColumn {
+  name: string;
+  data_type: string;
+  business_name: string | null;
+  description: string | null;
+  tags: string[];
+  tags_origin: "crawler" | "user" | string;
+  role: string | null;
+  unit: string | null;
+  pii: PiiInfo | null;
+  glossary: GlossaryLink | null;
+}
+
+export type DescriptionOrigin = "source" | "rule" | "model" | "user";
+
+export interface CatalogAsset {
+  id: string;
+  fq: string;
+  source_id: string;
+  name: string;
+  business_name: string | null;
+  business_name_origin?: string | null;
+  description: string | null;
+  description_origin: DescriptionOrigin | string | null;
+  reviewed: boolean;
+  selected: boolean;
+  lifecycle: "active" | "deprecated" | string;
+  row_count: number | null;
+  role: string | null;
+  domain: string | null;
+  grain: string | null;
+  confidence: number | null;
+  last_crawled_at: string | null;
+  columns: CatalogColumn[];
+}
+
+export interface CatalogFilter {
+  q?: string;
+  domain?: string;
+  role?: string;
+  include_deprecated?: boolean;
+}
+
+export interface AssetMetadataPatch {
+  business_name?: string;
+  description?: string;
+  reviewed?: boolean;
+}
+
+export interface SqlExplanation {
+  statement?: string;
+  read_only?: boolean;
+  summary: string;
+  tables?: string[];
+  ctes?: string[];
+  outputs?: string[];
+  joins?: { kind: string; table: string; on: string | null }[];
+  filter?: string | null;
+  group_by?: string[];
+  aggregations?: string[];
+  having?: string | null;
+  order_by?: string[];
+  limit?: string | null;
+  window_functions?: number;
+  distinct?: boolean;
+  gateway: { accepted: boolean; code?: string; reason?: string };
+}
+
+// ----------------------------------------------------------------------------------- platform settings (admin)
+export type LLMMode = "off" | "auto" | "always";
+
+/** contracts/platform.py PlatformSettings: the effective admin document. */
+export interface PlatformSettings {
+  llm: {
+    purpose_modes: Record<string, LLMMode>;
+    routing_overrides: Record<string, string>;
+    profile_models: Record<string, string[]>;
+    disabled_models: string[];
+    cache_enabled: boolean;
+    cache_ttl_hours: number;
+    cacheable_purposes: string[];
+    max_prompt_tokens: number;
+    downgrade_below_budget_fraction: number;
+    compact_prompts: boolean;
+    catalog_max_columns_per_table: number;
+    catalog_max_tables: number;
+    [k: string]: unknown;
+  };
+  analysis: Record<string, number | boolean | string>;
+  crawl: Record<string, number | boolean | string>;
+  monitors: Record<string, number | boolean | string>;
+  sources: { enabled_kinds: string[]; allow_pushdown: boolean; staged_max_rows: number; [k: string]: unknown };
+  features: Record<string, boolean>;
+  [k: string]: unknown;
+}
+
+export interface SettingsDocument {
+  version: number;
+  settings: PlatformSettings;
+  defaults: PlatformSettings;
+  presets: Record<string, Record<string, LLMMode>>;
+  schema: Dict;
+}
+
+export interface SettingsChange {
+  path: string;
+  from: unknown;
+  to: unknown;
+}
+
+export interface SettingsUpdateResult {
+  version: number;
+  changes?: SettingsChange[];
+  rolled_back_to?: number;
+}
+
+export interface SettingsVersion {
+  version: number;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PromptTemplate {
+  name: string;
+  version: string;
+  text: string;
+}
+
+export interface TokenSavingsRow {
+  calls: number;
+  tokens_used: number;
+  tokens_saved: number;
+  cost_usd: number;
+  by_status: Record<string, number>;
+}
+
+export interface TokenSavings {
+  days: number;
+  totals: {
+    calls: number;
+    tokens_used: number;
+    tokens_saved: number;
+    cost_usd: number;
+    cache_hits: number;
+    deterministic_skips: number;
+    refused: number;
+    saved_share: number;
+  };
+  by_purpose: Record<string, TokenSavingsRow>;
 }
 
 // ----------------------------------------------------------------------------------- errors
@@ -1056,8 +1353,8 @@ export const api = {
 
   // sources
   listSources: (ws: string) => get<Source[]>(`/workspaces/${e(ws)}/sources`),
-  addSource: (ws: string, body: { kind: string; name: string; config: Dict; secret_ref?: string | null }) =>
-    post<Source>(`/workspaces/${e(ws)}/sources`, body),
+  addSource: (ws: string, body: SourceInput) => post<Source>(`/workspaces/${e(ws)}/sources`, body),
+  sourceKinds: () => get<SourceKindInfo[]>("/source-kinds"),
   discover: (ws: string, sourceId: string) => post<DiscoverResponse>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/discover`),
   selectAssets: (ws: string, sourceId: string, assets: string[]) =>
     put<{ selected: string[]; loaded: Dict[] }>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/selection`, { assets }),
@@ -1070,6 +1367,19 @@ export const api = {
   tagColumn: (assetId: string, column: string, tags: string[]) =>
     put<SourceColumn>(`/assets/${e(assetId)}/columns/${e(column)}/tags`, { tags }),
   relationships: (ws: string) => get<Relationship[]>(`/workspaces/${e(ws)}/relationships`),
+
+  // metadata crawls & catalog
+  startCrawl: (ws: string, sourceId: string, body: CrawlInput = {}) =>
+    post<Crawl>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/crawl`, body),
+  listCrawls: (ws: string, sourceId?: string) => get<Crawl[]>(`/workspaces/${e(ws)}/crawls${qs({ source_id: sourceId })}`),
+  getCrawl: (id: string) => get<Crawl>(`/crawls/${e(id)}`),
+  catalog: (ws: string, filter: CatalogFilter = {}) =>
+    get<CatalogAsset[]>(`/workspaces/${e(ws)}/catalog${qs({
+      q: filter.q, domain: filter.domain, role: filter.role, include_deprecated: filter.include_deprecated ? "true" : undefined,
+    })}`),
+  curateAsset: (assetId: string, body: AssetMetadataPatch) =>
+    patch<{ id: string; business_name: string | null; description: string | null; description_origin: string | null; reviewed: boolean }>(
+      `/assets/${e(assetId)}/metadata`, body),
 
   // analysis
   startRun: (ws: string, body: { objective?: string; source_ids?: string[]; autonomy_level?: number }) =>
@@ -1090,6 +1400,8 @@ export const api = {
   ask: (ws: string, question: string) => post<AskResponse>(`/workspaces/${e(ws)}/ask`, { question }),
   query: (ws: string, sql: string, maxRows?: number) =>
     post<QueryResult>(`/workspaces/${e(ws)}/query`, { sql, max_rows: maxRows ?? null }),
+  explainQuery: (ws: string, sql: string, maxRows?: number) =>
+    post<SqlExplanation>(`/workspaces/${e(ws)}/query/explain`, { sql, max_rows: maxRows ?? null }),
 
   // artifacts, insights, approvals
   listArtifacts: (ws: string, filter: { type?: string; run_id?: string } = {}) =>
@@ -1142,6 +1454,15 @@ export const api = {
   models: () => get<ModelsView>("/admin/models"),
   usage: () => get<Usage>("/admin/usage"),
   audit: (limit = 300) => get<AuditEvent[]>(`/admin/audit${qs({ limit })}`),
+
+  // platform settings (admin only)
+  adminSettings: () => get<SettingsDocument>("/admin/settings"),
+  updateSettings: (patchDoc: Dict, note: string) => put<SettingsUpdateResult>("/admin/settings", { patch: patchDoc, note }),
+  applyPreset: (preset: string) => post<SettingsUpdateResult>("/admin/settings/preset", { preset }),
+  settingsHistory: () => get<SettingsVersion[]>("/admin/settings/history"),
+  rollbackSettings: (version: number) => post<SettingsUpdateResult>("/admin/settings/rollback", { version }),
+  prompts: () => get<PromptTemplate[]>("/admin/prompts"),
+  tokenSavings: (days = 30) => get<TokenSavings>(`/admin/token-savings${qs({ days })}`),
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)

@@ -509,3 +509,15 @@ input.mono { font-family: var(--mono); }
 .bell-link:hover { background: var(--surface-2); }
 .bell-empty { padding: 0.75rem 0.4rem; margin: 0; }
 @media (max-width: 860px) { .bell-menu { position: fixed; right: 16px; left: 16px; top: 56px; width: auto; } }
+
+/* increment 3: crawls, catalog, explain, admin settings */
+.crawl-panel { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.crawl-detail { padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.crawl-log > summary, .optional-fields > summary, details.prompt > summary { cursor: pointer; margin-bottom: 0.4rem; }
+.optional-fields { margin: 0.25rem 0; }
+.catalog-filters { display: flex; margin-top: 0; }
+.catalog-filters input[type="search"] { min-width: 16rem; }
+.curation { margin-bottom: 0.75rem; }
+.explain { margin-top: 0.75rem; }
+details.prompt { border-bottom: 1px solid var(--border); padding: 0.35rem 0; }
+details.prompt pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; }

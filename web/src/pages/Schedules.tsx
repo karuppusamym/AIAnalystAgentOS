@@ -20,7 +20,7 @@ export function SchedulesPage() {
   return (
     <div className="page">
       <PageHeader title="Schedules"
-        subtitle="Recurring re-analysis, dataset refresh, reports and monitor evaluation. Runs use the owner's current permissions; publishing always needs an approval."
+        subtitle="Recurring re-analysis, dataset refresh, reports, monitor evaluation and metadata crawls. Runs use the owner's current permissions; publishing always needs an approval."
         actions={!creating && <button type="button" className="btn btn-primary" onClick={() => { setCreating(true); setEditing(null); }}>New schedule</button>} />
       {creating && (
         <Card title="New schedule">
@@ -122,6 +122,11 @@ function ConfigSummary({ schedule: s }: { schedule: Schedule }) {
     parts.push(c.monitor_ids?.length ? `${c.monitor_ids.length} monitor(s)` : "all enabled monitors");
   } else if (s.kind === "dataset_refresh") {
     parts.push(c.source_ids?.length ? `${c.source_ids.length} source(s)` : "all staged sources");
+  } else if (s.kind === "crawl") {
+    parts.push(c.source_ids?.length ? `${c.source_ids.length} source(s)` : "all discovered sources");
+    parts.push(`${c.mode ?? "admin default"} mode`);
+    if (c.include?.length) parts.push(`include ${c.include.join(", ")}`);
+    if (c.exclude?.length) parts.push(`exclude ${c.exclude.join(", ")}`);
   }
   return <span className="small">{parts.join(" · ") || "—"}</span>;
 }
@@ -149,7 +154,8 @@ function RecentRuns({ wsId, runs }: { wsId: string; runs: ScheduleRun[] }) {
                       {res.run_id && <Link to={`/w/${wsId}/runs/${res.run_id}`}>Run</Link>}
                       {res.report_artifact_id && <Link to={`/w/${wsId}/reports?artifact=${res.report_artifact_id}`}>Report</Link>}
                       {ch && <span className="muted">{ch.new ?? 0} new · {ch.persisting ?? 0} persisting · {ch.changed ?? 0} changed · {ch.resolved ?? 0} resolved</span>}
-                      {!res.run_id && !res.report_artifact_id && !ch && <span className="muted">—</span>}
+                      {res.crawls && <CrawlRunSummary wsId={wsId} crawls={res.crawls} />}
+                      {!res.run_id && !res.report_artifact_id && !ch && !res.crawls && <span className="muted">—</span>}
                     </div>
                   </td>
                   <td className="small warn-text clamp-2">{r.error ?? ""}</td>
@@ -160,6 +166,18 @@ function RecentRuns({ wsId, runs }: { wsId: string; runs: ScheduleRun[] }) {
         </table>
       </div>
     </details>
+  );
+}
+
+function CrawlRunSummary({ wsId, crawls }: { wsId: string; crawls: NonNullable<ScheduleRun["result"]["crawls"]> }) {
+  const entries = Object.values(crawls);
+  const failed = entries.filter((c) => c.error).length;
+  const sum = (k: "new" | "changed" | "deprecated") => entries.reduce((n, c) => n + (c[k] ?? 0), 0);
+  return (
+    <span className="muted">
+      <Link to={`/w/${wsId}/sources`}>{entries.length} source{entries.length === 1 ? "" : "s"} crawled</Link>
+      {" "}· {sum("new")} new · {sum("changed")} changed · {sum("deprecated")} deprecated{failed ? ` · ${failed} failed` : ""}
+    </span>
   );
 }
 
@@ -179,7 +197,7 @@ export function ScheduleForm({ wsId, initial, onSaved, onCancel }: {
   };
   const runs = useAsync(() => (f.kind === "report" ? api.listRuns(wsId) : Promise.resolve([])), [wsId, f.kind]);
   const monitors = useAsync(() => (f.kind === "monitor" ? api.listMonitors(wsId) : Promise.resolve([])), [wsId, f.kind]);
-  const sources = useAsync(() => (f.kind === "dataset_refresh" ? api.listSources(wsId) : Promise.resolve([])), [wsId, f.kind]);
+  const sources = useAsync(() => (f.kind === "dataset_refresh" || f.kind === "crawl" ? api.listSources(wsId) : Promise.resolve([])), [wsId, f.kind]);
   const zones = timeZoneOptions();
 
   const submit = async (e: FormEvent) => {
@@ -332,6 +350,38 @@ export function ScheduleForm({ wsId, initial, onSaved, onCancel }: {
             ))}
           </div>
         </fieldset>
+      )}
+
+      {f.kind === "crawl" && (
+        <>
+          <fieldset className="autonomy">
+            <legend>Sources (none selected = every discovered source)</legend>
+            <ErrorBox error={sources.error} />
+            <div className="toggle-group">
+              {(sources.data ?? []).map((s) => (
+                <label key={s.id} className="toggle small">
+                  <input type="checkbox" checked={f.sourceIds.includes(s.id)} onChange={(e) => toggleIn("sourceIds", s.id, e.target.checked)} /> {s.name}
+                  <span className="muted">({s.kind})</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="form-row">
+            <Field label="Crawl mode" htmlFor={`${id}-cmode`} hint="Full crawls deprecate tables that disappeared; incremental crawls never do.">
+              <select id={`${id}-cmode`} value={f.crawlMode} onChange={(e) => set({ crawlMode: e.target.value as ScheduleFormState["crawlMode"] })}>
+                <option value="">Admin default</option>
+                <option value="incremental">Incremental</option>
+                <option value="full">Full</option>
+              </select>
+            </Field>
+            <Field label="Include patterns" htmlFor={`${id}-cinc`} hint="Comma separated globs on schema.table or table.">
+              <input id={`${id}-cinc`} value={f.crawlInclude} onChange={(e) => set({ crawlInclude: e.target.value })} />
+            </Field>
+            <Field label="Exclude patterns" htmlFor={`${id}-cexc`}>
+              <input id={`${id}-cexc`} value={f.crawlExclude} onChange={(e) => set({ crawlExclude: e.target.value })} />
+            </Field>
+          </div>
+        </>
       )}
 
       <ErrorBox error={act.error} />

@@ -35,6 +35,7 @@ describe.skipIf(!LIVE)("live API smoke", () => {
     if (ws) {
       errors.push(...await visit(`/w/${ws.id}`, /Key verified insights/));
       errors.push(...await visit(`/w/${ws.id}/sources`, /Relationships/));
+      errors.push(...await visit(`/w/${ws.id}/catalog`, /Catalog/));
       errors.push(...await visit(`/w/${ws.id}/runs`, /Analysis runs/));
       errors.push(...await visit(`/w/${ws.id}/ask`, /SQL console/));
       errors.push(...await visit(`/w/${ws.id}/governance`, /Workspace policy/));

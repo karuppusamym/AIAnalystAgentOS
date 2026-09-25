@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { EmptyState } from "./components/ui";
 import { AdminPage } from "./pages/Admin";
 import { AskPage } from "./pages/Ask";
+import { CatalogPage } from "./pages/Catalog";
 import { ConsolePage } from "./pages/Console";
 import { GovernancePage } from "./pages/Governance";
 import { InsightsPage } from "./pages/Insights";
@@ -36,6 +37,7 @@ export function AppRoutes() {
         <Route path="w/:wsId">
           <Route index element={<WorkspaceHomePage />} />
           <Route path="sources" element={<SourcesPage />} />
+          <Route path="catalog" element={<CatalogPage />} />
           <Route path="runs" element={<RunsPage />} />
           <Route path="runs/:runId" element={<RunViewPage />} />
           <Route path="runs/:runId/console" element={<ConsolePage />} />

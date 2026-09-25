@@ -4,27 +4,42 @@ import { useAuth } from "../auth";
 import { Card, EmptyState, ErrorBox, JsonView, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
 import { fmtDate, fmtMs, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
+import { PromptsView, SettingsEditor, TokenSavingsView } from "./AdminSettings";
 
-type Tab = "agents" | "tools" | "skills" | "models" | "usage" | "audit";
+type Tab = "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
+
+/** Tabs whose endpoints are admin-only: rendered as a notice for everyone else instead of a 403. */
+const ADMIN_ONLY = new Set<Tab>(["settings", "savings", "prompts", "usage", "audit"]);
 
 export function AdminPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("agents");
   return (
     <div className="page">
-      <PageHeader title="Admin & registry" subtitle="Agents, tools, skills and model routing — plus platform usage and the audit log." />
-      {!user?.is_admin && <Notice tone="info">You can view the registries; changing them, usage and the audit log need an admin account.</Notice>}
+      <PageHeader title="Admin & registry"
+        subtitle="Agents, tools, skills and model routing; platform settings, token savings and prompts; usage and the audit log." />
+      {!user?.is_admin && <Notice tone="info">You can view the registries; changing them, platform settings, usage and the audit log need an admin account.</Notice>}
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
-        { id: "models", label: "Models" }, { id: "usage", label: "Usage" }, { id: "audit", label: "Audit log" },
+        { id: "models", label: "Models" }, { id: "settings", label: "Settings" }, { id: "savings", label: "Token savings" },
+        { id: "prompts", label: "Prompts" }, { id: "usage", label: "Usage" }, { id: "audit", label: "Audit log" },
       ]} />
       <div className="tab-panel" role="tabpanel">
-        {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
-        {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
-        {tab === "skills" && <Skills />}
-        {tab === "models" && <Models />}
-        {tab === "usage" && <UsageView />}
-        {tab === "audit" && <Audit />}
+        {ADMIN_ONLY.has(tab) && !user?.is_admin ? (
+          <Notice tone="warning">This section is available to platform administrators only.</Notice>
+        ) : (
+          <>
+            {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
+            {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
+            {tab === "skills" && <Skills />}
+            {tab === "models" && <Models />}
+            {tab === "settings" && <SettingsEditor />}
+            {tab === "savings" && <TokenSavingsView />}
+            {tab === "prompts" && <PromptsView />}
+            {tab === "usage" && <UsageView />}
+            {tab === "audit" && <Audit />}
+          </>
+        )}
       </div>
     </div>
   );
@@ -147,7 +162,7 @@ function Models() {
           <span className="tag tag-jev">JEV decision</span> purposes use the TypeSafe Jev decision model: typed choices with probabilities.</p>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Purpose</th><th>Profile</th><th>Models (fallback order)</th><th>Available</th></tr></thead>
+            <thead><tr><th>Purpose</th><th>Profile</th><th>Models (fallback order)</th><th>Mode</th><th>Available</th></tr></thead>
             <tbody>
               {Object.entries(d.routing).map(([purpose, profile]) => {
                 const p = d.profiles[profile];
@@ -156,7 +171,8 @@ function Models() {
                   <tr key={purpose} className={jev ? "row-jev" : undefined}>
                     <td><code>{purpose}</code>{jev && <span className="tag tag-jev">JEV decision</span>}</td>
                     <td><code className="small">{profile}</code>{p?.exclude_families?.length ? <div className="muted small">excludes: {p.exclude_families.join(", ")}</div> : null}</td>
-                    <td className="small">{p?.models.join(" → ") ?? "—"}</td>
+                    <td className="small">{(d.effective?.[purpose]?.models ?? p?.models)?.join(" → ") ?? "—"}</td>
+                    <td className="small">{d.effective?.[purpose]?.mode ?? "always"}{d.effective?.[purpose]?.deterministic_path && <div className="muted small">rule path</div>}</td>
                     <td><StatusBadge status={d.available[purpose] ? "ok" : "failed"} label={d.available[purpose] ? "available" : "unavailable"} /></td>
                   </tr>
                 );

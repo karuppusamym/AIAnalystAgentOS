@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { ApiError, api, errorMessage, type AskResponse, type QueryResult } from "../api";
+import { ApiError, api, errorMessage, type AskResponse, type QueryResult, type SqlExplanation } from "../api";
 import { ChartView } from "../components/Chart";
-import { Card, CodeBlock, DataTable, ErrorBox, Field, Notice, PageHeader } from "../components/ui";
+import { Card, CodeBlock, DataTable, ErrorBox, Field, KeyValue, Notice, PageHeader } from "../components/ui";
 import { guessChart } from "../lib/charts";
 import { fmtMs } from "../lib/format";
 
@@ -40,6 +40,40 @@ function GatewayError({ error }: { error: unknown }) {
   return <ErrorBox error={errorMessage(error)} />;
 }
 
+/** The deterministic explanation of a statement and the gateway's verdict — nothing is executed. */
+export function ExplainView({ ex }: { ex: SqlExplanation }) {
+  const g = ex.gateway;
+  const list = (xs: string[] | undefined) => (xs?.length ? xs.join(", ") : null);
+  const items: [string, ReactNode][] = [];
+  if (ex.tables?.length) items.push(["Tables", <span key="t">{ex.tables.map((t) => <code key={t} className="tag">{t}</code>)}</span>]);
+  if (ex.joins?.length) {
+    items.push(["Joins", <ul key="j" className="list compact">{ex.joins.map((j, i) => (
+      <li key={i} className="small"><code>{j.table}</code> ({j.kind}){j.on ? <> on <code>{j.on}</code></> : null}</li>
+    ))}</ul>]);
+  }
+  if (ex.filter) items.push(["Filter", <code key="f">{ex.filter}</code>]);
+  if (ex.group_by?.length) items.push(["Group by", list(ex.group_by)]);
+  if (ex.aggregations?.length) items.push(["Aggregations", list(ex.aggregations)]);
+  if (ex.having) items.push(["Having", <code key="h">{ex.having}</code>]);
+  if (ex.order_by?.length) items.push(["Order by", list(ex.order_by)]);
+  if (ex.limit) items.push(["Limit", ex.limit]);
+  if (ex.ctes?.length) items.push(["Named subqueries", list(ex.ctes)]);
+  return (
+    <section className="stack explain" aria-label="Query explanation">
+      {g.accepted ? (
+        <Notice tone="success"><strong>The gateway would accept this query.</strong> It is read-only and stays within your scope.</Notice>
+      ) : (
+        <div className="alert alert-danger" role="alert">
+          <strong>The gateway would reject this query{g.code ? ` (${g.code})` : ""}.</strong> {g.reason}
+        </div>
+      )}
+      <p>{ex.summary}</p>
+      {items.length > 0 && <KeyValue items={items} />}
+      <p className="muted small">Explained deterministically from the parsed SQL — no model call and nothing executed.</p>
+    </section>
+  );
+}
+
 export function AskPage() {
   const { wsId = "" } = useParams();
   const [question, setQuestion] = useState("");
@@ -51,6 +85,8 @@ export function AskPage() {
   const [qres, setQres] = useState<QueryResult | null>(null);
   const [qErr, setQErr] = useState<unknown>(null);
   const [running, setRunning] = useState(false);
+  const [explain, setExplain] = useState<SqlExplanation | null>(null);
+  const [explaining, setExplaining] = useState(false);
 
   const submitAsk = async (e: FormEvent) => {
     e.preventDefault();
@@ -66,8 +102,22 @@ export function AskPage() {
     }
   };
 
+  const runExplain = async () => {
+    setExplaining(true);
+    setQErr(null);
+    setExplain(null);
+    try {
+      setExplain(await api.explainQuery(wsId, sql, maxRows));
+    } catch (err) {
+      setQErr(err);
+    } finally {
+      setExplaining(false);
+    }
+  };
+
   const submitSql = async (e: FormEvent) => {
     e.preventDefault();
+    setExplain(null);
     setRunning(true);
     setQErr(null);
     setQres(null);
@@ -120,10 +170,13 @@ export function AskPage() {
           </Field>
           <div className="form-actions">
             <label className="inline-field small">Max rows <input type="number" min={1} max={50000} value={maxRows} onChange={(e) => setMaxRows(Number(e.target.value))} /></label>
+            <button type="button" className="btn" onClick={() => void runExplain()} disabled={explaining || running || !sql.trim()}
+              title="Explain the query and check it against the gateway without running it">{explaining ? "Explaining…" : "Explain"}</button>
             <button type="submit" className="btn btn-primary" disabled={running || !sql.trim()}>{running ? "Running…" : "Run (Ctrl+Enter)"}</button>
           </div>
         </form>
         <GatewayError error={qErr} />
+        {explain && <ExplainView ex={explain} />}
         {qres && <ResultView res={qres} />}
       </Card>
     </div>

@@ -6,6 +6,7 @@ export const MONITOR_KINDS: { id: MonitorKind; label: string; description: strin
   { id: "metric_threshold", label: "Threshold", description: "Alert when the latest period crosses a fixed bound." },
   { id: "metric_drift", label: "Drift", description: "Alert when the latest period is far from the recent median (robust z-score)." },
   { id: "change_point", label: "Change point", description: "Alert on a statistically significant regime shift in the recent periods." },
+  { id: "forecast_deviation", label: "Forecast deviation", description: "Alert when the latest period falls outside the forecast interval fitted on the prior periods (trend and seasonality aware)." },
   { id: "data_quality", label: "Data quality", description: "Alert on new or worsening data-quality issues versus the recorded baseline." },
 ];
 
@@ -23,6 +24,9 @@ export interface MonitorFormState {
   lookback: string;
   zThreshold: string;
   recentPeriods: string;
+  forecastZ: string;
+  history: string;
+  seasonalPeriods: string;
   assets: string[];
   autoInvestigate: boolean;
 }
@@ -30,7 +34,8 @@ export interface MonitorFormState {
 export function emptyMonitorForm(): MonitorFormState {
   return {
     name: "", kind: "metric_drift", metric: "", grain: "week", op: ">", value: "", severity: "warning",
-    lookback: "8", zThreshold: "3", recentPeriods: "4", assets: [], autoInvestigate: false,
+    lookback: "8", zThreshold: "3", recentPeriods: "4", forecastZ: "2.5", history: "60", seasonalPeriods: "",
+    assets: [], autoInvestigate: false,
   };
 }
 
@@ -48,6 +53,13 @@ export function validateMonitorForm(f: MonitorFormState): Record<string, string>
   if (f.kind === "change_point" && !(Number.isInteger(num(f.recentPeriods)) && num(f.recentPeriods) >= 1)) {
     e.recentPeriods = "Recent periods must be a whole number ≥ 1.";
   }
+  if (f.kind === "forecast_deviation") {
+    if (!(num(f.forecastZ) > 0)) e.forecastZ = "z must be positive.";
+    if (!(Number.isInteger(num(f.history)) && num(f.history) >= 4)) e.history = "History must be a whole number ≥ 4 (3 to fit, 1 to check).";
+    if (f.seasonalPeriods.trim() && !(Number.isInteger(num(f.seasonalPeriods)) && num(f.seasonalPeriods) >= 2)) {
+      e.seasonalPeriods = "Season length must be a whole number ≥ 2, or empty to infer it from the grain.";
+    }
+  }
   return e;
 }
 
@@ -59,6 +71,11 @@ export function buildMonitorConfig(f: MonitorFormState): MonitorConfig {
       return { metric: f.metric, grain: f.grain, lookback: num(f.lookback), z_threshold: num(f.zThreshold) };
     case "change_point":
       return { metric: f.metric, grain: f.grain, recent_periods: num(f.recentPeriods) };
+    case "forecast_deviation": {
+      const cfg: MonitorConfig = { metric: f.metric, grain: f.grain, z: num(f.forecastZ), history: num(f.history) };
+      if (f.seasonalPeriods.trim()) cfg.seasonal_periods = num(f.seasonalPeriods);
+      return cfg;
+    }
     case "data_quality":
       return f.assets.length ? { assets: [...f.assets] } : {};
     default:
@@ -98,6 +115,9 @@ export function describeMonitorConfig(m: Monitor): string {
       return `${c.metric ?? "?"} per ${c.grain ?? "week"} · |z| ≥ ${c.z_threshold ?? 3} vs ${c.lookback ?? 8}-period median`;
     case "change_point":
       return `${c.metric ?? "?"} per ${c.grain ?? "week"} · shift in last ${c.recent_periods ?? 4} periods`;
+    case "forecast_deviation":
+      return `${c.metric ?? "?"} per ${c.grain ?? "week"} · outside the ±${c.z ?? 2.5}σ forecast from ${c.history ?? 60} periods`
+        + (c.seasonal_periods ? ` · season ${c.seasonal_periods}` : "");
     case "data_quality":
       return c.assets?.length ? `assets: ${c.assets.join(", ")}` : "all assets in scope";
     default:

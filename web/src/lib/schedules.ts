@@ -5,6 +5,7 @@
  * The server is authoritative (croniter + the 15-minute minimum interval); these checks only catch
  * obvious mistakes before the round trip, and the form always shows the server's message too.
  */
+import { splitList } from "./sourceKinds";
 import type { ReportFormat, ReportKind, Schedule, ScheduleConfig, ScheduleInput, ScheduleKind } from "../api";
 
 export const SCHEDULE_KINDS: { id: ScheduleKind; label: string; description: string }[] = [
@@ -12,6 +13,7 @@ export const SCHEDULE_KINDS: { id: ScheduleKind; label: string; description: str
   { id: "dataset_refresh", label: "Dataset refresh", description: "Re-load staged sources so analyses and monitors see fresh data." },
   { id: "report", label: "Report", description: "Generate a report from the latest (or a chosen) completed run." },
   { id: "monitor", label: "Monitor evaluation", description: "Evaluate monitors and raise alerts on material changes." },
+  { id: "crawl", label: "Metadata crawl", description: "Re-crawl source metadata to catch schema drift (new, changed, missing and renamed tables)." },
 ];
 
 export const REPORT_KINDS: { id: ReportKind; label: string }[] = [
@@ -178,8 +180,12 @@ export interface ScheduleFormState {
   runId: string;
   // monitor
   monitorIds: string[];
-  // dataset_refresh
+  // dataset_refresh + crawl
   sourceIds: string[];
+  // crawl
+  crawlMode: "" | "full" | "incremental";
+  crawlInclude: string;
+  crawlExclude: string;
 }
 
 export function emptyScheduleForm(timezone = browserTimeZone()): ScheduleFormState {
@@ -187,6 +193,7 @@ export function emptyScheduleForm(timezone = browserTimeZone()): ScheduleFormSta
     name: "", kind: "reanalysis", preset: "weekly_monday_0700", cron: CRON_PRESETS[0].cron, timezone,
     objective: "", refreshFirst: true, publish: "skip", includeReport: true,
     reportKind: "weekly_summary", formats: ["html", "pdf", "xlsx"], runId: "", monitorIds: [], sourceIds: [],
+    crawlMode: "", crawlInclude: "", crawlExclude: "",
   };
 }
 
@@ -208,6 +215,9 @@ export function formFromSchedule(s: Schedule): ScheduleFormState {
     runId: c.run_id ?? "",
     monitorIds: c.monitor_ids ?? [],
     sourceIds: c.source_ids ?? [],
+    crawlMode: kind === "crawl" && (c.mode === "full" || c.mode === "incremental") ? c.mode : "",
+    crawlInclude: kind === "crawl" ? (c.include ?? []).join(", ") : "",
+    crawlExclude: kind === "crawl" ? (c.exclude ?? []).join(", ") : "",
   };
 }
 
@@ -230,6 +240,16 @@ export function buildScheduleConfig(f: ScheduleFormState): ScheduleConfig {
       return f.monitorIds.length ? { monitor_ids: [...f.monitorIds] } : {};
     case "dataset_refresh":
       return f.sourceIds.length ? { source_ids: [...f.sourceIds] } : {};
+    case "crawl": {
+      const cfg: ScheduleConfig = {};
+      if (f.sourceIds.length) cfg.source_ids = [...f.sourceIds];
+      if (f.crawlMode) cfg.mode = f.crawlMode;
+      const include = splitList(f.crawlInclude);
+      const exclude = splitList(f.crawlExclude);
+      if (include.length) cfg.include = include;
+      if (exclude.length) cfg.exclude = exclude;
+      return cfg;
+    }
     default:
       return {};
   }
@@ -252,7 +272,9 @@ export function validateScheduleForm(f: ScheduleFormState): ScheduleFormErrors {
   return errors;
 }
 
-const MANAGED_KEYS = new Set(["objective", "refresh_first", "publish", "report", "kind", "formats", "run_id", "monitor_ids", "source_ids"]);
+const MANAGED_KEYS = new Set([
+  "objective", "refresh_first", "publish", "report", "kind", "formats", "run_id", "monitor_ids", "source_ids", "mode", "include", "exclude",
+]);
 
 /**
  * PATCH replaces `config` wholesale, so keep keys the form does not manage (e.g. the backend's

@@ -18,6 +18,7 @@ function WorkspaceNav({ wsId }: { wsId: string }) {
   const items: [string, string, boolean?][] = [
     [base, "Home", true],
     [`${base}/sources`, "Sources & data"],
+    [`${base}/catalog`, "Catalog"],
     [`${base}/runs`, "Analysis runs"],
     [`${base}/insights`, "Insights"],
     [`${base}/studio`, "Studio"],

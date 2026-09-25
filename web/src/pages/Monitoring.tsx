@@ -30,7 +30,7 @@ export function MonitoringPage() {
   return (
     <div className="page">
       <PageHeader title="Monitoring"
-        subtitle="Metric thresholds, drift, change points and data quality — evaluated on a schedule, de-duplicated into alerts, triaged by JEV." />
+        subtitle="Metric thresholds, drift, change points, forecast deviations and data quality — evaluated on a schedule, de-duplicated into alerts, triaged by JEV." />
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "monitors", label: `Monitors${monitors.data ? ` (${monitors.data.length})` : ""}` },
         { id: "alerts", label: `Alerts${openAlerts.data?.length ? ` (${openAlerts.data.length} open)` : ""}` },
@@ -244,6 +244,22 @@ export function MonitorForm({ wsId, onSaved, onCancel }: { wsId: string; onSaved
           <input id={`${id}-rp`} type="number" min={1} value={f.recentPeriods} onChange={(e) => set({ recentPeriods: e.target.value })} />
           {err("recentPeriods")}
         </Field>
+      )}
+      {f.kind === "forecast_deviation" && (
+        <div className="form-row">
+          <Field label="Interval z" htmlFor={`${id}-fz`} hint="Width of the forecast interval in standard deviations (2.5 ≈ 98.8%). Critical at twice this.">
+            <input id={`${id}-fz`} type="number" step="0.1" min={0} value={f.forecastZ} onChange={(e) => set({ forecastZ: e.target.value })} />
+            {err("forecastZ")}
+          </Field>
+          <Field label="History periods" htmlFor={`${id}-hist`} hint="How many recent periods the forecast is fitted on.">
+            <input id={`${id}-hist`} type="number" min={4} value={f.history} onChange={(e) => set({ history: e.target.value })} />
+            {err("history")}
+          </Field>
+          <Field label="Season length (optional)" htmlFor={`${id}-season`} hint="e.g. 7 for daily data with a weekly cycle; empty = inferred from the grain.">
+            <input id={`${id}-season`} type="number" min={2} value={f.seasonalPeriods} onChange={(e) => set({ seasonalPeriods: e.target.value })} />
+            {err("seasonalPeriods")}
+          </Field>
+        </div>
       )}
       {f.kind === "data_quality" && (
         <fieldset className="autonomy">
