@@ -6,6 +6,10 @@ COPY pyproject.toml README.md alembic.ini ./
 COPY src ./src
 COPY config ./config
 COPY migrations ./migrations
+# Domain packs (glossary, hints, hypothesis templates) and the connector certification evidence the
+# API derives `certified` from.
+COPY packs ./packs
+COPY docs/60-delivery/evidence ./docs/60-delivery/evidence
 # Optional build secret `pipcert`: CA bundle for TLS-inspecting proxies.
 RUN --mount=type=secret,id=pipcert,required=false \
     if [ -f /run/secrets/pipcert ]; then export PIP_CERT=/run/secrets/pipcert; fi; \

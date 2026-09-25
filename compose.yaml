@@ -1,5 +1,8 @@
 # Full AnalystOS stack (ADR-0003). `docker compose up -d` boots infrastructure + app.
-# Infra only:  docker compose up -d postgres redis neo4j temporal superset servicenow-mock
+# Infra only:  docker compose up -d postgres redis temporal superset servicenow-mock
+# Optional Neo4j graph projection: `docker compose --profile graph up -d neo4j` + ANALYSTOS_GRAPH_ENABLED=true.
+# Worker pools (one per Temporal task queue) scale independently, e.g.
+#   docker compose up -d --scale worker-compute=4 --scale worker-analysis=2
 name: analystos
 
 x-app-env: &app-env
@@ -8,6 +11,8 @@ x-app-env: &app-env
   ANALYSTOS_ANALYTICS_READER_URL: postgresql+psycopg://analystos_reader:reader@postgres:5432/analytics
   ANALYSTOS_REDIS_URL: redis://redis:6379/0
   ANALYSTOS_NEO4J_URI: bolt://neo4j:7687
+  # Neo4j is an optional projection (off by default); start it with `--profile graph` and set this to true.
+  ANALYSTOS_GRAPH_ENABLED: ${ANALYSTOS_GRAPH_ENABLED:-false}
   ANALYSTOS_TEMPORAL_ADDRESS: temporal:7233
   ANALYSTOS_SUPERSET_URL: http://superset:8088
   ANALYSTOS_SERVICENOW_MOCK_URL: http://servicenow-mock:8090
@@ -17,6 +22,8 @@ x-app-env: &app-env
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    # API, workers (one pool per queue), scheduler and Superset each keep a pool; 100 runs out.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_USER: analystos
       POSTGRES_PASSWORD: analystos
@@ -39,6 +46,7 @@ services:
 
   neo4j:
     image: neo4j:5-community
+    profiles: ["graph"]
     environment:
       NEO4J_AUTH: neo4j/analystos-neo4j
       NEO4J_server_memory_heap_max__size: 1G
@@ -92,10 +100,36 @@ services:
     command: ["sh", "-c", "analystos migrate && analystos seed && uvicorn analystos.api.app:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
 
-  worker:
+  # One service per worker pool (spec v3 §8): each serves only its task queue(s) and scales on its own.
+  # Sizing per pool (slots, executor, timeouts) is config/task_queues.yaml.
+  worker-analysis:
     build: {context: ., dockerfile: deploy/docker/Dockerfile}
-    environment: *app-env
+    environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: analysis}
     depends_on: [api, temporal]
+    restart: unless-stopped
+    command: ["analystos", "worker"]
+
+  worker-compute:
+    # CPU-bound statistics in a process pool; give it CPUs rather than replicas of the other pools.
+    build: {context: ., dockerfile: deploy/docker/Dockerfile}
+    environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: compute}
+    depends_on: [api, temporal]
+    restart: unless-stopped  # a pool that loses a process (hung statistic killed) exits and is restarted
+    command: ["analystos", "worker"]
+
+  worker-publish:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile}
+    environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: publish}
+    depends_on: [api, temporal]
+    restart: unless-stopped
+    command: ["analystos", "worker"]
+
+  worker-crawl:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile}
+    # elt is a placeholder queue with no activities yet; it rides on the crawl pool until P4-E* gives it one.
+    environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: "crawl,elt"}
+    depends_on: [api, temporal]
+    restart: unless-stopped
     command: ["analystos", "worker"]
 
   scheduler:

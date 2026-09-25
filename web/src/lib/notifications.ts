@@ -1,27 +1,29 @@
 import type { AppNotification } from "../api";
+import { to } from "../routes";
 
 /**
  * Where a notification's link {type, id} leads in the UI:
- * alert -> monitoring (alerts tab), artifact -> reports (report notifications) or studio,
- * run -> run view, schedule -> schedules. Returns null when there is nowhere sensible to go.
+ * alert -> Operate monitoring (alerts tab), artifact -> Build reports (report notifications) or
+ * studio, run -> Investigate board, schedule -> Operate schedules. Returns null when there is
+ * nowhere sensible to go.
  */
 export function notificationHref(n: Pick<AppNotification, "workspace_id" | "kind" | "link">): string | null {
-  const ws = n.workspace_id ? `/w/${encodeURIComponent(n.workspace_id)}` : null;
+  const ws = n.workspace_id;
   const type = n.link?.type;
-  const id = n.link?.id ? encodeURIComponent(n.link.id) : null;
+  const id = n.link?.id || undefined;
   if (!ws) return null;
   switch (type) {
     case "alert":
-      return `${ws}/monitoring?tab=alerts${id ? `&alert=${id}` : ""}`;
+      return to.monitoring(ws, { tab: "alerts", alert: id });
     case "artifact":
-      if (!id) return `${ws}/reports`;
-      return n.kind === "report" ? `${ws}/reports?artifact=${id}` : `${ws}/studio?artifact=${id}`;
+      if (!id) return to.reports(ws);
+      return n.kind === "report" ? to.reports(ws, id) : to.studio(ws, id);
     case "run":
-      return id ? `${ws}/runs/${id}` : `${ws}/runs`;
+      return id ? to.run(ws, id) : to.investigations(ws);
     case "schedule":
-      return `${ws}/schedules${id ? `?schedule=${id}` : ""}`;
+      return to.schedules(ws, id);
     default:
-      return ws;
+      return to.workspace(ws);
   }
 }
 

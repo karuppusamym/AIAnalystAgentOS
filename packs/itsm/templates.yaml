@@ -1,0 +1,68 @@
+# ITSM analyst playbook as AnalysisSpec patterns (format: skills/hypothesis_templates.py).
+# Slots bind by semantic type, crawler role, name pattern and profile — no column is named outright.
+slots:
+  flag: {type: boolean, limit: 1}
+  start: {type: datetime, name: "(opened|start|created|begin|reported)", limit: 1}
+  end: {type: datetime, name: "(resolved|closed|end|finished|completed)", limit: 1}
+  counts: {type: numeric, name: count, max_value: 50}
+  dims: {type: categorical, distinct: [2, 30], exclude_text: true, prefer: "_name$"}
+  service: {from: dims, name: "(^|_)(ci|cmdb|application|service|app)(_|$)", limit: 1, fallback: service_display}
+  service_display: {type: categorical, name: ["_name$", "(ci|application|service)"], limit: 1}
+  severity: {name: "^priority$", limit: 1}
+
+outcomes:
+  breach:
+    kind: flag_rate
+    slot: flag
+    success_name: "(made_|met_|success|passed|on_time|within)"
+    success_prefix: "^(made|met|passed|within)_"
+  resolution: {kind: duration_hours, start: start, end: end, label: resolution hours}
+
+segments:
+  drivers:
+    - {slot: counts, as: bucket, edges: [0, 1, 2, 3], limit: 2}
+    - {slot: dims, limit: 5}
+    - {slot: start, as: after_hours, label: opened after hours, limit: 1}
+
+display_name: "_name$"
+
+templates:
+  - id: breach_by_driver
+    method: rate_by_segment
+    outcome: breach
+    segment: {group: drivers, limit: 6}
+    priority: {default: medium, by_segment: {bucket: high, after_hours: high}}
+    question: "Does {outcome} vary by {segment}?"
+    statement: "The rate of {outcome} differs materially across {segment}."
+  - id: resolution_by_driver
+    method: numeric_by_segment
+    outcome: resolution
+    segment:
+      - {group: drivers, types: [after_hours]}
+      - {group: drivers, types: [column], limit: 2}
+    priority: {default: medium, by_segment: {after_hours: high}}
+    question: "Does {outcome} differ by {segment}?"
+    statement: "{Outcome} differs materially across {segment}."
+  - id: priority1_concentration
+    method: pareto
+    segment: {slot: service, label_style: plain}
+    filters: [{slot: severity, op: "=", value: {lowest_top_value: true, default: 1}}]
+    priority: high
+    question: "Are records concentrated in a few {segment} values?"
+    statement: "A small number of {segment} values account for a disproportionate share."
+    when_filtered:
+      question: "Are priority-1 records concentrated in a few {segment} values?"
+      statement: "A small number of {segment} values account for a disproportionate share of priority-1 records."
+  - id: volume_trend
+    method: trend
+    time: {slot: start, grain: week}
+    priority: low
+    question: "How has volume trended over time?"
+    statement: "Volume shows a significant trend or change point."
+  - id: breach_drivers
+    method: driver_model
+    outcome: breach
+    drivers: {group: drivers, limit: 5, min: 2}
+    priority: medium
+    question: "Which factors jointly predict {outcome}?"
+    statement: "Several operational factors jointly predict {outcome}."

@@ -6,6 +6,10 @@
 safely, and draws a hard line around what Phase 1 must prove. Where v2 narrows or reorders v1, the
 reason is stated. Nothing in v1's vision is dropped; items outside Phase 1 remain in the
 [tracker](../60-delivery/01-tracker.md) with their v1 IDs.
+**Amended by:** [spec v3 — platform](03-spec-v3-platform.md) (proposed 2026-09-25). v3 changes how
+agents, plans, methods, model calls, knowledge, engines and the UI are built: §5, §6, §7, §10, §11,
+§13 and §15 here. It builds on the increment-3 additions in §10.1 and §11. Every principle,
+invariant and verification rule in this document still holds.
 
 **2026-09-25 design extension:** [Workspace-adaptive data team](03-workspace-data-team-spec.md)
 defines future analyst, engineering and ML workflows, [workbench UX](../10-architecture/02-workbench-ux.md)
@@ -161,6 +165,25 @@ Fourteen persistent roles are registered from YAML (`config/agents/*.yaml`); two
 registered disabled. An agent is *configuration + a behaviour*; capabilities live in **skills**
 (deterministic functions) and **tools** (gated, audited invocations). An agent can only invoke tools
 bound in its definition, and every invocation is policy-checked and recorded.
+
+Tool-gate coverage (P4-C11). Two paths act *as* a tool without being invoked by name; they pass
+the same policy check (tool enabled, workspace `tool_denylist`, role, autonomy) with the denial
+recorded as a `tool_execution` row, but not the per-agent binding, because the agent's bound tool
+(`profile.table`, `analysis.run`, …) is what it invoked:
+
+| Path | Gated as | Where | Per-use record |
+|---|---|---|---|
+| Skill and agent SQL in a run (`ctx.run_sql`, incl. REV re-runs) | `sql.execute` | `RunContext.authorize_tool`, once per step | `query_execution` row per statement |
+| Ask (NL→SQL outside a run) | `sql.execute` (bound to the SQL agent) | `agents/sql_agent.ask` | `query_execution` row per attempt |
+| Artifact persistence by an agent in a run | `artifact.write` | `artifacts/registry.save_artifact` | `artifact_version` + policy audit |
+
+Denylisting `sql.execute` or `artifact.write` therefore stops every path above. Exempt by design,
+and still governed by the gateway (scope, validator, per-workspace reader role, audit):
+the human SQL console (a user action under the caller's role, not an agent tool); monitors,
+scheduled checks and the metadata crawler (system actors governed by their own admin settings and
+`crawl.run`); and a run's own domain records (hypotheses, experiments, insights, lineage edges),
+which are provenance of the run rather than artifacts, so a denylist can never hide how a number
+was produced.
 
 | Agent | Phase-1 behaviour |
 |---|---|
@@ -325,7 +348,9 @@ environment; read-only; visible limits. Controlled-pilot and production gates ar
 ## 18. Open questions
 
 1. Real Context2AI endpoint contract (v1 §11.1 lists paths but not payloads) — the adapter
-   assumes `{results: [...]}`; confirm with the Context2AI owners.
+   assumes `{results: [...]}`; confirm with the Context2AI owners. *Proposed answer (spec v3
+   §6.6):* consume Context2AI (Atlas) through OKF v0.2 bundle import and its MCP knowledge tools
+   instead of a bespoke REST contract.
 2. ServiceNow instance for connector certification (mock-only today; v1 §62 forbids certifying on mocks).
 3. Model allowlist and residency requirements per tenant.
 4. Whether Level-4 autonomy should ever permit unattended publication (requires the adversarial

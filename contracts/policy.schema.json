@@ -16,6 +16,16 @@
       "title": "Max Queries Per Run",
       "type": "integer"
     },
+    "ask_queries_per_user_per_hour": {
+      "default": 60,
+      "title": "Ask Queries Per User Per Hour",
+      "type": "integer"
+    },
+    "ask_queries_per_workspace_per_hour": {
+      "default": 600,
+      "title": "Ask Queries Per Workspace Per Hour",
+      "type": "integer"
+    },
     "run_token_budget": {
       "default": 400000,
       "title": "Run Token Budget",
@@ -65,6 +75,11 @@
     "send_data_samples_to_models": {
       "default": false,
       "title": "Send Data Samples To Models",
+      "type": "boolean"
+    },
+    "independent_model_verification": {
+      "default": false,
+      "title": "Independent Model Verification",
       "type": "boolean"
     },
     "restricted_columns": {
@@ -129,6 +144,26 @@
       "default": 0.05,
       "title": "Alpha",
       "type": "number"
+    },
+    "domain_packs": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Domain Packs"
+    },
+    "require_approved_metrics": {
+      "default": false,
+      "title": "Require Approved Metrics",
+      "type": "boolean"
     }
   },
   "title": "WorkspacePolicyDoc",

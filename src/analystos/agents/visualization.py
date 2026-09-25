@@ -8,17 +8,19 @@ import numpy as np
 import sqlglot
 from sqlalchemy import select
 
+from analystos import methods
 from analystos.agents.sql_agent import dataset_def, derivation_alias
-from analystos.artifacts.registry import link, save_artifact
+from analystos.artifacts.registry import current_plan_filter, link, save_artifact
 from analystos.contracts.analysis import AnalysisSpec, Derivation
 from analystos.contracts.bi import ChartSpec, DashboardSpec, MetricDef
 from analystos.core.errors import AnalystOSError
 from analystos.db.base import session_scope
-from analystos.db.models import Artifact, Hypothesis, Insight
+from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
+from analystos.methods.base import ChartIntent
 from analystos.runtime.context import RunContext
 
-JEV_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
-                    "trend": ["line", "bar"], "part_to_whole": ["treemap", "stacked_bar", "pie", "bar"]}
+CHART_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
+                      "trend": ["line", "bar"], "part_to_whole": ["treemap", "stacked_bar", "pie", "bar"]}
 
 
 def _q(c: str) -> str:
@@ -46,8 +48,9 @@ def preview_sql(chart: ChartSpec, ds_sql: str, metrics: dict[str, MetricDef]) ->
     raise ValueError(f"cannot build preview for {chart.key}")
 
 
-def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef]) -> str | None:
-    if spec.outcome is None or spec.method in ("pareto", "trend"):
+def _metric_for_outcome(spec: AnalysisSpec, metrics: dict[str, MetricDef], chart: ChartIntent | None = None) -> str | None:
+    chart = chart or methods.get(spec.method).chart_intent(spec)
+    if spec.outcome is None or chart is None or chart.measure == "volume":
         return "record_count" if "record_count" in metrics else None
     alias = derivation_alias(spec.outcome)
     for cand in (f"{alias}_rate", f"median_{alias}", f"avg_{alias}"):
@@ -63,14 +66,16 @@ def _choose(ctx: RunContext, intent: str, dim_type: str | None, cardinality: int
     options = {t: {"bar": "bar chart comparing categories", "treemap": "treemap of part-to-whole shares",
                    "pie": "pie chart of shares (few categories)", "table": "detail table", "histogram": "histogram of a distribution",
                    "line": "line chart over time", "stacked_bar": "stacked bars of composition"}[t]
-               for t in JEV_ALTERNATIVES.get(intent, []) if not (t == "pie" and cardinality > 5)}
+               for t in CHART_ALTERNATIVES.get(intent, []) if not (t == "pie" and cardinality > 5)}
     if chart_type in options and len(options) > 1:
-        v = ctx.jev.choose("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
-                           "Which chart type communicates `chart_title` best to a business audience?", options, ctx=ctx.call_ctx())
-        if v and v.value != chart_type and v.probabilities.get(v.value, 0) >= 0.6:
-            return v.value, f"{rationale}; overridden by JEV ({v.value} p={v.probabilities.get(v.value):.2f})"
-        if v:
-            rationale += f"; JEV agrees ({chart_type} p={v.probabilities.get(chart_type, 0):.2f})"
+        # ADR-0015 choose_presentation: the chart rules decide; a model only breaks a rule tie.
+        from analystos.decisions import Question
+
+        d = ctx.decisions.decide("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
+                                 Question.choice("Which chart type communicates `chart_title` best to a business audience?",
+                                                 options, hint=chart_type), ctx=ctx.call_ctx())
+        if d.value != chart_type:
+            return d.value, f"{rationale}; tie broken by {d.backend} ({d.value})"
     return chart_type, rationale
 
 
@@ -100,15 +105,18 @@ def design(ctx: RunContext) -> dict:
                                     intent="trend", dataset=ds.name, metric=rate, dimension=ds.time_column, time_grain="month",
                                     rationale="trend -> line"))
     for code, title, spec in verified:
-        metric = _metric_for_outcome(spec, metrics)
+        # The method says how its finding is shown (analystos.methods); the dashboard charts the
+        # findings that break a metric down by the spec's segment.
+        shown = methods.get(spec.method).chart_intent(spec)
+        metric = _metric_for_outcome(spec, metrics, shown)
         seg = spec.segment
         dim = derivation_alias(seg) if seg is not None else None
-        if spec.method == "trend" or not metric or not dim or dim not in cols:
+        if shown is None or shown.dimension != "segment" or not metric or not dim or dim not in cols:
             continue
         # Filters on dataset columns only (raw columns keep their names in the dataset).
         filters = [f"{_q(f.column)} {f.op} {repr(f.value) if isinstance(f.value, str) else f.value}"
                    for f in spec.filters if f.column in cols and f.op in ("=", "!=", ">", ">=", "<", "<=")]
-        intent = "part_to_whole" if spec.method == "pareto" else "comparison"
+        intent = shown.intent
         card = int(cols[dim].get("distinct") or 10) if isinstance(cols[dim].get("distinct"), int) else 10
         ctype, why = _choose(ctx, intent, cols[dim].get("semantic_type"), card, title)
         charts.append(ChartSpec(key=f"finding_{code.lower().replace('-', '_')}", title=title, chart_type=ctype, intent=intent,
@@ -196,8 +204,12 @@ def design(ctx: RunContext) -> dict:
 
 
 def load_bundle_parts(run_id: str) -> dict[str, Any]:
+    """Metrics, charts and dashboards of the run's current plan version only: after a replan, what an
+    earlier version produced and the new plan did not reproduce is stale and must not be published."""
     with session_scope() as s:
-        arts = list(s.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type.in_(["metric", "chart", "dashboard"]))
+        run = s.get(AnalysisRun, run_id)
+        arts = list(s.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type.in_(["metric", "chart", "dashboard"]),
+                                                     current_plan_filter(run))
                               .order_by(Artifact.created_at)))
         return {"metrics": [MetricDef.model_validate(a.content) for a in arts if a.type == "metric"],
                 "charts": [ChartSpec.model_validate(a.content) for a in arts if a.type == "chart"],

@@ -7,15 +7,14 @@ from typing import Any
 
 from analystos.contracts.analysis import Filter
 from analystos.contracts.policy import ExecutionIdentity
-from analystos.core.errors import Conflict, InvalidInput, NotFound, PolicyDenied
+from analystos.core.errors import Conflict, ContextOverBudget, InvalidInput, NotFound, PolicyDenied
 from analystos.core.ids import new_id, utcnow
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Feedback, Hypothesis, Insight, User
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate, get_workspace, require_role, resolve_scope
-from analystos.llm.router import CallContext
-from analystos.runtime.context import default_router
+from analystos.runtime.context import default_router, workspace_call_ctx
 from analystos.runtime.engine import apply_replan
 from analystos.workflows.orchestrator import signal_run, start_run
 
@@ -23,7 +22,14 @@ TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
 
 
 def create_run(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
-               autonomy_level: int | None = None, origin: dict | None = None) -> AnalysisRun:
+               autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None) -> AnalysisRun:
+    """`playbook` names a Playbook capability (default playbook.investigate); it must exist now, and
+    enablement and certification are checked when the plan binds it."""
+    if playbook is not None:
+        from analystos.capabilities import registry
+
+        if registry.current().get(playbook).kind != "Playbook":
+            raise InvalidInput(f"{playbook} is not a playbook")
     with session_scope() as s:
         require_role(s, user, workspace_id, "analyst")
         ws = get_workspace(s, workspace_id)
@@ -43,7 +49,7 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
         run = AnalysisRun(id=new_id("run"), workspace_id=workspace_id, objective=objective, status="NEW", autonomy_level=level,
                           policy_version=ws.policy_version, requested_by=user.id,
                           scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={},
-                          origin=origin or {"type": "user"})
+                          origin=origin or {"type": "user"}, capabilities={"playbook": playbook} if playbook else {})
         s.add(run)
         s.flush()
         emit(workspace_id, "run.created", {"objective": objective, "autonomy_level": level, "assets": scope.assets,
@@ -152,11 +158,39 @@ def _vocabulary(run: AnalysisRun) -> dict[tuple[str, str], list[str]]:
     return out
 
 
+def _feedback_messages(router: Any, ctx: Any, run: AnalysisRun, system: str, text: str,
+                       catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compiled context (P4-T03) in the cache-stable layout (P4-T04): the instruction and objective
+    are mandatory; the scope's column names and matching glossary entries fill the budget.
+    Raises ContextOverBudget when the instruction alone is over budget."""
+    from analystos.context.compiler import compile_context, load_knowledge
+    from analystos.contracts.platform import PurposeProfile
+    from analystos.services.platform_settings import get as platform
+
+    settings = platform()
+    profile = settings.context.profiles.get("feedback_interpretation") or PurposeProfile(sections=["catalog"])
+    knowledge: list = []
+    if settings.context.compiler_enabled and any(x != "catalog" for x in profile.sections):
+        with session_scope() as s:
+            knowledge = load_knowledge(s, run.workspace_id, profile.sections, run_id=run.id)
+    compiled = compile_context("feedback_interpretation", profile, objective=f"{text} {run.objective}",
+                               required={"instruction": text, "objective": run.objective}, catalog=catalog,
+                               knowledge=knowledge, limit_chars=int(settings.llm.max_prompt_tokens * 3.6) - len(system) - 200,
+                               min_relevance=settings.context.min_relevance)
+    ctx.context_receipts = compiled.receipts
+    return [{"role": "system", "content": system, "cache": True},
+            {"role": "user", "content": json.dumps(compiled.body, separators=(",", ":"), default=str)}]
+
+
 def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
     """Rules first (profiled category vocabulary), model when rules find nothing or admin mode is
     `always`; either way filters are validated against the run scope. Invalid filters are dropped."""
+    from analystos.agents.prompts import prompt, prompt_version_id
+
     router = default_router()
-    ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor", prompt_version="feedback_interpretation.v1")
+    system = prompt("feedback_interpretation.v1")
+    ctx = workspace_call_ctx(run.workspace_id, run_id=run.id, agent_id="supervisor",
+                             prompt_version=prompt_version_id("feedback_interpretation.v1", system))
     rule_filters = parse_redirect_rules(text, _vocabulary(run))
     mode = router.mode("feedback_interpretation")
     if rule_filters and mode in ("auto", "off"):
@@ -168,11 +202,15 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
                            "interpreted_by": "rules" if rule_filters else "none"}
     if not router.available("feedback_interpretation", ctx):
         return out
-    from analystos.agents.prompts import prompt
-
     try:
-        resp = router.complete_json("feedback_interpretation", prompt("feedback_interpretation.v1"),
-                                    json.dumps({"instruction": text, "catalog": catalog, "objective": run.objective}), ctx=ctx)
+        messages = _feedback_messages(router, ctx, run, system, text, catalog)
+    except ContextOverBudget as exc:  # visible refusal; the rule parse (if any) stands
+        router.sink.record(ctx=ctx, purpose="feedback_interpretation", profile="-", provider="context_compiler", model="-",
+                           status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                           request_hash=None, error=exc.message[:500])
+        return {**out, "refused": exc.message}
+    try:
+        resp = router.complete("feedback_interpretation", messages, ctx=ctx, json_output=True)
     except Exception:
         return out
     data = resp.data if isinstance(resp.data, dict) else {}
@@ -194,33 +232,44 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
 
 def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = None, target_type: str | None = None,
                     target_id: str | None = None) -> dict[str, Any]:
-    from analystos.llm.jev import JevDecisions
+    from analystos.decisions import Question, decision_service
+    from analystos.llm.jev import CONSEQUENTIAL_INSTRUCTIONS
 
     with session_scope() as s:
         run = get_run_for(s, user, run_id, "analyst")
         s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
-    jev = JevDecisions(default_router())
-    ctx = CallContext(workspace_id=run.workspace_id, run_id=run.id, agent_id="supervisor")
-    classified_by = "user"
+    decisions = decision_service(default_router())
+    ctx = workspace_call_ctx(run.workspace_id, run_id=run.id, agent_id="supervisor")
+    fb_id = new_id("fb")
+    classified_by, classification = "user", None
     if kind is None:
-        v = jev.choose("feedback_classification", {"feedback": text, "objective": run.objective},
-                       "What kind of feedback is `feedback` about an analysis of `objective`?", FEEDBACK_KINDS, ctx=ctx)
-        kind, classified_by = (v.value, f"jev:{v.model}") if v else ("redirect", "default")
+        # ADR-0015 route: pick a processing path among the valid feedback kinds (calibrated by user corrections).
+        classification = decisions.decide(
+            "feedback_classification", {"feedback": text, "objective": run.objective},
+            Question.choice("What kind of feedback is `feedback` about an analysis of `objective`?", FEEDBACK_KINDS, default="redirect"),
+            ctx=ctx, subject=f"feedback:{fb_id}")
+        kind = classification.value
+        classified_by = {"jev": f"jev:{classification.model}", "rules": "default", "default": "default"}.get(
+            classification.backend, f"{classification.backend}:{classification.model}")
     if kind not in FEEDBACK_KINDS:
         raise InvalidInput(f"kind must be one of {sorted(FEEDBACK_KINDS)}")
-    risk = jev.consequential(text, ctx=ctx)
-    result: dict[str, Any] = {"kind": kind, "classified_by": classified_by,
-                              "consequential_p": risk.value if risk else None}
+    # escalate_only: side-effect verbs (rule) or JEV may add the approval note; nothing removes it.
+    risk = decisions.decide("risk_check", {"request": text},
+                            Question.escalation(CONSEQUENTIAL_INSTRUCTIONS, key="consequential", levels=["read", "consequential"],
+                                                baseline="read", escalate_to="consequential", escalate_at=0.5),
+                            ctx=ctx, subject=f"feedback:{fb_id}")
+    result: dict[str, Any] = {"kind": kind, "classified_by": classified_by, "consequential_p": risk.p,
+                              "decision_ids": [d.id for d in (classification, risk) if d is not None]}
     interpretation = _interpret_redirect(run, text) if kind in ("redirect", "deeper_analysis") else None
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id, with_for_update=True)
         was_completed = run.status == "COMPLETED"  # its workflow has returned; a replan needs a new one
-        fb = Feedback(id=new_id("fb"), workspace_id=run.workspace_id, run_id=run.id, user_id=user.id, kind=kind, text=text,
+        fb = Feedback(id=fb_id, workspace_id=run.workspace_id, run_id=run.id, user_id=user.id, kind=kind, text=text,
                       target_type=target_type, target_id=target_id, data={"interpretation": interpretation, **result})
         s.add(fb)
         run.instructions = [*run.instructions, {"kind": kind, "text": text, "at": utcnow().isoformat(), "feedback_id": fb.id}]
-        if risk and risk.value >= 0.5:
+        if risk.value == "consequential":
             result["note"] = ("This instruction asks for an action with side effects; agents never execute it directly — "
                               "publication, scheduling and sending always go through an approval.")
         if kind in ("redirect", "deeper_analysis"):
@@ -240,6 +289,9 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
             if ins is None or ins.run_id != run.id:
                 raise NotFound("insight not found in this run")
             ins.status = "rejected"
+            from analystos.decisions.calibration import record_signal
+
+            record_signal(s, "finding.reject", f"insight:{ins.id}", user_id=user.id, workspace_id=run.workspace_id)
             h = s.get(Hypothesis, ins.hypothesis_id)
             if h:
                 h.status, h.conclusion = "rejected", (h.conclusion or "") + " — rejected by user feedback"

@@ -8,8 +8,10 @@
     "dev": "vite",
     "build": "tsc --noEmit -p . && vite build",
     "typecheck": "tsc --noEmit -p .",
+    "gen:api": "openapi-typescript openapi.json -o src/generated/openapi.ts --default-non-nullable false",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "echarts": "^6.1.0",
@@ -18,13 +20,17 @@
     "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "1.56.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.1.1",
+    "axe-core": "^4.13.0",
     "jsdom": "^27.0.0",
+    "openapi-typescript": "^7.13.0",
     "typescript": "~5.9.3",
     "vite": "^8.3.1",
     "vitest": "^5.0.1"

@@ -1,37 +1,50 @@
-agent:
-  id: data_scientist
-  version: '1.0'
-  name: Data Scientist Agent
-  description: 'Executes statistical tests and ML-lite methods on governed query results: chi-square, Mann-Whitney/Kruskal,
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.data_scientist
+version: 1.0.0
+summary: Data Scientist Agent
+entry: python:analystos.agents.data_scientist:test_hypothesis
+determinism: deterministic
+side_effect: write_internal
+cost_class: query
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- segmentation
+- statistical_testing
+- regression
+- classification
+- trend
+- anomaly_detection
+spec:
+  role: Data Scientist Agent
+  goal: 'Executes statistical tests and ML-lite methods on governed query results: chi-square, Mann-Whitney/Kruskal,
     correlation, logistic regression, feature importance, trend and change-point, Pareto.'
   capabilities:
-  - segmentation
-  - statistical_testing
-  - regression
-  - classification
-  - trend
-  - anomaly_detection
-  skills:
-  - chi_square
-  - t_test
-  - anova
-  - nonparametric_test
-  - correlation
-  - logistic_regression
-  - feature_importance
-  - trend_analysis
-  - pareto_analysis
+  - skill.run_analysis
+  - skill.chi_square
+  - skill.t_test
+  - skill.anova
+  - skill.nonparametric_test
+  - skill.correlation
+  - skill.logistic_regression
+  - skill.feature_importance
+  - skill.trend_analysis
+  - skill.pareto_analysis
+  - skill.python_sandbox
   tools:
   - analysis.run
   - sql.execute
   - python.execute
   - artifact.write
-  model_profile: analytical_reasoning
   prompt_version: v1
+  budget:
+    llm_calls: 0
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: true
   phase: mvp

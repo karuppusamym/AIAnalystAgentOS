@@ -6,6 +6,7 @@ idempotency key creates no duplicates, and that rollback removes what was create
 from __future__ import annotations
 
 import json
+import os
 import random
 from datetime import UTC, datetime, timedelta
 
@@ -18,8 +19,9 @@ from analystos.publishing.superset import SupersetPublisher
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "src_publishtest"
-WORKSPACE = "ws_publishtest"
+_SUFFIX = os.environ.get("ANALYSTOS_TEST_DP_DB", "analystos_test_dp").removeprefix("analystos_test_dp").strip("_")
+SCHEMA = f"src_publishtest{_SUFFIX}"
+WORKSPACE = f"ws_publishtest{_SUFFIX}"  # per test session: the Superset instance is shared
 COLUMNS = ["opened_at", "priority", "assignment_group", "reassignment_count", "made_sla", "resolution_hours"]
 
 
@@ -31,7 +33,7 @@ def _superset_up(url: str) -> bool:
 
 
 @pytest.fixture(scope="module")
-def settings():
+def settings(analytics_plane):
     s = get_settings()
     if not _superset_up(s.superset_url):
         pytest.skip(f"Superset not reachable at {s.superset_url}/health")
@@ -72,8 +74,11 @@ def incidents_table(settings):
         )
         with conn.cursor() as cur:
             cur.executemany(f"INSERT INTO {SCHEMA}.incidents VALUES (%s,%s,%s,%s,%s,%s)", rows)
-        conn.execute(f"GRANT USAGE ON SCHEMA {SCHEMA} TO analystos_reader")
-        conn.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {SCHEMA} TO analystos_reader")
+        from analystos.staging.roles import ensure_workspace_role, grant_schema, reader_login, role_for
+
+        with conn.transaction(), conn.cursor() as cur:  # as the loader does: only the workspace role reads it
+            ensure_workspace_role(cur, role_for(settings, WORKSPACE), reader_login(settings))
+            grant_schema(cur, SCHEMA, role_for(settings, WORKSPACE), reader_login(settings))
     return f"{SCHEMA}.incidents"
 
 

@@ -149,7 +149,7 @@ def models(_: User = Depends(current_user)):
     effective = {}
     for purpose in cfg.routing:
         profile, _, models = router_.candidates(purpose, CallContext())
-        effective[purpose] = {"profile": profile, "models": models, "mode": router_.mode(purpose),
+        effective[purpose] = {"profile": profile, "models": models, "mode": router_.mode(purpose), "ladder": router_.ladder(purpose),
                               "available": router_.available(purpose), "deterministic_path": purpose in DETERMINISTIC_CAPABLE,
                               "decision_model": cfg.profiles[cfg.routing[purpose]].provider == "typesafe"}
     return {**cfg.public_view(), "effective": effective, "available": {p: v["available"] for p, v in effective.items()}}
@@ -216,24 +216,39 @@ def prompts(_: User = Depends(admin_user)):
 @router.get("/admin/token-savings")
 def token_savings(days: int = 30, _: User = Depends(admin_user), session: Session = Depends(db)):
     """Tokens spent vs avoided (cache hits, deterministic skips, refused oversize prompts)."""
+    # By purpose and by the ladder rung that answered (P4-T01), plus calls whose cost is unknown (P4-T07).
     from datetime import timedelta
 
     from analystos.core.ids import utcnow
+    from analystos.llm.config import load_models_config
 
     since = utcnow() - timedelta(days=max(1, min(days, 365)))
-    rows = session.execute(select(ModelCall.purpose, ModelCall.status, func.count(),
+    rows = session.execute(select(ModelCall.purpose, ModelCall.status, ModelCall.answered_by, func.count(),
                                   func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0),
                                   func.coalesce(func.sum(ModelCall.tokens_saved), 0), func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
-                           .where(ModelCall.created_at >= since).group_by(ModelCall.purpose, ModelCall.status)).all()
+                           .where(ModelCall.created_at >= since)
+                           .group_by(ModelCall.purpose, ModelCall.status, ModelCall.answered_by)).all()
+
+    def bucket() -> dict:
+        return {"calls": 0, "answered": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0}
+
+    def add(b: dict, status: str, n: int, used: int, saved: int, cost: float) -> None:
+        b["calls"] += n if status in ("ok", "error") else 0  # requests sent to a provider
+        b["answered"] += n if status != "error" else 0  # the rung produced the answer
+        b["tokens_used"] += int(used)
+        b["tokens_saved"] += int(saved)
+        b["cost_usd"] += float(cost)
+
     by_purpose: dict[str, dict] = {}
+    by_rung: dict[str, dict] = {}
     totals = {"calls": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0, "cache_hits": 0, "deterministic_skips": 0, "refused": 0}
-    for purpose, status, n, used, saved, cost in rows:
-        p = by_purpose.setdefault(purpose, {"calls": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0, "by_status": {}})
-        p["by_status"][status] = n
-        p["calls"] += n if status in ("ok", "error") else 0
-        p["tokens_used"] += int(used)
-        p["tokens_saved"] += int(saved)
-        p["cost_usd"] += float(cost)
+    for purpose, status, rung, n, used, saved, cost in rows:
+        rung = rung or "llm_large"
+        p = by_purpose.setdefault(purpose, {**bucket(), "by_status": {}, "by_rung": {}})
+        p["by_status"][status] = p["by_status"].get(status, 0) + n
+        add(p, status, n, used, saved, cost)
+        add(p["by_rung"].setdefault(rung, bucket()), status, n, used, saved, cost)
+        add(by_rung.setdefault(rung, bucket()), status, n, used, saved, cost)
         totals["calls"] += n if status in ("ok", "error") else 0
         totals["tokens_used"] += int(used)
         totals["tokens_saved"] += int(saved)
@@ -243,7 +258,15 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
         totals["refused"] += n if status == "refused" else 0
     denom = totals["tokens_used"] + totals["tokens_saved"]
     totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
-    return {"days": days, "totals": totals, "by_purpose": by_purpose}
+    # A model with no price and no provider-reported cost: its spend is unknown, not $0.
+    unpriced = session.execute(select(ModelCall.model, func.count(), func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0))
+                               .where(ModelCall.created_at >= since, ModelCall.cost_source == "missing_price")
+                               .group_by(ModelCall.model)).all()
+    missing = [{"model": m, "calls": n, "tokens": int(t)} for m, n, t in unpriced]
+    totals["missing_price_calls"] = sum(m["calls"] for m in missing)
+    return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung,
+            "missing_price": missing, "prices_version": load_models_config().prices_version,
+            "cost_complete": not missing}
 
 
 @router.get("/admin/usage")

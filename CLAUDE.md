@@ -2,8 +2,11 @@
 
 Context2AI AnalystOS is a governed, autonomous analytics agent OS (Python 3.11 / FastAPI /
 Postgres+pgvector / Temporal / Neo4j / Redis / Superset / React). Read
-[`docs/00-intent/02-spec-v2.md`](docs/00-intent/02-spec-v2.md) before changing behaviour; the
-original product vision is [`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_AnalystOS_Complete_Spec.md).
+[`docs/00-intent/02-spec-v2.md`](docs/00-intent/02-spec-v2.md) before changing behaviour, and
+[`docs/00-intent/03-spec-v3-platform.md`](docs/00-intent/03-spec-v3-platform.md) before starting an
+increment-4 (`P4-*`) row. The original product vision is
+[`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_AnalystOS_Complete_Spec.md). Reviews under
+`docs/70-reviews/` are dated evidence, not work queues.
 
 ## Rules (each one exists because the failure mode is expensive here)
 
@@ -31,13 +34,14 @@ original product vision is [`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_
 
 ```bash
 uv venv -p 3.11 .venv && uv pip install -e ".[dev]"      # deps
-docker compose up -d postgres redis neo4j temporal superset # infra (Superset image adds psycopg2)
+docker compose up -d postgres redis temporal superset       # infra (Superset image adds psycopg2); Neo4j is optional:
+                                                            # --profile graph + ANALYSTOS_GRAPH_ENABLED=true
 .venv/bin/analystos migrate && .venv/bin/analystos seed     # schema + users/registries/glossary
 .venv/bin/pytest -q -m "not integration"                    # fast suite (no services)
 .venv/bin/pytest -q -m integration                          # needs the compose stack
 .venv/bin/ruff check src tests
 .venv/bin/uvicorn analystos.api.app:app --reload            # API :8000
-.venv/bin/analystos worker                                  # Temporal worker
+.venv/bin/analystos worker [--queues analysis,compute]      # Temporal worker (all queues by default; config/task_queues.yaml)
 .venv/bin/analystos scheduler                               # schedules + monitors (claim-then-execute)
 .venv/bin/uvicorn analystos.connectors.servicenow_mock:app --port 8090   # demo source
 cd web && npm install && npm run dev                        # UI :5173
@@ -53,8 +57,8 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | Where | What |
 |---|---|
 | `src/analystos/contracts/` | Pydantic contracts (agent/tool/skill/policy/analysis/bi/events); `analystos export-contracts` writes `contracts/*.json` |
-| `src/analystos/runtime/` | plan (DAG, hashes), engine (get_state/execute_task/replan), per-step RunContext |
-| `src/analystos/agents/` | agent behaviours; `dispatch.py` maps task keys → behaviours |
+| `src/analystos/runtime/` | plan (hashes), engine (get_state/execute_task/replan: interprets the run's bound playbook, no step keys), per-step RunContext (agent manifest, budget) |
+| `src/analystos/agents/` | agent behaviours; `dispatch.py` resolves a task through the playbook + agent manifest; `generic.py` runs declarative agents (propose → validate → execute) |
 | `src/analystos/workflows/` | Temporal workflow + activities; `orchestrator.py` local runner |
 | `src/analystos/governance/` | scope, policy decisions, approvals, audit |
 | `src/analystos/gateway/`, `connectors/`, `staging/` | data plane; `config/source_kinds.yaml` + `connectors/kinds.py` + `generic_sql.py` = every database kind |
@@ -64,9 +68,10 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `src/analystos/llm/` | router, JEV, redaction; `config/models.yaml` |
 | `src/analystos/publishing/` | BI publisher interface, Superset adapter, preview |
 | `src/analystos/services/{schedules,monitors,reports,changes,notifications}.py`, `src/analystos/reports/` | Phase 3: scheduling, monitoring, reports |
-| `config/agents/*.yaml` | agent catalog (config-driven agents) |
+| `config/agents/*.yaml` | agent manifests (kind Agent); every field is enforced (`capabilities/agents.py`). `entry: builtin:generic` = a YAML-only agent |
+| `src/analystos/capabilities/` | registry (discovery, validation, reload), `builtin/playbooks/*.yaml` (`investigate.v1` = the v1 plan), bindings (run keeps its versions; refs in the plan hash), per-workspace enablement + certification gate; API `/api/capabilities`, `POST /api/admin/capabilities/reload` |
 | `migrations/` | Alembic; regenerate with `alembic revision --autogenerate` after model changes |
-| `docs/` | intent/spec v2, architecture + ADRs, runbooks, delivery tracker/register/readiness |
+| `docs/` | intent (spec v2, spec v3), architecture + ADRs, runbooks, delivery tracker/register/readiness, dated reviews (`70-reviews/`) |
 
 ## Conventions
 

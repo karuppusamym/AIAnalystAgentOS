@@ -15,7 +15,9 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -126,6 +128,8 @@ class SourceAsset(Base):
     business_name_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | model | user
     reviewed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What the staged snapshot is relative to its origin: rows staged, origin total, truncated, sampling (P4-C12)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
 
 
@@ -191,6 +195,20 @@ class AgentDefinition(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class WorkspaceCapability(Base):
+    """Per-workspace enablement of a capability (spec v3 §3.1). No row = the default: on for the
+    built-in set `playbook.investigate` needs (and built-in tools), off for everything else."""
+
+    __tablename__ = "workspace_capability"
+    __table_args__ = (UniqueConstraint("workspace_id", "capability_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    capability_id: Mapped[str] = mapped_column(String(160))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by: Mapped[str] = mapped_column(String(40))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ToolDefinition(Base):
     __tablename__ = "tool_definition"
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -231,6 +249,10 @@ class AnalysisRun(Base):
     # How the run was started: {"type": "user"} or {"type": "schedule", "schedule_id", "schedule_run_id",
     # "previous_run_id", "publish": "skip"|"propose", "report": {...}} or {"type": "alert", "alert_id"}
     origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Capability bindings (spec v3 §3.1, P4-X01): {"playbook": id, "refs": ["id@version", ...],
+    # "manifests": {id: manifest}, "skipped": {step: reason}}. Bound when the plan materializes; the run
+    # keeps these versions after a registry reload, and the refs are part of the plan hash.
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -252,8 +274,11 @@ class RunTask(Base):
     plan_version: Mapped[int] = mapped_column(Integer, default=1)
     seq: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # claim time
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped by every claim: a claim is a compare-and-set on it (P4-S02), and an attempt whose claim was
+    # retaken (timed out, released) cannot write its result over the new attempt's.
+    claim_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class RunEvent(Base):
@@ -302,7 +327,20 @@ class ModelCall(Base):
     tokens_saved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # cache hits and deterministic skips
     request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Replay (P4-C09): content addresses of the redacted request and response in model_payload.
+    request_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    response_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Execution ladder (P4-T01): the rung that answered — cache | registry | rules | decision | llm_small | llm_large.
+    answered_by: Mapped[str] = mapped_column(String(20), default="llm_large", server_default="llm_large")
+    # P4-T07: provider | price_table@<prices_version> | missing_price | none (no billable call).
+    cost_source: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # Prompt caching (P4-T04): prompt tokens the provider served from its cache (share = / input_tokens).
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Context compiler receipts (P4-T03): the context items the prompt carried ("context used").
+    context_receipts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (Index("ix_model_call_created_purpose_rung", "created_at", "purpose", "answered_by"),)
 
 
 class ToolExecution(Base):
@@ -415,6 +453,8 @@ class Artifact(Base):
     type: Mapped[str] = mapped_column(String(40), index=True)
     name: Mapped[str] = mapped_column(String(300))
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # Plan version of the run that last wrote this artifact; a replan makes lower versions stale.
+    plan_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="draft")
     platform: Mapped[str | None] = mapped_column(String(40), nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -440,10 +480,14 @@ class ArtifactVersion(Base):
 
 
 class LineageEdge(Base):
-    """Generic provenance edge between any two persisted objects (artifact, insight, query, table...)."""
+    """Generic provenance edge between any two persisted objects (artifact, insight, query, table...).
+    Unique per workspace: name-identified nodes (``table``, ``src_x.orders``) recur across workspaces."""
 
     __tablename__ = "lineage_edge"
-    __table_args__ = (UniqueConstraint("from_type", "from_id", "relation", "to_type", "to_id"),)
+    # The unique key serves lookups by the `from` end; the index serves the `to` end (per-artifact lineage CTE).
+    __table_args__ = (UniqueConstraint("workspace_id", "from_type", "from_id", "relation", "to_type", "to_id",
+                                       name="uq_lineage_edge_workspace_edge"),
+                      Index("ix_lineage_edge_workspace_to", "workspace_id", "to_type", "to_id"))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     workspace_id: Mapped[str] = mapped_column(String(40), index=True)
     run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -478,6 +522,61 @@ class Approval(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = _ts()
+
+
+class SemanticModel(Base):
+    """One version of a workspace's semantic model structure (P4-K03, SEM-001/004): Ossie datasets
+    (with fields and dimensions), relationships and `ai_context`. Every change is a new version row;
+    the newest non-deprecated version is current. Metrics are versioned separately (`semantic_metric`)
+    because each one has its own approval."""
+
+    __tablename__ = "semantic_model"
+    __table_args__ = (UniqueConstraint("workspace_id", "version", name="uq_semantic_model_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | proposed | approved | deprecated
+    owner_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_context: Mapped[Any] = mapped_column(JSON, nullable=True)
+    datasets: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    relationships: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    custom_extensions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    origin: Mapped[str] = mapped_column(String(80))  # user | agent:<id> | dbt | ossie
+    run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class SemanticMetric(Base):
+    """One version of a KPI definition with its own approval (SEM-002/003/005). `proposed` versions
+    wait for an approver who is not the proposer; approving one deprecates the name's previous
+    approved version. `approval_id` binds the decision to the definition's hash (governance/approvals)."""
+
+    __tablename__ = "semantic_metric"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version", name="uq_semantic_metric_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="proposed")  # draft|proposed|approved|deprecated|rejected
+    definition: Mapped[dict[str, Any]] = mapped_column(JSON)  # contracts.semantic.SemanticMetricDef
+    expression: Mapped[str] = mapped_column(Text)
+    normalized_expression: Mapped[str] = mapped_column(Text)
+    display_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    proposed_by: Mapped[str] = mapped_column(String(40))  # the human accountable for the proposal
+    proposed_via: Mapped[str] = mapped_column(String(80))  # user | agent:<id> | dbt | ossie
+    run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Publication(Base):
@@ -642,3 +741,218 @@ class CrawlRun(Base):
     started_by: Mapped[str] = mapped_column(String(80))
     started_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ModelPayload(Base):
+    """Redacted model request/response bodies, content-addressed (P4-C09).
+
+    A separate table rather than two JSON columns on model_call because the same body recurs:
+    every retry and fallback attempt re-sends the identical request, cache hits repeat a stored
+    response, and scheduled re-runs resend the same catalog. Addressing by sha256 of the canonical
+    JSON stores each body once. Bodies are zlib-compressed and capped (llm/replay.py MAX_PAYLOAD_BYTES);
+    an over-cap body is replaced by a stub and marked truncated, never cut mid-JSON."""
+
+    __tablename__ = "model_payload"
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # request | response
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)  # uncompressed canonical JSON size
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    body: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = _ts()
+
+
+class DecisionRecord(Base):
+    """One DecisionService decision (ADR-0015, P4-T08): who decided, what every backend said, what the
+    authority class enforced. `answer` is the enforced value; `proposal` the deciding backend's raw one."""
+
+    __tablename__ = "decision"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    authority: Mapped[str] = mapped_column(String(30))
+    backend: Mapped[str] = mapped_column(String(30))  # jev | rules | local_classifier | llm_structured | default
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    inputs_hash: Mapped[str] = mapped_column(String(64))
+    subject: Mapped[str | None] = mapped_column(String(240), index=True, nullable=True)  # insight:<id> | alert:<key> | feedback:<id>
+    options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    answer: Mapped[Any] = mapped_column(JSON, nullable=True)
+    proposal: Mapped[Any] = mapped_column(JSON, nullable=True)
+    probabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    enforced: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = _ts()
+
+
+class DecisionOutcome(Base):
+    """A labelled outcome for a decision from a user signal (P4-T09): finding accepted/rejected/dismissed,
+    alert acknowledged/dismissed, feedback class corrected. `label` is the true answer on the decision's
+    own scale (an option key, or yes/no for probability purposes)."""
+
+    __tablename__ = "decision_outcome"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(ForeignKey("decision.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    backend: Mapped[str] = mapped_column(String(30))
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    label: Mapped[str] = mapped_column(String(80))
+    source: Mapped[str] = mapped_column(String(40))  # finding.accept | finding.reject | alert.dismiss | feedback.correct ...
+    user_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class DecisionCalibration(Base):
+    """Append-only calibration evaluations and backend downgrades per purpose x backend (P4-T09).
+    The latest row per (purpose, backend) is the effective state: `downgraded` rows remove that backend
+    from the purpose's chain until a later evaluation or an administrator restores it."""
+
+    __tablename__ = "decision_calibration"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    backend: Mapped[str] = mapped_column(String(30))
+    window_days: Mapped[int] = mapped_column(Integer, default=30)
+    n: Mapped[int] = mapped_column(Integer, default=0)
+    brier: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ece: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_brier: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_ece: Mapped[float | None] = mapped_column(Float, nullable=True)
+    downgraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    action: Mapped[str] = mapped_column(String(30))  # evaluated | downgraded | restored | admin_restored | admin_downgraded
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class McpServer(Base):
+    """An external MCP server registered in one workspace (spec v3 §3.7, P4-X05).
+
+    Nothing is called until an owner/admin sets `allowed`. `tools` is the last screened
+    `tools/list` snapshot; `classifications` holds the owner's side-effect verdict per tool, bound to
+    the tool's definition hash so a changed tool falls back to `write_external`.
+    """
+
+    __tablename__ = "mcp_server"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    url: Mapped[str] = mapped_column(String(500))
+    transport: Mapped[str] = mapped_column(String(30), default="streamable_http")
+    secret_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)  # env:NAME | file:/path, never a value
+    status: Mapped[str] = mapped_column(String(20), default="registered")  # registered | ready | error
+    allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # max_calls_per_run, timeout_seconds
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    classifications: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class McpClient(Base):
+    """An external MCP client of AnalystOS (P4-X06). Only a SHA-256 of the secret is stored; the client
+    acts as its own service user, so scope, roles and the gateway apply unchanged."""
+
+    __tablename__ = "mcp_client"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # the public client_id
+    name: Mapped[str] = mapped_column(String(200))
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    service_user_id: Mapped[str] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | revoked
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class McpGrant(Base):
+    """What one MCP client may do in one workspace: role, tools and per-tool daily quotas."""
+
+    __tablename__ = "mcp_grant"
+    __table_args__ = (UniqueConstraint("client_id", "workspace_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("mcp_client.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="viewer")  # viewer | analyst
+    tools: Mapped[list[str]] = mapped_column(JSON, default=list)
+    quotas: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)  # tool -> calls per UTC day
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class McpUsage(Base):
+    """Per-day call counters for quota enforcement (incremented atomically before a call runs)."""
+
+    __tablename__ = "mcp_usage"
+    __table_args__ = (UniqueConstraint("client_id", "workspace_id", "tool", "day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("mcp_client.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40))
+    tool: Mapped[str] = mapped_column(String(80))
+    day: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD (UTC)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ------------------------------------------------------------------------------ registries (P4-T05)
+class VerifiedQuery(Base):
+    """A parameterised, verified query for Ask (ladder rung L1, ADR-0012). Promoted from a successful
+    Ask answer or a verified finding; `sql_template` holds `{{name}}` placeholders for `parameters`
+    (typed: enum over a profiled column's vocabulary, date, number, string). Executed through the
+    gateway under the asking user's scope, so a registry hit never widens what anyone can read."""
+
+    __tablename__ = "verified_query"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    patterns: Mapped[list[str]] = mapped_column(JSON, default=list)  # question phrasings (parameter values removed)
+    sql_template: Mapped[str] = mapped_column(Text)
+    parameters: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    dialect: Mapped[str] = mapped_column(String(40), default="postgres")
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type: ask|finding, query_id, insight_id, question}
+    spec: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # the AnalysisSpec of a promoted finding
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class RegisteredHypothesis(Base):
+    """The hypothesis registry (review C11): every tested hypothesis spec of a workspace, keyed by its
+    spec hash, with the claim identity of the method registry. Scheduled re-analysis replays it with
+    no model call, so "new" and "resolved" mean the evidence changed, not that the questions did."""
+
+    __tablename__ = "registered_hypothesis"
+    __table_args__ = (UniqueConstraint("workspace_id", "spec_hash"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    question: Mapped[str] = mapped_column(Text, default="")
+    statement: Mapped[str] = mapped_column(Text, default="")
+    method: Mapped[str] = mapped_column(String(60))
+    asset: Mapped[str] = mapped_column(String(300))
+    question_key: Mapped[str] = mapped_column(String(64), index=True)  # hash of the claim key without its top group
+    claim: Mapped[list[Any]] = mapped_column(JSON, default=list)  # last claim key (method registry), top group last
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    last_outcome: Mapped[str] = mapped_column(String(30), default="")  # verified | supported | rejected | inconclusive | ...
+    last_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    origin: Mapped[str] = mapped_column(String(20), default="agent")  # origin of the first registration
+    first_run_id: Mapped[str] = mapped_column(String(40))
+    last_run_id: Mapped[str] = mapped_column(String(40))
+    times_tested: Mapped[int] = mapped_column(Integer, default=0)
+    times_verified: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

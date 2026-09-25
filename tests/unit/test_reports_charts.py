@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import pytest
+from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportChart
 from analystos.reports.charts import render_chart_png
-from analystos.reports.sample import sample_report
 
 PNG = b"\x89PNG\r\n\x1a\n"
 

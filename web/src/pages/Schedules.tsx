@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type Schedule, type ScheduleRun } from "../api";
 import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
 import { fmtDate } from "../lib/format";
@@ -151,8 +152,8 @@ function RecentRuns({ wsId, runs }: { wsId: string; runs: ScheduleRun[] }) {
                   <td className="small">{fmtDate(r.finished_at)}</td>
                   <td className="small">
                     <div className="chip-row">
-                      {res.run_id && <Link to={`/w/${wsId}/runs/${res.run_id}`}>Run</Link>}
-                      {res.report_artifact_id && <Link to={`/w/${wsId}/reports?artifact=${res.report_artifact_id}`}>Report</Link>}
+                      {res.run_id && <Link to={to.run(wsId, res.run_id)}>Run</Link>}
+                      {res.report_artifact_id && <Link to={to.reports(wsId, res.report_artifact_id)}>Report</Link>}
                       {ch && <span className="muted">{ch.new ?? 0} new · {ch.persisting ?? 0} persisting · {ch.changed ?? 0} changed · {ch.resolved ?? 0} resolved</span>}
                       {res.crawls && <CrawlRunSummary wsId={wsId} crawls={res.crawls} />}
                       {!res.run_id && !res.report_artifact_id && !ch && !res.crawls && <span className="muted">—</span>}
@@ -175,7 +176,7 @@ function CrawlRunSummary({ wsId, crawls }: { wsId: string; crawls: NonNullable<S
   const sum = (k: "new" | "changed" | "deprecated") => entries.reduce((n, c) => n + (c[k] ?? 0), 0);
   return (
     <span className="muted">
-      <Link to={`/w/${wsId}/sources`}>{entries.length} source{entries.length === 1 ? "" : "s"} crawled</Link>
+      <Link to={to.sources(wsId)}>{entries.length} source{entries.length === 1 ? "" : "s"} crawled</Link>
       {" "}· {sum("new")} new · {sum("changed")} changed · {sum("deprecated")} deprecated{failed ? ` · ${failed} failed` : ""}
     </span>
   );

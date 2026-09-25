@@ -166,17 +166,24 @@ def alert_action(alert_id: str, action: str, user: User = Depends(current_user),
     a = session.get(Alert, alert_id)
     if a is None:
         raise NotFound("alert not found")
+    from analystos.decisions.calibration import record_signal
+
     if action == "investigate":
         require_role(session, user, a.workspace_id, "analyst")
+        record_signal(session, "alert.investigate", f"alert:{a.dedupe_key}", user_id=user.id, workspace_id=a.workspace_id)
         session.commit()
         return {"run_id": mon_svc.start_investigation(alert_id, user)}
     require_role(session, user, a.workspace_id, "analyst")
     if action == "acknowledge":
         a.status, a.acknowledged_by = "acknowledged", user.id
-    elif action == "resolve":
+        record_signal(session, "alert.acknowledge", f"alert:{a.dedupe_key}", user_id=user.id, workspace_id=a.workspace_id)
+    elif action in ("resolve", "dismiss"):
         from analystos.core.ids import utcnow
 
         a.status, a.resolved_at = "resolved", utcnow()
+        if action == "dismiss":  # "not worth attention": the labelled outcome that calibrates alert triage
+            a.data = {**(a.data or {}), "dismissed_by": user.id}
+            record_signal(session, "alert.dismiss", f"alert:{a.dedupe_key}", user_id=user.id, workspace_id=a.workspace_id)
     else:
         raise NotFound("unknown action")
     audit(f"user:{user.id}", f"alert.{action}", workspace_id=a.workspace_id, target=a.id, session=session)

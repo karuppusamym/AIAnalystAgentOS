@@ -1,24 +1,35 @@
-agent:
-  id: data_quality
-  version: '1.0'
-  name: Data Quality Agent
-  description: Detects missing and invalid values, duplicate keys, broken joins, temporal-order violations, future
-    timestamps and suspicious categories.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.data_quality
+version: 1.0.0
+summary: Data Quality Agent
+entry: python:analystos.agents.profiler:check_quality
+determinism: deterministic
+side_effect: write_internal
+cost_class: query
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- data_quality
+spec:
+  role: Data Quality Agent
+  goal: Detects missing and invalid values, duplicate keys, broken joins, temporal-order violations, future timestamps
+    and suspicious categories.
   capabilities:
-  - data_quality
-  skills:
-  - missingness_analysis
-  - uniqueness_analysis
+  - skill.data_quality_checks
+  - skill.dataset_profile
   tools:
   - quality.check
   - sql.execute
   - artifact.write
-  model_profile: low_cost
   prompt_version: v1
+  budget:
+    llm_calls: 0
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

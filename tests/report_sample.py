@@ -1,4 +1,4 @@
-"""A realistic ReportData (ServiceNow SLA analysis) for previews, docs and renderer tests.
+"""A realistic ReportData (ServiceNow SLA analysis) for renderer tests.
 
 It deliberately carries hostile/awkward content — HTML/script payloads, a javascript: link,
 formula-injection strings, non-latin text, an empty chart and a malformed chart — so every renderer

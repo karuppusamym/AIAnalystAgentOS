@@ -220,18 +220,18 @@ describe("NotificationBell", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: /Notifications, 2 unread/ }));
     fireEvent.click(await screen.findByText("[critical] MTTR drift"));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/monitoring?tab=alerts&alert=alr_1"));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/operate/monitoring?tab=alerts&alert=alr_1"));
     const post = lastCall(fetchMock, (u) => u === "/api/notifications/read")!;
     expect(JSON.parse(String(post[1].body))).toEqual({ ids: [1] });
   });
 
   it("maps notification links to screens", () => {
     const n = (type: string, id: string, kind = "x") => ({ workspace_id: "ws", kind, link: { type, id } });
-    expect(notificationHref(n("alert", "a1"))).toBe("/w/ws/monitoring?tab=alerts&alert=a1");
-    expect(notificationHref(n("artifact", "r1", "report"))).toBe("/w/ws/reports?artifact=r1");
-    expect(notificationHref(n("artifact", "c1", "other"))).toBe("/w/ws/studio?artifact=c1");
-    expect(notificationHref(n("run", "run1"))).toBe("/w/ws/runs/run1");
-    expect(notificationHref(n("schedule", "s1"))).toBe("/w/ws/schedules?schedule=s1");
+    expect(notificationHref(n("alert", "a1"))).toBe("/w/ws/operate/monitoring?tab=alerts&alert=a1");
+    expect(notificationHref(n("artifact", "r1", "report"))).toBe("/w/ws/build/reports?artifact=r1");
+    expect(notificationHref(n("artifact", "c1", "other"))).toBe("/w/ws/build/studio?artifact=c1");
+    expect(notificationHref(n("run", "run1"))).toBe("/w/ws/investigate/run1");
+    expect(notificationHref(n("schedule", "s1"))).toBe("/w/ws/operate/schedules?schedule=s1");
   });
 });
 
@@ -257,14 +257,14 @@ describe("ChangesPanel", () => {
     expect(screen.getByText("Changed: 1")).toBeTruthy();
     expect(screen.getByText("Resolved: 0")).toBeTruthy();
     const newGroup = screen.getByRole("region", { name: "New findings" });
-    expect(within(newGroup).getByRole("link").getAttribute("href")).toBe("/w/ws_1/insights/ins_3");
+    expect(within(newGroup).getByRole("link").getAttribute("href")).toBe("/w/ws_1/investigate/findings/ins_3");
     const changed = screen.getByRole("region", { name: "Changed findings" });
     expect(changed.textContent).toMatch(/effect 0\.2 → 0\.5/);
     expect(within(screen.getByRole("region", { name: "Resolved findings" })).getByText("None.")).toBeTruthy();
     expect(screen.getByLabelText("up 20.0%").textContent).toContain("▲");
     expect(screen.getByLabelText("down -20.0%").textContent).toContain("▼");
-    expect(screen.getByRole("link", { name: "Generated report" }).getAttribute("href")).toBe("/w/ws_1/reports?artifact=art_9");
-    expect(screen.getByRole("link", { name: "Previous run" }).getAttribute("href")).toBe("/w/ws_1/runs/run_prev");
+    expect(screen.getByRole("link", { name: "Generated report" }).getAttribute("href")).toBe("/w/ws_1/build/reports?artifact=art_9");
+    expect(screen.getByRole("link", { name: "Previous run" }).getAttribute("href")).toBe("/w/ws_1/investigate/run_prev");
   });
 
   it("delta arrows", () => {
@@ -277,10 +277,10 @@ describe("ChangesPanel", () => {
   it("origin badge links scheduled runs and alert investigations", () => {
     const { rerender } = render(<MemoryRouter><OriginBadge wsId="ws" origin={{ type: "schedule", schedule_id: "sch_1", previous_run_id: "r0" }} /></MemoryRouter>);
     expect(screen.getByText("scheduled")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "schedule" }).getAttribute("href")).toBe("/w/ws/schedules?schedule=sch_1");
+    expect(screen.getByRole("link", { name: "schedule" }).getAttribute("href")).toBe("/w/ws/operate/schedules?schedule=sch_1");
     rerender(<MemoryRouter><OriginBadge wsId="ws" origin={{ type: "alert", alert_id: "alr_1" }} /></MemoryRouter>);
     expect(screen.getByText("alert investigation")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "alert" }).getAttribute("href")).toBe("/w/ws/monitoring?tab=alerts&alert=alr_1");
+    expect(screen.getByRole("link", { name: "alert" }).getAttribute("href")).toBe("/w/ws/operate/monitoring?tab=alerts&alert=alr_1");
     rerender(<MemoryRouter><OriginBadge wsId="ws" origin={{ type: "user" }} /></MemoryRouter>);
     expect(screen.queryByText("scheduled")).toBeNull();
   });
@@ -322,7 +322,7 @@ describe("AlertItem", () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Investigate" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/runs/run_42"));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/investigate/run_42"));
     expect(fetchMock.mock.calls[0][0]).toBe("/api/alerts/alr_1/investigate");
   });
 
@@ -331,7 +331,7 @@ describe("AlertItem", () => {
     expect(screen.queryByRole("button", { name: "Acknowledge" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resolve" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Investigate" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Investigation run" }).getAttribute("href")).toBe("/w/ws_1/runs/run_7");
+    expect(screen.getByRole("link", { name: "Investigation run" }).getAttribute("href")).toBe("/w/ws_1/investigate/run_7");
   });
 });
 

@@ -48,6 +48,32 @@
       "title": "AnalysisSettings",
       "type": "object"
     },
+    "ContextSettings": {
+      "description": "Context compiler (P4-T03): per-purpose profiles; purposes without one get only their\nmandatory inputs. `min_relevance` is the share of objective terms a knowledge item must match\n(or a mapped in-scope column) before it may reach a prompt; below it the section says NO_MATCH.",
+      "properties": {
+        "compiler_enabled": {
+          "default": true,
+          "title": "Compiler Enabled",
+          "type": "boolean"
+        },
+        "min_relevance": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Relevance",
+          "type": "number"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PurposeProfile"
+          },
+          "title": "Profiles",
+          "type": "object"
+        }
+      },
+      "title": "ContextSettings",
+      "type": "object"
+    },
     "CrawlSettings": {
       "properties": {
         "default_mode": {
@@ -106,6 +132,70 @@
       "title": "CrawlSettings",
       "type": "object"
     },
+    "DecisionSettings": {
+      "description": "DecisionService (ADR-0015) knobs an administrator can change without a redeploy.",
+      "properties": {
+        "backends": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Backends",
+          "type": "object"
+        },
+        "calibration_window_days": {
+          "default": 30,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Calibration Window Days",
+          "type": "integer"
+        },
+        "calibration_min_outcomes": {
+          "default": 20,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Calibration Min Outcomes",
+          "type": "integer"
+        },
+        "max_brier": {
+          "default": 0.2,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Brier",
+          "type": "number"
+        },
+        "max_ece": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Ece",
+          "type": "number"
+        },
+        "purpose_max_brier": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Purpose Max Brier",
+          "type": "object"
+        },
+        "auto_downgrade": {
+          "default": true,
+          "title": "Auto Downgrade",
+          "type": "boolean"
+        },
+        "pinned": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pinned",
+          "type": "array"
+        }
+      },
+      "title": "DecisionSettings",
+      "type": "object"
+    },
     "FeatureFlags": {
       "properties": {
         "jev_decisions": {
@@ -133,7 +223,7 @@
       "type": "object"
     },
     "LLMSettings": {
-      "description": "How and when models are called.\n\nmode per purpose: off = never call (deterministic path only), auto = deterministic first and call\nthe model only when the deterministic result is insufficient, always = call when available.",
+      "description": "How and when models are called.\n\nEach purpose runs a ladder (config/models.yaml `ladders`, spec v3 \u00a74.1). `ladders` here replaces a\npurpose's ladder outright; `purpose_modes` (the increment-3 modes, what presets set) derive one\nfrom the default: off = no model rung, auto = deterministic rungs first and the model only when\nthey are insufficient, always = model first. Precedence: ladders > purpose_modes > default.",
       "properties": {
         "purpose_modes": {
           "additionalProperties": {
@@ -145,6 +235,34 @@
             "type": "string"
           },
           "title": "Purpose Modes",
+          "type": "object"
+        },
+        "ladders": {
+          "additionalProperties": {
+            "items": {
+              "enum": [
+                "cache",
+                "registry",
+                "rules",
+                "decision",
+                "llm_small",
+                "llm_large"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Ladders",
+          "type": "object"
+        },
+        "purpose_run_caps": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object"
+          },
+          "title": "Purpose Run Caps",
           "type": "object"
         },
         "routing_overrides": {
@@ -254,9 +372,97 @@
           "default": true,
           "title": "Auto Investigation Enabled",
           "type": "boolean"
+        },
+        "min_material_effect": {
+          "default": 0.0,
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "title": "Min Material Effect",
+          "type": "number"
+        },
+        "min_material_points": {
+          "default": 3,
+          "maximum": 520,
+          "minimum": 2,
+          "title": "Min Material Points",
+          "type": "integer"
         }
       },
       "title": "MonitorSettings",
+      "type": "object"
+    },
+    "PurposeProfile": {
+      "description": "What the context compiler (P4-T03) gives one model purpose, and how much of it.\n\n`sections` are filled in order after the mandatory part (the caller's required inputs); each\nsection is cut in whole items and whatever does not fit is listed as omitted, never truncated.\n`referenced_only` restricts the catalog to the tables the objective/question/SQL names (SQL\ngeneration and repair). Budgets are characters of compact JSON (\u2248 3.6 chars per token).",
+      "properties": {
+        "sections": {
+          "items": {
+            "enum": [
+              "catalog",
+              "glossary",
+              "business_rules",
+              "metrics",
+              "prior_findings",
+              "negative_knowledge",
+              "episodes"
+            ],
+            "type": "string"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "catalog_detail": {
+          "default": "columns",
+          "enum": [
+            "names",
+            "columns",
+            "stats",
+            "profile"
+          ],
+          "title": "Catalog Detail",
+          "type": "string"
+        },
+        "referenced_only": {
+          "default": false,
+          "title": "Referenced Only",
+          "type": "boolean"
+        },
+        "drop_semantic_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Drop Semantic Types",
+          "type": "array"
+        },
+        "max_columns_per_table": {
+          "default": 30,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Columns Per Table",
+          "type": "integer"
+        },
+        "max_items_per_section": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Items Per Section",
+          "type": "integer"
+        },
+        "item_chars": {
+          "default": 240,
+          "maximum": 4000,
+          "minimum": 40,
+          "title": "Item Chars",
+          "type": "integer"
+        },
+        "max_chars": {
+          "default": 40000,
+          "maximum": 1500000,
+          "minimum": 1000,
+          "title": "Max Chars",
+          "type": "integer"
+        }
+      },
+      "title": "PurposeProfile",
       "type": "object"
     },
     "SourceSettings": {
@@ -289,6 +495,9 @@
     "llm": {
       "$ref": "#/$defs/LLMSettings"
     },
+    "context": {
+      "$ref": "#/$defs/ContextSettings"
+    },
     "analysis": {
       "$ref": "#/$defs/AnalysisSettings"
     },
@@ -303,6 +512,9 @@
     },
     "features": {
       "$ref": "#/$defs/FeatureFlags"
+    },
+    "decisions": {
+      "$ref": "#/$defs/DecisionSettings"
     }
   },
   "title": "PlatformSettings",

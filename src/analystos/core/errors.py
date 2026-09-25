@@ -76,8 +76,23 @@ class RunCancelled(AnalystOSError):
     code, http_status = "run_cancelled", 409
 
 
+class ProviderQuotaExhausted(ModelRouteUnavailable):
+    """The provider refused for payment/credit reasons (HTTP 402). Every model behind that provider
+    will fail the same way, so the router stops trying it for a cooldown instead of burning calls."""
+
+    code, retryable = "provider_quota_exhausted", False
+
+
 class LLMDisabled(ModelRouteUnavailable):
     """An administrator set this purpose to `off` (or the prompt was refused as oversize).
     Callers take their deterministic path; this is a decision, not an outage."""
 
     code, retryable = "llm_disabled", False
+
+
+class ContextOverBudget(AnalystOSError):
+    """The mandatory part of a prompt's context alone exceeds the purpose's budget (context
+    compiler, P4-T03). Callers take the deterministic path and record the refusal; the context is
+    never cut to make it fit."""
+
+    code, http_status = "context_over_budget", 422

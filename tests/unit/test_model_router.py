@@ -28,6 +28,13 @@ def make(transport, sink=None, settings=None):
                        settings_provider=lambda: platform, cache=ResponseCache(None))
 
 
+def _jev_always():
+    """Decision purposes with a rule path answer from rules by default (P4-T02); these tests exercise JEV."""
+    from analystos.contracts.platform import LLMSettings, PlatformSettings
+
+    return PlatformSettings(llm=LLMSettings(purpose_modes={"hypothesis_priority": "always", "chart_selection": "always"}))
+
+
 def test_json_completion_and_usage_recorded():
     sink = Sink()
     r = make(FakeTransport(chat=lambda p: chat_json({"ok": True})), sink)
@@ -95,7 +102,7 @@ def test_jev_score_choice_and_escalation():
         return {"model": "typesafe/jev-1.13", "answers": answers, "usage": {"cost": 0.00001}}
 
     t = FakeTransport(decide=decide)
-    jev = JevDecisions(make(t))
+    jev = JevDecisions(make(t, settings=_jev_always()))
     scores = jev.score_hypotheses("objective", {"0": "h zero", "1": "h one"})
     assert set(scores) == {"0", "1"} and scores["0"].value == pytest.approx(1.9)
     assert jev.choose("chart_selection", {"x": "y"}, "pick", {"line": "l", "bar": "b"}).value == "line"
@@ -105,7 +112,8 @@ def test_jev_score_choice_and_escalation():
 
 def test_jev_invalid_choice_is_ignored():
     t = FakeTransport(decide=lambda p: {"answers": {"pick": {"choice": "rm -rf", "probabilities": {}}}})
-    assert JevDecisions(make(t)).choose("chart_selection", {}, "pick", {"line": "l", "bar": "b"}) is None
+    assert JevDecisions(make(t, settings=_jev_always())).choose("chart_selection", {}, "pick", {"line": "l", "bar": "b"}) is None
+    assert len(t.decide_calls) == 1
 
 
 def test_jev_unavailable_returns_none():
@@ -202,3 +210,27 @@ def test_jev_feature_flag_turns_decisions_off():
     s = s.model_copy(update={"features": s.features.model_copy(update={"jev_decisions": False})})
     r = make(FakeTransport(), settings=s)
     assert r.mode("risk_check") == "off" and JevDecisions(r).consequential("publish") is None
+
+
+def test_credit_refusal_cools_the_provider_down_instead_of_trying_every_model():
+    """Seen live: OpenRouter answered HTTP 402 and the router tried every fallback model per call (32 errors)."""
+    from analystos.core.errors import ProviderQuotaExhausted
+    from analystos.llm import router as router_mod
+
+    router_mod._PROVIDER_COOLDOWN.clear()
+    calls = []
+
+    def chat(p):
+        calls.append(p["model"])
+        return ProviderQuotaExhausted("HTTP 402: requires more credits")
+
+    r = make(FakeTransport(chat=chat))
+    with pytest.raises(ProviderQuotaExhausted):
+        r.complete_json("planning", "s", "u")
+    assert len(calls) == 1  # no fallback to other models of the same provider
+    assert not r.available("planning")
+    with pytest.raises(ProviderQuotaExhausted, match="cooldown"):
+        r.complete_json("planning", "s", "u")
+    assert len(calls) == 1  # failed fast, no network call
+    router_mod._PROVIDER_COOLDOWN.clear()
+    assert r.available("planning")

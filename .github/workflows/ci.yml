@@ -26,14 +26,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv venv -p 3.11 .venv && uv pip install -e ".[dev,mysql,duckdb]"
+      - run: uv venv -p 3.11 .venv && uv pip install -e ".[dev,mysql,duckdb,mcp]"
       - name: Initialise databases and roles (same scripts as compose)
         env: {PGPASSWORD: analystos}
         run: |
           psql -h localhost -U analystos -d analystos -f deploy/postgres/01-init.sql
           POSTGRES_USER=analystos PGHOST=localhost sh deploy/postgres/02-extensions.sh
       - run: .venv/bin/ruff check src tests
+      - name: OpenAPI schema is current (the web client is generated from web/openapi.json)
+        run: |
+          PYTHONPATH=src .venv/bin/python scripts/export_openapi.py
+          git diff --exit-code web/openapi.json
       - run: .venv/bin/pytest -q -m "not integration"
+      - name: Cost gate (replayed runs; fails when model calls or tokens per run rise > 10% over the baseline)
+        run: PYTHONPATH=src .venv/bin/python scripts/cost_gate.py
       - run: .venv/bin/analystos migrate
       - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
         run: .venv/bin/pytest -q -m integration
@@ -46,6 +52,20 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22}
       - run: npm ci
+      - name: Generated API types match the committed OpenAPI schema
+        run: |
+          npm run gen:api
+          git diff --exit-code src/generated/openapi.ts
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Journey and accessibility tests (Playwright + axe, API mocked)
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/playwright-report
+          retention-days: 7

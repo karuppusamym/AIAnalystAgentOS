@@ -1,12 +1,20 @@
-agent:
-  id: integration
-  version: '0.1'
-  name: Data Integration Agent
-  description: Plans cross-source joins, type alignment, entity matching and federation vs materialization.
-  capabilities:
-  - multi_source_join
-  - entity_matching
-  skills: []
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.integration
+version: 0.1.0
+summary: Data Integration Agent
+determinism: deterministic
+side_effect: none
+cost_class: query
+certification:
+  status: draft
+tags:
+- multi_source_join
+- entity_matching
+spec:
+  role: Data Integration Agent
+  goal: Plans cross-source joins, type alignment, entity matching and federation vs materialization.
+  capabilities: []
   tools: []
-  model_profile: analytical_reasoning
   phase: phase2

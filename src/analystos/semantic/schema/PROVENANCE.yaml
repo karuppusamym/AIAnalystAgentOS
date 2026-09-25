@@ -1,0 +1,17 @@
+# Pinned standard artifacts (ADR-0013 §5: every standard sits behind a version-pinned adapter).
+# tests/unit/test_semantic_ossie.py checks the sha256 below, so a silent edit of the pinned file fails.
+ossie-0.1.1.json:
+  standard: Apache Ossie (incubating; formerly OSI, Open Semantic Interchange)
+  version: 0.1.1
+  upstream_repo: https://github.com/apache/ossie
+  upstream_ref: branch release/0.1.1 (tag osi-0.1.1-rc1 points at the same commit)
+  upstream_commit: faf581054dcf7964d5fe0ceae7d6f415c8ce32a5   # "Bump version to 0.1.1", 2026-05-19
+  upstream_path: core-spec/osi-schema.json
+  retrieved: 2026-09-25 (git clone through the session proxy)
+  sha256: c1e9adec39562786aa78809665fba568797b15f4c53a0847d9cbcf2dead1bc94
+  license: Apache-2.0 (see upstream LICENSE and NOTICE)
+  modifications: none (byte-for-byte copy)
+  notes: >
+    main is at 0.2.0.dev0 (core-spec/ossie-schema.json, adds `datatype`, more dialects and vendors).
+    dbt Core 1.12 accepts only 0.1.0 and 0.1.1 (dbt/constants.py SUPPORTED_OSI_VERSIONS), so we stay
+    on 0.1.1 (spec v3 §12 open question 2). Re-check this pin when upstream tags a final 0.1.1 or 0.2.0.

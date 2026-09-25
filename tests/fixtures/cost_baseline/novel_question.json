@@ -1,0 +1,174 @@
+{
+ "description": "Hand-made small run (not recorded from a live run): an objective the rules cannot answer, so hypothesis generation and SQL generation call a model (recorded responses from a fake transport), a repeated SQL request the response cache answers, template narratives, one JEV second opinion and policy-off verification.",
+ "name": "novel_question",
+ "points": [
+  {
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "hypothesis_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Propose testable hypotheses as JSON.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"objective\":\"Why did refunds rise in March?\",\"catalog\":[{\"asset\":\"sales.orders\"}]}",
+      "role": "user"
+     }
+    ],
+    "purpose": "hypothesis_generation",
+    "temperature": 0.2
+   },
+   "response": {
+    "model": "anthropic/claude-sonnet-5",
+    "text": "{\"hypotheses\": []}",
+    "usage": {
+     "completion_tokens": 350,
+     "cost": 0.0125,
+     "prompt_tokens": 2400
+    }
+   },
+   "tokens_hint": 0
+  },
+  {
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "sql_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Write one SELECT for the question.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"question\":\"refunds by region in March\"}",
+      "role": "user"
+     }
+    ],
+    "purpose": "sql_generation",
+    "temperature": 0.0
+   },
+   "response": {
+    "model": "anthropic/claude-sonnet-5",
+    "text": "{\"hypotheses\": []}",
+    "usage": {
+     "completion_tokens": 350,
+     "cost": 0.0125,
+     "prompt_tokens": 2400
+    }
+   },
+   "tokens_hint": 0
+  },
+  {
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "sql_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Write one SELECT for the question.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"question\":\"refunds by region in March\"}",
+      "role": "user"
+     }
+    ],
+    "purpose": "sql_generation",
+    "temperature": 0.0
+   },
+   "response": {
+    "model": "anthropic/claude-sonnet-5",
+    "text": "{\"hypotheses\": []}",
+    "usage": {
+     "completion_tokens": 350,
+     "cost": 0.0125,
+     "prompt_tokens": 2400
+    }
+   },
+   "tokens_hint": 0
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1200
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1200
+  },
+  {
+   "gate": "rules",
+   "kind": "chat",
+   "purpose": "insight_narrative",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1200
+  },
+  {
+   "gate": "rules",
+   "kind": "decision",
+   "purpose": "chart_selection",
+   "request": null,
+   "response": null,
+   "tokens_hint": 400
+  },
+  {
+   "gate": "model",
+   "kind": "decision",
+   "purpose": "rev_second_opinion",
+   "request": {
+    "kind": "decision",
+    "purpose": "rev_second_opinion",
+    "questions": {
+     "p": {
+      "instructions": "Does `evidence` support `claim` as worded, without overreach?",
+      "type": "noul"
+     }
+    },
+    "state": {
+     "claim": "Refunds concentrate in region = West",
+     "evidence": "chi2 p=0.001"
+    }
+   },
+   "response": {
+    "answers": {
+     "p": {
+      "noul": 0.82
+     }
+    },
+    "model": "typesafe/jev-1.13",
+    "usage": {
+     "input_tokens": 210,
+     "output_tokens": 5
+    }
+   },
+   "tokens_hint": 0
+  },
+  {
+   "gate": "policy",
+   "kind": "chat",
+   "purpose": "verification",
+   "request": null,
+   "response": null,
+   "tokens_hint": 1800
+  }
+ ]
+}

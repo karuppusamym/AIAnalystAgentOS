@@ -1,5 +1,5 @@
 /** Monitor form helpers and chart overlays (services/monitors.py semantics). Pure functions. */
-import type { Monitor, MonitorConfig, MonitorKind } from "../api";
+import type { Alert, Monitor, MonitorConfig, MonitorKind } from "../api";
 import { driftBaseline, type MonitorOverlay } from "./charts";
 
 export const MONITOR_KINDS: { id: MonitorKind; label: string; description: string }[] = [
@@ -104,6 +104,36 @@ export function monitorOverlay(m: Monitor, points: [string, number][]): MonitorO
 export function monitorMessage(m: Monitor): string {
   const r = m.last_result ?? {};
   return (r.error ? `Error: ${r.error}` : r.message ?? r.reason ?? "") || (m.last_evaluated_at ? "" : "Not evaluated yet.");
+}
+
+export interface TriageExplanation {
+  ruleSeverity: string | null;
+  /** JEV's materiality probability, or null when triage did not run. */
+  pMaterial: number | null;
+  model: string | null;
+  escalated: boolean;
+  /** Plain-language account; JEV is described as escalate-only because it is (services/monitors.py). */
+  lines: string[];
+}
+
+/** Why an alert has its severity: the monitor rule first, then JEV, which may only escalate. */
+export function explainTriage(a: Alert): TriageExplanation {
+  const d = (a.data ?? {}) as Record<string, unknown>;
+  const ruleSeverity = typeof d.severity === "string" ? d.severity : null;
+  const triage = a.data?.triage ?? null;
+  const p = typeof triage?.p_material === "number" ? triage.p_material : null;
+  const escalated = ruleSeverity !== null && ruleSeverity !== a.severity;
+  const rule = a.message || String(d.message ?? "") || "the monitor rule fired";
+  const lines = [`Rule: ${rule}${ruleSeverity ? ` (rule severity: ${ruleSeverity})` : ""}.`];
+  if (p === null) {
+    lines.push("JEV triage did not run; the severity is the rule's.");
+  } else if (escalated) {
+    lines.push(`JEV judged it material (p ${Math.round(p * 100)}%) and escalated the severity from ${ruleSeverity} to ${a.severity}.`);
+  } else {
+    lines.push(`JEV materiality p ${Math.round(p * 100)}%: the severity stays as the rule set it.`);
+  }
+  lines.push("JEV can only raise severity; it never lowers it or closes an alert.");
+  return { ruleSeverity, pMaterial: p, model: triage?.model ?? null, escalated, lines };
 }
 
 export function describeMonitorConfig(m: Monitor): string {

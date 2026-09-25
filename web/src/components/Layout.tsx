@@ -2,47 +2,69 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { api, type Workspace } from "../api";
 import { useAuth } from "../auth";
+import { nextThemePref, setThemePref, useTheme } from "../lib/theme";
+import { fillPath, JOURNEYS, SCREENS } from "../routes";
+import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { NotificationBell } from "./NotificationBell";
 
-function WorkspaceNav({ wsId }: { wsId: string }) {
+const THEME_LABEL = { system: "System theme", light: "Light theme", dark: "Dark theme" } as const;
+const THEME_ICON = { system: "◐", light: "☀", dark: "☾" } as const;
+
+export function ThemeToggle() {
+  const { pref } = useTheme();
+  const next = nextThemePref(pref);
+  return (
+    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setThemePref(next)}
+      title={`${THEME_LABEL[pref]} — switch to ${THEME_LABEL[next].toLowerCase()}`}>
+      <span aria-hidden="true">{THEME_ICON[pref]}</span>
+      <span className="sr-only">{THEME_LABEL[pref]}; switch to {THEME_LABEL[next].toLowerCase()}</span>
+    </button>
+  );
+}
+
+function useWorkspace(wsId: string | undefined): Workspace | null {
   const [ws, setWs] = useState<Workspace | null>(null);
   useEffect(() => {
+    if (!wsId) return setWs(null);
     let alive = true;
     api.getWorkspace(wsId).then((w) => alive && setWs(w)).catch(() => alive && setWs(null));
     return () => {
       alive = false;
     };
   }, [wsId]);
-  const base = `/w/${encodeURIComponent(wsId)}`;
-  const items: [string, string, boolean?][] = [
-    [base, "Home", true],
-    [`${base}/sources`, "Sources & data"],
-    [`${base}/catalog`, "Catalog"],
-    [`${base}/runs`, "Analysis runs"],
-    [`${base}/insights`, "Insights"],
-    [`${base}/studio`, "Studio"],
-    [`${base}/schedules`, "Schedules"],
-    [`${base}/monitoring`, "Monitoring"],
-    [`${base}/reports`, "Reports"],
-    [`${base}/ask`, "Ask (SQL)"],
-    [`${base}/governance`, "Policy & members"],
-  ];
+  return ws;
+}
+
+/** Side nav grouped by journey (spec v3 §9), built from the route manifest. */
+function JourneyNav({ wsId, wsName }: { wsId?: string; wsName?: string }) {
   return (
     <>
-      <div className="nav-section">
-        <Link to="/" className="nav-back">← All workspaces</Link>
-        <div className="nav-ws" title={ws?.name ?? wsId}>{ws?.name ?? "Workspace"}</div>
-      </div>
-      <ul className="nav-list">
-        {items.map(([to, label, end]) => (
-          <li key={to}>
-            <NavLink to={to} end={end} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-              {label}
-            </NavLink>
-          </li>
-        ))}
-      </ul>
+      {wsId && (
+        <div className="nav-section">
+          <Link to="/" className="nav-back">← All workspaces</Link>
+          <div className="nav-ws" title={wsName ?? wsId}>{wsName ?? "Workspace"}</div>
+        </div>
+      )}
+      {JOURNEYS.map((j) => {
+        const screens = SCREENS.filter((s) => s.journey === j.id && s.nav && (!s.workspace || wsId) && !(wsId && s.id === "workspaces"));
+        if (!screens.length) return null;
+        return (
+          <div key={j.id} className="nav-journey" role="group" aria-labelledby={`nav-j-${j.id}`}>
+            <div id={`nav-j-${j.id}`} className="nav-journey-label" title={j.description}>{j.label}</div>
+            <ul className="nav-list">
+              {screens.map((s) => (
+                <li key={s.id}>
+                  <NavLink to={fillPath(s.path, { wsId })} end={s.id === "workspace-home" || s.id === "workspaces" || s.id === "investigations"}
+                    className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
+                    {s.id === "workspace-home" ? "What changed" : s.title}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -50,9 +72,22 @@ function WorkspaceNav({ wsId }: { wsId: string }) {
 export function Layout() {
   const { user, logout } = useAuth();
   const wsId = useMatch("/w/:wsId/*")?.params.wsId;
+  const ws = useWorkspace(wsId);
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => setNavOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="shell">
@@ -67,6 +102,11 @@ export function Layout() {
           <span>Context2AI <strong>AnalystOS</strong></span>
         </Link>
         <div className="topbar-spacer" />
+        <button type="button" className="btn btn-sm palette-trigger" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog"
+          aria-keyshortcuts="Control+K Meta+K">
+          <span>Go to…</span> <kbd className="kbd">Ctrl K</kbd>
+        </button>
+        <ThemeToggle />
         {user && (
           <div className="topbar-user">
             <NotificationBell />
@@ -78,16 +118,7 @@ export function Layout() {
       </header>
       <div className="body">
         <nav id="sidenav" className={`sidenav ${navOpen ? "open" : ""}`} aria-label="Main">
-          {wsId ? <WorkspaceNav wsId={wsId} /> : (
-            <ul className="nav-list">
-              <li><NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Workspaces</NavLink></li>
-            </ul>
-          )}
-          <div className="nav-section nav-bottom">
-            <ul className="nav-list">
-              <li><NavLink to="/admin" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Admin &amp; registry</NavLink></li>
-            </ul>
-          </div>
+          <JourneyNav wsId={wsId} wsName={ws?.name} />
         </nav>
         <main id="main" className="main" tabIndex={-1}>
           <ErrorBoundary resetKey={location.pathname}>
@@ -95,6 +126,7 @@ export function Layout() {
           </ErrorBoundary>
         </main>
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} wsId={wsId} />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.policy import ExecutionIdentity
+from analystos.contracts.policy import ExecutionIdentity, PolicyDecision
 from analystos.contracts.registry import AgentSpec, ToolSpec
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError, ApprovalRequired, NotFound, PolicyDenied
@@ -41,7 +41,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
     ToolSpec(tool_id="context.search", name="Context search", category="context",
              description="Layered retrieval over Context2AI / local glossary, metrics, prior episodes and graph neighborhood."),
     ToolSpec(tool_id="graph.neighborhood", name="Graph neighborhood", category="graph",
-             description="Neo4j neighborhood of tables: joins and prior findings."),
+             description="Neighbourhood of tables (joins and prior findings) from the Postgres lineage graph; Neo4j when enabled."),
     ToolSpec(tool_id="viz.chart", name="Chart designer", category="visualization",
              description="Select chart type and encodings for an analytical intent and compute a governed preview."),
     ToolSpec(tool_id="artifact.write", name="Artifact writer", category="observability", side_effects="internal_write",
@@ -71,10 +71,16 @@ TOOLS = {t.tool_id: t for t in BUILTIN_TOOLS}
 
 
 def load_agent_specs(directory: Path | None = None) -> list[AgentSpec]:
+    """AgentSpecs (agent_definition rows, the tool gate) derived from the agent manifests in the
+    catalog directory. Old `agent:` files are still read during the compatibility window."""
+    from analystos.capabilities.agents import from_legacy, to_agent_spec
+    from analystos.contracts.capability import CapabilityManifest
+
     specs = []
     for path in sorted((directory or get_settings().agents_dir).glob("*.yaml")):
-        data = yaml.safe_load(path.read_text())["agent"]
-        specs.append(AgentSpec.model_validate(data))
+        data = yaml.safe_load(path.read_text())
+        raw = from_legacy(data["agent"]) if "agent" in data else data
+        specs.append(to_agent_spec(CapabilityManifest.model_validate(raw)))
     return specs
 
 
@@ -130,18 +136,26 @@ class ToolRuntime:
         self.identity = identity
         self.agent = agent
 
-    def invoke(self, tool_id: str, inputs: dict[str, Any], fn: Callable[[], Any]) -> Any:
-        started = time.perf_counter()
+    def authorize(self, tool_id: str, inputs: dict[str, Any] | None = None, *, bound: bool = True) -> PolicyDecision | None:
+        """Policy-check a tool use without running it; a denial is recorded and raised.
+
+        ``bound=False`` is for the implicit paths that act *as* a tool without being invoked by name
+        (skill SQL as ``sql.execute``, artifact persistence as ``artifact.write``, spec v2 §6): the
+        workspace policy (denylist, role, autonomy) and the tool's enabled flag apply, the per-agent
+        binding does not, because the agent's bound tool (``profile.table``...) is what it invoked."""
+        inputs = inputs or {}
         with session_scope() as session:
             row = session.get(ToolDefinition, tool_id)
             tool = ToolSpec.model_validate(row.spec) if row else None
             reasons: list[str] = []
             if tool is None or not row.enabled:
                 reasons.append("tool_not_registered_or_disabled")
-            elif tool_id not in self.agent.tools:
+            elif bound and tool_id not in self.agent.tools:
                 reasons.append(f"tool_not_bound_to_agent_{self.agent.id}")
             elif tool_id == "python.execute" and not _platform().features.python_sandbox:
                 reasons.append("python_sandbox_disabled_by_admin")
+            elif not _tool_enabled_here(session, self.identity.workspace_id, tool_id):
+                reasons.append("capability_disabled_for_workspace")
             decision = None
             if not reasons:
                 identity = self.identity.model_copy(update={"tool_id": tool_id, "agent_id": self.agent.id})
@@ -154,9 +168,15 @@ class ToolRuntime:
                 session.add(_execution(self, tool_id, "denied", inputs, {}, {"decision": "deny", "reasons": reasons}, 0, None))
                 emit(self.identity.workspace_id, "policy.denied", {"tool": tool_id, "agent": self.agent.id, "reasons": reasons},
                      run_id=self.identity.run_id, session=session)
-                raise PolicyDenied(f"tool {tool_id} denied for agent {self.agent.id}: {', '.join(reasons)}")
-            if decision is not None and decision.decision == "approval_required" and not inputs.get("_approval_verified"):
-                raise ApprovalRequired(f"tool {tool_id} requires an approved proposal")
+        if reasons:
+            raise PolicyDenied(f"tool {tool_id} denied for agent {self.agent.id}: {', '.join(reasons)}")
+        if decision is not None and decision.decision == "approval_required" and not inputs.get("_approval_verified"):
+            raise ApprovalRequired(f"tool {tool_id} requires an approved proposal")
+        return decision
+
+    def invoke(self, tool_id: str, inputs: dict[str, Any], fn: Callable[[], Any]) -> Any:
+        started = time.perf_counter()
+        decision = self.authorize(tool_id, inputs)
         status, output, error = "ok", None, None
         try:
             output = fn()
@@ -175,6 +195,28 @@ class ToolRuntime:
                                         "reasons": decision.reasons if decision else []}, latency, error))
 
 
+def gate_agent_write(session: Session, *, workspace_id: str, run_id: str, agent_id: str, tool_id: str = "artifact.write",
+                     inputs: dict[str, Any] | None = None) -> None:
+    """Tool gate for artifact persistence by an agent inside a run (``save_artifact``). Runs its own
+    short transaction so a denial is recorded even when the caller's transaction rolls back."""
+    from analystos.db.models import AnalysisRun
+
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        return
+    with session_scope() as s:
+        user = s.get(User, run.requested_by)
+        row = s.get(AgentDefinition, agent_id)
+        spec = AgentSpec.model_validate(row.spec) if row else AgentSpec.model_validate(
+            {"id": agent_id, "name": agent_id, "description": "", "tools": []})
+        s.expunge_all()
+    if user is None:
+        raise PolicyDenied("run owner no longer exists")
+    identity = ExecutionIdentity(user_id=user.id, workspace_id=workspace_id, agent_id=agent_id, purpose="analysis",
+                                 run_id=run_id)
+    ToolRuntime(user=user, identity=identity, agent=spec).authorize(tool_id, inputs, bound=False)
+
+
 def _execution(rt: ToolRuntime, tool_id, status, inputs, output, decision, latency, error):
     from analystos.db.models import ToolExecution
 
@@ -188,6 +230,15 @@ def _platform():
     from analystos.services.platform_settings import get
 
     return get()
+
+
+def _tool_enabled_here(session: Session, workspace_id: str | None, tool_id: str) -> bool:
+    """Per-workspace capability enablement (P4-X01): an owner can turn a built-in tool off."""
+    if not workspace_id:
+        return True
+    from analystos.capabilities.enablement import tool_enabled
+
+    return tool_enabled(session, workspace_id, tool_id)
 
 
 def list_tools(session: Session) -> list[dict]:

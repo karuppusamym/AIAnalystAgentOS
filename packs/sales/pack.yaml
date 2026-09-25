@@ -1,0 +1,21 @@
+apiVersion: analystos/v1
+kind: KnowledgePack
+id: pack.sales
+version: 1.0.0
+summary: Retail and B2B sales orders — glossary, hints and analyst playbook (returns, order value, fulfilment)
+determinism: deterministic
+side_effect: none
+cost_class: free
+certification:
+  status: tested
+  evidence: tests/benchmarks/test_pack_benchmarks.py
+tags: [domain, sales, retail]
+spec:
+  domain: sales
+  applies_when:
+    tables: ["orders?", "sales_orders?", "order_(lines?|items?)", "sales", "sales_(lines?|transactions?)", "invoice_lines?"]
+  hints: hints.yaml
+  templates: templates.yaml
+  kpis: kpis.yaml
+  knowledge: knowledge
+  benchmark: benchmark/benchmark.yaml

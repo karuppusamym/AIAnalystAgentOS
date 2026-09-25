@@ -1,8 +1,8 @@
 """Relationship (join key) discovery across a given set of assets, validated with SQL.
 
 Candidate sources, in order of prior confidence:
-  declared        a column's `references` (ServiceNow reference fields reference the target table's
-                  `sys_id`; also accepts "table", "schema.table" or "table.column")        prior 0.9
+  declared        a column's `references` ("table", "schema.table" or "table.column"; a bare table
+                  resolves to the installed domain packs' key column, then the declared key, then `id`)        prior 0.9
   name_heuristic  `x_id` -> table `x` / `xs` / `xes` / `x`->`ies`, column `id` (or `x_id`)  prior 0.6
   same_name_key   a column named like another asset's declared key column                   prior 0.5
 
@@ -64,6 +64,9 @@ def _plural_forms(stem: str) -> list[str]:
 
 
 def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from analystos.capabilities.packs import hints
+
+    key_columns = [k.lower() for k in hints().key_columns]
     by_full = {a["asset"].lower(): a for a in assets}
     by_short: dict[str, list[dict[str, Any]]] = {}
     for a in assets:
@@ -89,8 +92,9 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     def target_key(t: dict[str, Any]) -> str | None:
         tc = cols(t)
-        if "sys_id" in tc:
-            return tc["sys_id"]["name"]
+        for key in key_columns:  # a domain's surrogate key (installed packs' hints) wins over declared keys
+            if key in tc:
+                return tc[key]["name"]
         keys = [c["name"] for c in t.get("columns", []) if c.get("is_key")]
         if keys:
             return keys[0]

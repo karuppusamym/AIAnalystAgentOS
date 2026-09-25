@@ -32,5 +32,10 @@ description: Checklist for adding a new source kind (database, warehouse, file o
      a gateway query with a denied column rejected.
 
    Mock tests do not certify a connector (spec v1 §62).
-7. **Record it:** add a tracker row and a capability-register entry stating which kinds are
+7. **Certify it from live evidence:** add the kind's `-k` expression to `LIVE_TESTS` in
+   `scripts/certify_connectors.py` and run the script. It writes
+   `docs/60-delivery/evidence/connector-<kind>-YYYYMMDD.md` only when every real-engine test passed;
+   `connectors/certification.py` derives the kind's `certified` flag (`/api/source-kinds`, the
+   `connector.<kind>` capability manifest) from that file. Never write the file by hand.
+8. **Record it:** add a tracker row and a capability-register entry stating which kinds are
    live-tested and which are catalog-only.

@@ -1,0 +1,6 @@
+# Starter KPIs over the outcomes of templates.yaml (aggregate: rate | mean | median | sum | count).
+kpis:
+  - {name: sla_breach_rate, display_name: SLA breach rate, outcome: breach, aggregate: rate, format: percent}
+  - {name: mttr_hours, display_name: Mean time to resolve, outcome: resolution, aggregate: mean, format: hours}
+  - {name: median_resolution_hours, display_name: Median resolution time, outcome: resolution, aggregate: median, format: hours}
+  - {name: record_count, display_name: Records, aggregate: count, format: number}

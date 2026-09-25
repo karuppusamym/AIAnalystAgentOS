@@ -1,0 +1,31 @@
+# ITSM benchmark: the seeded synthetic ServiceNow instance (connectors/synthetic_servicenow.py) with
+# its ground truth (GROUND_TRUTH there). `prepare` adds the display-value columns the ServiceNow
+# connector derives from reference fields (<field>_name), as a staged instance would have them.
+dataset:
+  generator: python:analystos.connectors.synthetic_servicenow:servicenow_tables
+  schema: bench
+  prepare:
+    - >-
+      CREATE TABLE bench.incident AS SELECT i.*, g.name AS assignment_group_name, c.name AS cmdb_ci_name
+      FROM raw.incident i LEFT JOIN raw.sys_user_group g ON i.assignment_group = g.sys_id
+      LEFT JOIN raw.cmdb_ci c ON i.cmdb_ci = c.sys_id
+tables: [incident]
+
+planted:
+  - id: reassignment_sla_breach        # GT reassignment_sla_breach: 3+ reassignments breach ~3x as often
+    match: {method: rate_by_segment, outcome: made_sla, segment: reassignment_count, segment_type: bucket}
+    expect_top: "3+"
+  - id: after_hours_resolution         # GT after_hours_resolution: ~1.6x longer when opened after hours
+    match: {method: numeric_by_segment, outcome_type: duration_hours, segment_type: after_hours}
+  - id: payments_gateway_p1            # GT payments_gateway_p1: one CI holds ~35% of P1s
+    match: {method: pareto, segment: cmdb_ci_name, filtered: true}
+    expect_top: Payments Gateway
+
+null_controls:
+  - id: contact_type_no_effect         # contact type is drawn independently of every outcome
+    columns: [contact_type]
+    specs:
+      - {method: rate_by_segment, asset: bench.incident, outcome: {type: equals, column: made_sla, value: false},
+         segment: {type: column, column: contact_type}}
+      - {method: numeric_by_segment, asset: bench.incident,
+         outcome: {type: duration_hours, column: opened_at, end_column: resolved_at}, segment: {type: column, column: contact_type}}

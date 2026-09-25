@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { to } from "../routes";
 import { api } from "../api";
 import { AutonomyPicker } from "../components/AutonomyPicker";
-import { Card, EmptyState, ErrorBox, Field, Loading, PageHeader } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, Loading, PageHeader, Value } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
 import { AUTONOMY_LEVELS } from "../lib/status";
 import { fmtDate } from "../lib/format";
@@ -22,17 +23,17 @@ export function WorkspacesPage() {
       ) : (
         <div className="grid-cards">
           {list.data?.map((w) => (
-            <Link key={w.id} to={`/w/${w.id}`} className="card card-link">
+            <Link key={w.id} to={to.workspace(w.id)} className="card card-link">
               <div className="card-body">
                 <h2 className="card-title">{w.name}</h2>
                 {w.description && <p className="muted clamp-2">{w.description}</p>}
                 {w.objective && <p className="small clamp-2"><strong>Objective:</strong> {w.objective}</p>}
                 <div className="chip-row small">
                   <span className="tag tag-info">L{w.autonomy_level} · {AUTONOMY_LEVELS[w.autonomy_level]?.name ?? "?"}</span>
-                  <span className="tag">{w.counts?.sources ?? 0} sources</span>
-                  <span className="tag">{w.counts?.runs ?? 0} runs</span>
-                  <span className="tag tag-success">{w.counts?.verified_insights ?? 0} verified insights</span>
-                  <span className="tag">{w.counts?.dashboard ?? 0} dashboards</span>
+                  <span className="tag"><Value value={w.counts?.sources} format="int" suffix="sources" unknownLabel="sources unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.runs} format="int" suffix="runs" unknownLabel="runs unknown" /></span>
+                  <span className="tag tag-success"><Value value={w.counts?.verified_insights} format="int" suffix="verified insights" unknownLabel="verified insights unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix="dashboards" unknownLabel="dashboards unknown" /></span>
                 </div>
                 <p className="muted small">Created {fmtDate(w.created_at)}</p>
               </div>
@@ -54,7 +55,7 @@ function CreateWorkspace() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective, autonomy_level: level }));
-    if (ws) nav(`/w/${ws.id}`);
+    if (ws) nav(to.workspace(ws.id));
   };
   return (
     <Card title="Create workspace">

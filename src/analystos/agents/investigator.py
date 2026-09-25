@@ -7,25 +7,25 @@ when no model is available or too few proposals survive. JEV scores priority.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, model_gate, task_output
+from analystos import methods
+from analystos.agents.common import asset_rows, catalog_for_prompt, compile_for, llm_json, model_gate, task_output
 from analystos.artifacts.registry import link
+from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Experiment, Hypothesis
+from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
 from analystos.services.platform_settings import get as platform
-
-BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
-NUMERIC_OUT = {"column", "duration_hours"}
+from analystos.skills import hypothesis_templates as tmpl
 
 
 # ---------------------------------------------------------------------------------- validation
@@ -57,24 +57,7 @@ def validate_spec(spec: AnalysisSpec, scope, types: dict[str, dict[str, str]]) -
     def sem(d: Derivation) -> str | None:
         return _semantic(types, spec.asset, d.column)
 
-    m = spec.method
-    if m in ("rate_by_segment", "numeric_by_segment", "pareto") and spec.segment is None:
-        errors.append(f"{m} needs a segment")
-    if m == "rate_by_segment" and (spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT):
-        errors.append("rate_by_segment needs a boolean outcome (equals/is_true/after_hours)")
-    if m == "numeric_by_segment":
-        if spec.outcome is None or spec.outcome.type not in NUMERIC_OUT:
-            errors.append("numeric_by_segment needs a numeric outcome (column/duration_hours)")
-        elif spec.outcome.type == "column" and sem(spec.outcome) not in ("numeric", None):
-            errors.append(f"outcome {spec.outcome.column} is not numeric")
-        elif spec.outcome.type == "duration_hours" and not spec.outcome.end_column:
-            errors.append("duration_hours needs end_column")
-    if m == "trend" and (spec.time is None or spec.time.type != "date_trunc" or not spec.time.grain):
-        errors.append("trend needs time = date_trunc with a grain")
-    if m == "correlation" and (spec.outcome is None or not spec.drivers):
-        errors.append("correlation needs a numeric outcome and one numeric driver")
-    if m == "driver_model" and (spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT or len(spec.drivers) < 2):
-        errors.append("driver_model needs a boolean outcome and at least two drivers")
+    errors += methods.get(spec.method).validate(spec, sem)
     if spec.segment is not None and spec.segment.type == "column":
         st = sem(spec.segment)
         if st in ("numeric",) :
@@ -106,109 +89,64 @@ def with_constraints(spec: AnalysisSpec, constraints: dict[str, Any]) -> Analysi
 
 
 # ---------------------------------------------------------------------------------- heuristics
-_SUCCESS = re.compile(r"(made_|met_|success|passed|on_time|within)")
-_TEXTY = re.compile(r"(description|comment|note|summary|title|text|message|work_notes)")
-_ACRONYMS = {"sla": "SLA", "ci": "CI", "p1": "P1", "id": "ID", "mttr": "MTTR"}
+# Domain playbooks (which outcome, which drivers, which labels) are data in domain packs
+# (packs/<name>/templates.yaml, skills/hypothesis_templates); only the domain-neutral, role-driven
+# playbook below lives here.
+_TEXTY = tmpl.TEXTY
 
 
 def humanize(column: str) -> str:
-    return " ".join(_ACRONYMS.get(w, w) for w in column.split("_"))
+    return tmpl.humanize(column, pack_registry.hints().acronyms)
 
 
-def boolean_outcome_label(column: str, breach: bool) -> str:
-    """made_sla=false -> 'missed SLA'; is_x=true -> 'x'."""
-    if breach:
-        stem = re.sub(r"^(made|met|passed|within)_", "", column)
-        return f"missed {humanize(stem)}" if stem != column else f"not {humanize(column)}"
-    return humanize(re.sub(r"^is_", "", column))
-_START = re.compile(r"(opened|start|created|begin|reported)")
-_END = re.compile(r"(resolved|closed|end|finished|completed)")
+def table_columns(asset, cols, types: dict[str, dict[str, str]], denied: list[str]) -> list[tmpl.Col]:
+    """The engine's view of one selected table: visible columns with type, crawler role and profile."""
+    fq = f"{asset.schema_name}.{asset.name}"
+    deny = set(denied)
+    return [tmpl.Col(name=c.name, semantic_type=types.get(fq, {}).get(c.name), role=(c.semantics or {}).get("semantic_role"),
+                     profile=c.profile or {}) for c in cols if f"{fq}.{c.name}" not in deny]
 
 
-def heuristic_proposals(ctx: RunContext, types: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
-    """Profile-driven analyst playbook: outcome x driver grid over the largest selected table first."""
+def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list) -> list[dict[str, Any]]:
+    """Templates of every enabled pack first (in pack order), then the core role-driven playbook."""
+    acronyms = pack_registry.hints().acronyms
     proposals: list[dict[str, Any]] = []
+    for pack in packs:
+        proposals += [{**p, "pack": pack.id} for p in tmpl.propose(fq, cols, pack.templates, acronyms)]
+    st = {c.name: c.semantic_type for c in cols}
+    prof = {c.name: c.profile for c in cols}
+    categorical = [c for c in st if st[c] == "categorical" and 2 <= (prof[c].get("distinct") or 0) <= 30 and not _TEXTY.search(c)]
+    datetimes = [c for c in st if st[c] == "datetime"]
+    covered = {(p["spec"].get("outcome") or {}).get("column") for p in proposals}
+    has_trend = any(_method_attr(p["spec"], "playbook") == "volume_trend" for p in proposals)
+    return proposals + _role_proposals(fq, cols, st, categorical, datetimes, has_trend=has_trend, covered=covered)
+
+
+def heuristic_proposals(ctx: RunContext, types: dict[str, dict[str, str]], packs: list | None = None) -> list[dict[str, Any]]:
+    """Rule-based playbook over the largest selected table first (the next one when it yields nothing)."""
+    packs = pack_registry.for_scope(ctx.scope, ctx.policy) if packs is None else packs
     rows = sorted(asset_rows(ctx), key=lambda ac: -(ac[0].row_count or 0))
     for asset, cols in rows[:2]:
         fq = f"{asset.schema_name}.{asset.name}"
-        denied = set(ctx.scope.denied_columns)
-        visible = [c for c in cols if f"{fq}.{c.name}" not in denied]
-        st = {c.name: types.get(fq, {}).get(c.name) for c in visible}
-        prof = {c.name: (c.profile or {}) for c in visible}
-        booleans = [c for c in st if st[c] == "boolean"]
-        datetimes = [c for c in st if st[c] == "datetime"]
-        starts = [c for c in datetimes if _START.search(c)]
-        ends = [c for c in datetimes if _END.search(c)]
-        categorical = [c for c in st if st[c] == "categorical" and 2 <= (prof[c].get("distinct") or 0) <= 30 and not _TEXTY.search(c)]
-        names = [c for c in categorical if c.endswith("_name")] + [c for c in categorical if not c.endswith("_name")]
-        counts = [c for c in st if st[c] == "numeric" and (prof[c].get("max") is not None) and float(prof[c].get("max") or 0) <= 50
-                  and "count" in c]
-        segments: list[Derivation] = [Derivation(type="bucket", column=c, edges=[0, 1, 2, 3], label=humanize(c)) for c in counts[:2]]
-        segments += [Derivation(type="column", column=c, label=humanize(c)) for c in names[:5]]
-        if starts:
-            segments.append(Derivation(type="after_hours", column=starts[0], label="opened after hours"))
-        outcome_bool = None
-        if booleans:
-            b = booleans[0]
-            breach = bool(_SUCCESS.search(b))
-            outcome_bool = Derivation(type="equals", column=b, value=not breach,
-                                      label=boolean_outcome_label(b, breach))
-        duration = Derivation(type="duration_hours", column=starts[0], end_column=ends[0], label="resolution hours") \
-            if starts and ends else None
-        if outcome_bool:
-            for seg in segments[:6]:
-                proposals.append({"question": f"Does {outcome_bool.label} vary by {seg.label}?",
-                                  "statement": f"The rate of {outcome_bool.label} differs materially across {seg.label}.",
-                                  "priority": "high" if seg.type in ("bucket", "after_hours") else "medium",
-                                  "spec": {"method": "rate_by_segment", "asset": fq, "outcome": outcome_bool.model_dump(),
-                                           "segment": seg.model_dump()}})
-        if duration:
-            for seg in [s for s in segments if s.type == "after_hours"] + [s for s in segments if s.type == "column"][:2]:
-                proposals.append({"question": f"Does {duration.label} differ by {seg.label}?",
-                                  "statement": f"{duration.label.capitalize()} differs materially across {seg.label}.",
-                                  "priority": "high" if seg.type == "after_hours" else "medium",
-                                  "spec": {"method": "numeric_by_segment", "asset": fq, "outcome": duration.model_dump(),
-                                           "segment": seg.model_dump()}})
-        prio_col = next((c for c in st if c == "priority"), None)
-        ci_col = next((c for c in names if re.search(r"(^|_)(ci|cmdb|application|service|app)(_|$)", c)), None) or \
-            next((c for c in st if st[c] == "categorical" and c.endswith("_name") and re.search(r"(ci|application|service)", c)), None)
-        if ci_col:
-            top_prio = None
-            if prio_col:
-                values = [t.get("value") for t in (prof.get(prio_col, {}).get("top_values") or [])]
-                top_prio = min(values, key=lambda v: str(v)) if values else 1
-            filters = [{"column": prio_col, "op": "=", "value": top_prio}] if prio_col else []
-            proposals.append({"question": f"Are {'priority-1 ' if prio_col else ''}records concentrated in a few {ci_col.replace('_', ' ')} values?",
-                              "statement": f"A small number of {ci_col.replace('_', ' ')} values account for a disproportionate share"
-                                           f"{' of priority-1 records' if prio_col else ''}.",
-                              "priority": "high", "spec": {"method": "pareto", "asset": fq,
-                                                           "segment": {"type": "column", "column": ci_col, "label": ci_col.replace('_', ' ')},
-                                                           "filters": filters}})
-        if starts:
-            proposals.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
-                              "priority": "low", "spec": {"method": "trend", "asset": fq,
-                                                          "time": {"type": "date_trunc", "column": starts[0], "grain": "week"}}})
-        if outcome_bool and len(segments) >= 2:
-            proposals.append({"question": f"Which factors jointly predict {outcome_bool.label}?",
-                              "statement": f"Several operational factors jointly predict {outcome_bool.label}.", "priority": "medium",
-                              "spec": {"method": "driver_model", "asset": fq, "outcome": outcome_bool.model_dump(),
-                                       "drivers": [s.model_dump() for s in segments[:5]]}})
-        # Other outcomes (amounts, durations, rates) from crawler roles: breadth, not more of the same outcome.
-        proposals += _role_proposals(fq, visible, st, categorical, datetimes, has_trend=bool(starts))
+        proposals = proposals_for_table(fq, table_columns(asset, cols, types, ctx.scope.denied_columns), packs)
         if proposals:
-            break
-    return proposals
+            return proposals
+    return []
 
 
 _MEASURE_ROLES = ("amount", "measure", "duration", "percent")
 
 
-def _role_proposals(fq: str, visible: list, st: dict[str, str | None], categorical: list[str], datetimes: list[str], *,
-                    has_trend: bool) -> list[dict[str, Any]]:
-    """Domain-neutral playbook from crawler column roles (skills/catalog): measures by segments and a
-    trend on the first event timestamp. Lets any database get rule-based hypotheses without a model."""
-    roles = {c.name: (c.semantics or {}).get("semantic_role") for c in visible}
-    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c]
+def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None], categorical: list[str], datetimes: list[str], *,
+                    has_trend: bool, covered: set[str | None] = frozenset()) -> list[dict[str, Any]]:
+    """Domain-neutral playbook from crawler column roles (skills/catalog): measures and the first flag by
+    segments, and a trend on the first event timestamp. Lets any database get rule-based hypotheses
+    without a model or a domain pack; outcomes a pack template already covers are left to the pack.
+    Each role is filled by the registered method that declares it (`Method.playbook`)."""
+    by_segment, flag_rate, volume_trend = (methods.for_playbook(r) for r in ("measure_by_segment", "flag_by_segment", "volume_trend"))
+    roles = {c.name: c.role for c in visible}
+    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c] if by_segment else []
+    flags = [c for c in st if st[c] == "boolean" and c not in covered] if flag_rate else []
     segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:3]
     out: list[dict[str, Any]] = []
     for m in measures[:3]:
@@ -216,12 +154,19 @@ def _role_proposals(fq: str, visible: list, st: dict[str, str | None], categoric
         for seg in segs:
             out.append({"question": f"Does {outcome.label} differ by {humanize(seg)}?",
                         "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.", "priority": "medium",
-                        "spec": {"method": "numeric_by_segment", "asset": fq, "outcome": outcome.model_dump(),
+                        "spec": {"method": by_segment.name, "asset": fq, "outcome": outcome.model_dump(),
+                                 "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
+    for f in flags[:1]:
+        outcome = Derivation(type="is_true", column=f, label=tmpl.flag_label(f, False, None, pack_registry.hints().acronyms))
+        for seg in segs:
+            out.append({"question": f"Does the rate of {outcome.label} vary by {humanize(seg)}?",
+                        "statement": f"The rate of {outcome.label} differs materially across {humanize(seg)}.", "priority": "medium",
+                        "spec": {"method": flag_rate.name, "asset": fq, "outcome": outcome.model_dump(),
                                  "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
     times = [c for c in datetimes if roles.get(c) in ("timestamp", "date")] or datetimes
-    if times and not has_trend:
+    if times and not has_trend and volume_trend:
         out.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
-                    "priority": "low", "spec": {"method": "trend", "asset": fq,
+                    "priority": "low", "spec": {"method": volume_trend.name, "asset": fq,
                                                 "time": {"type": "date_trunc", "column": times[0], "grain": "month"}}})
     return out
 
@@ -280,26 +225,34 @@ def _accept(ctx: RunContext, proposals: list[dict[str, Any]], types, *, origin: 
 
 
 def identity_keys(spec: AnalysisSpec) -> set[str]:
-    """What makes two hypotheses the same test. A second driver model on the same outcome and population
-    re-answers the same question with a different feature list (seen live: three identical conclusions)."""
-    keys = {stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"}))}
-    if spec.method == "driver_model" and spec.outcome is not None:
-        filters = sorted(f"{f.column}{f.op}{f.value}" for f in spec.filters or [])
-        keys.add(stable_hash({"m": "driver_model", "o": spec.outcome.model_dump(), "f": filters}))
-    return keys
+    """What makes two hypotheses the same test: the full spec, plus any identity the method adds
+    (e.g. a second driver model on the same outcome and population re-answers the same question)."""
+    return {stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"})), *methods.get(spec.method).identity_keys(spec)}
 
 
 def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
-    verdicts = ctx.jev.score_hypotheses(ctx.run.objective, {str(i): a["statement"] for i, a in enumerate(accepted)},
-                                        ctx=ctx.call_ctx())
+    """Rank (ADR-0015 `rank`): JEV may reorder, never drop; a hypothesis it does not score keeps its label."""
+    if not accepted:
+        return "rules"
     rank = {"high": 2.0, "medium": 1.0, "low": 0.0}
+    items = {str(i): a["statement"] for i, a in enumerate(accepted)}
+    decision = ctx.decisions.decide(
+        "hypothesis_priority", {"objective": ctx.run.objective},
+        Question.scores("How valuable is testing each hypothesis for answering the objective?", items,
+                        hint={str(i): rank.get(a.get("priority", "medium"), 1.0) for i, a in enumerate(accepted)}),
+        ctx=ctx.call_ctx())
     for i, a in enumerate(accepted):
-        v = (verdicts or {}).get(str(i))
-        a["priority_score"] = round(v.value / 2, 3) if v else rank.get(a.get("priority", "medium"), 1.0) / 2
-        a["priority_by"] = f"jev:{v.model}" if v else "rules"
+        score, item = decision.value[str(i)], decision.details.get(str(i)) or {}
+        v = item.get("by") == "jev" and decision.backend == "jev"
+        a["priority_score"] = round(score / 2, 3)
+        a["priority_by"] = f"jev:{decision.model}" if v else "rules"
+        # The decision itself, not only who made it (P4-C09): replay and audit need the probabilities.
+        a["priority_decision"] = {"score": score, "probabilities": item.get("probabilities") or {},
+                                  "confidence": item.get("confidence"), "model": decision.model,
+                                  "decision_id": decision.id} if v else None
         a["priority"] = "high" if a["priority_score"] >= 0.7 else "medium" if a["priority_score"] >= 0.35 else "low"
     accepted.sort(key=lambda a: -a["priority_score"])
-    return "jev" if verdicts else "rules"
+    return "jev" if decision.backend == "jev" else "rules"
 
 
 def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key: str) -> list[str]:
@@ -324,7 +277,8 @@ def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key
                      depends_on=[round_key], optional=True, input={"hypothesis_id": h.id}, seq=60 + n,
                      from_version=ctx.task.plan_version)
             emit(run.workspace_id, "hypothesis.created", {"code": h.code, "statement": h.statement, "priority": h.priority,
-                                                          "priority_by": a.get("priority_by"), "method": spec["method"]},
+                                                          "priority_by": a.get("priority_by"),
+                                                          "priority_decision": a.get("priority_decision"), "method": spec["method"]},
                  run_id=run.id, session=s)
             link(s, run.workspace_id, ("objective", run.id), "asks", ("hypothesis", h.id), run_id=run.id)
             keys.append(key)
@@ -333,22 +287,28 @@ def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key
 
 
 def generate_hypotheses(ctx: RunContext) -> dict:
+    from analystos.registries.replay import replay_settings
+
+    replay = replay_settings(ctx.run)
+    if replay is not None:
+        return replay_hypotheses(ctx, replay)
     types = semantic_types(ctx)
-    context = task_output(ctx.run.id, "context")
     quality = task_output(ctx.run.id, "quality").get("issues") or []
-    payload = {"objective": ctx.run.objective, "questions": ctx.run.plan.get("questions"), "focus": ctx.run.plan.get("focus"),
-               "user_instructions": [i.get("text") for i in ctx.run.instructions],
-               "constraints": ctx.run.constraints, "catalog": catalog_for_prompt(ctx),
-               "resolved_terms": context.get("resolved_terms"),
-               "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
+    required = {"objective": ctx.run.objective, "questions": ctx.run.plan.get("questions"), "focus": ctx.run.plan.get("focus"),
+                "user_instructions": [i.get("text") for i in ctx.run.instructions],
+                "constraints": ctx.run.constraints,
+                # the context agent's resolved terms reach the prompt as the compiler's glossary section (with receipts)
+                "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
     seen: set[str] = set()
+    packs = pack_registry.for_scope(ctx.scope, ctx.policy)
     # Recurring analysis: re-test every previously verified claim with the identical spec first, so
     # "resolved" means the evidence changed — not that a different question was asked this time.
     carried, rejected = _accept(ctx, carried_forward(ctx), types, origin="carried", seen=seen)
-    payload["already_testing"] = [c["statement"] for c in carried]
+    required["already_testing"] = [c["statement"] for c in carried]
+    payload = compile_for(ctx, "hypothesis_generation", required)
     # Deterministic-first (admin: llm.purpose_modes.hypothesis_generation): the profile-driven playbook
     # runs first; in `auto` mode the model is only asked when the playbook is not enough.
-    rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
+    rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types, packs)], types,
                                origin="heuristic", seen=set(seen))
     enough = len(carried) + len(rules) >= platform().analysis.heuristic_hypotheses_sufficient
     data, model = (llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
@@ -358,7 +318,7 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     rejected += rejected_llm
     source = f"llm:{model}" if llm_props else f"rules ({model})"
     if len(accepted) < 4 or not llm_props:
-        more, rej2 = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
+        more, rej2 = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types, packs)], types,
                              origin="heuristic", seen=seen)
         accepted += more
         rejected += rej2
@@ -376,10 +336,85 @@ def generate_hypotheses(ctx: RunContext) -> dict:
         if ctx.policy.max_iterations > 1:
             add_task(s, run, key="followups:1", agent="investigator", title="Review results and propose follow-up hypotheses (round 2)",
                      depends_on=["test:*"], optional=True, input={"round": 1}, seq=90, from_version=ctx.task.plan_version)
+    pack_refs = [p.ref for p in packs]
     ctx.say(f"Proposed {len(accepted)} hypotheses ({len(carried)} carried forward from the previous run; source: {source}; "
-            f"priority by {by}); {len(rejected)} proposals rejected by validation.",
-            kind="decision", data={"questions": (data or {}).get("questions") if isinstance(data, dict) else None})
-    return {"hypotheses": len(accepted), "tasks": keys, "rejected": rejected, "source": source, "priority_by": by}
+            f"priority by {by}; domain packs: {', '.join(pack_refs) or 'none'}); {len(rejected)} proposals rejected by validation.",
+            kind="decision", data={"questions": (data or {}).get("questions") if isinstance(data, dict) else None,
+                                   "domain_packs": pack_refs})
+    return {"hypotheses": len(accepted), "tasks": keys, "rejected": rejected, "source": source, "priority_by": by,
+            "domain_packs": pack_refs}
+
+
+def replay_hypotheses(ctx: RunContext, settings: dict[str, Any]) -> dict:
+    """Scheduled re-analysis (P4-T05, review C11): re-test the hypothesis registry with no model call,
+    so on unchanged data the run asks the same questions and gets the same answers. No follow-up
+    rounds (the registry already holds the previous rounds' questions). The opt-in novelty round is
+    the only model use, within its own budget; its hypotheses are labelled `novelty`."""
+    from analystos.agents.common import compact_json
+    from analystos.llm.cache import estimate_tokens
+    from analystos.registries.hypotheses import replay_proposals
+
+    types = semantic_types(ctx)
+    previous = (ctx.run.origin or {}).get("previous_run_id")
+    with session_scope() as s:
+        proposals = replay_proposals(s, ctx.workspace.id, previous, ctx.scope.assets, scope=settings["registry_scope"])
+    seen: set[str] = set()
+    accepted, rejected = _accept(ctx, proposals, types, origin="registry", seen=seen)
+    source = "registry"
+    for a in accepted:
+        a["priority_by"] = "registry"
+    if not accepted:  # no usable baseline yet: the rule playbook, still without a model
+        accepted, rejected_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
+                                           origin="heuristic", seen=seen)
+        rejected += rejected_rules
+        _prioritise(ctx, accepted)  # a replay run's router is off for hypothesis_priority: rule ranking
+        accepted = diverse_top(accepted, platform().analysis.max_round1_hypotheses)
+        source = "rules (empty registry)"
+    avoided = {"objective": ctx.run.objective, "catalog": catalog_for_prompt(ctx), "already_testing": [a["statement"] for a in accepted]}
+    ctx.router.record_skip("hypothesis_generation", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(avoided)) + 500,
+                           reason=f"L1 registry: {len(accepted)} registered hypotheses replayed", rung="registry")
+    novel: list[dict] = []
+    if settings["novelty"]["enabled"]:
+        novel, rejected_novel = _novelty_round(ctx, types, seen, settings["novelty"], avoided)
+        rejected += rejected_novel
+    for r in rejected:
+        ctx.say(f"Not replayed: '{(r.get('statement') or '')[:100]}': {r['reason']}", kind="decision")
+    keys = _persist(ctx, accepted + novel, iteration=1, round_key="hypotheses")
+    novelty_note = f"novelty round added {len(novel)} new questions" if settings["novelty"]["enabled"] else "novelty round off"
+    ctx.say(f"Scheduled re-analysis: replayed {len(accepted)} hypotheses (source: {source}; no model call); {novelty_note}; "
+            f"{len(rejected)} not replayed.", kind="decision")
+    return {"hypotheses": len(keys), "tasks": keys, "rejected": rejected, "source": source, "priority_by": "registry",
+            "replayed": len(accepted), "novelty": len(novel)}
+
+
+def _purpose_spend(run_id: str, purpose: str) -> float:
+    from analystos.db.models import ModelCall
+
+    with session_scope() as s:
+        return float(s.scalar(select(func.coalesce(func.sum(ModelCall.cost_usd), 0.0)).where(
+            ModelCall.run_id == run_id, ModelCall.purpose == purpose)) or 0.0)
+
+
+def _novelty_round(ctx: RunContext, types, seen: set[str], novelty: dict[str, Any],
+                   payload: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """Opt-in exploration: at most one model call, and only while the round's USD budget lasts."""
+    budget = novelty["llm_budget_usd"]
+    if _purpose_spend(ctx.run.id, "hypothesis_generation") >= budget:
+        ctx.say(f"Novelty round skipped: its budget (${budget:.4f}) is used up.", kind="decision")
+        return [], []
+    data, model = llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1",
+                           {**payload, "max_new_hypotheses": novelty["max_hypotheses"],
+                            "instruction": "Propose only questions that are not in already_testing."}, max_tokens=3000)
+    props = [{**p, "origin": "novelty"} for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] \
+        if isinstance(data, dict) else []
+    accepted, rejected = _accept(ctx, props, types, origin="novelty", seen=seen)
+    accepted = accepted[:novelty["max_hypotheses"]]
+    for a in accepted:
+        a.update(priority="low", priority_score=0.3, priority_by=f"novelty:{model}")
+    spent = _purpose_spend(ctx.run.id, "hypothesis_generation")
+    if spent > budget:
+        ctx.say(f"Novelty round spent ${spent:.4f}, above its ${budget:.4f} budget.", kind="decision")
+    return accepted, rejected
 
 
 def carried_forward(ctx: RunContext) -> list[dict]:
@@ -406,6 +441,13 @@ def _results_summary(run_id: str) -> list[dict]:
         return out
 
 
+def _new_supported(run_id: str, round_no: int) -> int:
+    """Supported hypotheses first tested in round `round_no` (AUT-005: stop when a round adds none)."""
+    with session_scope() as s:
+        return int(s.scalar(select(func.count()).select_from(Hypothesis).where(
+            Hypothesis.run_id == run_id, Hypothesis.iteration == round_no, Hypothesis.status == "supported")) or 0)
+
+
 def follow_ups(ctx: RunContext) -> dict:
     round_no = int(ctx.task.input.get("round", 1))
     results = _results_summary(ctx.run.id)
@@ -413,22 +455,30 @@ def follow_ups(ctx: RunContext) -> dict:
     if not supported:
         ctx.say("No supported hypothesis to drill into; stopping iteration.", kind="decision")
         return {"added": 0, "stop": "no_supported_results"}
-    # Stop criterion (JEV): is the objective already answered well enough?
-    stop = ctx.jev.probability("stop_check", {"objective": ctx.run.objective,
-                                              "findings": "; ".join(f"{r['statement']} ({r['status']})" for r in results)[:3500]},
-                               "Do `findings` already answer `objective` well enough that further drill-down analysis is unnecessary?",
-                               ctx=ctx.call_ctx())
-    if stop and stop.value >= 0.85 and round_no >= 1 and len(supported) >= 3:
-        ctx.say(f"JEV stop check: P(objective answered)={stop.value:.2f} ≥ 0.85 — stopping iteration.", kind="decision")
-        return {"added": 0, "stop": "jev_stop_check", "p": stop.value}
+    # Stop criterion (ADR-0015 bounded_stop): rule first (nothing new in the last round), JEV only as a
+    # tie-break after the minimum rounds with enough supported findings.
+    stop = ctx.decisions.decide(
+        "stop_check", {"objective": ctx.run.objective,
+                       "findings": "; ".join(f"{r['statement']} ({r['status']})" for r in results)[:3500]},
+        Question.probability("Do `findings` already answer `objective` well enough that further drill-down analysis is unnecessary?"),
+        facts={"round": round_no, "supported": len(supported), "new_supported_last_round": _new_supported(ctx.run.id, round_no)},
+        ctx=ctx.call_ctx())
+    if stop.value:
+        if stop.backend == "rules":
+            ctx.say("Stop check: the last round found no new supported finding — stopping iteration.", kind="decision")
+            return {"added": 0, "stop": "rule_stop_check", "decision_id": stop.id}
+        who = "JEV" if stop.backend == "jev" else stop.backend
+        ctx.say(f"{who} stop check: P(objective answered)={stop.p:.2f} ≥ 0.85 — stopping iteration.", kind="decision")
+        return {"added": 0, "stop": f"{stop.backend}_stop_check", "p": stop.p, "decision_id": stop.id}
     types = semantic_types(ctx)
     seen = set().union(*(identity_keys(AnalysisSpec.model_validate(r["spec"])) for r in results)) if results else set()
     # Deterministic follow-ups: drill into supported findings, and continue each tested outcome across the
     # dimensions it has not been broken down by yet (an analyst's KPI x dimension matrix).
     roles = {f"{a.schema_name}.{a.name}.{c.name}": (c.semantics or {}).get("semantic_role") for a, cols in asset_rows(ctx) for c in cols}
-    drill = _drilldowns(supported, types) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
-    payload = {"objective": ctx.run.objective, "results": results, "catalog": catalog_for_prompt(ctx),
-               "constraints": ctx.run.constraints}
+    display = [p.templates["display_name"] for p in pack_registry.for_scope(ctx.scope, ctx.policy) if p.templates.get("display_name")]
+    drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
+    payload = compile_for(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results,
+                                                        "constraints": ctx.run.constraints})
     data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload)
                    if model_gate(ctx, "follow_up_generation", payload, deterministic_ok=bool(drill)) else (None, "deterministic"))
     props = [p for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
@@ -456,17 +506,25 @@ def follow_ups(ctx: RunContext) -> dict:
     return {"added": len(keys), "tasks": keys, "rejected": rejected}
 
 
-def _drilldowns(supported: list[dict], types) -> list[dict]:
+def _method_attr(spec: dict, attr: str) -> Any:
+    """An attribute of the spec's method (None for a name the registry does not know; validation rejects it later)."""
+    name = spec.get("method")
+    return getattr(methods.get(name), attr, None) if name in methods.names() else None
+
+
+def _drilldowns(supported: list[dict], types, display_patterns: list[str] = ()) -> list[dict]:
+    """Drill into each supported rate finding's top segment by the next categorical (enabled packs'
+    display-name columns first)."""
     out = []
     for r in supported:
         spec = r["spec"]
         hl = (r.get("result") or {}).get("highlights") or {}
         top = hl.get("top_segment")
         seg = spec.get("segment") or {}
-        if spec.get("method") != "rate_by_segment" or top is None or seg.get("type") != "column":
+        if not _method_attr(spec, "drill_down") or top is None or seg.get("type") != "column":
             continue
         cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c != seg.get("column")]
-        cats = [c for c in cats if c.endswith("_name")] + [c for c in cats if not c.endswith("_name")]  # display names first
+        cats = tmpl.prefer_display(cats, display_patterns)
         for other in cats[:1]:
             out.append({"question": f"Within {seg.get('label') or seg['column']} = {top}, does the outcome vary by {other}?",
                         "statement": f"Within {seg['column']} = {top}, the outcome rate differs across {other}.",
@@ -488,7 +546,7 @@ def _matrix_continuations(results: list[dict], types, denied: list[str], roles: 
     template: dict[tuple[str, str], dict] = {}
     for r in results:
         spec = r["spec"]
-        if spec.get("method") not in ("rate_by_segment", "numeric_by_segment") or spec.get("filters"):
+        if not _method_attr(spec, "segment_matrix") or spec.get("filters"):
             continue
         out = spec.get("outcome") or {}
         key = (spec["asset"], stable_hash(out))

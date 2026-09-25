@@ -169,3 +169,106 @@ This is documentary evidence only. No runtime capability, test count, connector 
 or release-readiness promotion is added. Existing live runs were not repeated. Validation for
 this change checks changed Markdown links, code fences, tracker IDs/status consistency and diff
 whitespace; application tests and browser execution are not part of this documentation change.
+## 2026-09-25 — Increment 4, wave 0 (plus X05–X08 and U01)
+
+Same environment. Built in parallel streams, merged with re-chained migrations
+(0005 → 0006 → 0009 → 0007 → 0008 → 0010, verified up, down to 0005 and up again).
+Suites at merge: 1,197 unit, 102 integration, 114 vitest, 21 Playwright.
+
+### Live evidence (P4-C08)
+
+| Evidence | Result | Notes |
+|---|---|---|
+| [`e2e-20260925-171115.md`](evidence/e2e-20260925-171115.md) | 26/26 | Full model use; 382 s; $0.29; 7 distinct KPIs, all percent KPIs fractions; new cross-workspace isolation probe passes |
+| [`e2e-phase3-20260925-171755.md`](evidence/e2e-phase3-20260925-171755.md) | 13/13 | One alert (de-duplicated), but it read 0.3827 — see findings |
+| [`e2e-20260925-173738.md`](evidence/e2e-20260925-173738.md) | 26/26 | After the fixes; OpenRouter returned HTTP 402 (credits) for large `max_tokens` requests, so planning, hypotheses, follow-ups and semantic modelling ran deterministically; 81 smaller calls succeeded |
+| [`e2e-phase3-20260925-173848.md`](evidence/e2e-phase3-20260925-173848.md) | 13/13 | One alert at 0.04192 (matches the data); KPI definition stable across the scheduled run |
+| [`sse-load-20260925-165049.md`](evidence/sse-load-20260925-165049.md) | pass | 200 streams, p95 38.9 ms, 0 slow-callback warnings |
+
+**Defects found by the live re-runs, fixed and tested:**
+- A low-cost model (`deepseek/deepseek-v4-flash`) wrote a finding in Chinese that passed the numbers
+  guard. Model narratives must now be English; words quoted from the evidence may be in any script.
+- A scheduled run's model re-proposed `critical_incident_rate` as `priority = 1 OR impact = 1 OR
+  urgency = 1`, and the artifact upsert silently replaced the carried-forward definition. A KPI name
+  now keeps its first definition; runs without a scheduled predecessor inherit the workspace's latest
+  completed run's definitions.
+- The threshold monitor resolved its KPI by name and followed the redefinition, alerting on 0.38
+  instead of 0.04. Monitors now pin the definition they measure (`config.pinned`, ignored by the
+  condition key).
+- On HTTP 402 the router tried every fallback model per call (32 failed calls). A credit refusal now
+  cools the provider down for 60 s, and callers take their deterministic path without a request.
+
+### Capabilities
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Workspace model policy (samples, providers, cost approval, residency) | `llm/router.py` `CallContext.for_policy` | `test_model_policy.py` | — | No provider regions configured yet: residency blocks all models until set; prices are list-price estimates |
+| Structured prompt trimming, prompt version hashes | `agents/common.fit_payload`, `agents/prompts.py` | `test_prompt_payload.py` | ✅ | — |
+| Replayable model calls | `llm/replay.py`, `model_payload` | `test_model_replay*.py` | — | Replays calls, not a whole run end to end |
+| Query budgets (critic re-runs, Ask) | `governance/budgets.py`, `agents/critic.py` | `test_tool_gate_and_budgets.py` | ✅ | — |
+| Workspace isolation in depth | `staging/roles.py`, gateway `SET LOCAL ROLE`, lineage key, Neo4j keys | `test_workspace_isolation.py` (validator bypass) | ✅ probe | The reader login can `SET ROLE` to any workspace role; isolation relies on the gateway choosing the role |
+| Tool-gate coverage | `ToolRuntime.authorize`, `gate_agent_write` | `test_tool_gate_and_budgets.py` | ✅ | Exempt paths named in spec v2 §6 |
+| Non-blocking SSE | `events/stream.py` | `test_sse_stream.py`, load script | ✅ 200 streams | Measured on the standard asyncio loop |
+| Replan supersedes artifacts | `artifact.plan_version` | `test_e2e_local_run.py` redirect test | ✅ | — |
+| Population of staged snapshots | `connectors/sampling.py`, `staging/snapshots.py`, critic `representative_population` | `test_snapshot_sampling.py`, `test_snapshot_population.py` | — | ServiceNow/files: `full` and `first_n` only |
+| Capability manifests and registry | `contracts/capability.py`, `capabilities/registry.py` | `test_capability_registry.py` | — | Enablement, certification gating and plan-hash binding pending (X01) |
+| MCP client | `mcp/client.py` | `test_mcp_client.py` (SDK-built test double) | — | Not registered against a real Superset/dbt MCP server; no host allowlist |
+| MCP server | `mcp/server.py`, `mcp/grants.py` | `test_mcp_server.py` | — | No per-client OpenAPI, no MCP prompts, no OAuth yet |
+| Domain packs | `packs/{itsm,sales}`, `skills/hypothesis_templates.py` | grep test, pack benchmarks (3/3 planted each) | ✅ via demo | Pack KPIs not yet read by the semantic agent |
+| Connector certification from evidence | `connectors/certification.py`, `scripts/certify_connectors.py` | `test_connector_certification.py` | postgres, mysql, sqlite, duckdb | Warehouses remain `tested` |
+| Five-journey UI shell | `web/src/routes.ts`, `components/CommandPalette.tsx` | 114 vitest, 21 Playwright (axe AA) | — | Journey content (U02–U07) not built |
+
+
+## 2026-09-25 — Increment 4, wave 2 (token and decision economy) plus S02, U03, U06, U07
+
+Merged from parallel streams onto `claude/gracious-knuth-ievauj`. Migrations chain
+0011 → 0015 (registries) → 0016 (task claims) → 0012 (ladder) → 0013 (decisions) → 0014 (prompt cache).
+Up/down/up was verified on a scratch database after each re-chain.
+
+### Measured (fake transport; live model runs are blocked by exhausted OpenRouter credits)
+
+| Measure | Before | After | Evidence |
+|---|---:|---:|---|
+| Chat calls per standard run | 20 | 0 | `evidence/token-default-20260925-183030.md` |
+| Decision calls per standard run | 15 | 7 (`rev_second_opinion`) | same |
+| Tokens per standard run | 25,075 | 1,435 | same; guarded by `scripts/cost_gate.py` in CI |
+| Prompt tokens, compiled purposes | 18,942 | 15,342 (−19 %) | `evidence/context-compiler-20260925-182819.md` |
+| Ask registry hit latency | — | p50 < 1 s asserted (no model call) | `test_registries.py` |
+| Queries per engine task | measured | — | `evidence/engine-queries-20260925-182754.md` |
+
+### Capabilities
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Execution ladder, `answered_by` per call | `llm/router.py` (`ladder`, `mode_of`), `config/models.yaml` `ladders:` | `test_ladder_and_budgets.py` | — | The JEV rung counts as a model rung, so `off` removes it |
+| Deterministic-first default | `contracts/platform.py` presets, `agents/{publisher,visualization,critic}.py` | `test_token_default.py`, `test_cost_gate.py` | — | Planning is not yet merged into hypothesis generation |
+| Context compiler with receipts | `context/compiler.py`, `agents/common.compile_for` | `test_context_compiler*.py`, `test_context_tokens.py` | — | Lexical relevance only (hybrid ranking is P4-K05) |
+| Prompt-cache layout and accounting | `llm/router.py` `wire_messages`, `cached_prompt_tokens` | `test_prompt_cache.py` | ❌ not measured | Stable prefix ≈ 18 % of sent text; the ≥ 60 % target is unlikely without a larger header |
+| Verified-query and hypothesis registries | `registries/`, `agents/sql_agent.py`, `agents/investigator.py` | `test_registries.py`, `test_registry_logic.py` | — | — |
+| Knowledge version in cache keys | `context/version.py` | `test_context_compiler_db.py` | — | — |
+| Redis budget counters, price table | `runtime/budget_counters.py`, `runtime/usage.py` | `test_budget_counters.py` | — | Ask's rolling-hour budget still counts in the database; JEV has no list price (`missing_price`) |
+| DecisionService, authority classes | `decisions/` | `test_decision_service.py`, `test_decisions_db.py` | — | Local-classifier weights are hand-set (v1) |
+| Decision calibration and downgrade | `decisions/calibration.py`, `analystos calibrate` | `test_decision_calibration.py`, `test_decisions_db.py` | — | No Operate screen for the report yet |
+| CI cost gate | `scripts/cost_gate.py`, `tests/fixtures/cost_baseline/` | `test_cost_gate.py` | — | New agent call sites are only caught once the fixture is re-recorded, or by `test_token_default.py` |
+| Engine loop without locks or N+1 | `runtime/engine.py`, `artifacts/registry.py`, `governance/policy.py` | `test_engine_claims.py`, `test_engine_queries.py` | ✅ | In-flight Temporal workflows must be drained before deploying |
+| Investigation board, Operate, capability-driven UI | `web/src/` | vitest, Playwright journeys | — | Capability invoke endpoint pending (P4-U02 stream) |
+
+### Merge decision recorded
+
+When the ladder and the DecisionService were merged, their meanings of `auto` differed. The
+ladder used `auto` to mean "rules first, then the model". The DecisionService used it to mean
+"the rule decides".
+
+The resolution: under `auto`, the service moves `rules` to the front of the purpose's backend
+chain, so JEV answers only what the rule leaves open (a tie, an abstention, an escalation). `off`
+removes the model backends. Direct `JevDecisions` callers keep "auto = the rule decides". The
+cost gate is unchanged (7 and 3 calls).
+
+## 2026-09-25 — Increment 4, wave 3: semantic layer (P4-K03)
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Ossie 0.1.1 semantic model, pinned schema | `semantic/ossie.py`, `semantic/schema/` (+ `PROVENANCE.yaml`) | `test_semantic_ossie.py` (upstream examples) | — | Upstream's Salesforce fixture fails its own SQL rule; recorded, not hidden |
+| Metric approval workflow | `semantic/service.py`, `governance/approvals.py` (`ALWAYS_SEPARATE_DUTIES`) | `test_semantic_layer.py` | ✅ deterministic run: run 1 refused at publish, approved, run 2 publishes (37 s) | Semantic-model structure versions have no approve endpoint |
+| dbt 1.12 import/export | `semantic/dbt.py` | `test_semantic_ossie.py` fixtures from real `dbt parse` | ✅ by hand (dbt-core 1.12.0 + metricflow 0.213.0) | dbt is not in the project environment; metricflow mangles percent KPIs (export warns) |
+| Publish gate on approved metrics | `semantic/service.gate_bundle`, `build_bundle` | `test_semantic_ossie.py`, `test_semantic_layer.py` | ✅ | Existing workspaces default to off; new ones on |

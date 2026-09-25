@@ -1,34 +1,56 @@
 import { useState } from "react";
 import { api, type AgentSpec, type ToolSpec } from "../api";
 import { useAuth } from "../auth";
-import { Card, EmptyState, ErrorBox, JsonView, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
+import { Card, EmptyState, EnabledToggle, ErrorBox, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { fmtDate, fmtMs, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { PromptsView, SettingsEditor, TokenSavingsView } from "./AdminSettings";
+import { CapabilityRegistry } from "./Registry";
 
-type Tab = "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
+type Tab = "capabilities" | "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
 
 /** Tabs whose endpoints are admin-only: rendered as a notice for everyone else instead of a 403. */
 const ADMIN_ONLY = new Set<Tab>(["settings", "savings", "prompts", "usage", "audit"]);
 
-export function AdminPage() {
+export type AdminSection = "registry" | "settings" | "usage";
+
+/** The Operate journey's platform screens: one screen per section, tabs within it. */
+const SECTIONS: Record<AdminSection, { title: string; subtitle: string; tabs: { id: Tab; label: string }[] }> = {
+  registry: {
+    title: "Capability registry",
+    subtitle: "Every installed capability — playbooks, agents, methods, tools, connectors, plugins and MCP tools — with certification, side effects and per-workspace enablement.",
+    tabs: [{ id: "capabilities", label: "Capabilities" }, { id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
+      { id: "models", label: "Models" }, { id: "prompts", label: "Prompts" }],
+  },
+  settings: {
+    title: "Platform settings",
+    subtitle: "Versioned runtime settings: LLM mode per purpose, presets, feature flags, limits and enabled source kinds.",
+    tabs: [{ id: "settings", label: "Settings" }],
+  },
+  usage: {
+    title: "Usage & cost",
+    subtitle: "Tokens avoided, model spend by purpose, query gateway activity and the platform audit log.",
+    tabs: [{ id: "savings", label: "Token savings" }, { id: "usage", label: "Usage" }, { id: "audit", label: "Audit log" }],
+  },
+};
+
+export function AdminPage({ section = "registry" }: { section?: AdminSection }) {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("agents");
+  const spec = SECTIONS[section];
+  const [tab, setTab] = useState<Tab>(spec.tabs[0].id);
+  const tabbed = spec.tabs.length > 1;
   return (
     <div className="page">
-      <PageHeader title="Admin & registry"
-        subtitle="Agents, tools, skills and model routing; platform settings, token savings and prompts; usage and the audit log." />
-      {!user?.is_admin && <Notice tone="info">You can view the registries; changing them, platform settings, usage and the audit log need an admin account.</Notice>}
-      <Tabs value={tab} onChange={setTab} tabs={[
-        { id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
-        { id: "models", label: "Models" }, { id: "settings", label: "Settings" }, { id: "savings", label: "Token savings" },
-        { id: "prompts", label: "Prompts" }, { id: "usage", label: "Usage" }, { id: "audit", label: "Audit log" },
-      ]} />
-      <div className="tab-panel" role="tabpanel">
+      <PageHeader title={spec.title} subtitle={spec.subtitle} />
+      {!user?.is_admin && section === "registry" && (
+        <Notice tone="info">You can view the registries; changing them, platform settings, usage and the audit log need an admin account.</Notice>)}
+      {tabbed && <Tabs value={tab} onChange={setTab} tabs={spec.tabs} />}
+      <div className="tab-panel" role={tabbed ? "tabpanel" : undefined}>
         {ADMIN_ONLY.has(tab) && !user?.is_admin ? (
           <Notice tone="warning">This section is available to platform administrators only.</Notice>
         ) : (
           <>
+            {tab === "capabilities" && <CapabilityRegistry isAdmin={!!user?.is_admin} />}
             {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
             {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
             {tab === "skills" && <Skills />}
@@ -42,16 +64,6 @@ export function AdminPage() {
         )}
       </div>
     </div>
-  );
-}
-
-function EnabledToggle({ enabled, disabled, onChange, label }: { enabled: boolean; disabled: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <label className="switch">
-      <input type="checkbox" role="switch" checked={enabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
-      <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
-      <span className="small">{enabled ? "enabled" : "disabled"}</span>
-    </label>
   );
 }
 
@@ -193,7 +205,7 @@ function Models() {
           <div className="chip-row">{d.allowlist.map((a) => <span key={a} className={`tag ${a.startsWith("typesafe/") ? "tag-jev" : ""}`}>{a}</span>)}</div>
         </Card>
       </div>
-      <Card title="Profiles"><JsonView value={d.profiles} collapsed label="Profile settings" /></Card>
+      <Card title="Profiles"><TechnicalDetails value={d.profiles} label="Profile settings" /></Card>
     </div>
   );
 }
@@ -216,10 +228,10 @@ function UsageView() {
                   <tr key={i} className={m.provider === "typesafe" ? "row-jev" : undefined}>
                     <td><code>{m.purpose}</code>{m.provider === "typesafe" && <span className="tag tag-jev">JEV</span>}</td>
                     <td className="small">{m.provider} / {m.model}</td>
-                    <td className="num">{m.calls}</td>
-                    <td className="num">{m.failed}</td>
-                    <td className="num">{fmtMs(m.avg_latency_ms)}</td>
-                    <td className="num">{fmtUsd(m.cost_usd)}</td>
+                    <td className="num"><Value value={m.calls} format="int" /></td>
+                    <td className="num"><Value value={m.failed} format="int" /></td>
+                    <td className="num"><Value value={m.avg_latency_ms} format="ms" /></td>
+                    <td className="num"><Value value={m.cost_usd} format="usd" /></td>
                   </tr>
                 ))}
               </tbody>
@@ -264,7 +276,7 @@ export function AuditTable({ rows, filter, onFilter }: { rows: import("../api").
                   <td><code>{e.action}</code></td>
                   <td className="small">{e.target ?? "—"}</td>
                   <td>{e.decision ? <StatusBadge status={e.decision} /> : "—"}{e.reasons?.length ? <div className="muted small">{e.reasons.join(", ")}</div> : null}</td>
-                  <td>{e.details && Object.keys(e.details).length ? <JsonView value={e.details} collapsed label="details" /> : null}</td>
+                  <td>{e.details && Object.keys(e.details).length ? <TechnicalDetails value={e.details} label="details" /> : null}</td>
                 </tr>
               ))}
             </tbody>

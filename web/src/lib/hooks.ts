@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "../api";
+import { useTheme } from "./theme";
 
 export interface AsyncState<T> {
   data: T | undefined;
@@ -60,17 +61,7 @@ export function useAction() {
   return { busy, error, setError, run };
 }
 
-/** True when the OS prefers a dark colour scheme (tracks changes). */
+/** True when the dark theme is in effect: the user's pinned theme, else the OS preference (tracks changes). */
 export function usePrefersDark(): boolean {
-  const query = "(prefers-color-scheme: dark)";
-  const get = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
-  const [dark, setDark] = useState(get);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(query);
-    const on = () => setDark(mq.matches);
-    mq.addEventListener?.("change", on);
-    return () => mq.removeEventListener?.("change", on);
-  }, []);
-  return dark;
+  return useTheme().resolved === "dark";
 }

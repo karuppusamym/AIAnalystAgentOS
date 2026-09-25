@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _method_schema(schema: dict[str, Any]) -> None:
+    from analystos import methods
+
+    methods.schema_extra(schema)
 
 
 class Derivation(BaseModel):
@@ -50,16 +56,11 @@ class Filter(BaseModel):
 
 
 class AnalysisSpec(BaseModel):
-    """method:
-    rate_by_segment      outcome boolean rate across segment groups           -> chi-square (+ logistic check)
-    numeric_by_segment   outcome numeric across segment groups                -> Mann-Whitney / Kruskal-Wallis
-    trend                outcome (count or numeric mean) over time            -> linear trend + change point
-    pareto               share of volume by segment                           -> concentration (top-k share, Gini)
-    correlation          numeric vs numeric                                   -> Spearman (+ Pearson)
-    driver_model         boolean outcome vs several drivers                   -> logistic regression + feature importance
-    """
+    """One executable hypothesis test. `method` must be a registered analysis method: the vocabulary,
+    its JSON Schema enum and the per-method requirements come from the method registry
+    (`analystos.methods`, spec v3 §3.5), never from a list kept here."""
 
-    method: Literal["rate_by_segment", "numeric_by_segment", "trend", "pareto", "correlation", "driver_model"]
+    method: str = Field(json_schema_extra=_method_schema)
     asset: str  # "schema.table"
     outcome: Derivation | None = None
     segment: Derivation | None = None
@@ -68,6 +69,15 @@ class AnalysisSpec(BaseModel):
     filters: list[Filter] = Field(default_factory=list)
     min_group_size: int = 30
     top_k: int = 12
+
+    @field_validator("method")
+    @classmethod
+    def _registered(cls, v: str) -> str:
+        from analystos import methods
+
+        if v not in methods.names():
+            raise ValueError(f"unknown analysis method {v!r}; registered methods: {', '.join(methods.names())}")
+        return v
 
 
 class HypothesisProposal(BaseModel):

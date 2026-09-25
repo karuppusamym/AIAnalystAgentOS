@@ -1,24 +1,37 @@
-agent:
-  id: semantic
-  version: '1.0'
-  name: Semantic Model Agent
-  description: Defines KPIs, measures and dimensions over the analytical dataset, validates each metric by executing
-    it, and flags duplicate or conflicting metrics.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.semantic
+version: 1.0.0
+summary: Semantic Model Agent
+entry: python:analystos.agents.semantic:define_metrics
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- metric_definition
+- dimension_definition
+- metric_validation
+spec:
+  role: Semantic Model Agent
+  goal: Defines KPIs, measures and dimensions over the analytical dataset, validates each metric by executing it,
+    and flags duplicate or conflicting metrics.
   capabilities:
-  - metric_definition
-  - dimension_definition
-  - metric_validation
-  skills:
-  - KPI_design
+  - skill.analysis_spec_compiler
   tools:
   - sql.execute
   - artifact.write
-  model_profile: coding
+  model_purposes:
+  - semantic_modeling
   prompt_version: v1
+  budget:
+    llm_calls: 1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp
