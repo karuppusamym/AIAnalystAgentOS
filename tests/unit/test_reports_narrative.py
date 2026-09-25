@@ -4,13 +4,13 @@ from __future__ import annotations
 import re
 
 import pytest
+from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportData, ReportMetric
 from analystos.core.errors import InvalidInput
 from analystos.reports import render
 from analystos.reports._common import CAUSATION_NOTE, format_value, metric_change, parse_markdown
 from analystos.reports.narrative import render_html, render_markdown
-from analystos.reports.sample import sample_report
 
 KINDS = ["executive", "operational", "statistical", "exception", "weekly_summary"]
 

@@ -447,7 +447,7 @@ class ArtifactVersion(Base):
 
 class LineageEdge(Base):
     """Generic provenance edge between any two persisted objects (artifact, insight, query, table...).
-    Unique per workspace: name-identified nodes (``table``, ``src_x.incident``) recur across workspaces."""
+    Unique per workspace: name-identified nodes (``table``, ``src_x.orders``) recur across workspaces."""
 
     __tablename__ = "lineage_edge"
     __table_args__ = (UniqueConstraint("workspace_id", "from_type", "from_id", "relation", "to_type", "to_id",

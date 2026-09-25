@@ -1,0 +1,24 @@
+# Naming vocabulary the deterministic skills merge from every installed pack (they only add to core).
+acronyms: {sla: SLA, ci: CI, p1: P1, mttr: MTTR}
+# Surrogate key of every ServiceNow table: the join target of reference fields and a must-be-unique key.
+key_columns: [sys_id]
+# Name columns of referenced tables used to label joined keys in analytical datasets.
+display_columns: [u_name]
+# Words naming when a record starts (the dataset's default time axis).
+event_start: [opened]
+# (start, end) timestamp pairs that must be ordered (data-quality temporal_order).
+lifecycle_pairs:
+  - [opened_at, resolved_at]
+  - [opened_at, closed_at]
+  - [resolved_at, closed_at]
+  - [opened_at, work_start]
+  - [sys_created_on, sys_updated_on]
+  - [sys_created_on, closed_at]
+  - [created_at, resolved_at]
+# Crawler table-domain vocabulary (skills/catalog domain classification).
+domain_keywords:
+  it_operations: [incident, problem, change, ticket, ci, cmdb, sla, assignment, caller, outage, alert, server, host,
+                  deployment, sys, itsm, knowledge, escalation, reassignment, servicenow, configuration, resolved,
+                  resolution, urgency, impact, assigned, request, task]
+# PII: a "<noun>_name" / "<noun>_id_name" column names a person (caller_id_name, opened_by_name, ...).
+person_nouns: [caller, opened, resolved, assigned]

@@ -1,0 +1,7 @@
+# Naming vocabulary merged from every installed pack (only adds to core).
+acronyms: {aov: AOV, sku: SKU, pos: POS, b2b: B2B}
+event_start: [ordered, order_date, placed]
+lifecycle_pairs:
+  - [ordered_at, shipped_at]
+  - [shipped_at, delivered_at]
+person_nouns: [buyer, shopper, seller]

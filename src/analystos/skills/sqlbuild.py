@@ -454,7 +454,7 @@ def render_derivation(d: Derivation, dialect: str, *, table_alias: str | None = 
     """SQL text of one derivation's value expression (quoted identifiers, dialect-correct).
 
     Boolean derivations render as 1/0/NULL; bucket renders its (string-sortable) label CASE. With
-    `table_alias`, every column is qualified (``"t"."opened_at"``) so the expression can be used in
+    `table_alias`, every column is qualified (``"t"."created_at"``) so the expression can be used in
     ``SELECT t.*, <expr> AS ... FROM <asset> AS t``.
     """
     dialect = _check_dialect(dialect)

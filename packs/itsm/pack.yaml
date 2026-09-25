@@ -1,0 +1,21 @@
+apiVersion: analystos/v1
+kind: KnowledgePack
+id: pack.itsm
+version: 1.0.0
+summary: IT service management (ServiceNow-shaped incidents, changes, CMDB) — glossary, hints and analyst playbook
+determinism: deterministic
+side_effect: none
+cost_class: free
+certification:
+  status: tested
+  evidence: tests/benchmarks/test_pack_benchmarks.py
+tags: [domain, itsm, servicenow]
+spec:
+  domain: it_operations
+  applies_when:
+    tables: ["incident", "change_request", "problem", "sc_req_item", "sc_task", "cmdb_ci.*", "sys_user_group"]
+  hints: hints.yaml
+  templates: templates.yaml
+  kpis: kpis.yaml
+  knowledge: knowledge
+  benchmark: benchmark/benchmark.yaml

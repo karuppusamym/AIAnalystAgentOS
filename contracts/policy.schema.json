@@ -139,6 +139,21 @@
       "default": 0.05,
       "title": "Alpha",
       "type": "number"
+    },
+    "domain_packs": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Domain Packs"
     }
   },
   "title": "WorkspacePolicyDoc",

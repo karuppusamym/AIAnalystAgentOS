@@ -3,7 +3,9 @@
 Discovery order (later sources may not redefine an id a built-in already owns):
 1. built-in manifests  `src/analystos/capabilities/builtin/*.yaml`
 2. the legacy registries (tools, skills, agent YAML) bridged into manifests during the
-   compatibility window, so everything that exists today is discoverable
+   compatibility window, so everything that exists today is discoverable; and one Connector per
+   source kind, generated from the kind catalog (connectors/kinds.py) with its certification
+   derived from live evidence files (connectors/certification.py)
 3. directory packs      `packs/<name>/**/*.yaml` (config-only)
 4. Python entry points  group `analystos.capabilities` (a callable returning manifests or dicts)
 
@@ -117,6 +119,13 @@ def _legacy_manifests() -> list[dict[str, Any]]:
     return out
 
 
+def _connector_manifests() -> list[dict[str, Any]]:
+    """One Connector manifest per source kind; the kind catalog stays the single list."""
+    from analystos.connectors.certification import connector_manifests
+
+    return connector_manifests()
+
+
 def _semver(v: str) -> str:
     parts = str(v).split(".")
     return ".".join((parts + ["0", "0"])[:3])
@@ -136,7 +145,8 @@ def _entry_point_manifests(problems: list[str]) -> list[tuple[str, dict[str, Any
 
 
 def load(*, builtin_dir: Path = BUILTIN_DIR, packs_dir: Path | None = PACKS_DIR, entry_points: bool = True,
-         legacy: bool = True, extra: Iterable[tuple[str, dict[str, Any]]] = (), strict: bool = True) -> Snapshot:
+         legacy: bool = True, extra: Iterable[tuple[str, dict[str, Any]]] = (), strict: bool = True,
+         connectors: bool = True) -> Snapshot:
     """Build a snapshot. `strict` raises on any problem; non-strict keeps valid manifests and reports problems."""
     problems: list[str] = []
     raws: list[tuple[str, dict[str, Any]]] = []
@@ -144,6 +154,8 @@ def load(*, builtin_dir: Path = BUILTIN_DIR, packs_dir: Path | None = PACKS_DIR,
         raws += [("builtin", r) for p in sorted(builtin_dir.glob("*.yaml")) for r in _read_yaml(p)]
     if legacy:
         raws += [("builtin", r) for r in _legacy_manifests()]
+    if connectors:
+        raws += [("builtin", r) for r in _connector_manifests()]
     if packs_dir is not None and packs_dir.is_dir():
         for pack in sorted(p for p in packs_dir.iterdir() if p.is_dir()):
             raws += [(f"pack:{pack.name}", r) for p in sorted(pack.rglob("*.yaml")) for r in _read_yaml(p)

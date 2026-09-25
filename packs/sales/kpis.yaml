@@ -1,0 +1,7 @@
+# Starter KPIs over the outcomes of templates.yaml (aggregate: rate | mean | median | sum | count).
+kpis:
+  - {name: net_revenue, display_name: Net revenue, outcome: order_value, aggregate: sum, format: currency}
+  - {name: average_order_value, display_name: Average order value, outcome: order_value, aggregate: mean, format: currency}
+  - {name: return_rate, display_name: Return rate, outcome: flag_rate, aggregate: rate, format: percent}
+  - {name: avg_fulfilment_days, display_name: Average fulfilment time, outcome: fulfilment, aggregate: mean, format: days}
+  - {name: order_count, display_name: Orders, aggregate: count, format: number}
