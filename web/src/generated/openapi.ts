@@ -646,6 +646,26 @@ export interface paths {
         patch: operations["edit_hypothesis_api_hypotheses__hypothesis_id__patch"];
         trace?: never;
     };
+    "/api/hypothesis-registry/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Registered Hypothesis
+         * @description Retire a question so scheduled re-analysis stops replaying it (or reactivate it).
+         */
+        patch: operations["patch_registered_hypothesis_api_hypothesis_registry__entry_id__patch"];
+        trace?: never;
+    };
     "/api/insights/{insight_id}": {
         parameters: {
             query?: never;
@@ -910,6 +930,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/verified-queries/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Verified Query */
+        patch: operations["patch_verified_query_api_verified_queries__entry_id__patch"];
         trace?: never;
     };
     "/api/workspaces": {
@@ -1304,6 +1341,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/hypothesis-registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Registered Hypotheses */
+        get: operations["list_registered_hypotheses_api_workspaces__workspace_id__hypothesis_registry_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/insights": {
         parameters: {
             query?: never;
@@ -1688,6 +1742,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/verified-queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Verified Queries */
+        get: operations["list_verified_queries_api_workspaces__workspace_id__verified_queries_get"];
+        put?: never;
+        /**
+         * Promote Verified Query
+         * @description Promote a successful Ask answer (`query_id` + `question`) or a verified finding (`insight_id`).
+         */
+        post: operations["promote_verified_query_api_workspaces__workspace_id__verified_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1699,8 +1774,17 @@ export interface components {
         };
         /** AskIn */
         AskIn: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
             /** Question */
             question: string;
+            /**
+             * Use Registry
+             * @default true
+             */
+            use_registry?: boolean;
         };
         /** AssetMetadataIn */
         AssetMetadataIn: {
@@ -1902,10 +1986,33 @@ export interface components {
             /** Preset */
             preset: string;
         };
+        /** PromoteIn */
+        PromoteIn: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Insight Id */
+            insight_id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Patterns */
+            patterns?: string[] | null;
+            /** Query Id */
+            query_id?: string | null;
+            /** Question */
+            question?: string | null;
+        };
         /** ReadIn */
         ReadIn: {
             /** Ids */
             ids: number[];
+        };
+        /** RegisteredHypothesisPatch */
+        RegisteredHypothesisPatch: {
+            /** Status */
+            status: string;
         };
         /** ReportIn */
         ReportIn: {
@@ -2065,6 +2172,21 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VerifiedQueryPatch */
+        VerifiedQueryPatch: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Patterns */
+            patterns?: string[] | null;
+            /** Status */
+            status?: string | null;
         };
         /** WorkspaceIn */
         WorkspaceIn: {
@@ -3492,6 +3614,44 @@ export interface operations {
             };
         };
     };
+    patch_registered_hypothesis_api_hypothesis_registry__entry_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredHypothesisPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_insight_api_insights__insight_id__get: {
         parameters: {
             query?: never;
@@ -4093,6 +4253,44 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["NewUser"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_verified_query_api_verified_queries__entry_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifiedQueryPatch"];
             };
         };
         responses: {
@@ -5094,6 +5292,42 @@ export interface operations {
             };
         };
     };
+    list_registered_hypotheses_api_workspaces__workspace_id__hypothesis_registry_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     insights_api_workspaces__workspace_id__insights_get: {
         parameters: {
             query?: never;
@@ -6030,6 +6264,80 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_upload_api_workspaces__workspace_id__uploads_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_verified_queries_api_workspaces__workspace_id__verified_queries_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_verified_query_api_workspaces__workspace_id__verified_queries_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromoteIn"];
             };
         };
         responses: {

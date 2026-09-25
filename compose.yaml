@@ -22,6 +22,8 @@ x-app-env: &app-env
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    # API, workers (one pool per queue), scheduler and Superset each keep a pool; 100 runs out.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_USER: analystos
       POSTGRES_PASSWORD: analystos
