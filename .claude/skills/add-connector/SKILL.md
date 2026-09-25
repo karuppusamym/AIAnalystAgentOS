@@ -12,9 +12,11 @@ description: Checklist for adding a new source kind (database, warehouse, file o
    - `catalog` method, `system_schemas`, and a `docs` line saying how read-only access is enforced
 
    Add the pip extra to `pyproject.toml`. The `GenericSQLConnector` does the rest.
-2. **Pushdown** only if the gateway validator understands the dialect (postgres, tsql) **and** the
-   session can be made read-only. Everything else stays **staged**, which is the default. Never
-   widen pushdown to make a kind "faster".
+2. **Pushdown** only if the gateway validator has a security suite for the dialect
+   (`gateway/dialects.py` + `tests/unit/test_gateway_dialects.py`), the analysis compiler emits it
+   (postgres, tsql, duckdb) **and** the session can be made read-only (`kinds.PUSHDOWN_DIALECTS`,
+   `SourceKind.readonly_enforcement`); the kind's engine comes from `engines/registry.py`.
+   Everything else stays **staged**, which is the default. Never widen pushdown to make a kind "faster".
 3. **Credentials** only via `secret_ref` (`env:NAME` / `file:/path`), resolved just in time.
    `register_source` rejects secrets in config. Errors must not echo URLs or passwords (see
    `generic_sql.describe_error`).

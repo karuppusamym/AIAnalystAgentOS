@@ -12,9 +12,15 @@
 #                    resolved value (a service-account JSON) before it enters the URL.
 #   driver           python modules that must import, the pip packages, and the analystos[extra].
 #   sqlglot_dialect  the source's native dialect. Pushdown (querying in place through the gateway) is
-#                    allowed ONLY when it is one the analysis compiler and validator speak for pushdown
-#                    (postgres, tsql). Every other SQL kind is staged: extracted with a read-only
-#                    session into the analytics DB and queried there in the postgres dialect.
+#                    allowed ONLY when the gateway validator has a security suite for it
+#                    (gateway/dialects.py), the analysis compiler emits it (postgres, tsql, duckdb) AND
+#                    the session can be made read-only (session_sql.readonly or connect_args.read_only;
+#                    sqlserver is the one legacy least-privilege-identity exception). Every other SQL
+#                    kind is staged: extracted with a read-only session into the analytics DB and
+#                    queried there in the postgres dialect. The validator already speaks snowflake,
+#                    bigquery, databricks, trino and mysql; those kinds stay staged until the other
+#                    two conditions hold (engines/registry.py lists them as draft engines).
+#   pushdown_default false: pushdown is allowed but opt-in (execution_mode: pushdown on the source).
 #   session_sql      readonly: run on every connection the connector opens (discover/extract) and by
 #                    the gateway before pushdown queries. Kinds with an empty list have no session-level
 #                    read-only switch: the configured identity MUST be least-privilege (SELECT only).
@@ -294,8 +300,11 @@ kinds:
     catalog: duckdb
     system_schemas: [information_schema, pg_catalog]
     default_schemas: null
+    pushdown_default: false
     docs: >-
-      Staged. config.path must be inside the upload directory; the file is opened read_only.
+      Staged by default; execution_mode pushdown queries the file in place through the DuckDB engine
+      (read_only, external access off, configuration locked). config.path must be inside the upload
+      directory.
 
   sqlite:
     label: SQLite file

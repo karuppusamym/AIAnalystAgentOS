@@ -40,7 +40,8 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
         if not scope.assets:
             raise InvalidInput("no selected, ready assets: add a source, discover it and select tables first")
         if len(set(scope.asset_sources.values())) > 1 and not source_ids:
-            raise InvalidInput("the MVP analyses one source per run: pass source_ids with a single source")
+            raise InvalidInput("the workspace has several sources: pass source_ids (one source, or several for a "
+                               "cross-source run)")
         level = min(autonomy_level if autonomy_level is not None else ws.autonomy_level, ws.autonomy_level)
         identity = ExecutionIdentity(user_id=user.id, workspace_id=workspace_id, purpose="analysis")
         decision = evaluate(s, s.merge(user), identity, "run_analysis", autonomy_level=level)

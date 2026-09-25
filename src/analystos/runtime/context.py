@@ -231,13 +231,17 @@ class RunContext:
         if used >= self.policy.max_queries_per_run:
             raise BudgetExceeded(f"per-run query budget ({self.policy.max_queries_per_run}) exhausted")
 
-    def run_sql(self, source_id: str | None = None):
+    def run_sql(self, source_id: str | None = None, *, federated: bool = False):
         """Governed SQL runner for skills and agents: tool gate (``sql.execute``), per-run query budget,
-        then the gateway."""
+        then the gateway. ``federated=True`` (cross-source runs, P4-E03) spans every source of the scope;
+        each source's leg is still validated and audited under that source's own scope."""
         self.authorize_tool("sql.execute")
         gateway = self.services.gateway
+        kwargs: dict = {"source_id": source_id} if source_id else {}
+        if federated:
+            kwargs = {"federated": True}
         inner = gateway.run_sql_for(self.scope, actor=f"agent:{self.agent.id}", run_id=self.run.id, task_id=self.task.id,
-                                    **({"source_id": source_id} if source_id else {}))
+                                    **kwargs)
         ctx = self
 
         class _Budgeted:

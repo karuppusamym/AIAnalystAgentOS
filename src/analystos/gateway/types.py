@@ -13,6 +13,7 @@ class ValidatedSQL(BaseModel):
     referenced_assets: list[str]  # "schema.table"
     referenced_columns: list[str] = Field(default_factory=list)  # "schema.table.column" where resolvable
     fingerprint: str  # hash of normalized SQL (no limit), used for cache key with scope hash
+    asset_sources: dict[str, str] = Field(default_factory=dict)  # "schema.table" -> source_id (several when federated)
 
 
 class QueryResult(BaseModel):
