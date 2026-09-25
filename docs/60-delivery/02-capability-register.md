@@ -252,3 +252,12 @@ The resolution: under `auto`, the service moves `rules` to the front of the purp
 chain, so JEV answers only what the rule leaves open (a tie, an abstention, an escalation). `off`
 removes the model backends. Direct `JevDecisions` callers keep "auto = the rule decides". The
 cost gate is unchanged (7 and 3 calls).
+
+## 2026-09-25 — Increment 4, wave 3: semantic layer (P4-K03)
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Ossie 0.1.1 semantic model, pinned schema | `semantic/ossie.py`, `semantic/schema/` (+ `PROVENANCE.yaml`) | `test_semantic_ossie.py` (upstream examples) | — | Upstream's Salesforce fixture fails its own SQL rule; recorded, not hidden |
+| Metric approval workflow | `semantic/service.py`, `governance/approvals.py` (`ALWAYS_SEPARATE_DUTIES`) | `test_semantic_layer.py` | ✅ deterministic run: run 1 refused at publish, approved, run 2 publishes (37 s) | Semantic-model structure versions have no approve endpoint |
+| dbt 1.12 import/export | `semantic/dbt.py` | `test_semantic_ossie.py` fixtures from real `dbt parse` | ✅ by hand (dbt-core 1.12.0 + metricflow 0.213.0) | dbt is not in the project environment; metricflow mangles percent KPIs (export warns) |
+| Publish gate on approved metrics | `semantic/service.gate_bundle`, `build_bundle` | `test_semantic_ossie.py`, `test_semantic_layer.py` | ✅ | Existing workspaces default to off; new ones on |
