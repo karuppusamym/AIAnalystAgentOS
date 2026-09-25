@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate"""
 from __future__ import annotations
 
 import argparse
@@ -128,14 +128,29 @@ def replay_run(run_id: str, *, check: bool, out: str | None) -> int:
     return 0
 
 
+def calibrate(*, dry_run: bool) -> int:
+    """Decision calibration now (the scheduler also runs it nightly): Brier/ECE per purpose x backend,
+    downgrading or restoring backends against the admin thresholds."""
+    from analystos.db.base import session_scope
+    from analystos.decisions.calibration import run_calibration
+
+    with session_scope() as s:
+        result = run_calibration(s, actor="cli", dry_run=dry_run)
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
-                                            "export-contracts", "replay-run", "packs"])
+                                            "export-contracts", "replay-run", "packs", "calibrate"])
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
     parser.add_argument("--out", help="replay-run: write the JSON report to this file")
+    parser.add_argument("--dry-run", action="store_true", help="calibrate: report without downgrading or restoring")
     args = parser.parse_args(argv)
+    if args.command == "calibrate":
+        return calibrate(dry_run=args.dry_run)
     if args.command == "replay-run":
         if not args.run_id:
             parser.error("replay-run needs a run id")

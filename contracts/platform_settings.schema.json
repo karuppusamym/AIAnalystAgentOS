@@ -106,6 +106,70 @@
       "title": "CrawlSettings",
       "type": "object"
     },
+    "DecisionSettings": {
+      "description": "DecisionService (ADR-0015) knobs an administrator can change without a redeploy.",
+      "properties": {
+        "backends": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Backends",
+          "type": "object"
+        },
+        "calibration_window_days": {
+          "default": 30,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Calibration Window Days",
+          "type": "integer"
+        },
+        "calibration_min_outcomes": {
+          "default": 20,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Calibration Min Outcomes",
+          "type": "integer"
+        },
+        "max_brier": {
+          "default": 0.2,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Brier",
+          "type": "number"
+        },
+        "max_ece": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Ece",
+          "type": "number"
+        },
+        "purpose_max_brier": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Purpose Max Brier",
+          "type": "object"
+        },
+        "auto_downgrade": {
+          "default": true,
+          "title": "Auto Downgrade",
+          "type": "boolean"
+        },
+        "pinned": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pinned",
+          "type": "array"
+        }
+      },
+      "title": "DecisionSettings",
+      "type": "object"
+    },
     "FeatureFlags": {
       "properties": {
         "jev_decisions": {
@@ -254,6 +318,20 @@
           "default": true,
           "title": "Auto Investigation Enabled",
           "type": "boolean"
+        },
+        "min_material_effect": {
+          "default": 0.0,
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "title": "Min Material Effect",
+          "type": "number"
+        },
+        "min_material_points": {
+          "default": 3,
+          "maximum": 520,
+          "minimum": 2,
+          "title": "Min Material Points",
+          "type": "integer"
         }
       },
       "title": "MonitorSettings",
@@ -303,6 +381,9 @@
     },
     "features": {
       "$ref": "#/$defs/FeatureFlags"
+    },
+    "decisions": {
+      "$ref": "#/$defs/DecisionSettings"
     }
   },
   "title": "PlatformSettings",

@@ -41,6 +41,7 @@ class ModelsConfig(BaseModel):
     profiles: dict[str, ProfileConfig]
     routing: dict[str, str]
     models: dict[str, ModelMeta] = Field(default_factory=dict)
+    decisions: dict[str, Any] = Field(default_factory=dict)  # DecisionService purposes (analystos.decisions.config)
 
     def region_of(self, model: str, provider: str) -> str | None:
         meta = self.models.get(model)

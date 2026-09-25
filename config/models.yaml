@@ -93,3 +93,36 @@ routing:
   rev_second_opinion: decision
   stop_check: decision
   alert_triage: decision
+  ask_route: decision
+  clarify_needed: decision
+  metric_match: decision
+  join_path_choice: decision
+  # DecisionService `llm_structured` backend: a small chat model answering with a strict JSON schema
+  decision_structured: low_cost
+
+# DecisionService (ADR-0015, spec v3 §5). Every decision purpose declares its authority class, its
+# backends in order, a timeout and (through `rules`) a deterministic fallback. Backends: jev | rules |
+# local_classifier | llm_structured. No backend may grant, lower a risk, skip a gate or suppress an
+# alert: the authority class is enforced in analystos/decisions/authority.py, whatever a backend answers.
+#   rank                 order valid options (never drop one)
+#   choose_presentation  pick among rule-valid presentations
+#   escalate_only        raise risk/severity or ask the user; `rules` sets the baseline and must come first
+#   route                pick a processing path among valid ones (needs calibration)
+#   bounded_stop         end exploration only after the minimum work; `rules` first (needs calibration)
+decisions:
+  defaults:
+    timeout_seconds: 3          # per decision, across its model backends; rules always run inline
+    breaker_failures: 3         # consecutive failures that open a backend's circuit
+    breaker_reset_seconds: 30   # open -> half-open (one probe) after this long
+  purposes:
+    hypothesis_priority: {kind: scores, authority: rank, backends: [jev, rules]}
+    metric_match: {kind: scores, authority: rank, backends: [jev, rules]}
+    join_path_choice: {kind: scores, authority: rank, backends: [rules, jev]}
+    chart_selection: {kind: choice, authority: choose_presentation, backends: [rules, jev]}
+    feedback_classification: {kind: choice, authority: route, backends: [jev, rules], default: redirect}
+    ask_route: {kind: choice, authority: route, backends: [rules, jev, local_classifier], default: generate}
+    rev_second_opinion: {kind: probability, authority: escalate_only, backends: [rules, jev]}
+    alert_triage: {kind: probability, authority: escalate_only, backends: [rules, jev]}
+    risk_check: {kind: probability, authority: escalate_only, backends: [rules, jev]}
+    clarify_needed: {kind: probability, authority: escalate_only, backends: [rules, jev]}
+    stop_check: {kind: probability, authority: bounded_stop, backends: [rules, jev], min_rounds: 1, min_supported: 3, stop_at: 0.85}

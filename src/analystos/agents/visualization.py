@@ -68,12 +68,14 @@ def _choose(ctx: RunContext, intent: str, dim_type: str | None, cardinality: int
                    "line": "line chart over time", "stacked_bar": "stacked bars of composition"}[t]
                for t in JEV_ALTERNATIVES.get(intent, []) if not (t == "pie" and cardinality > 5)}
     if chart_type in options and len(options) > 1:
-        v = ctx.jev.choose("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
-                           "Which chart type communicates `chart_title` best to a business audience?", options, ctx=ctx.call_ctx())
-        if v and v.value != chart_type and v.probabilities.get(v.value, 0) >= 0.6:
-            return v.value, f"{rationale}; overridden by JEV ({v.value} p={v.probabilities.get(v.value):.2f})"
-        if v:
-            rationale += f"; JEV agrees ({chart_type} p={v.probabilities.get(chart_type, 0):.2f})"
+        # ADR-0015 choose_presentation: the chart rules decide; a model only breaks a rule tie.
+        from analystos.decisions import Question
+
+        d = ctx.decisions.decide("chart_selection", {"chart_title": title, "intent": intent, "categories": str(cardinality)},
+                                 Question.choice("Which chart type communicates `chart_title` best to a business audience?",
+                                                 options, hint=chart_type), ctx=ctx.call_ctx())
+        if d.value != chart_type:
+            return d.value, f"{rationale}; tie broken by {d.backend} ({d.value})"
     return chart_type, rationale
 
 

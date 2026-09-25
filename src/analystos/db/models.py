@@ -690,6 +690,74 @@ class ModelPayload(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class DecisionRecord(Base):
+    """One DecisionService decision (ADR-0015, P4-T08): who decided, what every backend said, what the
+    authority class enforced. `answer` is the enforced value; `proposal` the deciding backend's raw one."""
+
+    __tablename__ = "decision"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    authority: Mapped[str] = mapped_column(String(30))
+    backend: Mapped[str] = mapped_column(String(30))  # jev | rules | local_classifier | llm_structured | default
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    inputs_hash: Mapped[str] = mapped_column(String(64))
+    subject: Mapped[str | None] = mapped_column(String(240), index=True, nullable=True)  # insight:<id> | alert:<key> | feedback:<id>
+    options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    answer: Mapped[Any] = mapped_column(JSON, nullable=True)
+    proposal: Mapped[Any] = mapped_column(JSON, nullable=True)
+    probabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    enforced: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = _ts()
+
+
+class DecisionOutcome(Base):
+    """A labelled outcome for a decision from a user signal (P4-T09): finding accepted/rejected/dismissed,
+    alert acknowledged/dismissed, feedback class corrected. `label` is the true answer on the decision's
+    own scale (an option key, or yes/no for probability purposes)."""
+
+    __tablename__ = "decision_outcome"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(ForeignKey("decision.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    backend: Mapped[str] = mapped_column(String(30))
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    label: Mapped[str] = mapped_column(String(80))
+    source: Mapped[str] = mapped_column(String(40))  # finding.accept | finding.reject | alert.dismiss | feedback.correct ...
+    user_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class DecisionCalibration(Base):
+    """Append-only calibration evaluations and backend downgrades per purpose x backend (P4-T09).
+    The latest row per (purpose, backend) is the effective state: `downgraded` rows remove that backend
+    from the purpose's chain until a later evaluation or an administrator restores it."""
+
+    __tablename__ = "decision_calibration"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    purpose: Mapped[str] = mapped_column(String(60), index=True)
+    backend: Mapped[str] = mapped_column(String(30))
+    window_days: Mapped[int] = mapped_column(Integer, default=30)
+    n: Mapped[int] = mapped_column(Integer, default=0)
+    brier: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ece: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_brier: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_ece: Mapped[float | None] = mapped_column(Float, nullable=True)
+    downgraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    action: Mapped[str] = mapped_column(String(30))  # evaluated | downgraded | restored | admin_restored | admin_downgraded
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
 class McpServer(Base):
     """An external MCP server registered in one workspace (spec v3 §3.7, P4-X05).
 

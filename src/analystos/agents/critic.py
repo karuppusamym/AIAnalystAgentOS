@@ -18,6 +18,7 @@ from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
+from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.llm.config import family
 from analystos.runtime.context import RunContext
@@ -130,9 +131,14 @@ def verify_insights(ctx: RunContext) -> dict:
                                          "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
                                                                                    "effect_label", "highlights", "warnings")},
                                          "checks": checks}, exclude_families=[primary_family] if primary_family else [])
-        jev = ctx.jev.probability("rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
-            "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
-            "Does `evidence` support `claim` as worded, without overreach?", ctx=ctx.call_ctx())
+        # ADR-0015 escalate_only: the second opinion can add doubt (lower confidence), never add credit.
+        second_opinion = ctx.decisions.decide(
+            "rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
+                "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
+            Question.escalation("Does `evidence` support `claim` as worded, without overreach?", levels=["none", "doubt"],
+                                baseline="none", escalate_to="doubt", escalate_at=0.3, escalate_when="low"),
+            ctx=ctx.call_ctx(), subject=f"insight:{insight_id}")
+        jev = second_opinion if second_opinion.by_model and second_opinion.p is not None else None
         # ---- Contradictions
         key = (spec.asset, (spec_d.get("outcome") or {}).get("column"), (spec_d.get("segment") or {}).get("column"))
         top = (stat_d.get("highlights") or {}).get("top_segment")
@@ -149,8 +155,8 @@ def verify_insights(ctx: RunContext) -> dict:
             conf += 0.05 if review.get("supports") else -0.1
             if review.get("suggested_caveat"):
                 caveats_extra.append(f"Reviewer: {str(review['suggested_caveat'])[:200]}")
-        if jev is not None:
-            conf += 0.05 if jev.value >= 0.7 else -0.1 if jev.value < 0.3 else 0.0
+        if second_opinion.value == "doubt":
+            conf -= 0.1
         if dq:
             caveats_extra.append("Data quality: " + "; ".join(dq[:2]))
             conf -= 0.05
@@ -160,7 +166,7 @@ def verify_insights(ctx: RunContext) -> dict:
         verification = {"reason": reason, "evaluate": checks, "verify": {
             "reproducible": reproducible, "second_method": _dump(second.stat) if second else None,
             "independent_model": {"model": review_model, "review": review} if isinstance(review, dict) else {"unavailable": review_model},
-            "jev": {"p_supports": jev.value, "model": jev.model} if jev else None,
+            "jev": {"p_supports": jev.p, "model": jev.model, "by": jev.backend, "decision_id": jev.id} if jev else None,
             "contradictions": contradiction}, "verified": deterministic_ok,
             "note": "Verification is grounded in deterministic checks and reproducible data; model opinions only adjust confidence."}
         with session_scope() as s:

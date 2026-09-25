@@ -320,22 +320,30 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
 
 
 def _triage(monitor: Monitor, workspace: Workspace, result: dict) -> tuple[str, dict | None]:
-    """JEV materiality check. Escalate-only: it can raise severity, never lower it."""
-    from analystos.llm.jev import JevDecisions
+    """Materiality rules first, then JEV escalate-only (ADR-0015): severity can rise, never fall,
+    and a model answering "not material" suppresses nothing. An immaterial signal (too few periods,
+    effect below the minimum) keeps its severity and is not sent to a model."""
+    from analystos.decisions import Question, decision_service
     from analystos.runtime.context import default_router, workspace_call_ctx
-
-    severity = result.get("severity", "warning")
-    verdict = JevDecisions(default_router()).probability(
-        "alert_triage", {"objective": workspace.objective, "monitor": monitor.name, "signal": result.get("message", "")},
-        "Is `signal` a material change for `objective` that an operations lead would want investigated now?",
-        ctx=workspace_call_ctx(workspace.id, agent_id="monitor"))
-    if verdict is None:
-        return severity, None
     from analystos.services.platform_settings import get as platform
 
-    if verdict.value >= platform().monitors.triage_escalate_probability and SEVERITY_RANK[severity] < SEVERITY_RANK["critical"]:
-        severity = "critical"
-    return severity, {"p_material": verdict.value, "model": verdict.model}
+    settings = platform().monitors
+    severity = result.get("severity", "warning")
+    effect = next((result[k] for k in ("pct_change", "shift_pct") if isinstance(result.get(k), (int, float))), None)
+    d = decision_service(default_router()).decide(
+        "alert_triage", {"objective": workspace.objective, "monitor": monitor.name, "signal": result.get("message", "")},
+        Question.escalation("Is `signal` a material change for `objective` that an operations lead would want investigated now?",
+                            levels=list(SEVERITY_RANK), baseline=severity if severity in SEVERITY_RANK else "warning",
+                            escalate_to="critical", escalate_at=settings.triage_escalate_probability),
+        facts={"points": result.get("points"), "effect": effect, "min_effect": settings.min_material_effect,
+               "min_points": settings.min_material_points},
+        ctx=workspace_call_ctx(workspace.id, agent_id="monitor"), subject=f"alert:{alert_dedupe_key(monitor, result)}")
+    rule = (d.details.get("baseline") or {}) if d.backend != "rules" else d.details
+    material = bool(rule.get("material", True)) or d.value != severity
+    # p_material is a model's probability (the UI labels it JEV); a rule-only triage leaves it empty.
+    triage = {"p_material": d.p if d.by_model else None, "material": material, "by": d.backend, "model": d.model,
+              "decision_id": d.id, "rule": rule.get("reasons")}
+    return d.value, triage
 
 
 def alert_dedupe_key(monitor: Monitor, result: dict) -> str:
@@ -375,7 +383,7 @@ def _raise_alert(monitor: Monitor, owner: User, workspace: Workspace, result: di
     from analystos.services.platform_settings import get as platform
 
     if platform().monitors.auto_investigation_enabled and monitor.auto_investigate and \
-            SEVERITY_RANK[severity] >= SEVERITY_RANK["warning"] and (triage is None or triage["p_material"] >= 0.5):
+            SEVERITY_RANK[severity] >= SEVERITY_RANK["warning"] and (triage is None or triage.get("material", True)):
         start_investigation(alert_id, owner, automatic=True)
     return alert_id
 

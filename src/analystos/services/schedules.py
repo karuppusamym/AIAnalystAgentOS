@@ -285,6 +285,17 @@ def complete_from_run(run_id: str) -> None:
         _finish(srun_id, "failed", {"run_id": run_id}, error=f"run {status}: {summary.get('error') or ''}".strip())
 
 
+def nightly_calibration() -> None:
+    """Decision calibration (P4-T09) once a day, whichever scheduler process gets the advisory lock."""
+    from analystos.decisions.calibration import maybe_run_nightly
+
+    try:
+        with session_scope() as s:
+            maybe_run_nightly(s)
+    except Exception:
+        log.exception("decision calibration failed")
+
+
 def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
     from analystos.core.logging import configure_logging
 
@@ -296,6 +307,7 @@ def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
                 execute(srun)
         except Exception:
             log.exception("scheduler iteration failed")
+        nightly_calibration()
         if once:
             return
         time.sleep(poll_seconds)
