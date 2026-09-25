@@ -34,13 +34,14 @@ increment-4 (`P4-*`) row. The original product vision is
 
 ```bash
 uv venv -p 3.11 .venv && uv pip install -e ".[dev]"      # deps
-docker compose up -d postgres redis neo4j temporal superset # infra (Superset image adds psycopg2)
+docker compose up -d postgres redis temporal superset       # infra (Superset image adds psycopg2); Neo4j is optional:
+                                                            # --profile graph + ANALYSTOS_GRAPH_ENABLED=true
 .venv/bin/analystos migrate && .venv/bin/analystos seed     # schema + users/registries/glossary
 .venv/bin/pytest -q -m "not integration"                    # fast suite (no services)
 .venv/bin/pytest -q -m integration                          # needs the compose stack
 .venv/bin/ruff check src tests
 .venv/bin/uvicorn analystos.api.app:app --reload            # API :8000
-.venv/bin/analystos worker                                  # Temporal worker
+.venv/bin/analystos worker [--queues analysis,compute]      # Temporal worker (all queues by default; config/task_queues.yaml)
 .venv/bin/analystos scheduler                               # schedules + monitors (claim-then-execute)
 .venv/bin/uvicorn analystos.connectors.servicenow_mock:app --port 8090   # demo source
 cd web && npm install && npm run dev                        # UI :5173
