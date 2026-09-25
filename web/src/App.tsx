@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import type { ReactElement, ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { Layout } from "./components/Layout";
 import { EmptyState } from "./components/ui";
 import { AdminPage } from "./pages/Admin";
+import { ApprovalsPage } from "./pages/Approvals";
 import { AskPage } from "./pages/Ask";
 import { CatalogPage } from "./pages/Catalog";
 import { ConsolePage } from "./pages/Console";
@@ -19,6 +20,7 @@ import { SourcesPage } from "./pages/Sources";
 import { StudioPage } from "./pages/Studio";
 import { WorkspaceHomePage } from "./pages/WorkspaceHome";
 import { WorkspacesPage } from "./pages/Workspaces";
+import { fillPath, LEGACY_REDIRECTS, SCREENS, type ScreenId } from "./routes";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -27,29 +29,44 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** One element per screen in the manifest: a screen without an element is a type error. */
+const ELEMENTS: Record<ScreenId, ReactElement> = {
+  login: <LoginPage />,
+  workspaces: <WorkspacesPage />,
+  "workspace-home": <WorkspaceHomePage />,
+  ask: <AskPage />,
+  investigations: <RunsPage />,
+  investigation: <RunViewPage />,
+  "investigation-console": <ConsolePage />,
+  findings: <InsightsPage />,
+  sources: <SourcesPage />,
+  catalog: <CatalogPage />,
+  studio: <StudioPage />,
+  reports: <ReportsPage />,
+  approvals: <ApprovalsPage />,
+  monitoring: <MonitoringPage />,
+  schedules: <SchedulesPage />,
+  governance: <GovernancePage />,
+  registry: <AdminPage key="registry" section="registry" />,
+  settings: <AdminPage key="settings" section="settings" />,
+  usage: <AdminPage key="usage" section="usage" />,
+};
+
+/** Old URL → new screen, keeping path parameters and the query string (?tab=, ?artifact=, …). */
+function LegacyRedirect({ target }: { target: string }) {
+  const params = useParams();
+  const { search, hash } = useLocation();
+  return <Navigate replace to={`${fillPath(target, params as Record<string, string>)}${search}${hash}`} />;
+}
+
 export function AppRoutes() {
+  const screens = SCREENS.filter((s) => s.id !== "login");
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={ELEMENTS.login} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
-        <Route index element={<WorkspacesPage />} />
-        <Route path="admin" element={<AdminPage />} />
-        <Route path="w/:wsId">
-          <Route index element={<WorkspaceHomePage />} />
-          <Route path="sources" element={<SourcesPage />} />
-          <Route path="catalog" element={<CatalogPage />} />
-          <Route path="runs" element={<RunsPage />} />
-          <Route path="runs/:runId" element={<RunViewPage />} />
-          <Route path="runs/:runId/console" element={<ConsolePage />} />
-          <Route path="insights" element={<InsightsPage />} />
-          <Route path="insights/:insightId" element={<InsightsPage />} />
-          <Route path="studio" element={<StudioPage />} />
-          <Route path="schedules" element={<SchedulesPage />} />
-          <Route path="monitoring" element={<MonitoringPage />} />
-          <Route path="reports" element={<ReportsPage />} />
-          <Route path="ask" element={<AskPage />} />
-          <Route path="governance" element={<GovernancePage />} />
-        </Route>
+        {screens.map((s) => <Route key={s.id} path={s.path} element={ELEMENTS[s.id]} />)}
+        {LEGACY_REDIRECTS.map((r) => <Route key={r.from} path={r.from} element={<LegacyRedirect target={r.to} />} />)}
         <Route path="*" element={<div className="page"><EmptyState title="Page not found" /></div>} />
       </Route>
     </Routes>

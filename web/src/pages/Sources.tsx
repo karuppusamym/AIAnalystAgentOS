@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type Asset, type DiscoveredAsset, type Source, type SourceColumn } from "../api";
 import { CrawlPanel } from "../components/CrawlPanel";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
@@ -29,8 +30,8 @@ export function SourcesPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Sources & data explorer"
-        subtitle={<>Connect sources, crawl their metadata, select what agents may analyse, and tag sensitive columns. Curate descriptions in the <Link to={`/w/${encodeURIComponent(wsId)}/catalog`}>Catalog</Link>.</>}
+      <PageHeader title="Sources & crawls"
+        subtitle={<>Connect sources, crawl their metadata, select what agents may analyse, and tag sensitive columns. Curate descriptions in the <Link to={to.catalog(wsId)}>Catalog</Link>.</>}
         actions={<button type="button" className="btn btn-primary" onClick={() => setShowAdd((s) => !s)}>{showAdd ? "Close" : "Add source"}</button>} />
       {showAdd && <AddSource wsId={wsId} onAdded={() => { setShowAdd(false); reloadAll(); }} />}
       <ErrorBox error={sources.error} onRetry={sources.reload} />
@@ -141,7 +142,7 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
         <>
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th scope="col"><span className="sr-only">Select</span></th><th>Asset</th><th className="num">Rows</th><th className="num">Columns</th><th>Description</th><th /></tr></thead>
+              <thead><tr><th scope="col"><span className="sr-only">Select</span></th><th>Asset</th><th className="num">Rows</th><th className="num">Columns</th><th>Description</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {names.map((n) => {
                   const a = assets.find((x) => x.name === n.name);

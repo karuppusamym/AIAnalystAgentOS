@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
 import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
@@ -53,7 +54,7 @@ export function CatalogPage() {
     <div className="page">
       <PageHeader title="Catalog"
         subtitle={<>Every crawled table with its business meaning, role, grain and sensitive columns. Crawl sources on
-          the <Link to={`/w/${encodeURIComponent(wsId)}/sources`}>Sources</Link> page.</>} />
+          the <Link to={to.sources(wsId)}>Sources</Link> page.</>} />
       <Card>
         <form className="form-inline catalog-filters" onSubmit={search} role="search" aria-label="Search the catalog">
           <label className="inline-field">
@@ -91,7 +92,7 @@ export function CatalogPage() {
           <div className="table-wrap">
             <table className="table">
               <thead>
-                <tr><th>Table</th><th>Role</th><th>Domain</th><th>Grain</th><th>Confidence</th><th>Description</th><th>Status</th><th /></tr>
+                <tr><th>Table</th><th>Role</th><th>Domain</th><th>Grain</th><th>Confidence</th><th>Description</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
               </thead>
               <tbody>
                 {list.data.map((a) => (

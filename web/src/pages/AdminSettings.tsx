@@ -4,8 +4,8 @@
  */
 import { useId, useMemo, useState } from "react";
 import { api, type LLMMode, type PlatformSettings, type SettingsDocument, type SettingsVersion } from "../api";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StatusBadge, Tag } from "../components/ui";
-import { fmtDate, fmtNumber, fmtPct, fmtUsd } from "../lib/format";
+import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StatusBadge, Tag, Value } from "../components/ui";
+import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, type AsyncState } from "../lib/hooks";
 import {
   LIMIT_SECTIONS, LLM_MODES, MODE_TEXT, SECTION_LABELS, fieldSchema, humanKey, modeOf, pendingChanges, presetEffect, savedShare,
@@ -312,7 +312,7 @@ function SettingsHistory({ doc, history, onRollback, busy }: {
       {!!history.data?.length && (
         <div className="table-wrap">
           <table className="table table-compact">
-            <thead><tr><th>Version</th><th>Note</th><th>By</th><th>When</th><th /></tr></thead>
+            <thead><tr><th>Version</th><th>Note</th><th>By</th><th>When</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {history.data.map((h) => (
                 <tr key={h.version}>
@@ -381,13 +381,13 @@ export function TokenSavingsView() {
       {t && (
         <>
           <div className="stats-row">
-            <Stat label="Tokens saved" value={fmtNumber(t.tokens_saved, 0)} hint={`${fmtPct(t.saved_share)} of all tokens`} />
-            <Stat label="Tokens used" value={fmtNumber(t.tokens_used, 0)} />
-            <Stat label="Model calls" value={fmtNumber(t.calls, 0)} />
-            <Stat label="Cost" value={fmtUsd(t.cost_usd)} />
-            <Stat label="Cache hits" value={fmtNumber(t.cache_hits, 0)} />
-            <Stat label="Deterministic skips" value={fmtNumber(t.deterministic_skips, 0)} />
-            <Stat label="Refused (oversize)" value={fmtNumber(t.refused, 0)} />
+            <Stat label="Tokens saved" value={<Value value={t.tokens_saved} format="int" />} hint={`${fmtPct(t.saved_share)} of all tokens`} />
+            <Stat label="Tokens used" value={<Value value={t.tokens_used} format="int" />} />
+            <Stat label="Model calls" value={<Value value={t.calls} format="int" />} />
+            <Stat label="Cost" value={<Value value={t.cost_usd} format="usd" />} />
+            <Stat label="Cache hits" value={<Value value={t.cache_hits} format="int" />} />
+            <Stat label="Deterministic skips" value={<Value value={t.deterministic_skips} format="int" />} />
+            <Stat label="Refused (oversize)" value={<Value value={t.refused} format="int" />} />
           </div>
           <Card title="By purpose">
             {rows.length === 0 ? <EmptyState title="No model activity in this period" /> : (
@@ -405,7 +405,7 @@ export function TokenSavingsView() {
                           <td className="num">{fmtNumber(r.calls, 0)}</td>
                           <td className="num">{fmtNumber(r.tokens_used, 0)}</td>
                           <td className="num">{fmtNumber(r.tokens_saved, 0)}</td>
-                          <td className="num">{fmtUsd(r.cost_usd)}</td>
+                          <td className="num"><Value value={r.cost_usd} format="usd" /></td>
                           <td className="num">{fmtNumber(statusCount(r, "cache_hit"), 0)}</td>
                           <td className="num">{fmtNumber(statusCount(r, "skipped"), 0)}</td>
                           <td className="num">{fmtNumber(statusCount(r, "refused"), 0)}</td>

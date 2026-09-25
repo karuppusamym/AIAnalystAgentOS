@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type ModelCall } from "../api";
-import { Card, CodeBlock, EmptyState, ErrorBox, JsonView, Loading, PageHeader, Stat, StatusBadge, Tabs } from "../components/ui";
-import { fmtMs, fmtTime, fmtUsd } from "../lib/format";
+import { Card, CodeBlock, EmptyState, ErrorBox, JsonView, Loading, PageHeader, Stat, StatusBadge, Tabs, Value } from "../components/ui";
+import { fmtMs, fmtTime } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 
 export const isJev = (c: Pick<ModelCall, "provider">) => c.provider === "typesafe";
@@ -24,14 +25,14 @@ export function ConsolePage() {
 
   return (
     <div className="page">
-      <PageHeader title="Agent console" subtitle={<>Run <Link to={`/w/${wsId}/runs/${runId}`}><code>{runId}</code></Link> — what each agent thought, called and queried.</>}
+      <PageHeader title="Agent console" subtitle={<>Run <Link to={to.run(wsId, runId)}><code>{runId}</code></Link> — what each agent thought, called and queried.</>}
         actions={<button type="button" className="btn btn-sm" onClick={data.reload} disabled={data.loading}>{data.loading ? "Refreshing…" : "Refresh"}</button>} />
       <div className="stats-row card card-body">
-        <Stat label="Cost" value={fmtUsd(d.cost.usd)} />
-        <Stat label="Tokens" value={d.cost.tokens.toLocaleString()} />
-        <Stat label="Model calls" value={d.cost.model_calls} />
-        <Stat label="JEV decisions" value={d.cost.jev_calls} hint="TypeSafe Jev" />
-        <Stat label="Failed calls" value={d.cost.failed_calls} />
+        <Stat label="Cost" value={<Value value={d.cost?.usd} format="usd" />} />
+        <Stat label="Tokens" value={<Value value={d.cost?.tokens} format="int" />} />
+        <Stat label="Model calls" value={<Value value={d.cost?.model_calls} format="int" />} />
+        <Stat label="JEV decisions" value={<Value value={d.cost?.jev_calls} format="int" />} hint="TypeSafe Jev" />
+        <Stat label="Failed calls" value={<Value value={d.cost?.failed_calls} format="int" />} />
         <Stat label="Tool calls" value={d.tool_calls.length} />
         <Stat label="Queries" value={d.queries.length} />
       </div>
@@ -100,8 +101,8 @@ export function ConsolePage() {
                     <td className="small">{m.provider} / {m.model}{m.attempt > 1 ? <span className="muted"> (attempt {m.attempt})</span> : null}</td>
                     <td><StatusBadge status={m.status} />{m.error && <div className="warn-text small clamp-2">{m.error}</div>}</td>
                     <td className="num">{fmtMs(m.latency_ms)}</td>
-                    <td className="num">{m.input_tokens.toLocaleString()} / {m.output_tokens.toLocaleString()}</td>
-                    <td className="num">{fmtUsd(m.cost_usd)}</td>
+                    <td className="num"><Value value={m.input_tokens} format="int" /> / <Value value={m.output_tokens} format="int" /></td>
+                    <td className="num"><Value value={m.cost_usd} format="usd" /></td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type InsightDetail, type Verification } from "../api";
 import { LineageGraph } from "../components/LineageGraph";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, JsonView, KeyValue, Loading, PageHeader, PreviewTable, RecordTable, StatusBadge, Tag } from "../components/ui";
@@ -15,7 +16,7 @@ export function InsightsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Insights" subtitle="Every finding links to the queries, experiments and checks behind it." />
+      <PageHeader title="Findings" subtitle="Every finding links to the queries, experiments and checks behind it." />
       <div className="split">
         <div className="split-list">
           <div className="seg" role="radiogroup" aria-label="Filter insights">
@@ -29,7 +30,7 @@ export function InsightsPage() {
           <ul className="list selectable">
             {items.map((i) => (
               <li key={i.id}>
-                <button type="button" className={`list-button ${i.id === insightId ? "active" : ""}`} onClick={() => nav(`/w/${wsId}/insights/${i.id}`)}>
+                <button type="button" className={`list-button ${i.id === insightId ? "active" : ""}`} onClick={() => nav(to.findings(wsId, i.id))}>
                   <span className="list-button-head">
                     <strong>{i.code}</strong> <span className="clamp-1">{i.title}</span>
                   </span>
@@ -72,7 +73,7 @@ function InsightDetailView({ id, wsId }: { id: string; wsId: string }) {
           <KeyValue items={[
             ["Population", fmtNumber(i.population_size)],
             ["Narrative", i.narrative_source],
-            ["Run", <Link key="r" to={`/w/${wsId}/runs/${i.run_id}`}><code>{i.run_id}</code></Link>],
+            ["Run", <Link key="r" to={to.run(wsId, i.run_id)}><code>{i.run_id}</code></Link>],
             ["Created", fmtDate(i.created_at)],
           ]} />
         </div>

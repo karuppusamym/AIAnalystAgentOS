@@ -25,16 +25,42 @@ export function fmtP(v: unknown): string {
   return n.toFixed(4);
 }
 
+/** Absent or non-numeric input: the display state for values the platform did not report. */
+export const UNKNOWN = "unknown";
+
+function knownNumber(v: unknown): number | null {
+  if (v === null || v === undefined || v === "" || typeof v === "boolean") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Unknown (null/undefined/NaN) is "unknown", never "$0.0000". */
 export function fmtUsd(v: unknown): string {
-  const n = Number(v ?? 0);
-  if (!Number.isFinite(n)) return "—";
+  const n = knownNumber(v);
+  if (n === null) return UNKNOWN;
   return `$${n < 1 ? n.toFixed(4) : n.toFixed(2)}`;
 }
 
 export function fmtMs(v: unknown): string {
-  const n = Number(v ?? 0);
-  if (!Number.isFinite(n)) return "—";
+  const n = knownNumber(v);
+  if (n === null) return UNKNOWN;
   return n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`;
+}
+
+export type ValueFormat = "number" | "int" | "usd" | "pct" | "ms" | "text";
+
+/** Format a known value, or return null when it is unknown (the caller renders the unknown state). */
+export function formatKnown(v: unknown, format: ValueFormat = "number", digits?: number): string | null {
+  if (format === "text") return v === null || v === undefined || v === "" ? null : String(v);
+  const n = knownNumber(v);
+  if (n === null) return null;
+  switch (format) {
+    case "int": return Math.round(n).toLocaleString("en-US");
+    case "usd": return fmtUsd(n);
+    case "pct": return fmtPct(n, digits ?? 1);
+    case "ms": return fmtMs(n);
+    default: return fmtNumber(n, digits ?? 2);
+  }
 }
 
 export function fmtDate(v: string | null | undefined): string {
