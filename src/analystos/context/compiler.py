@@ -266,7 +266,7 @@ def rank_items(items: Iterable[KnowledgeItem], focus: set[str], in_scope: set[st
     gate on term overlap with the focus terms (generic table-name words excluded), or when it was
     reached by one hop from a section that passed. The index rank orders candidates; it never
     admits one on its own: its lexical match counts table-name words too, and a section admitted on
-    `incident` alone would pull its mapped columns' tables into a SQL prompt (measured, P4-K05)."""
+    one table-name word alone would pull its mapped columns' tables into a SQL prompt (measured, P4-K05)."""
     items = list(items)
     scores = {id(i): item_score(i, focus, in_scope) for i in items}
     by_overlap = sorted(items, key=lambda i: (-scores[id(i)], i.name, i.id))
