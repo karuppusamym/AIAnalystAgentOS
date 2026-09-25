@@ -403,7 +403,8 @@
               "metrics",
               "prior_findings",
               "negative_knowledge",
-              "episodes"
+              "episodes",
+              "external"
             ],
             "type": "string"
           },
@@ -460,6 +461,13 @@
           "minimum": 1000,
           "title": "Max Chars",
           "type": "integer"
+        },
+        "supplementary_share": {
+          "default": 0.12,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Supplementary Share",
+          "type": "number"
         }
       },
       "title": "PurposeProfile",

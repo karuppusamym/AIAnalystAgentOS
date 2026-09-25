@@ -10,13 +10,15 @@ Identity: document and section ids are derived from (pack, path, anchor), rows a
 path order, and every ranking breaks ties on stable keys, so dropping the index and rebuilding it
 from the same revisions gives identical retrieval results (tests/integration/test_knowledge_pack.py).
 
-Retrieval is hybrid and deterministic: a lexical leg (Postgres full text, `ts_rank_cd` over an
-OR-query of the question's words) and a vector leg (HNSW nearest neighbours), fused by reciprocal
-rank (k=60). The lexical leg is Postgres full-text ranking, not Okapi BM25 — see
-docs/10-architecture/okf-profile.md. Scope is always the packs a workspace may see.
+Retrieval is hybrid and deterministic: a lexical leg (Okapi BM25 over the sections' `tsvector`
+lexemes, with per-pack corpus statistics kept in the index state; P4-K05) and a vector leg (HNSW
+nearest neighbours), fused by reciprocal rank (k=60), then optionally one hop over the link graph.
+The P4-K01 lexical leg (`ts_rank_cd`) stays selectable so the retrieval benchmark can compare them.
+Scope is always the packs a workspace may see.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import re
 from collections.abc import Iterable
@@ -41,6 +43,10 @@ from analystos.knowledge.entries import doc_kind
 log = get_logger(__name__)
 
 RRF_K = 60
+BM25_K1 = 1.2
+BM25_B = 0.75
+HOP_DECAY = 0.25  # what a link passes on: a quarter of the linking hit's fused score
+LEXICAL = ("bm25", "ts_rank_cd")
 HNSW_INDEX = "ix_knowledge_section_embedding_hnsw"
 EMBEDDING_KEY = "embedding"
 _WORD = re.compile(r"[a-z0-9]+")
@@ -173,12 +179,25 @@ def index_pack(session: Session, pack: KnowledgePack, provider: emb.EmbeddingPro
         session.execute(_INSERT_SECTION, [{**s, "embedding": _vec(v), "embedding_model": model}
                                           for s, v in zip(sections, vectors, strict=True)])
     session.add_all(links)
+    session.flush()
     report = {"pack_id": pack.id, "slug": pack.slug, "revision": rev.number if rev else None,
               "content_digest": rev.content_digest if rev else None, "documents": len(docs), "sections": len(sections),
               "links": len(links), "dangling_links": sum(1 for x in links if x.kind == "internal" and not x.resolved),
-              "problems": problems[:200], "embedding": emb.provider_id(provider)}
+              "problems": problems[:200], "embedding": emb.provider_id(provider), "bm25": _bm25_stats(session, pack.id)}
     _set_state(session, f"pack:{pack.id}", report)
     return report
+
+
+def _tokens(tsv: str) -> str:
+    """SQL for a section's length in tokens: its lexeme occurrences (tsvector positions)."""
+    return f"(SELECT coalesce(sum(coalesce(array_length(u.positions, 1), 1)), 0) FROM unnest({tsv}) u)"
+
+
+def _bm25_stats(session: Session, pack_id: str) -> dict[str, int]:
+    """The corpus statistics BM25 needs, per pack: section count and total token count."""
+    row = session.execute(text(f"SELECT count(*) AS n, coalesce(sum({_tokens('s.tsv')}), 0) AS tokens "
+                               "FROM knowledge_section s WHERE s.pack_id = :p"), {"p": pack_id}).one()
+    return {"sections": int(row.n), "tokens": int(row.tokens)}
 
 
 def _jsonable(value: Any) -> Any:
@@ -269,6 +288,8 @@ class Hit:
     lexical_rank: int | None
     vector_rank: int | None
     similarity: float | None
+    lexical_share: float | None = None  # share of the question's lexemes this section contains (BM25 leg)
+    via: str | None = None  # one-hop hits: the path of the document that links here
 
     def receipt(self) -> dict[str, Any]:
         """What a caller cites: path, anchor, sha256 (spec v3 §4.3)."""
@@ -283,7 +304,53 @@ def query_terms(query: str) -> list[str]:
     return sorted({w for w in _WORD.findall(query.lower()) if len(w) >= 2})
 
 
+def query_lexemes(session: Session, query: str) -> list[str]:
+    """The question's lexemes as the index sees them (english stemming, stop words dropped)."""
+    return sorted(session.scalar(text("SELECT tsvector_to_array(to_tsvector('english', :q))"), {"q": query[:4000]}) or [])
+
+
+def _tsquery_literal(lexemes: list[str]) -> str:
+    """An OR tsquery of already-normalised lexemes (cast, not re-parsed by a dictionary)."""
+    return " | ".join("'" + lx.replace("\\", "\\\\").replace("'", "''") + "'" for lx in lexemes)
+
+
+def _corpus(session: Session, packs: list[str]) -> tuple[int, float]:
+    n = tokens = 0
+    for p in packs:
+        stats = (_state(session, f"pack:{p}") or {}).get("bm25") or _bm25_stats(session, p)  # older state: compute
+        n += int(stats.get("sections") or 0)
+        tokens += int(stats.get("tokens") or 0)
+    return n, (tokens / n if n else 1.0)
+
+
+def _bm25(session: Session, packs: list[str], query: str, candidates: int) -> tuple[list[str], dict[str, float]]:
+    """Okapi BM25 (k1=1.2, b=0.75, idf = ln(1 + (N - df + .5) / (df + .5))) over the tsvector
+    lexemes. Every section containing a query lexeme matches the OR query, so document frequencies
+    are counted over that match set; N and the mean length come from the per-pack index state.
+    Returns the ranked ids and each one's share of the question's lexemes."""
+    lexemes = query_lexemes(session, query)
+    if not lexemes:
+        return [], {}
+    n, avgdl = _corpus(session, packs)
+    rows = session.execute(text(f"""
+        WITH cand AS (SELECT s.id, s.tsv FROM knowledge_section s
+                      WHERE s.pack_id = ANY(:packs) AND s.tsv @@ CAST(:tsq AS tsquery)),
+             lens AS (SELECT c.id, {_tokens('c.tsv')} AS dl FROM cand c),
+             tf AS (SELECT c.id, u.lexeme, coalesce(array_length(u.positions, 1), 1) AS tf
+                    FROM cand c, unnest(c.tsv) u WHERE u.lexeme = ANY(:lexemes)),
+             df AS (SELECT lexeme, count(*) AS df FROM tf GROUP BY lexeme)
+        SELECT tf.id, round(sum(ln(1 + (:n - df.df + 0.5) / (df.df + 0.5)) * tf.tf * (:k1 + 1)
+                                / (tf.tf + :k1 * (1 - :b + :b * lens.dl / :avgdl)))::numeric, 8) AS score,
+               count(*) AS matched
+        FROM tf JOIN df ON df.lexeme = tf.lexeme JOIN lens ON lens.id = tf.id
+        GROUP BY tf.id ORDER BY score DESC, tf.id LIMIT :limit"""),
+                           {"packs": packs, "tsq": _tsquery_literal(lexemes), "lexemes": lexemes, "n": max(n, 1),
+                            "avgdl": max(avgdl, 1.0), "k1": BM25_K1, "b": BM25_B, "limit": candidates}).all()
+    return [r.id for r in rows], {r.id: round(int(r.matched) / len(lexemes), 4) for r in rows}
+
+
 def _lexical(session: Session, packs: list[str], words: list[str], candidates: int) -> list[str]:
+    """The P4-K01 lexical leg: `ts_rank_cd` over an OR query of the question's words."""
     if not words:
         return []
     rows = session.execute(text("""
@@ -312,16 +379,26 @@ def _vector(session: Session, packs: list[str], query: str, candidates: int) -> 
 
 def retrieve(session: Session, workspace_id: str, query: str, *, limit: int = 8, kinds: Iterable[str] | None = None,
              types: Iterable[str] | None = None, pack_ids: Iterable[str] | None = None, candidates: int = 50,
-             exclude_kinds: Iterable[str] = ()) -> list[Hit]:
+             exclude_kinds: Iterable[str] = (), lexical: str = "bm25", hop: bool = False,
+             hop_from: int = 5) -> list[Hit]:
     """Hybrid retrieval over the packs this workspace may see (platform + its own). `pack_ids` can
-    only narrow that set. The API the context compiler calls (P4-K05 builds on it)."""
+    only narrow that set. The API the context compiler calls (P4-K05).
+
+    `hop=True` follows the resolved internal links of the best `hop_from` hits one step: a linked
+    document's first section joins the results at HOP_DECAY of the linking hit's score (unless it
+    is already there), marked with `via`. Links never leave the linking document's pack."""
     from analystos.knowledge.store import visible_packs
 
+    if lexical not in LEXICAL:
+        raise ValueError(f"lexical leg must be one of {LEXICAL}")
     visible = {p.id: p for p in visible_packs(session, workspace_id)}
     wanted = [p for p in visible if pack_ids is None or p in set(pack_ids)]
     if not wanted or not query.strip():
         return []
-    lex = _lexical(session, wanted, query_terms(query), candidates)
+    if lexical == "bm25":
+        lex, shares = _bm25(session, wanted, query, candidates)
+    else:
+        lex, shares = _lexical(session, wanted, query_terms(query), candidates), {}
     vec, sims = _vector(session, wanted, query, candidates)
     fused: dict[str, float] = {}
     for ranks in (lex, vec):
@@ -329,28 +406,78 @@ def retrieve(session: Session, workspace_id: str, query: str, *, limit: int = 8,
             fused[sid] = fused.get(sid, 0.0) + 1.0 / (RRF_K + n)
     if not fused:
         return []
-    rows = session.execute(select(KnowledgeSection, KnowledgeDocument)
-                           .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeSection.document_id)
-                           .where(KnowledgeSection.id.in_(list(fused)))).all()
     kinds_set = set(kinds) if kinds is not None else None
     types_set = {t.lower() for t in types} if types is not None else None
     excluded = set(exclude_kinds)
+
+    def keep(d: KnowledgeDocument) -> bool:
+        if (kinds_set is not None and d.kind not in kinds_set) or d.kind in excluded:
+            return False
+        return types_set is None or d.type.lower() in types_set
+
     lex_rank = {sid: n for n, sid in enumerate(lex, start=1)}
     vec_rank = {sid: n for n, sid in enumerate(vec, start=1)}
-    hits = []
-    for s, d in rows:
-        if (kinds_set is not None and d.kind not in kinds_set) or d.kind in excluded:
-            continue
-        if types_set is not None and d.type.lower() not in types_set:
-            continue
-        p = visible[d.pack_id]
-        hits.append(Hit(section_id=s.id, document_id=d.id, pack_id=p.id, pack_slug=p.slug, pack_kind=p.kind, path=d.path,
-                        concept_id=d.concept_id, type=d.type, kind=d.kind, title=d.title, anchor=s.anchor,
-                        heading=s.heading, text=s.text, document_sha256=d.sha256, section_sha256=s.sha256,
-                        status=d.status, trust_tier=d.trust_tier, score=round(fused[s.id], 8),
-                        lexical_rank=lex_rank.get(s.id), vector_rank=vec_rank.get(s.id), similarity=sims.get(s.id)))
+    hits = [_hit(visible[d.pack_id], s, d, round(fused[s.id], 8), lex_rank.get(s.id), vec_rank.get(s.id), sims.get(s.id),
+                 shares.get(s.id))
+            for s, d in _rows(session, list(fused)) if keep(d)]
     hits.sort(key=lambda h: (-h.score, h.path, h.anchor))
+    if hop:
+        hits = _one_hop(session, visible, hits, hop_from, keep)
     return hits[:limit]
+
+
+def _rows(session: Session, section_ids: list[str]) -> list[Any]:
+    return list(session.execute(
+        select(KnowledgeSection, KnowledgeDocument).join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeSection.document_id)
+        .where(KnowledgeSection.id.in_(section_ids))).all())
+
+
+def _hit(p: KnowledgePack, s: KnowledgeSection, d: KnowledgeDocument, score: float, lexical_rank: int | None,
+         vector_rank: int | None, similarity: float | None, share: float | None, via: str | None = None) -> Hit:
+    return Hit(section_id=s.id, document_id=d.id, pack_id=p.id, pack_slug=p.slug, pack_kind=p.kind, path=d.path,
+               concept_id=d.concept_id, type=d.type, kind=d.kind, title=d.title, anchor=s.anchor, heading=s.heading,
+               text=s.text, document_sha256=d.sha256, section_sha256=s.sha256, status=d.status, trust_tier=d.trust_tier,
+               score=score, lexical_rank=lexical_rank, vector_rank=vector_rank, similarity=similarity, lexical_share=share,
+               via=via)
+
+
+def _one_hop(session: Session, visible: dict[str, KnowledgePack], hits: list[Hit], hop_from: int, keep: Any) -> list[Hit]:
+    """One hop over the link graph: the first section of every document a top hit links to (resolved
+    internal links) gains HOP_DECAY of the linking hit's score — added to its own score when it is
+    already a hit, as a new hit otherwise — and records `via`. The best linking hit counts once, and
+    a link never lifts a section above the hit that links to it (a hop adds context, it does not
+    replace the answer)."""
+    top = hits[:hop_from]
+    if not top:
+        return hits
+    boost: dict[str, tuple[float, str, float]] = {}  # document id -> (added score, via path, linking score)
+    for h in top:
+        for target in session.scalars(select(KnowledgeLink.target_path).where(
+                KnowledgeLink.pack_id == h.pack_id, KnowledgeLink.source_path == h.path, KnowledgeLink.kind == "internal",
+                KnowledgeLink.resolved.is_(True)).order_by(KnowledgeLink.target_path)):
+            did = doc_id(h.pack_id, str(target))
+            add = round(h.score * HOP_DECAY, 8)
+            if did != h.document_id and add > boost.get(did, (0.0, "", 0.0))[0]:
+                boost[did] = (add, h.path, h.score)
+    if not boost:
+        return hits
+    firsts = {d.id: (s, d) for s, d in session.execute(
+        select(KnowledgeSection, KnowledgeDocument).join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeSection.document_id)
+        .where(KnowledgeSection.document_id.in_(list(boost)), KnowledgeSection.ordinal == 0)).all()
+        if d.pack_id in visible and keep(d)}
+    out, seen = [], set()
+    for h in hits:
+        if h.document_id in firsts and h.section_id == firsts[h.document_id][0].id:
+            add, via, ceiling = boost[h.document_id]
+            if h.score < ceiling:
+                h = dataclasses.replace(h, score=round(min(h.score + add, ceiling - 1e-8), 8), via=via)
+            seen.add(h.document_id)
+        out.append(h)
+    for did, (s, d) in firsts.items():
+        if did not in seen:
+            out.append(_hit(visible[d.pack_id], s, d, boost[did][0], None, None, None, None, via=boost[did][1]))
+    out.sort(key=lambda h: (-h.score, h.path, h.anchor))
+    return out
 
 
 def signature(hits: Iterable[Hit]) -> list[tuple[Any, ...]]:

@@ -53,7 +53,8 @@ class LLMSettings(BaseModel):
     catalog_max_tables: int = Field(12, ge=1, le=200)
 
 
-ContextSection = Literal["catalog", "glossary", "business_rules", "metrics", "prior_findings", "negative_knowledge", "episodes"]
+ContextSection = Literal["catalog", "glossary", "business_rules", "metrics", "prior_findings", "negative_knowledge", "episodes",
+                         "external"]
 CatalogDetail = Literal["names", "columns", "stats", "profile"]
 
 
@@ -73,15 +74,19 @@ class PurposeProfile(BaseModel):
     max_items_per_section: int = Field(8, ge=0, le=100)
     item_chars: int = Field(240, ge=40, le=4000)  # excerpt length of one knowledge item
     max_chars: int = Field(40_000, ge=1_000, le=1_500_000)
+    # P4-K05: each supplementary section (external, prior_findings, negative_knowledge, episodes) is
+    # filled after the primary ones and may take at most this share of the budget
+    supplementary_share: float = Field(0.12, ge=0.0, le=1.0)
 
 
 def _default_profiles() -> dict[str, PurposeProfile]:
     knowledge: list[ContextSection] = ["glossary", "business_rules", "metrics"]
     return {
-        "planning": PurposeProfile(sections=["catalog", "glossary", "business_rules"], catalog_detail="names",
-                                   drop_semantic_types=["id"], max_columns_per_table=20, max_items_per_section=4,
-                                   max_chars=16_000),
-        "hypothesis_generation": PurposeProfile(sections=["catalog", *knowledge, "prior_findings", "negative_knowledge"],
+        "planning": PurposeProfile(sections=["catalog", "glossary", "business_rules", "external", "episodes"],
+                                   catalog_detail="names", drop_semantic_types=["id"], max_columns_per_table=20,
+                                   max_items_per_section=4, max_chars=16_000),
+        "hypothesis_generation": PurposeProfile(sections=["catalog", *knowledge, "external", "prior_findings",
+                                                          "negative_knowledge", "episodes"],
                                                 catalog_detail="stats", drop_semantic_types=["id"],
                                                 max_columns_per_table=30, max_chars=48_000),
         "follow_up_generation": PurposeProfile(sections=["catalog", "negative_knowledge"], catalog_detail="stats",
