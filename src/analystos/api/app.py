@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,7 +19,18 @@ from analystos.mcp import server as mcp_server
 configure_logging()
 log = get_logger("analystos.api")
 
-app = FastAPI(title="Context2AI AnalystOS", version="0.1.0",
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # The import graph (statistics, ML, reporting stacks) is hundreds of thousands of long-lived
+    # objects. Freezing them keeps full GC collections from rescanning them: each one otherwise
+    # pauses the event loop for 100-150 ms, which every open SSE stream feels (P4-C04 load test).
+    gc.collect()
+    gc.freeze()
+    yield
+
+
+app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
               description="Autonomous, governed data & analytics agent operating system (Phase 1 MVP).")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])

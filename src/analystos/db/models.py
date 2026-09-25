@@ -421,6 +421,8 @@ class Artifact(Base):
     type: Mapped[str] = mapped_column(String(40), index=True)
     name: Mapped[str] = mapped_column(String(300))
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # Plan version of the run that last wrote this artifact; a replan makes lower versions stale.
+    plan_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="draft")
     platform: Mapped[str | None] = mapped_column(String(40), nullable=True)
     external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)

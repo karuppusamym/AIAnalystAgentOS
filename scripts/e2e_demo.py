@@ -67,6 +67,13 @@ def wait(api: Api, ws: str, run: str, predicate, *, timeout=1800, label=""):
     raise SystemExit(f"timeout waiting for {label}")
 
 
+def run_seconds(detail: dict | None) -> float | None:
+    """Wall-clock duration of an analysis run from its own timestamps (None while it has not finished)."""
+    if not detail or not detail.get("started_at") or not detail.get("finished_at"):
+        return None
+    return round((datetime.fromisoformat(detail["finished_at"]) - datetime.fromisoformat(detail["started_at"])).total_seconds(), 1)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default=os.getenv("ANALYSTOS_API", "http://localhost:8000"))
@@ -200,6 +207,10 @@ def main() -> int:
     del outsider_ws
 
     # Report
+    finished = datetime.now(UTC)
+    ev["finished_at"] = finished.isoformat()
+    ev["duration"] = {"scenario_seconds": round((finished - started).total_seconds(), 1),
+                      "analysis_run_seconds": run_seconds(analyst.get(f"/api/workspaces/{wid}/analysis/{rid}"))}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     stamp = started.strftime("%Y%m%d-%H%M%S")
@@ -208,7 +219,10 @@ def main() -> int:
     lines = [f"# MVP end-to-end evidence — {started:%Y-%m-%d %H:%M} UTC", "",
              f"Live run through the HTTP API at `{args.api}` (workspace `{wid}`, run `{rid}`). Raw evidence: `e2e-{stamp}.json`.",
              "Synthetic ServiceNow-shaped data served by the Table-API mock — **not** a certification of the ServiceNow connector.", "",
-             f"**{passed}/{len(check)} checks passed.**", "", "| Check | Result |", "|---|---|"]
+             f"**{passed}/{len(check)} checks passed.**", "",
+             f"Duration: scenario {ev['duration']['scenario_seconds']} s (started {started:%H:%M:%S}, finished {finished:%H:%M:%S} UTC); "
+             f"analysis run {ev['duration']['analysis_run_seconds']} s (started → finished, including the approval wait and the redirect).",
+             "", "| Check | Result |", "|---|---|"]
     lines += [f"| {k} | {'PASS' if v else '**FAIL**'} |" for k, v in check.items()]
     lines += ["", "## Verified findings", ""]
     for e in evidence:
@@ -222,7 +236,7 @@ def main() -> int:
               "## Model usage", "", f"```json\n{json.dumps(ev['model_usage'], indent=2)}\n```", "",
               "## Redirect (dynamic replanning)", "", f"```json\n{json.dumps({k: fb.get(k) for k in ('kind', 'classified_by', 'consequential_p', 'interpretation', 'replan')}, indent=2, default=str)}\n```", ""]
     (out / f"e2e-{stamp}.md").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines[:len(check) + 8]))
+    print("\n".join(lines[:len(check) + 10]))
     print(f"wrote {out / f'e2e-{stamp}.md'}")
     return 0 if passed == len(check) else 1
 

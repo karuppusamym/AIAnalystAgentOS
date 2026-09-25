@@ -11,12 +11,12 @@ import math
 import statistics
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from analystos.contracts.policy import ExecutionIdentity
 from analystos.core.errors import AnalystOSError, InvalidInput, NotFound
-from analystos.core.ids import new_id, utcnow
+from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import Alert, Artifact, Monitor, User, Workspace
@@ -30,6 +30,13 @@ log = get_logger(__name__)
 KINDS = {"metric_threshold", "metric_drift", "change_point", "forecast_deviation", "data_quality"}
 OPS = {">": lambda a, b: a > b, ">=": lambda a, b: a >= b, "<": lambda a, b: a < b, "<=": lambda a, b: a <= b}
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+PERCENT_TOLERANCE = 1e-9
+
+
+def condition_key(workspace_id: str, kind: str, config: dict) -> str:
+    """Identity of what a monitor watches. Two monitors with the same condition are the same signal:
+    they share alerts instead of each raising its own (the repeated alert in the Phase-3 evidence)."""
+    return stable_hash({"workspace": workspace_id, "kind": kind, "config": config})[:32]
 
 
 # ------------------------------------------------------------------------------------ definitions
@@ -45,6 +52,14 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
+    key = condition_key(workspace_id, kind, config)
+    for existing in session.scalars(select(Monitor).where(Monitor.workspace_id == workspace_id, Monitor.kind == kind,
+                                                          Monitor.enabled.is_(True))):
+        if condition_key(workspace_id, kind, existing.config) == key and existing.auto_investigate == auto_investigate:
+            # Idempotent: re-creating a monitor for the same condition returns the one already watching it.
+            audit(f"user:{user.id}", "monitor.reused", workspace_id=workspace_id, target=existing.id,
+                  details={"kind": kind, "requested_name": name}, session=session)
+            return existing
     m = Monitor(id=new_id("mon"), workspace_id=workspace_id, name=name, kind=kind, config=config, enabled=True,
                 auto_investigate=auto_investigate, created_by=user.id)
     session.add(m)
@@ -52,7 +67,21 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
     return m
 
 
-def _dataset_and_metric(session: Session, monitor: Monitor) -> tuple[dict, str, str]:
+def _is_fraction(value: Any) -> bool:
+    return isinstance(value, (int, float)) and -PERCENT_TOLERANCE <= value <= 1 + PERCENT_TOLERANCE
+
+
+def _usable_metric(metric: Artifact | None) -> bool:
+    """A percent KPI whose validated value is not a fraction is a legacy x100 definition (written before
+    semantic validation required fractions); monitoring it would report the same rate at 100 times its scale."""
+    if metric is None:
+        return False
+    content = metric.content or {}
+    value = (content.get("validation") or {}).get("value")
+    return not (content.get("format") == "percent" and value is not None and not _is_fraction(value))
+
+
+def _dataset_and_metric(session: Session, monitor: Monitor) -> tuple[dict, str, str, str | None]:
     cfg = monitor.config
     stmt = select(Artifact).where(Artifact.workspace_id == monitor.workspace_id, Artifact.type == "dataset")
     if cfg.get("dataset_artifact_id"):
@@ -62,24 +91,38 @@ def _dataset_and_metric(session: Session, monitor: Monitor) -> tuple[dict, str, 
         raise InvalidInput("no analytical dataset in this workspace yet: run an analysis first")
     expression = cfg.get("sql_expression")
     label = cfg.get("metric") or monitor.name
+    fmt = cfg.get("format")
     if not expression:
         metric = session.scalar(select(Artifact).where(Artifact.workspace_id == monitor.workspace_id, Artifact.type == "metric",
                                                        Artifact.name == cfg["metric"], Artifact.run_id == dataset.run_id))
-        metric = metric or session.scalar(select(Artifact).where(Artifact.workspace_id == monitor.workspace_id,
-                                                                  Artifact.type == "metric", Artifact.name == cfg["metric"])
-                                          .order_by(Artifact.created_at.desc()))
+        if not _usable_metric(metric):
+            candidates = session.scalars(select(Artifact).where(Artifact.workspace_id == monitor.workspace_id,
+                                                                Artifact.type == "metric", Artifact.name == cfg["metric"])
+                                         .order_by(Artifact.created_at.desc()))
+            metric = next((m for m in candidates if _usable_metric(m)), None)
         if metric is None:
-            raise NotFound(f"metric {cfg['metric']} not found")
+            raise NotFound(f"metric {cfg['metric']} not found (or only on a legacy x100 percent scale)")
         expression = metric.content["sql_expression"]
         label = metric.content.get("display_name") or label
-    return dict(dataset.content), expression, label
+        fmt = metric.content.get("format")
+    return dict(dataset.content), expression, label, fmt
+
+
+def check_scale(label: str, fmt: str | None, points: list[tuple[str, float]]) -> None:
+    """Percent KPIs are fractions end to end; a series outside [0, 1] is a scale defect, not a signal."""
+    if fmt != "percent":
+        return
+    bad = [(p, v) for p, v in points if not _is_fraction(v)]
+    if bad:
+        raise InvalidInput(f"{label} is a percent KPI but its series has {len(bad)} value(s) outside [0, 1] "
+                           f"(e.g. {bad[0][1]:.4g} for {bad[0][0]}): the definition is on the wrong scale")
 
 
 def metric_series(session: Session, owner: User, monitor: Monitor) -> dict[str, Any]:
     """Governed time series of the monitored metric: [(period, value)] oldest first."""
     from analystos.runtime.context import default_gateway
 
-    ds, expression, label = _dataset_and_metric(session, monitor)
+    ds, expression, label, fmt = _dataset_and_metric(session, monitor)
     time_col = ds.get("raw_time_column")
     if not time_col:
         raise InvalidInput("the dataset has no time column to monitor over")
@@ -94,6 +137,7 @@ def metric_series(session: Session, owner: User, monitor: Monitor) -> dict[str, 
                              actor=f"monitor:{monitor.id}", purpose="monitor.future_rows").rows[0][0]
     rows = [(p, v, ts) for p, v, ts in result.rows if v is not None]
     points = [(str(p)[:10], float(v)) for p, v, _ in rows]
+    check_scale(label, fmt, points)
     dropped = None
     if monitor.config.get("exclude_last_period", True) and rows:
         # The last period is incomplete unless the data reaches (almost) its end.
@@ -104,7 +148,7 @@ def metric_series(session: Session, owner: User, monitor: Monitor) -> dict[str, 
         end = {"day": start + timedelta(days=1), "week": start + timedelta(days=7)}.get(grain) or _next_month(start)
         if _as_datetime(last_ts) < end - timedelta(hours=12):
             dropped = points.pop()[0]
-    return {"label": label, "expression": expression, "grain": grain, "points": points, "query_id": result.query_id,
+    return {"label": label, "expression": expression, "format": fmt, "grain": grain, "points": points, "query_id": result.query_id,
             "excluded_future_rows": int(future or 0), "dropped_incomplete_period": dropped}
 
 
@@ -260,7 +304,9 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
         m.last_evaluated_at = utcnow()
         m.last_result = {k: v for k, v in result.items() if k != "series_tail"} | {"series_tail": result.get("series_tail")}
         if not result.get("alert"):
-            for a in s.scalars(select(Alert).where(Alert.monitor_id == monitor_id, Alert.status != "resolved")):
+            key = condition_key(m.workspace_id, m.kind, m.config)
+            for a in s.scalars(select(Alert).where(or_(Alert.monitor_id == monitor_id, Alert.dedupe_key.like(f"{key}:%")),
+                                                   Alert.status != "resolved")):
                 a.status, a.resolved_at = "resolved", utcnow()
         emit(m.workspace_id, "monitor.evaluated", {"monitor": m.id, "state": m.state, "trigger": trigger,
                                                    "message": result.get("message"), "alert_id": alert_id}, session=s)
@@ -286,9 +332,24 @@ def _triage(monitor: Monitor, workspace: Workspace, result: dict) -> tuple[str, 
     return severity, {"p_material": verdict.value, "model": verdict.model}
 
 
+def alert_dedupe_key(monitor: Monitor, result: dict) -> str:
+    """Same condition, same period: one open alert, whichever monitor observed it."""
+    at = result.get("period") or result.get("change_period") or ",".join(result.get("new", []))
+    return f"{condition_key(monitor.workspace_id, monitor.kind, monitor.config)}:{at}"[:200]
+
+
+def _open_alert(*keys: str) -> str | None:
+    with session_scope() as s:
+        return s.scalar(select(Alert.id).where(Alert.dedupe_key.in_(keys), Alert.status != "resolved"))
+
+
 def _raise_alert(monitor: Monitor, owner: User, workspace: Workspace, result: dict) -> str:
+    dedupe = alert_dedupe_key(monitor, result)
+    legacy = f"{monitor.id}:{dedupe.split(':', 1)[1]}"[:200]  # alerts raised before condition keys
+    existing_id = _open_alert(dedupe, legacy)
+    if existing_id:
+        return existing_id  # no second alert, notification, triage call or investigation for the same signal
     severity, triage = _triage(monitor, workspace, result)
-    dedupe = f"{monitor.id}:{result.get('period') or result.get('change_period') or ','.join(result.get('new', []))[:120]}"
     with session_scope() as s:
         existing = s.scalar(select(Alert).where(Alert.dedupe_key == dedupe, Alert.status != "resolved"))
         if existing:

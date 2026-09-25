@@ -9,12 +9,12 @@ import sqlglot
 from sqlalchemy import select
 
 from analystos.agents.sql_agent import dataset_def, derivation_alias
-from analystos.artifacts.registry import link, save_artifact
+from analystos.artifacts.registry import current_plan_filter, link, save_artifact
 from analystos.contracts.analysis import AnalysisSpec, Derivation
 from analystos.contracts.bi import ChartSpec, DashboardSpec, MetricDef
 from analystos.core.errors import AnalystOSError
 from analystos.db.base import session_scope
-from analystos.db.models import Artifact, Hypothesis, Insight
+from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
 from analystos.runtime.context import RunContext
 
 JEV_ALTERNATIVES = {"comparison": ["bar", "treemap", "pie", "table"], "distribution": ["histogram", "bar"],
@@ -196,8 +196,12 @@ def design(ctx: RunContext) -> dict:
 
 
 def load_bundle_parts(run_id: str) -> dict[str, Any]:
+    """Metrics, charts and dashboards of the run's current plan version only: after a replan, what an
+    earlier version produced and the new plan did not reproduce is stale and must not be published."""
     with session_scope() as s:
-        arts = list(s.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type.in_(["metric", "chart", "dashboard"]))
+        run = s.get(AnalysisRun, run_id)
+        arts = list(s.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type.in_(["metric", "chart", "dashboard"]),
+                                                     current_plan_filter(run))
                               .order_by(Artifact.created_at)))
         return {"metrics": [MetricDef.model_validate(a.content) for a in arts if a.type == "metric"],
                 "charts": [ChartSpec.model_validate(a.content) for a in arts if a.type == "chart"],

@@ -3,18 +3,37 @@ dashboard and report is persisted and versioned; provenance is a generic edge li
 graph projection mirrors into Neo4j."""
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from analystos.core.ids import new_id, stable_hash
-from analystos.db.models import Artifact, ArtifactVersion, LineageEdge
+from analystos.db.models import AnalysisRun, Artifact, ArtifactVersion, LineageEdge
 
 ARTIFACT_TYPES = {"query", "profile", "quality_report", "relationship_map", "context_package", "plan", "dataset",
                   "semantic_model", "metric", "chart", "dashboard", "report", "narrative", "python_script", "ml_model",
                   "forecast", "alert", "schedule", "export", "data_quality_rule", "notebook", "transformation"}
+
+# (run_id, plan_version) of the task currently executing; set by the engine around each task.
+producing_plan: ContextVar[tuple[str, int] | None] = ContextVar("producing_plan", default=None)
+
+
+def _plan_version(session: Session, run_id: str | None) -> int | None:
+    if run_id is None:
+        return None
+    producing = producing_plan.get()
+    if producing and producing[0] == run_id:
+        return producing[1]
+    run = session.get(AnalysisRun, run_id)
+    return run.plan_version if run is not None else None
+
+
+def current_plan_filter(run: AnalysisRun):
+    """Artifacts written under the run's current plan version (unstamped rows predate stamping)."""
+    return or_(Artifact.plan_version == run.plan_version, Artifact.plan_version.is_(None))
 
 
 def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str, content: dict[str, Any],
@@ -23,7 +42,9 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
     """Upsert by (workspace, run, type, name): unchanged content is a no-op, changed content is a new version.
 
     An agent writing inside a run passes the ``artifact.write`` tool gate (workspace ``tool_denylist``,
-    role, autonomy; spec v2 §6). Writes by a signed-in user are governed by their route's role check."""
+    role, autonomy; spec v2 §6). Writes by a signed-in user are governed by their route's role check.
+    Run artifacts are stamped with the writing task's plan version; a task of a superseded plan cannot
+    overwrite what the current plan already wrote."""
     if type_ not in ARTIFACT_TYPES:
         raise ValueError(f"unknown artifact type {type_}")
     if creator_agent and run_id:
@@ -32,9 +53,14 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
         gate_agent_write(session, workspace_id=workspace_id, run_id=run_id, agent_id=creator_agent,
                          inputs={"type": type_, "name": name})
     content_hash = stable_hash(content)
+    plan_version = _plan_version(session, run_id)
     existing = session.scalar(select(Artifact).where(Artifact.workspace_id == workspace_id, Artifact.run_id == run_id,
                                                      Artifact.type == type_, Artifact.name == name))
     if existing:
+        if plan_version is not None and (existing.plan_version or 0) > plan_version:
+            return existing
+        if plan_version is not None:
+            existing.plan_version = plan_version
         if existing.content_hash != content_hash:
             existing.version += 1
             existing.content = content
@@ -44,8 +70,8 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
                                         content_hash=content_hash, created_by=creator_agent or creator_user))
         return existing
     artifact = Artifact(id=new_id("art"), workspace_id=workspace_id, run_id=run_id, type=type_, name=name, version=1,
-                        status=status, creator_agent=creator_agent, creator_user=creator_user, content=content,
-                        content_hash=content_hash)
+                        plan_version=plan_version, status=status, creator_agent=creator_agent, creator_user=creator_user,
+                        content=content, content_hash=content_hash)
     session.add(artifact)
     session.flush()
     session.add(ArtifactVersion(artifact_id=artifact.id, version=1, content=content, content_hash=content_hash,
