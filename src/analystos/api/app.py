@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
+from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import mcp as mcp_router
@@ -44,6 +45,7 @@ for r in (auth.router, workspaces.router, analysis.router, artifacts.router, adm
 app.include_router(mcp_router.router)
 app.include_router(decisions_router.router)
 app.include_router(builds_router.router)
+app.include_router(ask_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 

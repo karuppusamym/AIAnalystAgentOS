@@ -1,4 +1,4 @@
-import { INSIGHT, RUN, WS } from "../src/test/mockBackend";
+import { INSIGHT, RUN, THREAD_NEW, WS } from "../src/test/mockBackend";
 import { axeViolations, expect, signIn, test } from "./fixtures";
 
 test.describe("five-journey IA", () => {
@@ -67,6 +67,43 @@ test.describe("five-journey IA", () => {
     await expect(html).toHaveAttribute("data-theme", "dark");
     await page.reload();
     await expect(html).toHaveAttribute("data-theme", "dark");
+  });
+});
+
+test.describe("Ask (P4-U02)", () => {
+  test("ask → promote to monitor → investigate", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("How many P1 incidents per assignment group?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const answer = page.getByRole("article", { name: "Question 1" });
+    await expect(answer.getByText("P1 incidents by assignment group.")).toBeVisible();
+    await expect(answer.getByRole("list", { name: "Provenance" }).getByText("Validated by the query gateway")).toBeVisible();
+    await expect(answer.getByRole("img", { name: /bar chart/ })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`thread=${THREAD_NEW}`));
+
+    const inspector = page.getByRole("complementary", { name: "Answer inspector" });
+    await inspector.getByRole("tab", { name: "Decision" }).click();
+    await expect(inspector.getByText(/ask_route: generate — decided by rule/)).toBeVisible();
+
+    const promote = answer.getByRole("region", { name: "Promote this answer" });
+    await promote.getByRole("button", { name: "Monitor this" }).click();
+    await promote.getByLabel("Every").selectOption("month");
+    await promote.getByRole("button", { name: "Create monitor" }).click();
+    await expect(promote.getByText(/Monitor "P1 incidents per assignment group" created/)).toBeVisible();
+
+    await promote.getByRole("button", { name: "Investigate why" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("a vague question gets the clarify refusal with its remedy", async ({ page }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("what about it?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const turn = page.getByRole("article", { name: "Question 1" });
+    await expect(turn.getByText("The question needs more detail")).toBeVisible();
+    await expect(turn.getByRole("button", { name: "Rephrase the question" })).toBeVisible();
   });
 });
 
@@ -150,6 +187,7 @@ test.describe("operate (P4-U06, P4-U07)", () => {
 const SCREENS: [string, string, RegExp][] = [
   ["Home", `/w/${WS}`, /What changed/],
   ["Ask", `/w/${WS}/ask`, /SQL console/],
+  ["Ask · thread", `/w/${WS}/ask?thread=ask_old`, /How many P1 incidents per week/],
   ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
   ["Knowledge", `/w/${WS}/knowledge/catalog`, /One row per incident/],
   ["Build", `/w/${WS}/build/studio`, /P1 resolution/],

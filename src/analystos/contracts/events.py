@@ -17,6 +17,7 @@ EVENT_TYPES = {
     "build_target.provisioned", "build.planned", "build.started", "build.completed", "build.failed", "build.refused",
     "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
+    "ask.answered", "ask.promoted", "capability.invoked",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

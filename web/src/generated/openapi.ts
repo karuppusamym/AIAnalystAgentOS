@@ -484,6 +484,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Thread */
+        get: operations["get_thread_api_ask_threads__thread_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Thread */
+        patch: operations["patch_thread_api_ask_threads__thread_id__patch"];
+        trace?: never;
+    };
+    "/api/ask/threads/{thread_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask Turn
+         * @description Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
+         *     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
+         */
+        post: operations["ask_turn_api_ask_threads__thread_id__turns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask/turns/{turn_id}/inspector": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Turn */
+        get: operations["inspect_turn_api_ask_turns__turn_id__inspector_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask/turns/{turn_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote Turn
+         * @description Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), or a
+         *     dashboard chart (202 with an approval request first; again with the approved `approval_id`).
+         */
+        post: operations["promote_turn_api_ask_turns__turn_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets/{asset_id}/columns/{column}/tags": {
         parameters: {
             query?: never;
@@ -1341,6 +1418,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/ask/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Threads */
+        get: operations["list_threads_api_workspaces__workspace_id__ask_threads_get"];
+        put?: never;
+        /** Create Thread */
+        post: operations["create_thread_api_workspaces__workspace_id__ask_threads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/assets": {
         parameters: {
             query?: never;
@@ -1422,6 +1517,28 @@ export interface paths {
         /** Set Capability Enabled */
         put: operations["set_capability_enabled_api_workspaces__workspace_id__capabilities__capability_id__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/capabilities/{capability_id}/invoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invoke Capability
+         * @description Run a capability with arguments validated against its `input_schema`. Read-only capabilities run
+         *     now; any other side effect returns 202 with an approval request, and runs only when called again
+         *     with that approval once it is approved (verified against the exact payload just before running).
+         */
+        post: operations["invoke_capability_api_workspaces__workspace_id__capabilities__capability_id__invoke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1757,7 +1874,8 @@ export interface paths {
         put?: never;
         /**
          * Explain Query
-         * @description Deterministic explanation (no model, no execution) plus the gateway validator's verdict for this caller.
+         * @description Deterministic explanation (no model, no execution), the gateway validator's verdict for this
+         *     caller and, when accepted, the source's plan through the gateway (EXPLAIN only).
          */
         post: operations["explain_query_api_workspaces__workspace_id__query_explain_post"];
         delete?: never;
@@ -2168,6 +2286,74 @@ export interface components {
              */
             use_registry?: boolean;
         };
+        /** AskPromoteIn */
+        AskPromoteIn: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /**
+             * Auto Investigate
+             * @default false
+             */
+            auto_investigate?: boolean;
+            /** Chart */
+            chart?: {
+                [key: string]: unknown;
+            } | null;
+            /** Dashboard */
+            dashboard?: string | null;
+            /** Destination */
+            destination?: string | null;
+            /** Display Name */
+            display_name?: string | null;
+            /** Extra */
+            extra?: {
+                [key: string]: unknown;
+            };
+            /** Format */
+            format?: string | null;
+            /** Grain */
+            grain?: ("day" | "week" | "month") | null;
+            /** Kind */
+            kind?: ("metric_drift" | "metric_threshold" | "change_point" | "forecast_deviation") | null;
+            /** Name */
+            name?: string | null;
+            /** Objective */
+            objective?: string | null;
+            /** Op */
+            op?: string | null;
+            /** Question */
+            question?: string | null;
+            /** Sql Expression */
+            sql_expression?: string | null;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate";
+            /** Value */
+            value?: number | null;
+        };
+        /** AskThreadIn */
+        AskThreadIn: {
+            /** Title */
+            title?: string | null;
+        };
+        /** AskThreadPatch */
+        AskThreadPatch: {
+            /** Archived */
+            archived?: boolean | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** AskTurnIn */
+        AskTurnIn: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
+            /** Question */
+            question: string;
+        };
         /** AssetMetadataIn */
         AssetMetadataIn: {
             /** Business Name */
@@ -2228,6 +2414,15 @@ export interface components {
              * @default false
              */
             dry_run?: boolean;
+        };
+        /** CapabilityInvokeIn */
+        CapabilityInvokeIn: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
         };
         /** ClassifyIn */
         ClassifyIn: {
@@ -3778,6 +3973,188 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thread_api_ask_threads__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_thread_api_ask_threads__thread_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskThreadPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_turn_api_ask_threads__thread_id__turns_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskTurnIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inspect_turn_api_ask_turns__turn_id__inspector_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_turn_api_ask_turns__turn_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskPromoteIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5731,6 +6108,81 @@ export interface operations {
             };
         };
     };
+    list_threads_api_workspaces__workspace_id__ask_threads_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                archived?: boolean;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_thread_api_workspaces__workspace_id__ask_threads_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskThreadIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     assets_api_workspaces__workspace_id__assets_get: {
         parameters: {
             query?: never;
@@ -5961,6 +6413,45 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["EnableIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invoke_capability_api_workspaces__workspace_id__capabilities__capability_id__invoke_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                capability_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapabilityInvokeIn"];
             };
         };
         responses: {

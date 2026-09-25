@@ -247,6 +247,38 @@ class QueryGateway:
             })
         return result
 
+    def explain(self, scope: DataScope, sql: str, *, actor: str, purpose: str = "explain",
+                timeout_seconds: int | None = None) -> dict[str, Any]:
+        """Dry explain (paste-SQL explain in Ask): validated exactly as `execute` validates, then the
+        source is asked for its plan without running the statement (`EXPLAIN (FORMAT JSON)`, never
+        ANALYZE, inside the same read-only transaction). Rejections are audited like an execution's;
+        a source with no plan explain reports `available: False`. No rows are read or kept."""
+        started = time.perf_counter()
+        eff_rows = min(x for x in (scope.max_rows, self.settings.query_max_rows) if x is not None and x > 0)
+        eff_timeout = min(
+            x for x in (timeout_seconds, scope.timeout_seconds, self.settings.query_timeout_seconds) if x is not None and x > 0
+        )
+        audit = {"id": new_id("qry"), "workspace_id": scope.workspace_id, "run_id": None, "task_id": None,
+                 "actor": actor[:80], "purpose": (purpose or "explain")[:120], "sql": sql if isinstance(sql, str) else str(sql)}
+        try:
+            validated = validate_sql(scope, sql, max_rows=eff_rows)
+            source = self._load_source(scope, validated)
+        except (SQLRejected, Forbidden, NotFound) as exc:
+            self._reject(audit, exc, started)
+            raise
+        audit.update(source_id=validated.source_id, executed_sql=validated.executable_sql, fingerprint=validated.fingerprint,
+                     referenced_assets=validated.referenced_assets)
+        if validated.dialect != "postgres":
+            return {"available": False, "reason": f"plan explain is not supported for {validated.dialect} sources"}
+        try:
+            _, rows = self._run(source, validated, 1, eff_timeout, sql="EXPLAIN (FORMAT JSON) " + validated.executable_sql)
+        except AnalystOSError as exc:
+            self._fail(audit, "error", exc, started)
+            raise
+        self._persist(dict(audit, status="explained", row_count=0, duration_ms=int((time.perf_counter() - started) * 1000)),
+                      strict=False)
+        return {"available": True, **plan_summary(rows[0][0] if rows and rows[0] else None)}
+
     # ------------------------------------------------------------------ helpers
     def _load_source(self, scope: DataScope, validated: ValidatedSQL) -> dict[str, Any]:
         session = self.session_factory()
@@ -282,11 +314,14 @@ class QueryGateway:
                 )
         return source
 
-    def _run(self, source: dict[str, Any], validated: ValidatedSQL, max_rows: int, timeout: int) -> tuple[list[str], list[list[Any]]]:
+    def _run(self, source: dict[str, Any], validated: ValidatedSQL, max_rows: int, timeout: int,
+             sql: str | None = None) -> tuple[list[str], list[list[Any]]]:
+        """`sql` replaces the validated statement only for the gateway's own wrappers of it (EXPLAIN)."""
+        statement = sql or validated.executable_sql
         if source["execution_mode"] == "staged":
             role = workspace_reader_role(source["workspace_id"],
                                          getattr(self.settings, "analytics_workspace_role_prefix", "analystos_r_"))
-            return self._run_postgres(self.settings.analytics_reader_url, validated.executable_sql, max_rows, timeout,
+            return self._run_postgres(self.settings.analytics_reader_url, statement, max_rows, timeout,
                                       role=role)
         connector = self.connector_factory(_SourceView(source), self.settings)
         if getattr(connector, "execution_mode", "pushdown") != "pushdown":
@@ -297,11 +332,11 @@ class QueryGateway:
         if dialect != validated.dialect:
             raise SQLRejected(f"Source {source['id']} expects {dialect} SQL")
         if dialect == "postgres":
-            return self._run_postgres(connector.sqlalchemy_url(), validated.executable_sql, max_rows, timeout)
+            return self._run_postgres(connector.sqlalchemy_url(), statement, max_rows, timeout)
         if dialect == "tsql":
             url = connector.query_url(timeout) if hasattr(connector, "query_url") else connector.sqlalchemy_url()
             session_sql = connector.session_statements(timeout) if hasattr(connector, "session_statements") else []
-            return self._run_generic(url, validated.executable_sql, max_rows, session_sql)
+            return self._run_generic(url, statement, max_rows, session_sql)
         raise InvalidInput(f"Unsupported pushdown dialect {dialect}")
 
     def _run_postgres(self, url: str, sql: str, max_rows: int, timeout: int,
@@ -471,3 +506,24 @@ class _SourceView:
 def _first_line(exc: BaseException | None) -> str:
     text_ = str(exc or "").strip()
     return text_.splitlines()[0][:500] if text_ else (exc.__class__.__name__ if exc else "error")
+
+
+def plan_summary(raw: Any) -> dict[str, Any]:
+    """The top of a Postgres JSON plan: estimated rows and cost, and every node and relation in it."""
+    import json
+
+    doc = json.loads(raw) if isinstance(raw, str) else raw
+    top = (doc[0] if isinstance(doc, list) and doc else doc or {}).get("Plan") or {}
+    nodes: list[str] = []
+    relations: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        nodes.append(str(node.get("Node Type")))
+        if node.get("Relation Name"):
+            relations.append(f"{node.get('Schema') or ''}.{node['Relation Name']}".lstrip("."))
+        for child in node.get("Plans") or []:
+            walk(child)
+
+    walk(top)
+    return {"node": top.get("Node Type"), "estimated_rows": top.get("Plan Rows"), "total_cost": top.get("Total Cost"),
+            "nodes": nodes[:40], "relations": sorted(set(relations))}

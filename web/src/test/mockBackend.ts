@@ -4,7 +4,7 @@
  * the client's response shapes so a shape change breaks the typecheck, not just a screenshot.
  */
 import type {
-  AgentSpec, Alert, Approval, Artifact, AskResponse, CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight,
+  AgentSpec, Alert, Approval, Artifact, AskInspector, AskResponse, AskThread, AskTurn, CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight,
   InsightDetail, Monitor, ModelsView, PlatformSettings, Run, RunDetail, Schedule, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec,
   Usage, User, WorkspaceDetail,
 } from "../api";
@@ -142,6 +142,106 @@ export const ASK: AskResponse = {
   explanation: "P1 incidents by assignment group.", chart: { type: "bar", x: "assignment_group", y: "p1" }, model: "rule", attempts: [],
   result: { query_id: "qry_1", columns: ["assignment_group", "p1"], rows: [["Network", 182], ["Desktop", 110]], row_count: 2, truncated: false },
 };
+
+// ------------------------------------------------------------------------------------ Ask threads (P4-U02)
+export const THREAD_OLD = "ask_old";
+export const THREAD_NEW = "ask_new";
+
+const THREAD: AskThread = { id: THREAD_OLD, workspace_id: WS, user_id: USER.id, title: "Weekly P1 volume", archived: false,
+  created_at: "2026-09-20T09:00:00Z", updated_at: "2026-09-20T09:00:00Z", turn_count: 1 };
+
+const STAGES = [
+  { key: "scope", text: "Checking what you are allowed to see", at_ms: 3 },
+  { key: "registry", text: "Looking for a verified answer to this question", at_ms: 9 },
+  { key: "route", text: "No verified answer fits: writing new SQL", at_ms: 12 },
+  { key: "context", text: "Finding the tables that answer this", at_ms: 15 },
+  { key: "generate", text: "Writing the SQL", at_ms: 20 },
+  { key: "execute", text: "Running it through the query gateway (read-only, within your access)", at_ms: 910 },
+  { key: "done", text: "Answered", at_ms: 950 },
+];
+
+export function askTurn(id: string, question: string, over: Partial<AskTurn> = {}): AskTurn {
+  return {
+    id, thread_id: THREAD_NEW, workspace_id: WS, seq: 1, question, parameters: {}, status: "answered", route: "generate", answered_by: "model",
+    refusal: null, sql: ASK.sql, explanation: ASK.explanation, chart: ASK.chart, result: { ...ASK.result, referenced_assets: ["stg_sn.incident"] },
+    verified_query: null, model: "openrouter/auto", attempts: [], stages: STAGES, promotions: [], latency_ms: 950, created_at: T,
+    decisions: [{ id: "dec_1", purpose: "ask_route", backend: "rules", value: "generate" },
+      { id: "dec_2", purpose: "clarify_needed", backend: "jev", value: "answer", model: "typesafe/jev-1", probabilities: { answer: 0.88, clarify: 0.12 } }],
+    provenance: { assets: [{ asset: "stg_sn.incident", asset_id: "ast_inc", business_name: "Incidents", source_id: SOURCE.id, source_name: "ServiceNow",
+      source_kind: "servicenow", execution_mode: "staged", freshness_at: "2026-09-25T06:00:00Z", row_count: 4210 }],
+    answered_by: "model", model: "openrouter/auto", query_id: "qry_1", cache_hit: false, result_hash: "9f86d081884c7d65", repairs: 0 },
+    staleness: { state: "fresh", label: "Data as of 3 hours ago", data_as_of: "2026-09-25T06:00:00Z" },
+    ...over,
+  };
+}
+
+const OLD_TURN = askTurn("askt_old", "How many P1 incidents per week?", { thread_id: THREAD_OLD });
+
+/** The clarify refusal: nothing to measure, so nothing ran. */
+function clarifyTurn(question: string): AskTurn {
+  return askTurn("askt_clarify", question, {
+    status: "clarify", route: "generate", answered_by: null, sql: null, explanation: null, chart: null, result: null, provenance: {},
+    refusal: { kind: "clarify", title: "The question needs more detail", message: "This question is too open to answer safely.",
+      remedy: "Say what to measure (a count, a rate, an average), over which records and period, and how to group it.", details: { missing: [{ name: "what to measure" }] } },
+    staleness: { state: "unknown", label: "Data freshness unknown", data_as_of: null },
+    stages: [STAGES[0], { key: "clarify", text: "The question needs more detail before it can be answered", at_ms: 8 }],
+  });
+}
+
+const INSPECTOR = (turn: AskTurn): AskInspector => ({
+  turn,
+  decisions: [
+    { id: "dec_1", purpose: "ask_route", authority: "route", backend: "rules", model: null, answer: "generate", proposal: "generate",
+      probabilities: { generate: 1 }, confidence: null, fallback_reason: null, attempts: [{ backend: "rules", outcome: "answered", reason: "nothing verified matched" }],
+      enforced: [], subject: `ask:${turn.id}`, latency_ms: 1, created_at: T },
+    { id: "dec_2", purpose: "clarify_needed", authority: "escalate_only", backend: "jev", model: "typesafe/jev-1", answer: "answer", proposal: "answer",
+      probabilities: { yes: 0.12, no: 0.88 }, confidence: 0.88, fallback_reason: null, attempts: [], enforced: [], subject: `ask:${turn.id}`, latency_ms: 240,
+      created_at: T },
+  ],
+  model_calls: [{ id: 91, run_id: null, task_id: turn.id, agent_id: "sql", purpose: "sql_generation", profile: "chat", provider: "openrouter",
+    model: "openrouter/auto", prompt_version: "sql_generation.v1@ab12", status: "ok", attempt: 1, latency_ms: 820, input_tokens: 2100, output_tokens: 90,
+    cost_usd: 0.0012, error: null, created_at: T, answered_by: "llm_small",
+    context_receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }] }],
+  query: { id: "qry_1", workspace_id: WS, source_id: SOURCE.id, run_id: null, task_id: null, actor: `user:${USER.id}`, purpose: "ask", sql: ASK.sql,
+    executed_sql: `${ASK.sql} LIMIT 5001`, fingerprint: "fp_ask_1", status: "ok", rejected_reason: null, referenced_assets: ["stg_sn.incident"], row_count: 2,
+    truncated: false, columns: ASK.result.columns, result_hash: "9f86d081884c7d65", cache_hit: false, duration_ms: 40, created_at: T },
+  receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }],
+});
+
+const sse = (frames: [string, unknown][]): MockResponse => ({
+  status: 200, contentType: "text/event-stream",
+  body: frames.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(""),
+});
+
+/** Ask thread routes: list, create, detail, streamed turn, inspector and promotions. */
+function askRoute(m: string, p: string, requestBody?: string | null): MockResponse | null {
+  if (m === "GET" && p === `/workspaces/${WS}/ask/threads`) return json([THREAD]);
+  if (m === "POST" && p === `/workspaces/${WS}/ask/threads`) {
+    return json({ id: THREAD_NEW, workspace_id: WS, user_id: USER.id, title: "New question", archived: false, created_at: T, updated_at: T, turns: [] });
+  }
+  if (m === "GET" && p === `/ask/threads/${THREAD_OLD}`) return json({ ...THREAD, turns: [OLD_TURN] });
+  if (m === "POST" && p === `/ask/threads/${THREAD_NEW}/turns`) {
+    const q = String((requestBody ? JSON.parse(requestBody) as { question?: string } : {}).question ?? "");
+    const turn = /about it/i.test(q) ? clarifyTurn(q) : askTurn("askt_1", q);
+    return sse([...turn.stages.map((s) => ["stage", { turn_id: turn.id, ...s }] as [string, unknown]), ["turn", turn], ["end", { status: "done" }]]);
+  }
+  const inspect = /^\/ask\/turns\/([^/]+)\/inspector$/.exec(p);
+  if (m === "GET" && inspect) return json(INSPECTOR(askTurn(inspect[1], "How many P1 incidents per assignment group?")));
+  const promote = /^\/ask\/turns\/([^/]+)\/promote$/.exec(p);
+  if (m === "POST" && promote) {
+    const body = requestBody ? JSON.parse(requestBody) as { target?: string } : {};
+    const at = T;
+    switch (body.target) {
+      case "verified_query": return json({ target: "verified_query", id: "vq_1", name: "p1_by_group", status: "created", at });
+      case "metric": return json({ target: "metric", id: "smet_1", name: "p1_count", status: "proposed", approval_id: "apr_m1", value: 292, at });
+      case "monitor": return json({ target: "monitor", id: "mon_2", name: "P1 incidents per assignment group", status: "created", kind: "metric_drift", at });
+      case "dashboard": return json({ target: "dashboard", id: "apr_d1", status: "approval_required", approval_id: "apr_d1", dashboard: "Ask answers", at }, 202);
+      case "investigate": return json({ target: "investigate", id: RUN, status: "started", objective: "Investigate why: P1 incidents", at });
+      default: return json({ error: { code: "invalid_input", message: "unknown target", details: {} } }, 422);
+    }
+  }
+  return null;
+}
 
 const SETTINGS: PlatformSettings = {
   llm: {
@@ -286,19 +386,18 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   if (wsCap && m === "POST" && wsCap[2]) {
     return decodeURIComponent(wsCap[1]) === PLUGIN_METHOD.id
       ? json({ status: "ok", capability: PLUGIN_METHOD.id, side_effect: "read_source", result: FUNNEL_RESULT })
-      : json({ error: { code: "not_found", message: "no invoke route", details: {} } }, 404);
+      : json({ error: { code: "invalid_input", message: "cannot be run on its own", details: { reason: "not_invocable" } } }, 422);
   }
   if (m === "POST" && p === "/admin/capabilities/reload") {
     return json({ digest: "d1e2f3a4b5c6d7e8", previous_digest: "d1e2f3a4b5c6d7e8", count: CAPABILITIES.length, problems: [] });
   }
   if (m === "GET" && p === `${W}/mcp/capabilities`) return json([]);
-  // feedback: the server has no "accept" kind yet (services/runs.py FEEDBACK_KINDS), so it is refused as there
+  if (m === "POST" && /^\/insights\/[^/]+\/outcome$/.test(p)) {
+    const body = requestBody ? JSON.parse(requestBody) as { signal?: string } : {};
+    return json({ insight: p.split("/")[2], signal: body.signal, labelled_decisions: 1 });
+  }
   if (m === "POST" && p === `${W}/analysis/${RUN}/feedback`) {
     const body = requestBody ? JSON.parse(requestBody) as { kind?: string | null } : {};
-    if (body.kind === "accept") {
-      return json({ error: { code: "invalid_input", message: "kind must be one of ['add_context', 'deeper_analysis', 'question', 'redirect', 'reject_finding']",
-        details: {} } }, 400);
-    }
     return json({ kind: body.kind || "redirect", classified_by: body.kind ? "user" : "jev:typesafe/jev-1", consequential_p: 0.04,
       interpretation: body.kind === "reject_finding" ? undefined : { filters: [], focus: ["Network"], summary: "Focus on the Network group.", interpreted_by: "rule" },
       replan: { plan_version: 2, tasks_reset: [], tasks_removed: [], approvals_invalidated: [] }, feedback_id: "fb_2" });
@@ -307,6 +406,8 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     const status = url.searchParams.get("status");
     return json([APPROVAL, APPROVAL_EXECUTED].filter((a) => !status || a.status === status));
   }
+  const asked = askRoute(m, p, requestBody);
+  if (asked) return asked;
   if (p.endsWith("/events")) {
     return { status: 200, body: `event: end\ndata: {"status":"COMPLETED"}\n\n`, contentType: "text/event-stream" };
   }

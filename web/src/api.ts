@@ -502,6 +502,10 @@ export interface ModelCall {
   cost_usd: number;
   error: string | null;
   created_at: string;
+  /** Execution-ladder rung that answered (P4-T01) and the context compiler's receipts (P4-T03). */
+  answered_by?: string | null;
+  context_receipts?: Dict[] | null;
+  tokens_saved?: number;
 }
 
 export type AgentRunDetail = RunTask & { messages: AgentMessage[]; tool_calls: ToolExecution[]; model_calls: ModelCall[]; queries: QueryExecution[] };
@@ -549,13 +553,167 @@ export interface QueryResult {
   sql?: string;
 }
 
+export type ChartHint = { type?: string; x?: string | null; y?: string | null } | null;
+
 export interface AskResponse {
   sql: string;
   explanation: string | null;
-  chart: { type?: string; x?: string | null; y?: string | null } | null;
+  chart: ChartHint;
   model: string | null;
   attempts: { sql: string; error: string }[];
   result: QueryResult;
+  status?: string;
+  answered_by?: string | null;
+  route?: string | null;
+}
+
+// ----------------------------------------------------------------------------------- Ask threads (P4-U02, services/ask.py)
+/** One plain-language step of an Ask, streamed while it runs. */
+export interface AskStage {
+  key: string;
+  text: string;
+  at_ms: number;
+  turn_id?: string;
+  data?: Dict;
+}
+
+/** The refusal kinds of services/ask.py REFUSALS: one state each, with a remedy. */
+export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "no_model"
+  | "no_scope" | "timeout" | "unavailable" | "failed";
+
+export interface AskRefusal {
+  kind: AskRefusalKind | string;
+  title: string;
+  message: string;
+  remedy: string;
+  details: { missing?: { name: string; type?: string; values?: string[] }[]; verified_query?: Dict | null; parameters?: Dict; [k: string]: unknown };
+}
+
+export interface AskProvenanceAsset {
+  asset: string;
+  asset_id: string | null;
+  business_name: string | null;
+  source_id: string | null;
+  source_name: string | null;
+  source_kind: string | null;
+  execution_mode: string | null;
+  freshness_at: string | null;
+  row_count: number | null;
+}
+
+export interface AskProvenance {
+  assets?: AskProvenanceAsset[];
+  answered_by?: string | null;
+  verified_query?: { id: string; name: string; pattern?: string; score?: number } | null;
+  model?: string | null;
+  query_id?: string | null;
+  cache_hit?: boolean;
+  result_hash?: string | null;
+  repairs?: number;
+}
+
+export interface AskStaleness {
+  state: "fresh" | "aging" | "stale" | "changed" | "unknown";
+  label: string;
+  data_as_of: string | null;
+}
+
+export interface AskDecisionSummary {
+  id: string | null;
+  purpose: string;
+  backend: string;
+  value: unknown;
+  p?: number | null;
+  model?: string | null;
+  fallback_reason?: string | null;
+  probabilities?: Record<string, number>;
+  note?: string | null;
+}
+
+export interface AskPromotion {
+  target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate" | string;
+  id: string;
+  status: string;
+  name?: string;
+  approval_id?: string | null;
+  value?: unknown;
+  at?: string;
+  [k: string]: unknown;
+}
+
+export interface AskTurn {
+  id: string;
+  thread_id: string;
+  workspace_id: string;
+  seq: number;
+  question: string;
+  parameters: Dict;
+  status: "running" | "answered" | "needs_input" | "clarify" | "refused" | string;
+  route: string | null;
+  answered_by: string | null;
+  refusal: AskRefusal | null;
+  sql: string | null;
+  explanation: string | null;
+  chart: ChartHint;
+  result: QueryResult | null;
+  verified_query: Dict | null;
+  model: string | null;
+  attempts: { sql: string; error: string }[];
+  stages: AskStage[];
+  decisions: AskDecisionSummary[];
+  provenance: AskProvenance;
+  promotions: AskPromotion[];
+  latency_ms: number;
+  created_at: string;
+  staleness: AskStaleness;
+}
+
+export interface AskThread {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  title: string;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  turn_count?: number;
+}
+
+export interface AskThreadDetail extends AskThread {
+  turns: AskTurn[];
+}
+
+/** A `decision` row (decisions/store.py) recorded against the turn. */
+export interface DecisionRow {
+  id: string;
+  purpose: string;
+  authority: string;
+  backend: string;
+  model: string | null;
+  answer: unknown;
+  proposal: unknown;
+  probabilities: Record<string, number>;
+  confidence: number | null;
+  fallback_reason: string | null;
+  attempts: { backend: string; outcome: string; reason?: string | null }[];
+  enforced: string[];
+  subject: string | null;
+  latency_ms: number;
+  created_at: string;
+}
+
+export interface AskInspector {
+  turn: AskTurn;
+  decisions: DecisionRow[];
+  model_calls: ModelCall[];
+  query: QueryExecution | null;
+  receipts: Dict[];
+}
+
+export type AskPromoteBody = Schemas["AskPromoteIn"];
+
+export interface AskStreamCallbacks {
+  onStage: (s: AskStage) => void;
 }
 
 export interface Artifact {
@@ -1079,6 +1237,9 @@ export interface SqlExplanation {
   window_functions?: number;
   distinct?: boolean;
   gateway: { accepted: boolean; code?: string; reason?: string };
+  /** The source's plan through the gateway (EXPLAIN, never executed); only when the validator accepts. */
+  plan?: { available: boolean; reason?: string; node?: string | null; estimated_rows?: number | null; total_cost?: number | null;
+    nodes?: string[]; relations?: string[] };
 }
 
 // ----------------------------------------------------------------------------------- platform settings (admin)
@@ -1661,13 +1822,29 @@ export const api = {
   invokeMcpTool: (ws: string, server: string, tool: string, args: Dict) =>
     post("/api/workspaces/{workspace_id}/mcp/servers/{server_name}/tools/{tool_name}/invoke",
       { path: { workspace_id: ws, server_name: server, tool_name: tool }, body: { arguments: args } }) as Promise<CapabilityInvocation>,
-  /**
-   * Backend gap: there is no generic invoke route for built-in or plugin capabilities yet (only MCP
-   * tools). The call is untyped on purpose so the route can land without a client change; until it
-   * does the server answers 404/405 and the form shows a "not available" state.
-   */
-  invokeCapability: (ws: string, id: string, args: Dict) =>
-    request<CapabilityInvocation>("POST", `/workspaces/${encodeURIComponent(ws)}/capabilities/${encodeURIComponent(id)}/invoke`, { arguments: args }),
+  /** Built-in or plugin capability (capabilities/invoke.py): read-only runs now; a side effect answers 202 + approval. */
+  invokeCapability: (ws: string, id: string, args: Dict, approvalId?: string) =>
+    post("/api/workspaces/{workspace_id}/capabilities/{capability_id}/invoke",
+      { path: { workspace_id: ws, capability_id: id }, body: approvalId ? { arguments: args, approval_id: approvalId } : { arguments: args } }) as Promise<CapabilityInvocation>,
+  /** P4-T09: accept or dismiss a finding (labels the decisions behind it for calibration). */
+  findingOutcome: (insightId: string, signal: "accept" | "dismiss") =>
+    post("/api/insights/{insight_id}/outcome", { path: { insight_id: insightId }, body: { signal } }) as
+      Promise<{ insight: string; signal: string; labelled_decisions: number }>,
+
+  // Ask threads (P4-U02)
+  askThreads: (ws: string, q?: string) =>
+    get("/api/workspaces/{workspace_id}/ask/threads", { path: W(ws), query: { q: q || undefined } }) as Promise<AskThread[]>,
+  createAskThread: (ws: string, title?: string) =>
+    post("/api/workspaces/{workspace_id}/ask/threads", { path: W(ws), body: { title: title ?? null } }) as Promise<AskThreadDetail>,
+  askThread: (id: string) => get("/api/ask/threads/{thread_id}", { path: { thread_id: id } }) as Promise<AskThreadDetail>,
+  patchAskThread: (id: string, body: Schemas["AskThreadPatch"]) =>
+    patch("/api/ask/threads/{thread_id}", { path: { thread_id: id }, body }) as Promise<AskThread>,
+  askTurn: (threadId: string, question: string, parameters?: Dict) =>
+    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null } }) as
+      Promise<AskTurn>,
+  askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
+  promoteTurn: (turnId: string, body: AskPromoteBody) =>
+    post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)
@@ -1757,4 +1934,43 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
   };
   void loop();
   return { close: () => controller.abort() };
+}
+
+/**
+ * Ask in a thread with the stages streamed (POST + `Accept: text/event-stream`): `stage` events as
+ * the Ask runs, then `turn` (the persisted answer or refusal). Rejects with ApiError on an `error`
+ * event, a non-2xx status or a stream that ends without the answer.
+ */
+export async function streamAskTurn(threadId: string, question: string, parameters: Dict | undefined, cb: AskStreamCallbacks,
+  signal?: AbortSignal): Promise<AskTurn> {
+  let turn: AskTurn | null = null;
+  let failure: ApiError | null = null;
+  try {
+    await readSSE({
+      url: API_BASE + apiPath("post", "/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId } }),
+      method: "POST", body: { question, parameters: parameters ?? null }, headers: authHeaders(),
+      signal: signal ?? new AbortController().signal,
+      onMessage: (m) => {
+        let data: unknown = null;
+        try {
+          data = m.data ? JSON.parse(m.data) : null;
+        } catch {
+          return;
+        }
+        if (m.event === "stage") cb.onStage(data as AskStage);
+        else if (m.event === "turn") turn = data as AskTurn;
+        else if (m.event === "error") {
+          const e = (data as { error?: { code?: string; message?: string; details?: Dict } }).error ?? {};
+          failure = new ApiError(422, e.code ?? "error", e.message ?? "The question could not be asked", e.details ?? {});
+        }
+      },
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 401) unauthorizedHandler?.();
+    throw new ApiError(status ?? 0, status ? `http_${status}` : "network_error", err instanceof Error ? err.message : String(err));
+  }
+  if (failure) throw failure;
+  if (!turn) throw new ApiError(0, "stream_incomplete", "The answer stream ended before the answer arrived");
+  return turn;
 }
