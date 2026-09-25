@@ -202,3 +202,27 @@ def test_jev_feature_flag_turns_decisions_off():
     s = s.model_copy(update={"features": s.features.model_copy(update={"jev_decisions": False})})
     r = make(FakeTransport(), settings=s)
     assert r.mode("risk_check") == "off" and JevDecisions(r).consequential("publish") is None
+
+
+def test_credit_refusal_cools_the_provider_down_instead_of_trying_every_model():
+    """Seen live: OpenRouter answered HTTP 402 and the router tried every fallback model per call (32 errors)."""
+    from analystos.core.errors import ProviderQuotaExhausted
+    from analystos.llm import router as router_mod
+
+    router_mod._PROVIDER_COOLDOWN.clear()
+    calls = []
+
+    def chat(p):
+        calls.append(p["model"])
+        return ProviderQuotaExhausted("HTTP 402: requires more credits")
+
+    r = make(FakeTransport(chat=chat))
+    with pytest.raises(ProviderQuotaExhausted):
+        r.complete_json("planning", "s", "u")
+    assert len(calls) == 1  # no fallback to other models of the same provider
+    assert not r.available("planning")
+    with pytest.raises(ProviderQuotaExhausted, match="cooldown"):
+        r.complete_json("planning", "s", "u")
+    assert len(calls) == 1  # failed fast, no network call
+    router_mod._PROVIDER_COOLDOWN.clear()
+    assert r.available("planning")

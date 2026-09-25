@@ -30,6 +30,7 @@ from analystos.core.errors import (
     BudgetExceeded,
     LLMDisabled,
     ModelRouteUnavailable,
+    ProviderQuotaExhausted,
     UpstreamUnavailable,
 )
 from analystos.core.ids import stable_hash
@@ -145,6 +146,8 @@ class HttpTransport:
             raise UpstreamUnavailable(f"model provider unreachable: {exc}") from exc
         if response.status_code in (408, 409, 425, 429) or response.status_code >= 500:
             raise UpstreamUnavailable(f"model provider HTTP {response.status_code}: {response.text[:300]}")
+        if response.status_code == 402:
+            raise ProviderQuotaExhausted(f"model provider refused for credits HTTP 402: {response.text[:300]}")
         if response.status_code >= 400:
             raise ModelRouteUnavailable(f"model provider rejected request HTTP {response.status_code}: {response.text[:300]}")
         return response.json()
@@ -157,6 +160,20 @@ class HttpTransport:
 
 
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+PROVIDER_COOLDOWN_SECONDS = 60
+_PROVIDER_COOLDOWN: dict[str, float] = {}  # provider -> monotonic time the cooldown ends (process-wide)
+
+
+def _cooling_down(provider: str) -> bool:
+    until = _PROVIDER_COOLDOWN.get(provider)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        _PROVIDER_COOLDOWN.pop(provider, None)
+        return False
+    return True
 
 
 def parse_json_text(text: str) -> Any:
@@ -277,7 +294,7 @@ class ModelRouter:
         except KeyError:
             return False
         provider = self.config.providers.get(profile.provider)
-        return bool(models and provider and self.api_key_lookup(provider.api_key_env))
+        return bool(models and provider and self.api_key_lookup(provider.api_key_env)) and not _cooling_down(profile.provider)
 
     def _provider(self, profile: ProfileConfig) -> tuple[str, str]:
         provider = self.config.providers.get(profile.provider)
@@ -336,6 +353,9 @@ class ModelRouter:
                                  request=request, response={"model": hit["model"], "text": redact(hit["text"]), "cached": True})
                 return ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
                                      cached=True)
+        if _cooling_down(profile.provider):
+            raise ProviderQuotaExhausted(f"provider '{profile.provider}' refused for credits recently; "
+                                         f"deterministic path until the cooldown ends")
         last_error: Exception | None = None
         attempt = 0
         for model in models:
@@ -377,6 +397,14 @@ class ModelRouter:
                     log.warning("model call failed purpose=%s model=%s attempt=%s: %s", purpose, model, attempt, exc)
                     if retry < self.max_retries:
                         time.sleep(min(0.5 * 2**retry, 4))
+                except ProviderQuotaExhausted as exc:  # 402: no model behind this provider will work either
+                    self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
+                                     status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
+                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
+                                     request=request)
+                    _PROVIDER_COOLDOWN[profile.provider] = time.monotonic() + PROVIDER_COOLDOWN_SECONDS
+                    log.warning("provider %s refused for credits; cooling down %ss", profile.provider, PROVIDER_COOLDOWN_SECONDS)
+                    raise
                 except ModelRouteUnavailable as exc:  # 4xx: this model will not work; try next model
                     last_error = exc
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,

@@ -76,6 +76,13 @@ class RunCancelled(AnalystOSError):
     code, http_status = "run_cancelled", 409
 
 
+class ProviderQuotaExhausted(ModelRouteUnavailable):
+    """The provider refused for payment/credit reasons (HTTP 402). Every model behind that provider
+    will fail the same way, so the router stops trying it for a cooldown instead of burning calls."""
+
+    code, retryable = "provider_quota_exhausted", False
+
+
 class LLMDisabled(ModelRouteUnavailable):
     """An administrator set this purpose to `off` (or the prompt was refused as oversize).
     Callers take their deterministic path; this is a decision, not an outage."""

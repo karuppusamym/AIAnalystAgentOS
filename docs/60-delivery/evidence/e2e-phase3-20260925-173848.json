@@ -1,0 +1,432 @@
+{
+  "api": "http://localhost:8000",
+  "workspace_id": "ws_f4256a0c3335",
+  "started_at": "2026-09-25T17:38:48.037945+00:00",
+  "checks": {
+    "schedule_created_with_next_fire": true,
+    "scheduled_reanalysis_completed": true,
+    "scheduled_run_did_not_publish": true,
+    "diff_against_previous_run": true,
+    "previous_findings_all_retested": true,
+    "weekly_report_generated_and_downloadable": true,
+    "monitor_schedule_evaluated_all": true,
+    "threshold_alert_raised": true,
+    "alert_triaged_by_jev": true,
+    "data_quality_baseline_recorded": true,
+    "metric_series_governed": true,
+    "auto_investigation_completed": true,
+    "notifications_for_report_and_alert": true
+  },
+  "reanalysis": {
+    "schedule": {
+      "id": "sch_a2fcf36f20c5",
+      "workspace_id": "ws_f4256a0c3335",
+      "name": "Weekly incident review",
+      "kind": "reanalysis",
+      "cron": "58 6 * * 1",
+      "timezone": "Europe/London",
+      "config": {
+        "baseline_run_id": "run_ffbe1ae530d3",
+        "refresh_first": true,
+        "publish": "skip",
+        "report": {
+          "kind": "weekly_summary",
+          "formats": [
+            "html",
+            "pdf",
+            "xlsx"
+          ]
+        }
+      },
+      "enabled": true,
+      "owner_id": "usr_84234781ebd9",
+      "next_run_at": "2026-09-28T05:58:00+00:00",
+      "last_run_at": null,
+      "created_at": "2026-09-25T17:38:48.218260+00:00"
+    },
+    "schedule_run": {
+      "id": "srun_ce1016145821",
+      "schedule_id": "sch_a2fcf36f20c5",
+      "workspace_id": "ws_f4256a0c3335",
+      "fire_key": "sch_a2fcf36f20c5:manual:2026-09-25T17:38:48.238986+00:00",
+      "scheduled_for": "2026-09-25T17:38:48.238986+00:00",
+      "trigger": "manual",
+      "status": "succeeded",
+      "result": {
+        "run_id": "run_624d39b2a7cb",
+        "changes": {
+          "new": 0,
+          "changed": 0,
+          "resolved": 0,
+          "persisting": 6
+        },
+        "refreshed": {
+          "refreshed": {
+            "src_19e9aa8295b2": [
+              {
+                "asset": "src_src_19e9aa8295b2.incident",
+                "table": "incident",
+                "schema": "src_src_19e9aa8295b2",
+                "columns": [
+                  {
+                    "name": "sys_id",
+                    "type": "text"
+                  },
+                  {
+                    "name": "number",
+                    "type": "text"
+                  },
+                  {
+                    "name": "opened_at",
+                    "type": "timestamp"
+                  },
+                  {
+                    "name": "resolved_at",
+                    "type": "timestamp"
+                  },
+                  {
+                    "name": "closed_at",
+                    "type": "timestamp"
+                  },
+                  {
+                    "name": "priority",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "impact",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "urgency",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "state",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "category",
+                    "type": "text"
+                  },
+                  {
+                    "name": "assignment_group",
+                    "type": "text"
+                  },
+                  {
+                    "name": "assignment_group_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "cmdb_ci",
+                    "type": "text"
+                  },
+                  {
+                    "name": "cmdb_ci_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "caused_by",
+                    "type": "text"
+                  },
+                  {
+                    "name": "caused_by_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "reassignment_count",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "reopen_count",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "made_sla",
+                    "type": "boolean"
+                  },
+                  {
+                    "name": "contact_type",
+                    "type": "text"
+                  },
+                  {
+                    "name": "short_description",
+                    "type": "text"
+                  },
+                  {
+                    "name": "caller_id",
+                    "type": "text"
+                  },
+                  {
+                    "name": "caller_id_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "sys_updated_on",
+                    "type": "timestamp"
+                  }
+                ],
+                "snapshot": {
+                  "row_cap": 200000,
+                  "sampling": {
+                    "method": "undeclared"
+                  },
+                  "staged_at": "2026-09-25T17:38:50.835819+00:00",
+                  "truncated": false,
+                  "rows_staged": 20000,
+                  "representative": true,
+                  "population_rows": 20000,
+                  "sampling_method": "undeclared",
+                  "total_rows_basis": "x-total-count",
+                  "source_total_rows": 20000
+                },
+                "row_count": 20000,
+                "truncated": false
+              },
+              {
+                "asset": "src_src_19e9aa8295b2.change_request",
+                "table": "change_request",
+                "schema": "src_src_19e9aa8295b2",
+                "columns": [
+                  {
+                    "name": "sys_id",
+                    "type": "text"
+                  },
+                  {
+                    "name": "number",
+                    "type": "text"
+                  },
+                  {
+                    "name": "type",
+                    "type": "text"
+                  },
+                  {
+                    "name": "risk",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "state",
+                    "type": "bigint"
+                  },
+                  {
+                    "name": "start_date",
+                    "type": "timestamp"
+                  },
+                  {
+                    "name": "end_date",
+                    "type": "timestamp"
+                  },
+                  {
+                    "name": "assignment_group",
+                    "type": "text"
+                  },
+                  {
+                    "name": "assignment_group_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "cmdb_ci",
+                    "type": "text"
+                  },
+                  {
+                    "name": "cmdb_ci_name",
+                    "type": "text"
+                  },
+                  {
+                    "name": "close_code",
+                    "type": "text"
+                  },
+                  {
+                    "name": "short_description",
+                    "type": "text"
+                  },
+                  {
+                    "name": "sys_updated_on",
+                    "type": "timestamp"
+                  }
+                ],
+                "snapshot": {
+                  "row_cap": 200000,
+                  "sampling": {
+                    "method": "undeclared"
+                  },
+                  "staged_at": "2026-09-25T17:38:51.107731+00:00",
+                  "truncated": false,
+                  "rows_staged": 3000,
+                  "representative": true,
+                  "population_rows": 3000,
+                  "sampling_method": "undeclared",
+                  "total_rows_basis": "x-total-count",
+                  "source_total_rows": 3000
+                },
+                "row_count": 3000,
+                "truncated": false
+              }
+            ]
+          }
+        },
+        "previous_run_id": "run_ffbe1ae530d3",
+        "report_artifact_id": "art_16214587fe4e"
+      },
+      "error": null,
+      "started_at": "2026-09-25T17:38:48.236288+00:00",
+      "finished_at": "2026-09-25T17:39:37.777296+00:00"
+    },
+    "run_id": "run_624d39b2a7cb",
+    "changes": {
+      "new": [],
+      "persisting": [
+        "Concentration of Priority-1 Records by CMDB CI Name",
+        "Missed SLA concentrates in assignment group name = Network Operations",
+        "SLA Miss Rates Vary by Assignment Group",
+        "Resolution hours is higher for cmdb CI name = API Gateway",
+        "Missed SLA Rate by Reassignment Count",
+        "Missed SLA Rates Vary by Category"
+      ],
+      "changed": [],
+      "resolved": [],
+      "not_retested": []
+    },
+    "metric_deltas": [
+      {
+        "name": "critical_incident_rate",
+        "value": 0.03875,
+        "pct_change": -0.0511,
+        "previous_value": 0.04083553986466608
+      },
+      {
+        "name": "record_count",
+        "value": 20000,
+        "pct_change": 0.1768,
+        "previous_value": 16995
+      },
+      {
+        "name": "avg_reassignment_count",
+        "value": 1.2877,
+        "pct_change": -0.0375,
+        "previous_value": 1.337805236834363
+      },
+      {
+        "name": "avg_reopen_count",
+        "value": 0.0513,
+        "pct_change": -0.0138,
+        "previous_value": 0.052015298617240364
+      },
+      {
+        "name": "avg_opened_at_to_resolved_at_hours",
+        "value": 53.5944073729657,
+        "pct_change": 0.0028,
+        "previous_value": 53.444464376088796
+      },
+      {
+        "name": "median_opened_at_to_resolved_at_hours",
+        "value": 38.72638888888889,
+        "pct_change": 0.0028,
+        "previous_value": 38.61972222222222
+      },
+      {
+        "name": "high_reassignment_rate",
+        "value": 0.0,
+        "pct_change": null,
+        "previous_value": 0.0
+      }
+    ],
+    "report_artifact_id": "art_16214587fe4e",
+    "downloads": {
+      "pdf": {
+        "status": 200,
+        "bytes": 164969,
+        "ok": true
+      },
+      "xlsx": {
+        "status": 200,
+        "bytes": 34163,
+        "ok": true
+      },
+      "html": {
+        "status": 200,
+        "bytes": 15233,
+        "ok": true
+      }
+    },
+    "cost_usd": 0.013064626000000001
+  },
+  "monitoring": {
+    "monitors": [
+      {
+        "name": "Weekly volume drift",
+        "kind": "metric_drift",
+        "result": {
+          "alert": false,
+          "message": "Record volume was 407 for 2026-08-24 vs a 8-period median of 383.5 (robust z = 1.76, +6.1%).",
+          "alert_id": null
+        }
+      },
+      {
+        "name": "Volume regime change",
+        "kind": "change_point",
+        "result": {
+          "alert": false,
+          "message": "No recent regime change in Record volume.",
+          "alert_id": null
+        }
+      },
+      {
+        "name": "critical_incident_rate above target",
+        "kind": "metric_threshold",
+        "result": {
+          "alert": true,
+          "message": "Critical Incident Rate was 0.04192 for 2026-08-01 (breaches threshold > 0.0).",
+          "alert_id": "alr_3c350d59ba86"
+        }
+      },
+      {
+        "name": "Incident data quality",
+        "kind": "data_quality",
+        "result": {
+          "alert": false,
+          "message": "Baseline recorded: 6 issues.",
+          "alert_id": null
+        }
+      }
+    ],
+    "alerts": [
+      {
+        "severity": "critical",
+        "title": "critical_incident_rate above target: signal detected",
+        "message": "Critical Incident Rate was 0.04192 for 2026-08-01 (breaches threshold > 0.0).",
+        "triage": {
+          "model": "typesafe/jev-1.13-20260917",
+          "p_material": 0.84
+        },
+        "investigation_run_id": "run_dd3bed5c2edb"
+      }
+    ],
+    "series_points": 52,
+    "investigation": {
+      "run_id": "run_dd3bed5c2edb",
+      "status": "COMPLETED",
+      "verified": 5,
+      "objective": "Investigate this monitored change and identify its drivers: Critical Incident Rate was 0.04192 for 2026-08-01 (breaches threshold > 0.0). Business objective: Analyze Incident and Change data for the last 12 months. Identify the drivers of SLA breaches, recurring operational problems, teams with unusually high reassignment, and applications generating repeated critical incidents. Create an executive dashboard and an operations dashboard."
+    }
+  },
+  "notifications": [
+    {
+      "kind": "run",
+      "title": "Investigation started for alert: critical_incident_rate above target: signal detected"
+    },
+    {
+      "kind": "alert",
+      "title": "[critical] critical_incident_rate above target: signal detected"
+    },
+    {
+      "kind": "report",
+      "title": "Report ready: ServiceNow Incident Intelligence 20260925-1737 \u2014 weekly summary report"
+    }
+  ],
+  "finished_at": "2026-09-25T17:40:19.535364+00:00",
+  "duration": {
+    "scenario_seconds": 91.5,
+    "reanalysis_run_seconds": 44.8,
+    "investigation_run_seconds": 37.2
+  }
+}

@@ -67,14 +67,20 @@ def _valid_expression(expr: str, columns: set[str], dialect: str) -> str | None:
 
 
 def previous_metrics(ctx: RunContext) -> list[MetricDef]:
-    previous = (ctx.run.origin or {}).get("previous_run_id")
-    if not previous:
-        return []
+    """KPI definitions to keep stable: the scheduled predecessor's, else the workspace's most recent
+    completed run (an alert investigation redefined critical_incident_rate live when it had neither)."""
     from sqlalchemy import select
 
-    from analystos.db.models import Artifact
+    from analystos.db.models import AnalysisRun, Artifact
 
+    previous = (ctx.run.origin or {}).get("previous_run_id")
     with session_scope() as s:
+        if not previous:
+            previous = s.scalar(select(AnalysisRun.id).where(AnalysisRun.workspace_id == ctx.workspace.id,
+                                                             AnalysisRun.status == "COMPLETED", AnalysisRun.id != ctx.run.id)
+                                .order_by(AnalysisRun.finished_at.desc().nulls_last()).limit(1))
+        if not previous:
+            return []
         out = []
         for a in s.scalars(select(Artifact).where(Artifact.run_id == previous, Artifact.type == "metric").order_by(Artifact.created_at)):
             m = MetricDef.model_validate(a.content)
