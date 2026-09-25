@@ -30,6 +30,9 @@ VENDOR = "analystos"
 _ID = re.compile(r"[^A-Za-z0-9_-]+")
 _LOGICAL = (("timestamp", "timestamp"), ("date", "date"), ("integer", "integer"), ("bigint", "integer"),
             ("numeric", "number"), ("double", "number"), ("boolean", "boolean"), ("json", "object"), ("text", "string"))
+# A dataset column without a physical type still has the profiler's semantic type.
+_SEMANTIC_LOGICAL = {"datetime": "timestamp", "date": "date", "numeric": "number", "measure": "number", "count": "integer",
+                     "boolean": "boolean", "flag": "boolean"}
 
 
 def stable_id(text: str) -> str:
@@ -54,8 +57,9 @@ def _custom(**props: Any) -> list[dict[str, Any]]:
 
 def _column_property(col: dict[str, Any]) -> dict[str, Any]:
     name = str(col.get("name"))
+    logical = logical_type(col.get("type")) if col.get("type") else _SEMANTIC_LOGICAL.get(str(col.get("semantic_type")), "string")
     prop: dict[str, Any] = {"id": stable_id(f"col_{name}"), "name": name, "physicalName": name,
-                            "logicalType": logical_type(col.get("type")), "semanticType": "column"}
+                            "logicalType": logical, "semanticType": "column"}
     if col.get("type"):
         prop["physicalType"] = str(col["type"])
     if col.get("business_name"):

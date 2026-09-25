@@ -4,6 +4,10 @@ Delivered for tracker rows P4-K01, P4-K02, P4-K09 and P4-K10 (ADR-0013; amends A
 Code: `src/analystos/knowledge/`. Tests: `tests/unit/test_knowledge_okf.py`,
 `tests/integration/test_knowledge_pack.py`. Evidence:
 [`docs/60-delivery/evidence/2026-09-25-knowledge-k01-k10.md`](../60-delivery/evidence/2026-09-25-knowledge-k01-k10.md).
+P4-K04 (Attested Computations, ODCS, OpenLineage: `knowledge/attested.py`, `evidence/`) and P4-K06
+(crawler sources: `knowledge/{drafts,crawl_docs,dbt_manifest,superset_meta,documents}.py`,
+`services/{facets,knowledge_ingest}.py`) are the last three sections; evidence:
+[`2026-09-25-knowledge-k04-k06.md`](../60-delivery/evidence/2026-09-25-knowledge-k04-k06.md).
 
 ## The pinned specification, and what is claimed
 

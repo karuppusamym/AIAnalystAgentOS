@@ -46,7 +46,7 @@ def _dataset() -> tuple[DatasetDef, list[MetricDef]]:
     ds = DatasetDef(name="incident.analysis", description="Incidents with SLA outcome.",
                     sql="SELECT priority, made_sla, resolution_hours FROM src_x.incident", time_column=None,
                     columns=[{"name": "priority", "type": "text", "semantic_type": "category", "business_name": "Priority"},
-                             {"name": "made_sla", "type": "boolean"},
+                             {"name": "made_sla", "type": "boolean"}, {"name": "opened_at", "semantic_type": "datetime"},
                              {"name": "resolution_hours", "type": "double precision", "tags": ["pii"]}],
                     source_assets=["src_x.incident"])
     metrics = [MetricDef(name="avg_resolution_hours", display_name="Average resolution (h)", definition="Mean hours.",
@@ -64,7 +64,7 @@ def test_generated_odcs_contract_validates_and_carries_the_dataset():
     assert c["apiVersion"] == "v3.2.0" and c["kind"] == "DataContract"
     props = {p["name"]: p for p in c["schema"][0]["properties"]}
     assert props["resolution_hours"]["logicalType"] == "number" and props["resolution_hours"]["classification"] == "restricted"
-    assert props["avg_resolution_hours"]["semanticType"] == "measure"
+    assert props["avg_resolution_hours"]["semanticType"] == "measure" and props["opened_at"]["logicalType"] == "timestamp"
     assert props["avg_resolution_hours"]["transformLogic"] == "AVG(resolution_hours)"
     assert odcs.contract_path(ds.name) == "contracts/incident-analysis.odcs.yaml"
     assert okf.check_path(odcs.contract_path(ds.name)) is None
