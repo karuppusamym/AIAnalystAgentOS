@@ -14,6 +14,7 @@ from analystos.api.routers import ask as ask_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import registries as registries_router
+from analystos.api.routers import semantic as semantic_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -38,7 +39,7 @@ app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router,
-          capabilities.router, registries_router.router):
+          capabilities.router, registries_router.router, semantic_router.router):
     app.include_router(r)
 app.include_router(mcp_router.router)
 app.include_router(decisions_router.router)

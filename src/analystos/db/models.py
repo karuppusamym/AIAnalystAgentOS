@@ -524,6 +524,61 @@ class Approval(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class SemanticModel(Base):
+    """One version of a workspace's semantic model structure (P4-K03, SEM-001/004): Ossie datasets
+    (with fields and dimensions), relationships and `ai_context`. Every change is a new version row;
+    the newest non-deprecated version is current. Metrics are versioned separately (`semantic_metric`)
+    because each one has its own approval."""
+
+    __tablename__ = "semantic_model"
+    __table_args__ = (UniqueConstraint("workspace_id", "version", name="uq_semantic_model_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | proposed | approved | deprecated
+    owner_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_context: Mapped[Any] = mapped_column(JSON, nullable=True)
+    datasets: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    relationships: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    custom_extensions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    origin: Mapped[str] = mapped_column(String(80))  # user | agent:<id> | dbt | ossie
+    run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class SemanticMetric(Base):
+    """One version of a KPI definition with its own approval (SEM-002/003/005). `proposed` versions
+    wait for an approver who is not the proposer; approving one deprecates the name's previous
+    approved version. `approval_id` binds the decision to the definition's hash (governance/approvals)."""
+
+    __tablename__ = "semantic_metric"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version", name="uq_semantic_metric_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="proposed")  # draft|proposed|approved|deprecated|rejected
+    definition: Mapped[dict[str, Any]] = mapped_column(JSON)  # contracts.semantic.SemanticMetricDef
+    expression: Mapped[str] = mapped_column(Text)
+    normalized_expression: Mapped[str] = mapped_column(Text)
+    display_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    proposed_by: Mapped[str] = mapped_column(String(40))  # the human accountable for the proposal
+    proposed_via: Mapped[str] = mapped_column(String(80))  # user | agent:<id> | dbt | ossie
+    run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Publication(Base):
     """Each attempt to write to an external BI destination; enables reconcile-before-retry."""
 

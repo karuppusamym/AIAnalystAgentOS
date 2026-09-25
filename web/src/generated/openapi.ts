@@ -1765,6 +1765,226 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/semantic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Model */
+        get: operations["get_model_api_workspaces__workspace_id__semantic_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Conflicts */
+        get: operations["list_conflicts_api_workspaces__workspace_id__semantic_conflicts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/export/dbt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Dbt
+         * @description `osi/*.json` files for a dbt 1.12 project (approved metrics only) and what dbt would object to.
+         */
+        get: operations["export_dbt_api_workspaces__workspace_id__semantic_export_dbt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/export/superset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Superset
+         * @description Approved metrics as Superset dataset-metric payloads (what the Superset publisher writes).
+         */
+        get: operations["export_superset_api_workspaces__workspace_id__semantic_export_superset_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/import/dbt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Dbt
+         * @description Body: the content of dbt's `target/osi_document.json`. Metrics arrive as proposals.
+         */
+        post: operations["import_dbt_api_workspaces__workspace_id__semantic_import_dbt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/import/ossie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Ossie
+         * @description Body: {"document": "<an Ossie 0.1.1 document, YAML or JSON>"}. Metrics arrive as proposals.
+         */
+        post: operations["import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Metrics */
+        get: operations["list_metrics_api_workspaces__workspace_id__semantic_metrics_get"];
+        put?: never;
+        /** Propose */
+        post: operations["propose_api_workspaces__workspace_id__semantic_metrics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Metric Versions */
+        get: operations["metric_versions_api_workspaces__workspace_id__semantic_metrics__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics/{name}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve */
+        post: operations["approve_api_workspaces__workspace_id__semantic_metrics__name__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics/{name}/deprecate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deprecate */
+        post: operations["deprecate_api_workspaces__workspace_id__semantic_metrics__name__deprecate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics/{name}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject */
+        post: operations["reject_api_workspaces__workspace_id__semantic_metrics__name__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/ossie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Ossie
+         * @description The workspace model as an Apache Ossie 0.1.1 document (YAML download, or JSON).
+         */
+        get: operations["download_ossie_api_workspaces__workspace_id__semantic_ossie_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/sources": {
         parameters: {
             query?: never;
@@ -1914,6 +2134,11 @@ export interface components {
              */
             note?: string;
         };
+        /** Body_import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post */
+        Body_import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post: {
+            /** Document */
+            document: string;
+        };
         /** Body_upload_api_workspaces__workspace_id__uploads_post */
         Body_upload_api_workspaces__workspace_id__uploads_post: {
             /** File */
@@ -1976,11 +2201,6 @@ export interface components {
             mode?: string | null;
             /** Profile */
             profile?: boolean | null;
-        };
-        /** Decision */
-        Decision: {
-            /** Reason */
-            reason?: string | null;
         };
         /** EnableIn */
         EnableIn: {
@@ -2067,6 +2287,39 @@ export interface components {
             email: string;
             /** Role */
             role: string;
+        };
+        /**
+         * MetricProposalIn
+         * @description API body for a user proposal.
+         */
+        MetricProposalIn: {
+            /** Ai Context */
+            ai_context?: string | {
+                [key: string]: unknown;
+            } | null;
+            /** Dataset */
+            dataset?: string | null;
+            /** Description */
+            description?: string | null;
+            /**
+             * Dialect
+             * @default ANSI_SQL
+             */
+            dialect?: string;
+            /** Dimensions */
+            dimensions?: string[];
+            /** Display Name */
+            display_name?: string | null;
+            /** Expression */
+            expression: string;
+            /** Filters */
+            filters?: string[];
+            /** Format */
+            format?: ("number" | "percent" | "hours" | "currency") | null;
+            /** Grain */
+            grain?: string | null;
+            /** Name */
+            name: string;
         };
         /** MonitorIn */
         MonitorIn: {
@@ -2366,6 +2619,18 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** Decision */
+        analystos__api__routers__artifacts__Decision: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /** Decision */
+        analystos__api__routers__semantic__Decision: {
+            /** Reason */
+            reason?: string | null;
+            /** Version */
+            version?: number | null;
         };
     };
     responses: never;
@@ -3253,7 +3518,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["Decision"] | null;
+                "application/json": components["schemas"]["analystos__api__routers__artifacts__Decision"] | null;
             };
         };
         responses: {
@@ -3291,7 +3556,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["Decision"] | null;
+                "application/json": components["schemas"]["analystos__api__routers__artifacts__Decision"] | null;
             };
         };
         responses: {
@@ -3363,7 +3628,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["Decision"] | null;
+                "application/json": components["schemas"]["analystos__api__routers__artifacts__Decision"] | null;
             };
         };
         responses: {
@@ -6403,6 +6668,483 @@ export interface operations {
                 "application/json": components["schemas"]["ScheduleIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_api_workspaces__workspace_id__semantic_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_conflicts_api_workspaces__workspace_id__semantic_conflicts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_dbt_api_workspaces__workspace_id__semantic_export_dbt_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_superset_api_workspaces__workspace_id__semantic_export_superset_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_dbt_api_workspaces__workspace_id__semantic_import_dbt_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Body_import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_metrics_api_workspaces__workspace_id__semantic_metrics_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_api_workspaces__workspace_id__semantic_metrics_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricProposalIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    metric_versions_api_workspaces__workspace_id__semantic_metrics__name__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_api_workspaces__workspace_id__semantic_metrics__name__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["analystos__api__routers__semantic__Decision"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deprecate_api_workspaces__workspace_id__semantic_metrics__name__deprecate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["analystos__api__routers__semantic__Decision"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_api_workspaces__workspace_id__semantic_metrics__name__reject_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["analystos__api__routers__semantic__Decision"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_ossie_api_workspaces__workspace_id__semantic_ossie_get: {
+        parameters: {
+            query?: {
+                include?: string;
+                format?: string;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
