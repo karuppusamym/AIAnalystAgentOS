@@ -133,10 +133,11 @@ def _agent_manifests(directory: Path | None = None) -> list[tuple[str, dict[str,
 
 
 def _connector_manifests() -> list[dict[str, Any]]:
-    """One Connector manifest per source kind; the kind catalog stays the single list."""
+    """One Connector and one Engine manifest per source kind; the kind catalog stays the single list."""
     from analystos.connectors.certification import connector_manifests
+    from analystos.engines.registry import engine_manifests
 
-    return connector_manifests()
+    return connector_manifests() + engine_manifests()
 
 
 def _semver(v: str) -> str:

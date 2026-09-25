@@ -299,7 +299,7 @@ def test_file_database_discover_stage_and_query(kind, tmp_path, dp_settings, dp_
     settings = SimpleNamespace(upload_dir=str(tmp_path))
     config = {"path": fname}
     source_id = _register_source(dp_session_factory, dp_workspace, kind=kind, config=config, secret_ref=None,
-                                 mode=execution_mode_for(kind, "pushdown"))  # pushdown request degrades to staged
+                                 mode=execution_mode_for(kind, None))  # both file kinds default to staged
     con = build_connector(SimpleNamespace(kind=kind, config=config, secret_ref=None), settings)
     assert con.execution_mode == "staged" and con.dialect == "postgres"
     assert con.test().ok

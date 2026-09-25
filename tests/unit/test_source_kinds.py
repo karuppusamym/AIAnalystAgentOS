@@ -118,16 +118,28 @@ def test_url_validation() -> None:
 
 
 def test_pushdown_only_for_compiler_dialects() -> None:
+    """Pushdown = validator suite + analysis compiler + read-only session (P4-E01); sqlserver is the
+    legacy least-privilege-identity exception, DuckDB files are opt-in."""
+    from analystos.gateway.dialects import SUPPORTED_DIALECTS
+    from analystos.skills.sqlbuild import DIALECTS
+
+    assert SUPPORTED_DIALECTS & set(DIALECTS) == kinds.PUSHDOWN_DIALECTS
     pushdown = {k.kind for k in kinds.list_kinds() if k.pushdown_allowed}
-    assert pushdown == {"postgres", "sqlserver"}
+    assert pushdown == {"postgres", "sqlserver", "duckdb"}
     for spec in kinds.list_kinds():
         if spec.pushdown_allowed:
             assert spec.sqlglot_dialect in kinds.PUSHDOWN_DIALECTS
+            assert spec.readonly_enforcement != "identity" or spec.kind in kinds.LEGACY_IDENTITY_PUSHDOWN
+    assert kinds.get_kind("duckdb").readonly_enforcement == "connect"
+    assert kinds.get_kind("postgres").readonly_enforcement == "session"
+    assert kinds.get_kind("snowflake").readonly_enforcement == "identity"
     assert kinds.execution_mode_for("postgres", None) == "pushdown"
     assert kinds.execution_mode_for("postgres", "staged") == "staged"
     assert kinds.execution_mode_for("sqlserver", "pushdown") == "pushdown"
+    assert kinds.execution_mode_for("duckdb", None) == "staged"  # opt-in
+    assert kinds.execution_mode_for("duckdb", "pushdown") == "pushdown"
     for kind in ("mysql", "mariadb", "oracle", "snowflake", "bigquery", "databricks", "trino", "clickhouse", "redshift",
-                 "duckdb", "sqlite", "servicenow", "csv", "file"):
+                 "sqlite", "servicenow", "csv", "file"):
         assert kinds.execution_mode_for(kind, "pushdown") == "staged"
         assert kinds.execution_mode_for(kind, None) == "staged"
     with pytest.raises(InvalidInput, match="execution_mode"):

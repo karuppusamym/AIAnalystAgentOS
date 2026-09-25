@@ -6,9 +6,14 @@ dialect, whether pushdown is allowed, the read-only session statements and the d
 strategies. ``governance.policy`` and ``services.sources`` read it through ``dialect_for`` and
 ``execution_mode_for`` so a new kind is a catalog entry, not code in several places.
 
-Pushdown (the gateway queries the source in place) is allowed only for SQL kinds whose native
-dialect the analysis compiler and validator speak for pushdown: postgres and tsql. Everything else
-is staged into the analytics DB and queried there in the postgres dialect.
+Pushdown (the gateway queries the source in place) is allowed only when three things hold (P4-E01):
+the gateway validator has a security suite for the kind's native dialect (``gateway/dialects.py``),
+the analysis compiler (``skills/sqlbuild``) emits that dialect, and the session can be made
+read-only (catalog ``session_sql.readonly`` statements, or a ``read_only`` connect argument).
+SQL Server predates the last rule: it pushes down with a least-privilege login instead
+(``LEGACY_IDENTITY_PUSHDOWN``). Everything else is staged into the analytics DB and queried there in
+the postgres dialect. Newly allowed kinds (DuckDB files) keep ``staged`` as their default mode and
+push down only when a source asks for it (``pushdown_default: false``).
 """
 from __future__ import annotations
 
@@ -26,7 +31,11 @@ from analystos.core.config import REPO_ROOT
 from analystos.core.errors import InvalidInput
 
 CATALOG_PATH = REPO_ROOT / "config" / "source_kinds.yaml"
-PUSHDOWN_DIALECTS = frozenset({"postgres", "tsql"})
+# Validator dialects (gateway/dialects.py) that the analysis compiler also emits (skills/sqlbuild.DIALECTS);
+# tests/unit/test_source_kinds.py keeps the three lists in step.
+PUSHDOWN_DIALECTS = frozenset({"postgres", "tsql", "duckdb"})
+# Kinds allowed to push down with a least-privilege identity and no session read-only switch (increment 3).
+LEGACY_IDENTITY_PUSHDOWN = frozenset({"sqlserver"})
 STAGED_DIALECT = "postgres"  # staged data lives in the analytics DB
 KIND_ALIASES = {"file": "csv", "postgresql": "postgres", "mssql": "sqlserver"}
 PLACEHOLDERS = ("username", "password", "host", "port", "database", "account", "warehouse", "role", "project",
@@ -73,6 +82,7 @@ class SourceKind(BaseModel):
     catalog: Literal["inspector", "duckdb", "none"] = "inspector"
     system_schemas: list[str] = Field(default_factory=list)
     default_schemas: list[str] | None = None
+    pushdown_default: bool = True  # when pushdown is allowed: is it the default mode, or opt-in?
     docs: str = ""
 
     @property
@@ -80,8 +90,20 @@ class SourceKind(BaseModel):
         return self.url_template is not None
 
     @property
+    def readonly_enforcement(self) -> Literal["session", "connect", "identity"]:
+        """How a pushdown session is kept read-only: catalog statements, a connect argument, or only
+        the configured least-privilege identity."""
+        if self.session_sql.readonly:
+            return "session"
+        if self.connect_args.get("read_only") is True:
+            return "connect"
+        return "identity"
+
+    @property
     def pushdown_allowed(self) -> bool:
-        return self.is_sql and self.category != "file" and self.sqlglot_dialect in PUSHDOWN_DIALECTS
+        if not self.is_sql or self.sqlglot_dialect not in PUSHDOWN_DIALECTS:
+            return False
+        return self.readonly_enforcement != "identity" or self.kind in LEGACY_IDENTITY_PUSHDOWN
 
     @property
     def pip_install_hint(self) -> str:
@@ -98,7 +120,7 @@ class SourceKind(BaseModel):
             "sqlglot_dialect": self.sqlglot_dialect, "pushdown_allowed": self.pushdown_allowed,
             "default_execution_mode": execution_mode_for(self.kind, None), "pip_extra": self.driver.extra,
             "driver_available": driver_available(self.kind), "readonly_session": bool(self.session_sql.readonly),
-            "docs": self.docs,
+            "readonly_enforcement": self.readonly_enforcement, "docs": self.docs,
         }
 
 
@@ -142,13 +164,15 @@ def execution_mode_for(kind: str, requested: str | None = None) -> Mode:
         raise InvalidInput(f"execution_mode must be 'pushdown' or 'staged', not {requested!r}")
     if requested == "staged" or not spec.pushdown_allowed:
         return "staged"
+    if requested is None or requested == "":
+        return "pushdown" if spec.pushdown_default else "staged"
     return "pushdown"
 
 
 def dialect_for(kind: str, execution_mode: str | None = None) -> str:
     """The sqlglot dialect the *gateway* validates this source's SQL in.
 
-    Pushdown sources: their native dialect (postgres | tsql). Staged sources: ``postgres`` (the
+    Pushdown sources: their native dialect (postgres | tsql | duckdb). Staged sources: ``postgres`` (the
     analytics DB), whatever the origin system speaks. ``execution_mode`` defaults to the kind's
     default mode; pass the Source row's mode when it is known."""
     mode = execution_mode_for(kind, execution_mode)
