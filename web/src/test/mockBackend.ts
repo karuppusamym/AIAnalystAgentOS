@@ -413,6 +413,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   const routes: [string, string, unknown][] = [
     ["GET", "/auth/me", USER],
+    ["GET", "/auth/providers", { password: true, oidc: { enabled: false, name: "SSO", login_url: null } }],
     ["GET", "/workspaces", [WORKSPACE]],
     ["GET", W, WORKSPACE],
     ["GET", `${W}/sources`, [SOURCE]],

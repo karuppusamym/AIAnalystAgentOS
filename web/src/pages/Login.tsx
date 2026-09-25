@@ -37,8 +37,9 @@ export function LoginPage() {
   }, [loginWithToken, nav]);
 
   if (user) return <Navigate to={from} replace />;
-  const sso = providers?.oidc.enabled ? providers.oidc : null;
-  const passwordEnabled = providers?.password ?? true;
+  // An unreachable or malformed answer keeps password sign-in available rather than blanking the form.
+  const sso = providers?.oidc?.enabled ? providers.oidc : null;
+  const passwordEnabled = providers?.password !== false;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
