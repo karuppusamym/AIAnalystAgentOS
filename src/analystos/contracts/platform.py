@@ -14,7 +14,7 @@ LLMMode = Literal["off", "auto", "always"]
 # Purposes where a deterministic path produces an equivalent result (auto = deterministic first).
 DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generation", "insight_narrative", "summarization",
                          "semantic_modeling", "dashboard_design", "feedback_interpretation", "metadata_enrichment",
-                         "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check"}
+                         "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check", "agent_actions"}
 
 
 class LLMSettings(BaseModel):

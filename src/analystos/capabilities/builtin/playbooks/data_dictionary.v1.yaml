@@ -1,0 +1,22 @@
+# A second playbook (P16: an extension point is used twice): document the selected tables with a
+# declarative agent. Disabled per workspace until an owner enables it; `tested`, so it runs only
+# below autonomy 3 and never on a schedule until it is certified.
+apiVersion: analystos/v1
+kind: Playbook
+id: playbook.data_dictionary
+version: 1.0.0
+summary: Document the selected tables (collect metadata, then a declarative agent writes the data dictionary)
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification: {status: tested, evidence: tests/integration/test_playbook_runs.py}
+tags: [documentation]
+spec:
+  framing: false
+  steps:
+    - {key: metadata, use: agent.metadata, title: Discover technical metadata of selected tables}
+    - key: dictionary
+      use: agent.data_dictionary
+      title: Write the data dictionary of the selected tables
+      after: [metadata]
+      optional: true

@@ -56,8 +56,8 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | Where | What |
 |---|---|
 | `src/analystos/contracts/` | Pydantic contracts (agent/tool/skill/policy/analysis/bi/events); `analystos export-contracts` writes `contracts/*.json` |
-| `src/analystos/runtime/` | plan (DAG, hashes), engine (get_state/execute_task/replan), per-step RunContext |
-| `src/analystos/agents/` | agent behaviours; `dispatch.py` maps task keys → behaviours |
+| `src/analystos/runtime/` | plan (hashes), engine (get_state/execute_task/replan: interprets the run's bound playbook, no step keys), per-step RunContext (agent manifest, budget) |
+| `src/analystos/agents/` | agent behaviours; `dispatch.py` resolves a task through the playbook + agent manifest; `generic.py` runs declarative agents (propose → validate → execute) |
 | `src/analystos/workflows/` | Temporal workflow + activities; `orchestrator.py` local runner |
 | `src/analystos/governance/` | scope, policy decisions, approvals, audit |
 | `src/analystos/gateway/`, `connectors/`, `staging/` | data plane; `config/source_kinds.yaml` + `connectors/kinds.py` + `generic_sql.py` = every database kind |
@@ -67,7 +67,8 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `src/analystos/llm/` | router, JEV, redaction; `config/models.yaml` |
 | `src/analystos/publishing/` | BI publisher interface, Superset adapter, preview |
 | `src/analystos/services/{schedules,monitors,reports,changes,notifications}.py`, `src/analystos/reports/` | Phase 3: scheduling, monitoring, reports |
-| `config/agents/*.yaml` | agent catalog. Metadata only today: behaviour is in `agents/*.py`, and only `id`/`tools` are read at runtime. Declarative agents are P4-X03. |
+| `config/agents/*.yaml` | agent manifests (kind Agent); every field is enforced (`capabilities/agents.py`). `entry: builtin:generic` = a YAML-only agent |
+| `src/analystos/capabilities/` | registry (discovery, validation, reload), `builtin/playbooks/*.yaml` (`investigate.v1` = the v1 plan), bindings (run keeps its versions; refs in the plan hash), per-workspace enablement + certification gate; API `/api/capabilities`, `POST /api/admin/capabilities/reload` |
 | `migrations/` | Alembic; regenerate with `alembic revision --autogenerate` after model changes |
 | `docs/` | intent (spec v2, spec v3), architecture + ADRs, runbooks, delivery tracker/register/readiness, dated reviews (`70-reviews/`) |
 

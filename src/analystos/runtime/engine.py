@@ -1,15 +1,20 @@
 """Orchestrator-agnostic run engine. Temporal (production) and the local runner (tests, laptops)
 drive the same four operations: plan_run, get_state, execute_task, finish_run. All state is in
-Postgres; each task has a stable key (idempotency) and a plan_version (stale results are dropped)."""
+Postgres; each task has a stable key (idempotency) and a plan_version (stale results are dropped).
+
+The engine knows no step keys: approval gates, side effects, skips, dynamic expansions and what a
+replan resets are read from the run's bound playbook (capabilities/playbook.py, P4-X02)."""
 from __future__ import annotations
 
 import traceback
 from datetime import UTC
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import func, select, update
 
 from analystos.artifacts.registry import producing_plan
+from analystos.capabilities.binding import bind_run, bound_refs, run_playbook
+from analystos.capabilities.playbook import Step, evaluate
 from analystos.contracts.events import RUN_TERMINAL
 from analystos.core.errors import AnalystOSError, RunCancelled
 from analystos.core.ids import new_id, utcnow
@@ -19,7 +24,7 @@ from analystos.db.models import AnalysisRun, Approval, Hypothesis, Insight, RunT
 from analystos.events.bus import emit
 from analystos.governance.approvals import invalidate_run_approvals
 from analystos.runtime.context import RunContext, Services, default_services
-from analystos.runtime.plan import DYNAMIC_PREFIXES, REPLAN_RESET, dep_satisfied, plan_hash
+from analystos.runtime.plan import dep_satisfied, plan_hash
 
 log = get_logger(__name__)
 CLAIM_TTL_SECONDS = 30 * 60  # equals the Temporal start_to_close timeout for execute_task
@@ -54,56 +59,79 @@ def add_task(session, run: AnalysisRun, *, key: str, agent: str, title: str, dep
     return task
 
 
+def run_hash(run: AnalysisRun) -> str:
+    return plan_hash(run.plan, constraints=run.constraints, scope_hash=run.scope.get("hash", ""),
+                     plan_version=run.plan_version, capabilities=bound_refs(run))
+
+
 def materialize_plan(session, run: AnalysisRun) -> None:
-    skip_publish = (run.origin or {}).get("publish") == "skip"
+    playbook = run_playbook(run)
+    ns = {"run": {"autonomy_level": run.autonomy_level, "origin": run.origin or {}}}
+    skipped = (run.capabilities or {}).get("skipped") or {}
     for i, step in enumerate(run.plan["steps"]):
         task = add_task(session, run, key=step["key"], agent=step["agent"], title=step["title"], depends_on=step["depends_on"],
                         optional=step.get("optional", False), seq=i * 10)
-        if skip_publish and step["key"] in ("publish_request", "publish"):
-            # Scheduled re-analyses and alert investigations refresh findings and reports; they do not
-            # propose publication unless the schedule asks for it.
-            task.status, task.error = "SKIPPED", "publication not requested for this run"
-    run.plan_hash = plan_hash(run.plan, constraints=run.constraints, scope_hash=run.scope.get("hash", ""),
-                              plan_version=run.plan_version)
+        spec = playbook.step(step["key"])
+        if spec is not None and spec.skip_when and evaluate(spec.skip_when.if_, ns):
+            # e.g. scheduled re-analyses and alert investigations refresh findings and reports; they do
+            # not propose publication unless the schedule asks for it.
+            task.status, task.error = "SKIPPED", spec.skip_when.reason
+        elif step["key"] in skipped:  # an optional step whose capability is disabled or not certified here
+            task.status, task.error = "SKIPPED", skipped[step["key"]]
+    run.plan_hash = run_hash(run)
 
 
 def plan_run(run_id: str, services: Services | None = None) -> dict:
-    """Activity 1: the supervisor builds the plan (idempotent)."""
+    """Activity 1: bind the playbook and its capabilities, the supervisor frames the plan (idempotent).
+    A binding failure (a required step's capability disabled, deprecated or not certified for an
+    autonomous run) fails the run with the reason instead of starting it."""
     from analystos.agents.supervisor import build_plan
 
     services = services or default_services()
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id)
-        if run.plan_version > 0:
+        if run.plan_version > 0 or run.status in RUN_TERMINAL:
             return {"plan_version": run.plan_version}
         set_run_status(s, run, "PLANNING", started_at=utcnow())
-    plan = build_plan(run_id, services)
+        try:
+            binding, failure = bind_run(s, run), None
+        except AnalystOSError as exc:
+            failure = f"{exc.code}: {exc.message}"
+    if failure:
+        finish_run(run_id, "FAILED", failure)  # schedules and alerts hear about it like any failed run
+        return {"plan_version": 0, "failed": failure}
+    plan = build_plan(run_id, services, binding.playbook)
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id, with_for_update=True)
         if run.plan_version > 0:
             return {"plan_version": run.plan_version}
         run.plan = plan
+        run.capabilities = binding.to_json()
         run.plan_version = 1
         materialize_plan(s, run)
         set_run_status(s, run, "READY")
-        emit(run.workspace_id, "run.replanned", {"plan_version": 1, "plan_hash": run.plan_hash, "steps": len(plan["steps"])},
-             run_id=run.id, session=s)
-        if any(st["key"] == "plan_approval" for st in plan["steps"]):
+        emit(run.workspace_id, "run.replanned", {"plan_version": 1, "plan_hash": run.plan_hash, "steps": len(plan["steps"]),
+                                                 "playbook": binding.playbook.ref, "capabilities": len(binding.refs),
+                                                 "skipped": binding.skipped}, run_id=run.id, session=s)
+        for st in plan["steps"]:
+            spec = binding.playbook.step(st["key"])
+            if spec is None or spec.type != "approval_gate" or spec.payload != "plan":
+                continue
             from analystos.governance.approvals import request_approval
 
             approval = request_approval(s, workspace_id=run.workspace_id, run_id=run.id, action="execute_plan",
                                         payload={"plan": plan, "constraints": run.constraints}, plan_hash=run.plan_hash,
                                         policy_version=run.policy_version, requested_by=run.requested_by, risk_tier="medium",
                                         destination=None, affected_assets=run.scope.get("assets", []))
-            task = s.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == "plan_approval"))
+            task = s.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == st["key"]))
             task.input = {**task.input, "approval_id": approval.id}
     return {"plan_version": 1}
 
 
-def _approval_gate(session, task: RunTask) -> str | None:
+def _approval_gate(session, task: RunTask, step: Step | None) -> str | None:
     """For approval-gated tasks: 'ready' | 'waiting' | 'skip'."""
     approval_id = task.input.get("approval_id")
-    if task.key not in ("plan_approval", "publish") or not approval_id:
+    if step is None or not step.waits_for_approval or not approval_id:
         return None
     approval = session.get(Approval, approval_id)
     if approval is None:
@@ -130,6 +158,7 @@ def get_state(run_id: str) -> dict:
         tasks = {t.key: t for t in s.scalars(select(RunTask).where(RunTask.run_id == run_id))}
         if not tasks:
             return {"needs_plan": True}
+        playbook = run_playbook(run)
         ready, waiting, running = [], [], []
         for key, task in sorted(tasks.items(), key=lambda kv: (kv[1].seq, kv[0])):
             if task.status == "RUNNING":
@@ -139,9 +168,10 @@ def get_state(run_id: str) -> dict:
                 continue
             if not all(dep_satisfied(d, tasks, key) for d in task.depends_on):
                 continue
-            gate = _approval_gate(s, task)
-            if task.key == "publish" and not task.input.get("approval_id") and task.status == "NEW":
-                # publish_request finished without creating an approval (nothing publishable or denied)
+            step = playbook.step(key)
+            gate = _approval_gate(s, task, step)
+            if step is not None and step.type == "side_effect" and not task.input.get("approval_id") and task.status == "NEW":
+                # its approval_gate finished without creating an approval (nothing publishable or denied)
                 task.status, task.finished_at = "SKIPPED", utcnow()
                 continue
             if gate == "waiting":
@@ -219,7 +249,7 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             if run.plan_version != version or task.plan_version != version:
                 # replanned while running: discard. Dynamic tasks of the old plan are removed; base
                 # tasks run again under the new plan version.
-                if key.startswith(DYNAMIC_PREFIXES):
+                if run_playbook(run).is_dynamic(key):
                     s.delete(task)
                 else:
                     task.status, task.output, task.error = "NEW", {}, "discarded: plan changed while running"
@@ -261,7 +291,9 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
             s.execute(update(RunTask).where(RunTask.run_id == run_id, RunTask.status.in_(["NEW", "READY", "WAITING_USER"]))
                       .values(status="CANCELLED"))
             invalidate_run_approvals(s, run_id, "run cancelled")
-            published = s.scalar(select(RunTask.status).where(RunTask.run_id == run_id, RunTask.key == "publish")) == "COMPLETED"
+            side_effects = [k for k, st in run_playbook(run).steps.items() if st.type == "side_effect"]
+            published = bool(side_effects) and s.scalar(select(func.count()).select_from(RunTask).where(
+                RunTask.run_id == run_id, RunTask.key.in_(side_effects), RunTask.status == "COMPLETED")) > 0
             run.summary = {**(run.summary or {}), "cancel_outcome": "cancelled_after_publication" if published else "cancelled_before_side_effects"}
         set_run_status(s, run, outcome, **({"error": error} if error else {}))
         notify_needed = (run.origin or {}).get("type") in ("schedule", "alert")
@@ -271,22 +303,24 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
         complete_from_run(run_id)
 
 
-DOWNSTREAM_OF_VERIFY = {"dataset", "semantic", "visualize", "publish_request", "publish", "finalize"}
-
-
 def apply_replan(session, run: AnalysisRun, reason: str, *, full: bool = True) -> dict:
     """Dynamic replanning (§40): persist, mark impacted, cancel invalid pending work, reuse valid artifacts.
 
-    full=True  (redirect / deeper analysis): hypotheses onward are recomputed; context, metadata,
-               profile and quality results are reused.
-    full=False (finding rejected / metric edited): only dataset onward is recomputed.
+    What is reset comes from the playbook's `replan_boundary` steps:
+    full=True  (redirect / deeper analysis): the `redirect` boundary (investigate.v1: hypotheses onward);
+               context, metadata, profile and quality results are reused.
+    full=False (finding rejected / metric edited): the `finding_rejected` boundary (investigate.v1:
+               dataset onward).
     """
-    reset_keys = REPLAN_RESET if full else DOWNSTREAM_OF_VERIFY
+    playbook = run_playbook(run)
+    trigger = "redirect" if full else "finding_rejected"
+    reset_keys = playbook.reset_keys(trigger)
+    removed_prefixes = playbook.removed_prefixes(trigger)
     run.plan_version += 1
     tasks = list(session.scalars(select(RunTask).where(RunTask.run_id == run.id)))
     removed, reset = 0, 0
     for task in tasks:
-        if full and task.key.startswith(DYNAMIC_PREFIXES):
+        if removed_prefixes and task.key.startswith(removed_prefixes):
             session.delete(task)
             removed += 1
         elif task.key in reset_keys:
@@ -300,8 +334,7 @@ def apply_replan(session, run: AnalysisRun, reason: str, *, full: bool = True) -
                         .values(status="superseded"))
         session.execute(update(Insight).where(Insight.run_id == run.id).values(status="superseded"))
     invalidated = invalidate_run_approvals(session, run.id, f"replanned: {reason}")
-    run.plan_hash = plan_hash(run.plan, constraints=run.constraints, scope_hash=run.scope.get("hash", ""),
-                              plan_version=run.plan_version)
+    run.plan_hash = run_hash(run)
     if run.status in ("WAITING_USER", "COMPLETED", "PAUSED"):
         run.status = "RUNNING"
         run.finished_at = None
@@ -310,6 +343,3 @@ def apply_replan(session, run: AnalysisRun, reason: str, *, full: bool = True) -
                                              "approvals_invalidated": invalidated}, run_id=run.id, session=session)
     return {"plan_version": run.plan_version, "tasks_reset": reset, "tasks_removed": removed, "approvals_invalidated": invalidated}
 
-
-def clear_dynamic(session, run_id: str) -> None:
-    session.execute(delete(RunTask).where(RunTask.run_id == run_id, RunTask.key.like("test:%")))

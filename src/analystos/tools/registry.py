@@ -71,10 +71,16 @@ TOOLS = {t.tool_id: t for t in BUILTIN_TOOLS}
 
 
 def load_agent_specs(directory: Path | None = None) -> list[AgentSpec]:
+    """AgentSpecs (agent_definition rows, the tool gate) derived from the agent manifests in the
+    catalog directory. Old `agent:` files are still read during the compatibility window."""
+    from analystos.capabilities.agents import from_legacy, to_agent_spec
+    from analystos.contracts.capability import CapabilityManifest
+
     specs = []
     for path in sorted((directory or get_settings().agents_dir).glob("*.yaml")):
-        data = yaml.safe_load(path.read_text())["agent"]
-        specs.append(AgentSpec.model_validate(data))
+        data = yaml.safe_load(path.read_text())
+        raw = from_legacy(data["agent"]) if "agent" in data else data
+        specs.append(to_agent_spec(CapabilityManifest.model_validate(raw)))
     return specs
 
 
@@ -148,6 +154,8 @@ class ToolRuntime:
                 reasons.append(f"tool_not_bound_to_agent_{self.agent.id}")
             elif tool_id == "python.execute" and not _platform().features.python_sandbox:
                 reasons.append("python_sandbox_disabled_by_admin")
+            elif not _tool_enabled_here(session, self.identity.workspace_id, tool_id):
+                reasons.append("capability_disabled_for_workspace")
             decision = None
             if not reasons:
                 identity = self.identity.model_copy(update={"tool_id": tool_id, "agent_id": self.agent.id})
@@ -222,6 +230,15 @@ def _platform():
     from analystos.services.platform_settings import get
 
     return get()
+
+
+def _tool_enabled_here(session: Session, workspace_id: str | None, tool_id: str) -> bool:
+    """Per-workspace capability enablement (P4-X01): an owner can turn a built-in tool off."""
+    if not workspace_id:
+        return True
+    from analystos.capabilities.enablement import tool_enabled
+
+    return tool_enabled(session, workspace_id, tool_id)
 
 
 def list_tools(session: Session) -> list[dict]:

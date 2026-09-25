@@ -82,6 +82,7 @@ routing:
   dashboard_design: low_cost
   feedback_interpretation: coding
   summarization: low_cost
+  agent_actions: low_cost  # declarative agents (agents/generic.py) propose typed actions; default_actions are the rule path
   metadata_enrichment: low_cost
   verification: independent_model_family
   # JEV decision purposes

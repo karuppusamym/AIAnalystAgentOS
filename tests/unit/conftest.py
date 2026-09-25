@@ -35,7 +35,9 @@ def sqlite_db(monkeypatch):
 
     tables = [models.Base.metadata.tables[t] for t in (
         "app_user", "workspace", "workspace_member", "analysis_run", "run_task", "run_event", "approval", "hypothesis",
-        "insight", "artifact", "artifact_version", "audit_event", "monitor", "alert", "notification")]
+        "insight", "artifact", "artifact_version", "audit_event", "monitor", "alert", "notification", "workspace_capability",
+        "agent_definition", "tool_definition", "tool_execution", "agent_message", "workspace_policy", "source", "source_asset",
+        "source_column", "model_call", "query_execution")]
     models.Base.metadata.create_all(engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(base, "SessionLocal", lambda: factory())

@@ -194,6 +194,20 @@ class AgentDefinition(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class WorkspaceCapability(Base):
+    """Per-workspace enablement of a capability (spec v3 §3.1). No row = the default: on for the
+    built-in set `playbook.investigate` needs (and built-in tools), off for everything else."""
+
+    __tablename__ = "workspace_capability"
+    __table_args__ = (UniqueConstraint("workspace_id", "capability_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    capability_id: Mapped[str] = mapped_column(String(160))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by: Mapped[str] = mapped_column(String(40))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ToolDefinition(Base):
     __tablename__ = "tool_definition"
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -234,6 +248,10 @@ class AnalysisRun(Base):
     # How the run was started: {"type": "user"} or {"type": "schedule", "schedule_id", "schedule_run_id",
     # "previous_run_id", "publish": "skip"|"propose", "report": {...}} or {"type": "alert", "alert_id"}
     origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Capability bindings (spec v3 §3.1, P4-X01): {"playbook": id, "refs": ["id@version", ...],
+    # "manifests": {id: manifest}, "skipped": {step: reason}}. Bound when the plan materializes; the run
+    # keeps these versions after a registry reload, and the refs are part of the plan hash.
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

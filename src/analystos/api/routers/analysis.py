@@ -35,6 +35,7 @@ class RunIn(BaseModel):
     objective: str | None = None
     source_ids: list[str] | None = None
     autonomy_level: int | None = None
+    playbook: str | None = None  # a Playbook capability id; default playbook.investigate
 
 
 class FeedbackIn(BaseModel):

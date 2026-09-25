@@ -22,7 +22,14 @@ TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
 
 
 def create_run(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
-               autonomy_level: int | None = None, origin: dict | None = None) -> AnalysisRun:
+               autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None) -> AnalysisRun:
+    """`playbook` names a Playbook capability (default playbook.investigate); it must exist now, and
+    enablement and certification are checked when the plan binds it."""
+    if playbook is not None:
+        from analystos.capabilities import registry
+
+        if registry.current().get(playbook).kind != "Playbook":
+            raise InvalidInput(f"{playbook} is not a playbook")
     with session_scope() as s:
         require_role(s, user, workspace_id, "analyst")
         ws = get_workspace(s, workspace_id)
@@ -42,7 +49,7 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
         run = AnalysisRun(id=new_id("run"), workspace_id=workspace_id, objective=objective, status="NEW", autonomy_level=level,
                           policy_version=ws.policy_version, requested_by=user.id,
                           scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={},
-                          origin=origin or {"type": "user"})
+                          origin=origin or {"type": "user"}, capabilities={"playbook": playbook} if playbook else {})
         s.add(run)
         s.flush()
         emit(workspace_id, "run.created", {"objective": objective, "autonomy_level": level, "assets": scope.assets,

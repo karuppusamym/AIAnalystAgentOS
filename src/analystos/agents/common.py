@@ -197,6 +197,25 @@ def fit_payload(payload: dict[str, Any], *, max_chars: int, objective: str | Non
     return out
 
 
+def _agent_refusal(ctx: Any, purpose: str) -> tuple[str, str] | None:
+    """Agent manifest enforcement (P4-X03): only the agent's declared model purposes are routed, and
+    only while its per-step budget (`llm_calls`, `usd`) lasts. Contexts without a manifest (Ask,
+    monitors) are governed by the workspace policy alone."""
+    manifest = getattr(ctx, "manifest", None)
+    if manifest is None or manifest.kind != "Agent":
+        return None
+    from analystos.capabilities.agents import body
+
+    if purpose not in body(manifest).purposes:
+        return "purpose_not_declared", (f"Model purpose {purpose} is not declared by {manifest.ref}; "
+                                        "using the deterministic path.")
+    for kind in ("llm_calls", "usd"):
+        if not ctx.budget_left(kind):
+            return "agent_budget_exhausted", (f"{manifest.ref} {kind} budget ({getattr(ctx.budget, kind)}) is used up "
+                                              f"for this step; {purpose} uses the deterministic path.")
+    return None
+
+
 def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: dict[str, Any], *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
              prompt_vars: dict[str, str] | None = None) -> tuple[Any | None, str | None]:
@@ -214,6 +233,12 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: dict[str,
     if ctx.router.mode(purpose) == "off":
         model_gate(ctx, purpose, payload, deterministic_ok=True)  # records the avoided call
         return None, "llm_off"
+    refused = _agent_refusal(ctx, purpose)
+    if refused:
+        ctx.say(refused[1], kind="decision")
+        ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(payload)) + 500,
+                               reason=refused[1][:200])
+        return None, refused[0]
     system = prompt(prompt_name, **(prompt_vars or {}))
     call = dataclasses.replace(ctx.call_ctx(exclude_families=exclude_families), prompt_version=prompt_version_id(prompt_name, system))
     call.with_policy(getattr(ctx, "policy", None))
@@ -225,8 +250,13 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: dict[str,
     if fitted is not payload:
         ctx.say(f"Prompt for {purpose} trimmed to fit the model budget (~{estimate_tokens(compact_json(fitted))} tokens); "
                 f"omitted: {compact_json({k: v for k, v in fitted['omitted'].items() if k != 'reason'})[:300]}", kind="decision")
+    spend = getattr(ctx, "spend", None)
+    if spend is not None:
+        spend("llm_calls")
     try:
         response = ctx.router.complete_json(purpose, system, compact_json(fitted), ctx=call, max_tokens=max_tokens)
+        if spend is not None:
+            spend("usd", response.cost_usd)
         return response.data, response.model
     except AnalystOSError as exc:
         log.warning("llm %s failed: %s", purpose, exc)

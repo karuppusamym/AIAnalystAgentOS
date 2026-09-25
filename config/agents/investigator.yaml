@@ -1,28 +1,44 @@
-agent:
-  id: investigator
-  version: '1.0'
-  name: Investigation / Hypothesis Agent
-  description: Turns the objective into analytical questions and executable hypotheses, prioritises them (JEV scoring),
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.investigator
+version: 1.0.0
+summary: Investigation / Hypothesis Agent
+entry: python:analystos.agents.investigator:generate_hypotheses
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- question_generation
+- hypothesis_generation
+- prioritisation
+- follow_up
+spec:
+  role: Investigation / Hypothesis Agent
+  goal: Turns the objective into analytical questions and executable hypotheses, prioritises them (JEV scoring),
     and proposes follow-up hypotheses from results.
+  behaviours:
+    follow_ups: python:analystos.agents.investigator:follow_ups
   capabilities:
-  - question_generation
-  - hypothesis_generation
-  - prioritisation
-  - follow_up
-  skills:
-  - root_cause_analysis
-  - segmentation
-  - trend_analysis
-  - pareto_analysis
+  - skill.analysis_spec_compiler
+  - skill.run_analysis
+  - skill.trend_analysis
+  - skill.pareto_analysis
   tools:
   - context.search
   - artifact.write
-  model_profile: analytical_reasoning
+  model_purposes:
+  - hypothesis_generation
+  - follow_up_generation
   prompt_version: v1
+  budget:
+    llm_calls: 1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

@@ -80,12 +80,18 @@ def _matches(pattern: str, fq: str) -> bool:
     return pattern == fq
 
 
+PII_ORDER = {"none": 0, "restricted": 1, "allowed": 2}
+
+
 def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids: list[str] | None = None,
-                  minimum_role: str = "analyst") -> DataScope:
-    """Server-side authorized data scope for this caller (§12.2). Selected assets only."""
+                  minimum_role: str = "analyst", pii_access: str | None = None) -> DataScope:
+    """Server-side authorized data scope for this caller (§12.2). Selected assets only.
+    `pii_access` (an agent manifest's policy) can only tighten the workspace policy."""
     role = require_role(session, user, workspace_id, minimum_role)
     workspace = get_workspace(session, workspace_id)
     policy = load_policy(session, workspace)
+    if pii_access is not None and PII_ORDER[pii_access] < PII_ORDER[policy.pii_access]:
+        policy.pii_access = pii_access
     sources = list(session.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.status == "ready")))
     if source_ids:
         sources = [s for s in sources if s.id in source_ids]

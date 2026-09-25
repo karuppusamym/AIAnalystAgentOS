@@ -1,25 +1,41 @@
-agent:
-  id: supervisor
-  version: '1.0'
-  name: Analytics Supervisor
-  description: Interprets the objective, builds and versions the execution plan, assigns agents, resolves dependencies,
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.supervisor
+version: 1.0.0
+summary: Analytics Supervisor
+entry: python:analystos.agents.supervisor:finalize
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- planning
+- replanning
+- progress_tracking
+- stop_criteria
+- consolidation
+spec:
+  role: Analytics Supervisor
+  goal: Interprets the objective, builds and versions the execution plan, assigns agents, resolves dependencies,
     replans on user redirects, enforces stop criteria and consolidates results.
-  capabilities:
-  - planning
-  - replanning
-  - progress_tracking
-  - stop_criteria
-  - consolidation
-  skills: []
+  behaviours:
+    plan_approved: python:analystos.agents.supervisor:plan_approved
+  capabilities: []
   tools:
   - context.search
   - artifact.write
-  model_profile: reasoning_strong
+  model_purposes:
+  - planning
+  - summarization
   prompt_version: v1
+  budget:
+    llm_calls: 1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

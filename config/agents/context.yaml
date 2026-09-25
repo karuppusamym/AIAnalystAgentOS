@@ -1,26 +1,36 @@
-agent:
-  id: context
-  version: '1.0'
-  name: Context Agent
-  description: Retrieves enterprise context (Context2AI or local store) with layered retrieval, resolves business
-    terminology to technical fields and flags ambiguity.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.context
+version: 1.0.0
+summary: Context Agent
+entry: python:analystos.agents.context_agent:load_context
+determinism: deterministic
+side_effect: write_internal
+cost_class: query
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- context_retrieval
+- term_resolution
+- ambiguity_detection
+spec:
+  role: Context Agent
+  goal: Retrieves enterprise context (Context2AI or local store) with layered retrieval, resolves business terminology
+    to technical fields and flags ambiguity.
   capabilities:
-  - context_retrieval
-  - term_resolution
-  - ambiguity_detection
-  skills:
-  - business_term_resolution
-  - metadata_summary
+  - skill.glossary_linking
   tools:
   - context.search
   - graph.neighborhood
   - artifact.write
-  model_profile: low_cost
   prompt_version: v1
+  budget:
+    llm_calls: 0
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

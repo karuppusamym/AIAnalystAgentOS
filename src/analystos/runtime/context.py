@@ -9,12 +9,14 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from analystos.capabilities.agents import AgentBudget
+from analystos.contracts.capability import CapabilityManifest
 from analystos.contracts.policy import DataScope, ExecutionIdentity, WorkspacePolicyDoc
 from analystos.contracts.registry import AgentSpec
 from analystos.core.config import get_settings
-from analystos.core.errors import BudgetExceeded, PolicyDenied, RunCancelled
+from analystos.core.errors import BudgetExceeded, NotFound, PolicyDenied, RunCancelled
 from analystos.db.base import session_scope
-from analystos.db.models import AgentMessage, AnalysisRun, QueryExecution, RunTask, User, Workspace
+from analystos.db.models import AgentDefinition, AgentMessage, AnalysisRun, QueryExecution, RunTask, User, Workspace
 from analystos.events.bus import emit
 from analystos.governance.policy import load_policy, resolve_scope
 from analystos.llm.jev import JevDecisions
@@ -75,6 +77,23 @@ def default_services() -> Services:
     return Services(router=default_router(), gateway=default_gateway())
 
 
+def _agent(session, run: AnalysisRun, agent_id: str) -> tuple[CapabilityManifest | None, AgentSpec]:
+    """The agent manifest this run bound (else the current registry's) and the AgentSpec derived from
+    it. agent_definition stays the platform-wide kill switch: a disabled row stops the agent."""
+    from analystos.capabilities import registry
+    from analystos.capabilities.agents import to_agent_spec
+    from analystos.capabilities.binding import bound_manifest
+
+    cap_id = f"agent.{agent_id}"
+    manifest = bound_manifest(run, cap_id) or registry.current().manifests.get(cap_id)
+    row = session.get(AgentDefinition, agent_id)
+    if row is not None and not row.enabled:
+        raise NotFound(f"agent {agent_id} is not registered or disabled")
+    if manifest is not None and manifest.kind == "Agent":
+        return manifest, to_agent_spec(manifest)
+    return None, get_agent_spec(session, agent_id)
+
+
 @dataclass
 class RunContext:
     run: AnalysisRun
@@ -85,7 +104,10 @@ class RunContext:
     scope: DataScope
     agent: AgentSpec
     services: Services
+    manifest: CapabilityManifest | None = None  # the agent manifest this run bound (None: agent_definition only)
     notes: list[str] = field(default_factory=list)
+    # Per task execution, against the agent manifest's budget (capabilities/agents.AgentBudget).
+    usage: dict[str, float] = field(default_factory=lambda: {"llm_calls": 0, "usd": 0.0, "queries": 0})
     _authorized: set[str] = field(default_factory=set, repr=False)
 
     # ------------------------------------------------------------------ construction
@@ -98,17 +120,38 @@ class RunContext:
             workspace = s.get(Workspace, run.workspace_id)
             if user is None or not user.active:
                 raise PolicyDenied("run owner is no longer active")
+            manifest, agent = _agent(s, run, task.agent_id)
+            # The agent manifest's policies only tighten the workspace policy.
             policy = load_policy(s, workspace)
+            policy.max_iterations = min(policy.max_iterations, agent.policies.max_iterations)
             # Re-resolve: revocations and policy tightening apply from the next step on.
-            scope = resolve_scope(s, user, run.workspace_id, source_ids=run.scope.get("source_ids") or None)
+            scope = resolve_scope(s, user, run.workspace_id, source_ids=run.scope.get("source_ids") or None,
+                                  pii_access=agent.policies.pii_access)
             original = set(run.scope.get("assets") or [])
             scope.assets = [a for a in scope.assets if a in original]  # a run never widens beyond its start scope
             scope.denied_columns = sorted(set(scope.denied_columns) | set(run.scope.get("denied_columns") or []))
+            scope.max_rows = min(scope.max_rows, agent.policies.max_rows_extract)
             if not scope.assets:
                 raise PolicyDenied("no authorized assets remain in scope for this run")
-            agent = get_agent_spec(s, task.agent_id)
             s.expunge_all()
-        return cls(run=run, task=task, user=user, workspace=workspace, policy=policy, scope=scope, agent=agent, services=services)
+        return cls(run=run, task=task, user=user, workspace=workspace, policy=policy, scope=scope, agent=agent, services=services,
+                   manifest=manifest)
+
+    # ------------------------------------------------------------------ budget
+    @property
+    def budget(self) -> AgentBudget | None:
+        from analystos.capabilities.agents import body
+
+        return body(self.manifest).budget if self.manifest is not None and self.manifest.kind == "Agent" else None
+
+    def spend(self, kind: str, amount: float = 1) -> None:
+        self.usage[kind] = self.usage.get(kind, 0) + amount
+
+    def budget_left(self, kind: str) -> bool:
+        """False once this task execution used the agent's `budget.<kind>` (llm_calls | usd | queries)."""
+        budget = self.budget
+        limit = getattr(budget, kind, None) if budget is not None else None
+        return limit is None or self.usage.get(kind, 0) < limit
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -164,6 +207,9 @@ class RunContext:
             def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None, use_cache: bool = True):
                 ctx.check_control()
                 ctx.check_query_budget()
+                if not ctx.budget_left("queries"):
+                    raise BudgetExceeded(f"agent {ctx.agent.id} query budget ({ctx.budget.queries}) exhausted for this step")
+                ctx.spend("queries")
                 if use_cache:
                     return inner(sql, purpose=purpose, max_rows=max_rows)
                 return inner(sql, purpose=purpose, max_rows=max_rows, use_cache=False)

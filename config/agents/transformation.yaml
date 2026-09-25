@@ -1,12 +1,20 @@
-agent:
-  id: transformation
-  version: '0.1'
-  name: Transformation Agent
-  description: Generates minimal reusable transformations and materializations.
-  capabilities:
-  - transformation
-  - materialization
-  skills: []
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.transformation
+version: 0.1.0
+summary: Transformation Agent
+determinism: deterministic
+side_effect: none
+cost_class: query
+certification:
+  status: draft
+tags:
+- transformation
+- materialization
+spec:
+  role: Transformation Agent
+  goal: Generates minimal reusable transformations and materializations.
+  capabilities: []
   tools: []
-  model_profile: coding
   phase: phase2

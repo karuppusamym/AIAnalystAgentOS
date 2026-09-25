@@ -146,8 +146,8 @@ def from_manifest(m: CapabilityManifest, packs_dir: Path | None = None) -> Domai
 def load_packs(packs_dir: Path | None = None, *, entry_points: bool = True) -> list[DomainPack]:
     """Every installed pack, sorted by id. A pack whose data does not load is skipped and logged:
     a broken pack must not take the crawler or a run down."""
-    snap = registry.load(packs_dir=packs_dir or registry.PACKS_DIR, entry_points=entry_points, legacy=False,
-                         connectors=False, strict=False)
+    snap = registry.load(builtin_dir=None, packs_dir=packs_dir or registry.PACKS_DIR, entry_points=entry_points, legacy=False,
+                         connectors=False, agents=False, strict=False)
     for p in snap.problems:
         _log.warning("capability problem while loading packs: %s", p)
     out = []

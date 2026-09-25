@@ -1,16 +1,19 @@
 """Capability registry (ADR-0011): discover, validate and serve capability manifests.
 
 Discovery order (later sources may not redefine an id a built-in already owns):
-1. built-in manifests  `src/analystos/capabilities/builtin/*.yaml`
-2. the legacy registries (tools, skills, agent YAML) bridged into manifests during the
+1. built-in manifests  `src/analystos/capabilities/builtin/**/*.yaml` (playbooks, action skills) and
+   the agent catalog `config/agents/*.yaml` (Agent manifests; old `agent:` files are converted)
+2. the legacy registries (tools, skills) bridged into manifests during the
    compatibility window, so everything that exists today is discoverable; and one Connector per
    source kind, generated from the kind catalog (connectors/kinds.py) with its certification
    derived from live evidence files (connectors/certification.py)
 3. directory packs      `packs/<name>/**/*.yaml` (config-only)
 4. Python entry points  group `analystos.capabilities` (a callable returning manifests or dicts)
 
-Validation happens at load: a malformed manifest, a duplicate id or an unknown `requires`
-reference fails the whole load with every problem listed. A reload builds a new immutable
+Validation happens at load: a malformed manifest, a duplicate id, an unknown `requires`
+reference or a kind-specific reference that does not resolve (an agent's skill, tool or model
+purpose, a playbook step's agent or behaviour: capabilities/validation.py) fails the whole load
+with every problem listed. A reload builds a new immutable
 snapshot and swaps it in; callers holding an old snapshot (runs in flight) keep their versions.
 """
 from __future__ import annotations
@@ -87,9 +90,9 @@ def _parse(raw: dict[str, Any], source: str, problems: list[str]) -> CapabilityM
 
 
 def _legacy_manifests() -> list[dict[str, Any]]:
-    """Today's tools, skills and agents as manifests (compatibility window, ADR-0011 consequences)."""
+    """Today's tools and skills as manifests (compatibility window, ADR-0011 consequences)."""
     from analystos.skills.registry import SKILLS
-    from analystos.tools.registry import TOOLS, load_agent_specs
+    from analystos.tools.registry import TOOLS
 
     side = {"none": "none", "internal_write": "write_internal", "external_write": "write_external"}
     out: list[dict[str, Any]] = []
@@ -110,12 +113,19 @@ def _legacy_manifests() -> list[dict[str, Any]]:
                     "determinism": "deterministic" if s.get("deterministic", True) else "model",
                     "side_effect": "read_source", "cost_class": "query",
                     "certification": {"status": "certified", "evidence": "tests/unit"}, "tags": [s["category"]]})
-    for a in load_agent_specs():
-        out.append({"kind": "Agent", "id": "agent." + a.id, "version": _semver(a.version), "summary": a.name,
-                    "entry": f"builtin:agent:{a.id}", "determinism": "model", "side_effect": "write_internal",
-                    "cost_class": "llm_small", "certification": {"status": "certified" if a.phase == "mvp" else "tested"},
-                    "spec": {"description": a.description, "tools": a.tools, "skills": a.skills,
-                             "model_profile": a.model_profile, "policies": a.policies.model_dump(), "phase": a.phase}})
+    return out
+
+
+def _agent_manifests(directory: Path | None = None) -> list[tuple[str, dict[str, Any]]]:
+    """Agent manifests from the agent catalog directory (`config/agents`). Files still in the old
+    `agent:` format are converted during the compatibility window (capabilities/agents.from_legacy)."""
+    from analystos.capabilities.agents import from_legacy
+    from analystos.core.config import get_settings
+
+    out: list[tuple[str, dict[str, Any]]] = []
+    for path in sorted((directory or get_settings().agents_dir).glob("*.yaml")):
+        for raw in _read_yaml(path):
+            out.append(("builtin", from_legacy(raw["agent"]) if isinstance(raw, dict) and "agent" in raw else raw))
     return out
 
 
@@ -144,16 +154,25 @@ def _entry_point_manifests(problems: list[str]) -> list[tuple[str, dict[str, Any
     return out
 
 
-def load(*, builtin_dir: Path = BUILTIN_DIR, packs_dir: Path | None = PACKS_DIR, entry_points: bool = True,
+def load(*, builtin_dir: Path | None = BUILTIN_DIR, packs_dir: Path | None | str = "default", entry_points: bool = True,
          legacy: bool = True, extra: Iterable[tuple[str, dict[str, Any]]] = (), strict: bool = True,
-         connectors: bool = True) -> Snapshot:
-    """Build a snapshot. `strict` raises on any problem; non-strict keeps valid manifests and reports problems."""
+         connectors: bool = True, agents_dir: Path | None = None, agents: bool | None = None) -> Snapshot:
+    """Build a snapshot. `strict` raises on any problem; non-strict keeps valid manifests and reports problems.
+
+    `legacy=False` is a partial load (no bridged tools/skills and, unless `agents=True`, no agent
+    catalog): each manifest is still validated, but kind-specific references (an agent's skills, a
+    playbook's agents) are only checked against a full catalog."""
+    agents = legacy if agents is None else agents
+    if packs_dir == "default":
+        packs_dir = PACKS_DIR  # read at call time, so a deployment or a test can point it elsewhere
     problems: list[str] = []
     raws: list[tuple[str, dict[str, Any]]] = []
-    if builtin_dir.is_dir():
-        raws += [("builtin", r) for p in sorted(builtin_dir.glob("*.yaml")) for r in _read_yaml(p)]
+    if builtin_dir is not None and builtin_dir.is_dir():
+        raws += [("builtin", r) for p in sorted(builtin_dir.rglob("*.yaml")) for r in _read_yaml(p)]
     if legacy:
         raws += [("builtin", r) for r in _legacy_manifests()]
+    if agents:
+        raws += _agent_manifests(agents_dir)
     if connectors:
         raws += [("builtin", r) for r in _connector_manifests()]
     if packs_dir is not None and packs_dir.is_dir():
@@ -179,6 +198,9 @@ def load(*, builtin_dir: Path = BUILTIN_DIR, packs_dir: Path | None = PACKS_DIR,
                 continue  # engine features are checked when an engine is bound (wave 4)
             if not any(fnmatch.fnmatchcase(i, req) for i in manifests):
                 problems.append(f"{m.source}: {m.id} requires unknown capability {req}")
+    from analystos.capabilities.validation import validate_kinds
+
+    problems += validate_kinds(manifests, references=legacy)
     if problems and strict:
         raise CapabilityLoadError("capability load failed:\n- " + "\n- ".join(problems))
     digest = stable_hash(sorted(m.ref for m in manifests.values()))
@@ -211,7 +233,14 @@ def resolve_entry(manifest: CapabilityManifest) -> Callable[..., Any]:
     """The callable behind a `python:` entry. Other schemes are dispatched by their own runtimes."""
     if not manifest.entry or not manifest.entry.startswith("python:"):
         raise InvalidInput(f"{manifest.id} has no python entry ({manifest.entry})")
-    target = manifest.entry[len("python:"):]
+    return resolve_python(manifest.entry)
+
+
+def resolve_python(entry: str) -> Callable[..., Any]:
+    """`python:module:attr` (or `python:module.attr`) -> the object."""
+    if not entry.startswith("python:"):
+        raise InvalidInput(f"{entry} is not a python entry")
+    target = entry[len("python:"):]
     module, _, attr = target.partition(":") if ":" in target else target.rpartition(".")
     obj: Any = importlib.import_module(module)
     for part in attr.split("."):
