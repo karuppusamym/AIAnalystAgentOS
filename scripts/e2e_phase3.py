@@ -52,6 +52,13 @@ def wait_run(api: Api, ws: str, run: str, timeout=1800) -> dict:
     raise SystemExit(f"timeout waiting for run {run}")
 
 
+def run_seconds(detail: dict | None) -> float | None:
+    """Wall-clock duration of an analysis run from its own timestamps (None while it has not finished)."""
+    if not detail or not detail.get("started_at") or not detail.get("finished_at"):
+        return None
+    return round((datetime.fromisoformat(detail["finished_at"]) - datetime.fromisoformat(detail["started_at"])).total_seconds(), 1)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default=os.getenv("ANALYSTOS_API", "http://localhost:8000"))
@@ -139,6 +146,10 @@ def main() -> int:
     check["notifications_for_report_and_alert"] = {"report", "alert"} <= kinds
     ev["notifications"] = [{"kind": n["kind"], "title": n["title"]} for n in notes if n["workspace_id"] == ws][:15]
 
+    finished = datetime.now(UTC)
+    ev["finished_at"] = finished.isoformat()
+    ev["duration"] = {"scenario_seconds": round((finished - started).total_seconds(), 1),
+                      "reanalysis_run_seconds": run_seconds(rerun), "investigation_run_seconds": run_seconds(inv)}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     stamp = started.strftime("%Y%m%d-%H%M%S")
@@ -146,7 +157,11 @@ def main() -> int:
     passed = sum(1 for v in check.values() if v)
     lines = [f"# Phase 3 end-to-end evidence — {started:%Y-%m-%d %H:%M} UTC", "",
              f"Live run through `{args.api}` in workspace `{ws}` (baseline run `{baseline['id']}`). Raw: `e2e-phase3-{stamp}.json`.", "",
-             f"**{passed}/{len(check)} checks passed.**", "", "| Check | Result |", "|---|---|"]
+             f"**{passed}/{len(check)} checks passed.**", "",
+             f"Duration: scenario {ev['duration']['scenario_seconds']} s (started {started:%H:%M:%S}, finished {finished:%H:%M:%S} UTC); "
+             f"scheduled re-analysis run {ev['duration']['reanalysis_run_seconds']} s; "
+             f"automatic investigation run {ev['duration']['investigation_run_seconds']} s.",
+             "", "| Check | Result |", "|---|---|"]
     lines += [f"| {k} | {'PASS' if v else '**FAIL**'} |" for k, v in check.items()]
     lines += ["", "## Scheduled re-analysis", "", f"Run `{rerun_id}`; schedule run `{srun['id']}` ({srun_now['status']}).", ""]
     for k in ("new", "persisting", "changed", "resolved", "not_retested"):
@@ -161,7 +176,7 @@ def main() -> int:
     lines += ["", f"Automatic investigation `{inv_ev['run_id']}`: {inv_ev['status']}, {inv_ev['verified']} verified findings.", "",
               "## Notifications", ""] + [f"- {n['kind']}: {n['title']}" for n in ev["notifications"]]
     (out / f"e2e-phase3-{stamp}.md").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines[: len(check) + 7]))
+    print("\n".join(lines[: len(check) + 9]))
     print(f"wrote {out / f'e2e-phase3-{stamp}.md'}")
     return 0 if passed == len(check) else 1
 
