@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -273,8 +274,11 @@ class RunTask(Base):
     plan_version: Mapped[int] = mapped_column(Integer, default=1)
     seq: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # claim time
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped by every claim: a claim is a compare-and-set on it (P4-S02), and an attempt whose claim was
+    # retaken (timed out, released) cannot write its result over the new attempt's.
+    claim_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class RunEvent(Base):
@@ -470,8 +474,10 @@ class LineageEdge(Base):
     Unique per workspace: name-identified nodes (``table``, ``src_x.orders``) recur across workspaces."""
 
     __tablename__ = "lineage_edge"
+    # The unique key serves lookups by the `from` end; the index serves the `to` end (per-artifact lineage CTE).
     __table_args__ = (UniqueConstraint("workspace_id", "from_type", "from_id", "relation", "to_type", "to_id",
-                                       name="uq_lineage_edge_workspace_edge"),)
+                                       name="uq_lineage_edge_workspace_edge"),
+                      Index("ix_lineage_edge_workspace_to", "workspace_id", "to_type", "to_id"))
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     workspace_id: Mapped[str] = mapped_column(String(40), index=True)
     run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)

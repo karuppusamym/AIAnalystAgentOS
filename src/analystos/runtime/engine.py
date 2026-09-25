@@ -143,63 +143,122 @@ def _approval_gate(session, task: RunTask, step: Step | None) -> str | None:
     return "skip"
 
 
+class _NeedsLock(Exception):
+    """Raised by an unlocked `get_state` pass that reached a state change."""
+
+
 def get_state(run_id: str) -> dict:
-    """Activity: what should the orchestrator do next?"""
+    """Activity: what should the orchestrator do next?
+
+    The loop polls often and nearly every poll changes nothing, so the run and its tasks are read
+    without locks (P4-S02). A poll that has to change state (pause, a run status, parking or skipping
+    a task) takes the run's row lock and decides again on fresh rows, which serializes it with
+    replans, controls and finish_run as before."""
     with session_scope() as s:
-        run = s.get(AnalysisRun, run_id, with_for_update=True)
-        if run.status in RUN_TERMINAL:
-            return {"terminal": True, "status": run.status}
-        if run.control == "cancel":
-            return {"control": "cancel"}
-        if run.control == "pause":
-            if run.status != "PAUSED":
-                set_run_status(s, run, "PAUSED")
-            return {"control": "pause"}
-        tasks = {t.key: t for t in s.scalars(select(RunTask).where(RunTask.run_id == run_id))}
-        if not tasks:
-            return {"needs_plan": True}
-        playbook = run_playbook(run)
-        ready, waiting, running = [], [], []
-        for key, task in sorted(tasks.items(), key=lambda kv: (kv[1].seq, kv[0])):
-            if task.status == "RUNNING":
-                running.append(key)
-                continue
-            if task.status not in ("NEW", "WAITING_USER"):
-                continue
-            if not all(dep_satisfied(d, tasks, key) for d in task.depends_on):
-                continue
-            step = playbook.step(key)
-            gate = _approval_gate(s, task, step)
-            if step is not None and step.type == "side_effect" and not task.input.get("approval_id") and task.status == "NEW":
-                # its approval_gate finished without creating an approval (nothing publishable or denied)
-                task.status, task.finished_at = "SKIPPED", utcnow()
-                continue
-            if gate == "waiting":
-                if task.status != "WAITING_USER":
-                    task.status = "WAITING_USER"
-                waiting.append(key)
-            elif gate == "skip":
-                task.status, task.finished_at, task.error = "SKIPPED", utcnow(), "approval rejected, expired or invalidated"
-                emit(run.workspace_id, "task.updated", {"task": key, "status": "SKIPPED"}, run_id=run_id, session=s)
-            else:
-                ready.append(key)
-        failed_required = [k for k, t in tasks.items() if t.status == "FAILED" and not t.input.get("optional")]
-        if failed_required:
-            return {"fail": f"required task(s) failed: {', '.join(failed_required)}"}
-        done = all(t.status in ("COMPLETED", "SKIPPED", "FAILED", "CANCELLED", "INVALIDATED") for t in tasks.values())
-        if done:
-            return {"done": True}
-        if ready:
-            if run.status not in ("RUNNING",):
-                set_run_status(s, run, "RUNNING")
-            return {"ready": ready[:4]}
-        if waiting and not running:
-            if run.status != "WAITING_USER":
-                set_run_status(s, run, "WAITING_USER")
-            return {"waiting_user": waiting}
-        if running:
-            return {"running": running}
-        return {"fail": "no runnable task (dependency deadlock)"}
+        try:
+            return _decide(s, s.get(AnalysisRun, run_id), locked=False)
+        except _NeedsLock:
+            s.expire_all()
+            return _decide(s, s.get(AnalysisRun, run_id, with_for_update=True), locked=True)
+
+
+def _decide(s, run: AnalysisRun, *, locked: bool) -> dict:
+    def change() -> None:
+        if not locked:
+            raise _NeedsLock
+
+    run_id = run.id
+    if run.status in RUN_TERMINAL:
+        return {"terminal": True, "status": run.status}
+    if run.control == "cancel":
+        return {"control": "cancel"}
+    if run.control == "pause":
+        if run.status != "PAUSED":
+            change()
+            set_run_status(s, run, "PAUSED")
+        return {"control": "pause"}
+    tasks = {t.key: t for t in s.scalars(select(RunTask).where(RunTask.run_id == run_id))}
+    if not tasks:
+        return {"needs_plan": True}
+    approval_ids = [t.input["approval_id"] for t in tasks.values()
+                    if t.status in ("NEW", "WAITING_USER") and t.input.get("approval_id")]
+    if len(approval_ids) > 1:  # one read, not one per gated task: _approval_gate then hits the identity map
+        list(s.scalars(select(Approval).where(Approval.id.in_(approval_ids))))
+    playbook = run_playbook(run)
+    ready, waiting, running = [], [], []
+    for key, task in sorted(tasks.items(), key=lambda kv: (kv[1].seq, kv[0])):
+        if task.status == "RUNNING":
+            running.append(key)
+            continue
+        if task.status not in ("NEW", "WAITING_USER"):
+            continue
+        if not all(dep_satisfied(d, tasks, key) for d in task.depends_on):
+            continue
+        step = playbook.step(key)
+        gate = _approval_gate(s, task, step)
+        if step is not None and step.type == "side_effect" and not task.input.get("approval_id") and task.status == "NEW":
+            # its approval_gate finished without creating an approval (nothing publishable or denied)
+            change()
+            task.status, task.finished_at = "SKIPPED", utcnow()
+            continue
+        if gate == "waiting":
+            if task.status != "WAITING_USER":
+                change()
+                task.status = "WAITING_USER"
+            waiting.append(key)
+        elif gate == "skip":
+            change()
+            task.status, task.finished_at, task.error = "SKIPPED", utcnow(), "approval rejected, expired or invalidated"
+            emit(run.workspace_id, "task.updated", {"task": key, "status": "SKIPPED"}, run_id=run_id, session=s)
+        else:
+            ready.append(key)
+    failed_required = [k for k, t in tasks.items() if t.status == "FAILED" and not t.input.get("optional")]
+    if failed_required:
+        return {"fail": f"required task(s) failed: {', '.join(failed_required)}"}
+    done = all(t.status in ("COMPLETED", "SKIPPED", "FAILED", "CANCELLED", "INVALIDATED") for t in tasks.values())
+    if done:
+        return {"done": True}
+    if ready:
+        if run.status not in ("RUNNING",):
+            change()
+            set_run_status(s, run, "RUNNING")
+        return {"ready": ready[:4]}
+    if waiting and not running:
+        if run.status != "WAITING_USER":
+            change()
+            set_run_status(s, run, "WAITING_USER")
+        return {"waiting_user": waiting}
+    if running:
+        return {"running": running}
+    return {"fail": "no runnable task (dependency deadlock)"}
+
+
+def _claim(s, run_id: str, key: str) -> dict:
+    """Optimistic claim (P4-S02): read the task unlocked, then compare-and-set on the claim version,
+    status and plan version it was read with. Of two concurrent claimers exactly one updates the row;
+    the other reports `in_progress`. A RUNNING claim younger than CLAIM_TTL_SECONDS belongs to a live
+    worker; an older one (or one released by `release_timed_out_claim`) is retaken."""
+    row = s.execute(select(RunTask.id, RunTask.status, RunTask.started_at, RunTask.attempts, RunTask.plan_version,
+                           RunTask.claim_version, RunTask.agent_id, AnalysisRun.workspace_id)
+                    .join(AnalysisRun, AnalysisRun.id == RunTask.run_id)
+                    .where(RunTask.run_id == run_id, RunTask.key == key)).one_or_none()
+    if row is None:
+        return {"status": "missing"}
+    if row.status in ("COMPLETED", "SKIPPED"):
+        return {"status": row.status, "cached": True}
+    if row.status == "RUNNING" and row.started_at and _age_seconds(row.started_at) < CLAIM_TTL_SECONDS:
+        return {"status": "in_progress"}
+    claim = row.claim_version + 1
+    won = s.execute(update(RunTask).where(RunTask.id == row.id, RunTask.claim_version == row.claim_version,
+                                          RunTask.status == row.status, RunTask.plan_version == row.plan_version)
+                    .values(status="RUNNING", attempts=RunTask.attempts + 1, started_at=utcnow(), error=None,
+                            claim_version=claim)
+                    .execution_options(synchronize_session=False)).rowcount
+    if not won:
+        return {"status": "in_progress"}  # another claimer moved the row first
+    emit(row.workspace_id, "agent.started", {"task": key, "agent": row.agent_id, "attempt": row.attempts + 1},
+         run_id=run_id, session=s)
+    return {"claim": claim, "plan_version": row.plan_version}
 
 
 def execute_task(run_id: str, key: str, services: Services | None = None) -> dict:
@@ -210,19 +269,10 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
     token = run_id_var.set(run_id)
     try:
         with session_scope() as s:
-            task = s.scalar(select(RunTask).where(RunTask.run_id == run_id, RunTask.key == key).with_for_update())
-            if task is None:
-                return {"status": "missing"}
-            if task.status in ("COMPLETED", "SKIPPED"):
-                return {"status": task.status, "cached": True}
-            if task.status == "RUNNING" and task.started_at and _age_seconds(task.started_at) < CLAIM_TTL_SECONDS:
-                # Another worker holds it. A claim older than the activity timeout is from a crashed worker and is retaken.
-                return {"status": "in_progress"}
-            task.status, task.attempts, task.started_at, task.error = "RUNNING", task.attempts + 1, utcnow(), None
-            version = task.plan_version
-            run = s.get(AnalysisRun, run_id)
-            emit(run.workspace_id, "agent.started", {"task": key, "agent": task.agent_id, "attempt": task.attempts},
-                 run_id=run_id, session=s)
+            claimed = _claim(s, run_id, key)
+        if "claim" not in claimed:
+            return claimed
+        claim, version = claimed["claim"], claimed["plan_version"]
         plan_token = producing_plan.set((run_id, version))
         try:
             ctx = RunContext.load(run_id, key, services)
@@ -237,7 +287,7 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             output, status, error = {}, "FAILED", f"{type(exc).__name__}: {exc}"
             log.error("task %s crashed\n%s", key, traceback.format_exc())
             if not _is_last_attempt(run_id, key):
-                _reset(run_id, key, error)
+                _reset(run_id, key, error, claim)
                 raise
         finally:
             producing_plan.reset(plan_token)
@@ -246,6 +296,9 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             run = s.get(AnalysisRun, run_id)
             if task is None:
                 return {"status": "discarded"}
+            if task.claim_version != claim:
+                # a later attempt retook the claim (this one timed out or was released); its result stands
+                return {"status": "superseded"}
             if run.plan_version != version or task.plan_version != version:
                 # replanned while running: discard. Dynamic tasks of the old plan are removed; base
                 # tasks run again under the new plan version.
@@ -276,9 +329,11 @@ def _is_last_attempt(run_id: str, key: str, max_attempts: int = 3) -> bool:
         return task is None or task.attempts >= max_attempts
 
 
-def _reset(run_id: str, key: str, error: str) -> None:
+def _reset(run_id: str, key: str, error: str, claim: int) -> None:
+    """Hand a crashed attempt's task back for the retry, unless a later attempt already holds it."""
     with session_scope() as s:
-        s.execute(update(RunTask).where(RunTask.run_id == run_id, RunTask.key == key).values(status="NEW", error=error))
+        s.execute(update(RunTask).where(RunTask.run_id == run_id, RunTask.key == key, RunTask.claim_version == claim)
+                  .values(status="NEW", error=error))
 
 
 def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:

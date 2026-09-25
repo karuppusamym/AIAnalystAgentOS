@@ -212,6 +212,69 @@ def test_execute_task_discards_results_when_replanned_while_running(sqlite_db, d
     assert _task("test:H1") is None  # dynamic task of the old plan is removed
 
 
+def test_get_state_locks_only_to_change_state(sqlite_db, monkeypatch):
+    """P4-S02: a poll that changes nothing reads without locks; one that must change state decides
+    again under the run's row lock."""
+    _run(("a", "COMPLETED", []), ("b", "RUNNING", []), ("c", "NEW", ["a"]), status="RUNNING")
+    passes, real = [], engine._decide
+    monkeypatch.setattr(engine, "_decide", lambda s, run, *, locked: passes.append(locked) or real(s, run, locked=locked))
+    assert engine.get_state("run_1") == {"ready": ["c"]}
+    assert passes == [False]
+    with session_scope() as s:
+        s.get(AnalysisRun, "run_1").status = "READY"
+    passes.clear()
+    assert engine.get_state("run_1") == {"ready": ["c"]}
+    assert passes == [False, True]
+    with session_scope() as s:
+        assert s.get(AnalysisRun, "run_1").status == "RUNNING"
+        assert [e.payload for e in s.scalars(select(RunEvent).where(RunEvent.type == "run.status"))] == [{"status": "RUNNING"}]
+
+
+def test_execute_task_claim_bumps_the_claim_version(sqlite_db, dispatch):
+    _run(("a", "NEW", []))
+    engine.execute_task("run_1", "a", services=object())
+    assert (_task("a").claim_version, _task("a").attempts) == (1, 1)
+
+
+def test_execute_task_superseded_attempt_is_dropped(sqlite_db, dispatch):
+    """An attempt whose claim was retaken (timed out, released, run again) cannot overwrite the result."""
+    _run(("a", "NEW", []))
+
+    def retaken(ctx):
+        with session_scope() as s:
+            t = s.scalar(select(RunTask).where(RunTask.key == "a"))
+            t.claim_version, t.status, t.output = t.claim_version + 1, "COMPLETED", {"by": "retry"}
+        return {"by": "stale attempt"}
+    dispatch.behaviour = retaken
+    assert engine.execute_task("run_1", "a", services=object()) == {"status": "superseded"}
+    assert (_task("a").status, _task("a").output) == ("COMPLETED", {"by": "retry"})
+
+
+def test_execute_task_crash_of_a_superseded_attempt_leaves_the_retry_running(sqlite_db, dispatch):
+    _run(("a", "NEW", []))
+
+    def crash(ctx):
+        with session_scope() as s:  # the retry has claimed the task meanwhile
+            t = s.scalar(select(RunTask).where(RunTask.key == "a"))
+            t.claim_version, t.started_at = t.claim_version + 1, utcnow()
+        raise RuntimeError("worker died")
+    dispatch.behaviour = crash
+    with pytest.raises(RuntimeError):
+        engine.execute_task("run_1", "a", services=object())
+    assert _task("a").status == "RUNNING"
+
+
+def test_execute_task_retakes_a_released_claim(sqlite_db, dispatch):
+    from analystos.workflows.activities import release_timed_out_claim
+
+    _run(("a", "RUNNING", []))
+    with session_scope() as s:
+        s.scalar(select(RunTask).where(RunTask.key == "a")).started_at = utcnow()
+    assert engine.execute_task("run_1", "a", services=object()) == {"status": "in_progress"}
+    assert release_timed_out_claim("run_1", "a", 2)
+    assert engine.execute_task("run_1", "a", services=object())["status"] == "COMPLETED"
+
+
 # ---------------------------------------------------------------------------------- apply_replan
 def test_apply_replan_resets_downstream_and_supersedes_bundle_artifacts(sqlite_db):
     from analystos.agents.visualization import load_bundle_parts
