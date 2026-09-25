@@ -45,8 +45,14 @@ def build_bundle(ctx: RunContext, destination: str) -> PublishBundle:
     ds, _ = dataset_def(ctx.run.id)
     parts = load_bundle_parts(ctx.run.id)
     charts = [ChartSpec.model_validate({**c.model_dump(), "preview": {}}) for c in parts["charts"]]  # previews are not published
-    return PublishBundle(workspace_id=ctx.workspace.id, destination=destination, datasets=[ds], metrics=parts["metrics"],
-                         charts=charts, dashboards=parts["dashboards"])
+    bundle = PublishBundle(workspace_id=ctx.workspace.id, destination=destination, datasets=[ds], metrics=parts["metrics"],
+                           charts=charts, dashboards=parts["dashboards"])
+    # P4-K03: KPIs are published as their approved semantic-layer definitions; with the workspace policy
+    # require_approved_metrics an unapproved KPI refuses the bundle, here and again right before publishing.
+    from analystos.semantic.service import gate_bundle
+
+    with session_scope() as s:
+        return gate_bundle(s, ctx.workspace.id, ctx.policy, bundle)
 
 
 def governance_review(ctx: RunContext, bundle: PublishBundle) -> dict:

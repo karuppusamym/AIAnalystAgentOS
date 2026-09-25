@@ -38,6 +38,9 @@ class WorkspacePolicyDoc(BaseModel):
     # Domain packs (spec v3 §3.6) whose templates and knowledge runs use: None = every installed pack
     # whose applies_when matches the selected catalog; a list (even empty) = exactly these pack ids.
     domain_packs: list[str] | None = None
+    # P4-K03: publication refuses a KPI that is not an approved metric of the workspace semantic model.
+    # False here keeps workspaces created before the semantic layer working; create_workspace sets True.
+    require_approved_metrics: bool = False
 
 
 class DataScope(BaseModel):

@@ -21,6 +21,7 @@ from analystos.db.models import (
 )
 from analystos.governance import approvals as approval_svc
 from analystos.governance.policy import require_role
+from analystos.semantic import service as semantic_svc
 from analystos.workflows.orchestrator import signal_run
 
 router = APIRouter(prefix="/api", tags=["artifacts"])
@@ -102,6 +103,8 @@ def list_approvals(workspace_id: str, status: str | None = None, user: User = De
 
 def _decide(approval_id: str, user: User, session: Session, approve: bool, reason: str | None):
     approval = approval_svc.decide(session, approval_id, session.merge(user), approve=approve, reason=reason)
+    if approval.action == semantic_svc.APPROVAL_ACTION:  # a KPI decided from the approvals inbox takes effect now
+        semantic_svc.apply_decision(session, approval)
     session.flush()
     result = row(approval, exclude={"payload"})
     run_id = approval.run_id

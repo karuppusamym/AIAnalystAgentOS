@@ -154,6 +154,11 @@
       ],
       "default": null,
       "title": "Domain Packs"
+    },
+    "require_approved_metrics": {
+      "default": false,
+      "title": "Require Approved Metrics",
+      "type": "boolean"
     }
   },
   "title": "WorkspacePolicyDoc",

@@ -12,6 +12,8 @@ EVENT_TYPES = {
     "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
     "mcp.server.refreshed", "mcp.tool_called", "agent.action",
+    "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
+    "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
