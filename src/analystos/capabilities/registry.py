@@ -1,7 +1,8 @@
 """Capability registry (ADR-0011): discover, validate and serve capability manifests.
 
 Discovery order (later sources may not redefine an id a built-in already owns):
-1. built-in manifests  `src/analystos/capabilities/builtin/*.yaml`
+1. built-in manifests  `src/analystos/capabilities/builtin/*.yaml`, and the built-in analysis methods
+   `src/analystos/methods/*.yaml` (each next to its module, so a method is one module plus one manifest)
 2. the legacy registries (tools, skills, agent YAML) bridged into manifests during the
    compatibility window, so everything that exists today is discoverable; and one Connector per
    source kind, generated from the kind catalog (connectors/kinds.py) with its certification
@@ -32,6 +33,7 @@ from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import stable_hash
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
+METHODS_DIR = Path(__file__).resolve().parents[1] / "methods"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKS_DIR = REPO_ROOT / "packs"
 ENTRY_POINT_GROUP = "analystos.capabilities"
@@ -146,12 +148,14 @@ def _entry_point_manifests(problems: list[str]) -> list[tuple[str, dict[str, Any
 
 def load(*, builtin_dir: Path = BUILTIN_DIR, packs_dir: Path | None = PACKS_DIR, entry_points: bool = True,
          legacy: bool = True, extra: Iterable[tuple[str, dict[str, Any]]] = (), strict: bool = True,
-         connectors: bool = True) -> Snapshot:
+         connectors: bool = True, methods_dir: Path | None = METHODS_DIR) -> Snapshot:
     """Build a snapshot. `strict` raises on any problem; non-strict keeps valid manifests and reports problems."""
     problems: list[str] = []
     raws: list[tuple[str, dict[str, Any]]] = []
     if builtin_dir.is_dir():
         raws += [("builtin", r) for p in sorted(builtin_dir.glob("*.yaml")) for r in _read_yaml(p)]
+    if methods_dir is not None and methods_dir.is_dir():
+        raws += [("builtin", r) for p in sorted(methods_dir.glob("*.yaml")) for r in _read_yaml(p)]
     if legacy:
         raws += [("builtin", r) for r in _legacy_manifests()]
     if connectors:

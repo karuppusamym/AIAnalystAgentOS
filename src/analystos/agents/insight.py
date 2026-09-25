@@ -9,20 +9,18 @@ from typing import Any
 
 from sqlalchemy import select
 
+from analystos import methods
 from analystos.agents.common import llm_json, model_gate
 from analystos.artifacts.registry import link
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight
 from analystos.events.bus import emit
+from analystos.methods.base import cap, fmt_pct, text_parts
 from analystos.runtime.context import RunContext
 from analystos.staging.snapshots import population_for
 
 _NUM = re.compile(r"(?<![A-Za-z_-])-?\d+(?:\.\d+)?")
-
-
-def _fmt_pct(x: float) -> str:
-    return f"{x * 100:.1f}%"
 
 
 def facts_for(stat: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
@@ -31,7 +29,7 @@ def facts_for(stat: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
                              "effect": {stat.get("effect_label") or "effect_size": stat.get("effect_size")}}
     for k, v in hl.items():
         if isinstance(v, float) and 0 <= v <= 1 and ("rate" in k or "share" in k):
-            facts[k] = _fmt_pct(v)
+            facts[k] = fmt_pct(v)
         elif isinstance(v, float):
             facts[k] = round(v, 2)
         else:
@@ -42,49 +40,17 @@ def facts_for(stat: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
-def _cap(text: str) -> str:
-    """Capitalise the first letter only ('missed SLA' -> 'Missed SLA', not 'Missed sla')."""
-    return text[:1].upper() + text[1:]
-
-
 def template_text(stat: dict[str, Any], spec: dict[str, Any]) -> tuple[str, str]:
-    """Deterministic title + finding built only from computed values."""
-    hl = stat.get("highlights") or {}
-    seg = (spec.get("segment") or {}).get("label") or (spec.get("segment") or {}).get("column") or "segment"
-    out = (spec.get("outcome") or {}).get("label") or (spec.get("outcome") or {}).get("column") or "volume"
-    scope = f" (where {', '.join(f['column'] + ' ' + f['op'] + ' ' + str(f.get('value')) for f in spec.get('filters') or [])})" \
-        if spec.get("filters") else ""
-    m = spec.get("method")
-    if m == "rate_by_segment" and "top_rate" in hl:
-        title = f"{_cap(out)} concentrates in {seg} = {hl.get('top_segment')}"
-        text = (f"Records with {seg} = {hl.get('top_segment')} have a {out} rate of {_fmt_pct(hl['top_rate'])} versus "
-                f"{_fmt_pct(hl.get('baseline_rate', 0))} for {seg} = {hl.get('baseline_segment')}"
-                + (f" ({hl['rate_ratio']:.1f}x)" if isinstance(hl.get("rate_ratio"), (int, float)) else "") + f"{scope}.")
-    elif m == "numeric_by_segment" and ("top_median" in hl or "top_value" in hl):
-        top = hl.get("top_median", hl.get("top_value"))
-        base = hl.get("baseline_median", hl.get("baseline_value"))
-        title = f"{_cap(out)} is higher for {seg} = {hl.get('top_segment')}"
-        text = (f"Median {out} is {top:.1f} for {seg} = {hl.get('top_segment')} versus {base:.1f} for "
-                f"{hl.get('baseline_segment')}" + (f" ({hl['ratio']:.1f}x)" if isinstance(hl.get("ratio"), (int, float)) else "") + f"{scope}.")
-    elif m == "pareto" and ("top_share" in hl or "top_k_share" in hl):
-        share = hl.get("top_share", hl.get("top_k_share"))
-        title = f"Volume is concentrated in few {seg} values"
-        text = (f"{hl.get('top_segment', 'The top segment')} accounts for {_fmt_pct(share)} of records{scope}"
-                + (f"; the top {hl.get('top_k')} account for {_fmt_pct(hl['top_k_share'])}" if hl.get("top_k_share") and hl.get("top_k") else "") + ".")
-    elif m == "trend":
-        title = f"{_cap(out) if out != 'volume' else 'Volume'} shows a significant trend"
-        text = (f"Weekly {out} changed by {hl.get('pct_change', 0):.1f}% from first to last period" if isinstance(hl.get("pct_change"), (int, float))
-                else f"A significant trend was detected in {out}") + f"{scope}."
-    elif m == "driver_model" and hl.get("top_driver"):
-        title = f"{_cap(out)} is driven mainly by {hl['top_driver']}"
-        feature, odds = hl.get("strongest_feature"), hl.get("strongest_odds_ratio")
-        text = (f"Among the drivers tested, {hl['top_driver']} explains the most of {out}"
-                + (f"; {feature} has {odds:.1f}x the odds" if feature and isinstance(odds, (int, float)) else "")
-                + (f" (holdout AUC {hl['holdout_roc_auc']:.2f})" if isinstance(hl.get("holdout_roc_auc"), (int, float)) else "")
-                + f"{scope}.")
-    else:
-        title = f"{_cap(out)} is associated with {seg}"
-        text = f"{stat.get('test')} indicates an association (effect {stat.get('effect_size')}, n={stat.get('n')}){scope}."
+    """Deterministic title + finding built only from computed values: the method's own template
+    (analystos.methods), or a generic association sentence when it has none for these highlights."""
+    name = spec.get("method")
+    method = methods.get(name) if name in methods.names() else None
+    written = method.template_text(spec, stat) if method is not None else None
+    if written is None:
+        seg, out, scope = text_parts(spec)
+        written = (f"{cap(out)} is associated with {seg}",
+                   f"{stat.get('test')} indicates an association (effect {stat.get('effect_size')}, n={stat.get('n')}){scope}.")
+    title, text = written
     return title[:200], text
 
 

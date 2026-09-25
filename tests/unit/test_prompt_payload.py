@@ -101,9 +101,9 @@ def test_sql_generation_prompt_has_its_dialect_filled():
     assert "in the snowflake dialect" in text and "{dialect}" not in text
     with pytest.raises(KeyError, match="dialect"):
         prompt("sql_generation.v1")
-    for name in PROMPTS:  # no other prompt has an unfilled placeholder
+    for name in PROMPTS:  # no other prompt has a placeholder the caller must fill
         if name != "sql_generation.v1":
-            assert prompt(name) == PROMPTS[name]
+            assert prompt(name) == PROMPTS[name] or "{method_vocabulary}" in PROMPTS[name]
 
 
 def test_prompt_version_is_name_plus_hash_of_the_exact_text():

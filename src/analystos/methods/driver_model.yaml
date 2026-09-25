@@ -1,0 +1,17 @@
+apiVersion: analystos/v1
+kind: Method
+id: method.driver_model
+version: 1.0.0
+summary: Boolean outcome vs several drivers -> logistic regression (+ random-forest permutation importance)
+entry: python:analystos.methods.driver_model:DriverModel
+determinism: seeded
+side_effect: read_source
+cost_class: compute
+permissions: [scope:read]
+requires: [engine:sql]
+certification:
+  status: certified
+  evidence: tests/unit/test_skills_analysis.py
+tags: [statistical, ml]
+spec:
+  order: 60

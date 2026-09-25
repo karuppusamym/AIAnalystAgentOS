@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
+from analystos import methods
 from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, model_gate, task_output
 from analystos.artifacts.registry import link
 from analystos.capabilities import packs as pack_registry
@@ -24,9 +25,6 @@ from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
 from analystos.services.platform_settings import get as platform
 from analystos.skills import hypothesis_templates as tmpl
-
-BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
-NUMERIC_OUT = {"column", "duration_hours"}
 
 
 # ---------------------------------------------------------------------------------- validation
@@ -58,24 +56,7 @@ def validate_spec(spec: AnalysisSpec, scope, types: dict[str, dict[str, str]]) -
     def sem(d: Derivation) -> str | None:
         return _semantic(types, spec.asset, d.column)
 
-    m = spec.method
-    if m in ("rate_by_segment", "numeric_by_segment", "pareto") and spec.segment is None:
-        errors.append(f"{m} needs a segment")
-    if m == "rate_by_segment" and (spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT):
-        errors.append("rate_by_segment needs a boolean outcome (equals/is_true/after_hours)")
-    if m == "numeric_by_segment":
-        if spec.outcome is None or spec.outcome.type not in NUMERIC_OUT:
-            errors.append("numeric_by_segment needs a numeric outcome (column/duration_hours)")
-        elif spec.outcome.type == "column" and sem(spec.outcome) not in ("numeric", None):
-            errors.append(f"outcome {spec.outcome.column} is not numeric")
-        elif spec.outcome.type == "duration_hours" and not spec.outcome.end_column:
-            errors.append("duration_hours needs end_column")
-    if m == "trend" and (spec.time is None or spec.time.type != "date_trunc" or not spec.time.grain):
-        errors.append("trend needs time = date_trunc with a grain")
-    if m == "correlation" and (spec.outcome is None or not spec.drivers):
-        errors.append("correlation needs a numeric outcome and one numeric driver")
-    if m == "driver_model" and (spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT or len(spec.drivers) < 2):
-        errors.append("driver_model needs a boolean outcome and at least two drivers")
+    errors += methods.get(spec.method).validate(spec, sem)
     if spec.segment is not None and spec.segment.type == "column":
         st = sem(spec.segment)
         if st in ("numeric",) :
@@ -136,7 +117,7 @@ def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list) -> list[dict
     categorical = [c for c in st if st[c] == "categorical" and 2 <= (prof[c].get("distinct") or 0) <= 30 and not _TEXTY.search(c)]
     datetimes = [c for c in st if st[c] == "datetime"]
     covered = {(p["spec"].get("outcome") or {}).get("column") for p in proposals}
-    has_trend = any(p["spec"]["method"] == "trend" for p in proposals)
+    has_trend = any(_method_attr(p["spec"], "playbook") == "volume_trend" for p in proposals)
     return proposals + _role_proposals(fq, cols, st, categorical, datetimes, has_trend=has_trend, covered=covered)
 
 
@@ -159,9 +140,12 @@ def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None],
                     has_trend: bool, covered: set[str | None] = frozenset()) -> list[dict[str, Any]]:
     """Domain-neutral playbook from crawler column roles (skills/catalog): measures and the first flag by
     segments, and a trend on the first event timestamp. Lets any database get rule-based hypotheses
-    without a model or a domain pack; outcomes a pack template already covers are left to the pack."""
+    without a model or a domain pack; outcomes a pack template already covers are left to the pack.
+    Each role is filled by the registered method that declares it (`Method.playbook`)."""
+    by_segment, flag_rate, volume_trend = (methods.for_playbook(r) for r in ("measure_by_segment", "flag_by_segment", "volume_trend"))
     roles = {c.name: c.role for c in visible}
-    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c]
+    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c] if by_segment else []
+    flags = [c for c in st if st[c] == "boolean" and c not in covered] if flag_rate else []
     segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:3]
     out: list[dict[str, Any]] = []
     for m in measures[:3]:
@@ -169,19 +153,19 @@ def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None],
         for seg in segs:
             out.append({"question": f"Does {outcome.label} differ by {humanize(seg)}?",
                         "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.", "priority": "medium",
-                        "spec": {"method": "numeric_by_segment", "asset": fq, "outcome": outcome.model_dump(),
+                        "spec": {"method": by_segment.name, "asset": fq, "outcome": outcome.model_dump(),
                                  "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
-    for f in [c for c in st if st[c] == "boolean" and c not in covered][:1]:
+    for f in flags[:1]:
         outcome = Derivation(type="is_true", column=f, label=tmpl.flag_label(f, False, None, pack_registry.hints().acronyms))
         for seg in segs:
             out.append({"question": f"Does the rate of {outcome.label} vary by {humanize(seg)}?",
                         "statement": f"The rate of {outcome.label} differs materially across {humanize(seg)}.", "priority": "medium",
-                        "spec": {"method": "rate_by_segment", "asset": fq, "outcome": outcome.model_dump(),
+                        "spec": {"method": flag_rate.name, "asset": fq, "outcome": outcome.model_dump(),
                                  "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
     times = [c for c in datetimes if roles.get(c) in ("timestamp", "date")] or datetimes
-    if times and not has_trend:
+    if times and not has_trend and volume_trend:
         out.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
-                    "priority": "low", "spec": {"method": "trend", "asset": fq,
+                    "priority": "low", "spec": {"method": volume_trend.name, "asset": fq,
                                                 "time": {"type": "date_trunc", "column": times[0], "grain": "month"}}})
     return out
 
@@ -240,13 +224,9 @@ def _accept(ctx: RunContext, proposals: list[dict[str, Any]], types, *, origin: 
 
 
 def identity_keys(spec: AnalysisSpec) -> set[str]:
-    """What makes two hypotheses the same test. A second driver model on the same outcome and population
-    re-answers the same question with a different feature list (seen live: three identical conclusions)."""
-    keys = {stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"}))}
-    if spec.method == "driver_model" and spec.outcome is not None:
-        filters = sorted(f"{f.column}{f.op}{f.value}" for f in spec.filters or [])
-        keys.add(stable_hash({"m": "driver_model", "o": spec.outcome.model_dump(), "f": filters}))
-    return keys
+    """What makes two hypotheses the same test: the full spec, plus any identity the method adds
+    (e.g. a second driver model on the same outcome and population re-answers the same question)."""
+    return {stable_hash(spec.model_dump(exclude={"min_group_size", "top_k"})), *methods.get(spec.method).identity_keys(spec)}
 
 
 def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
@@ -425,6 +405,12 @@ def follow_ups(ctx: RunContext) -> dict:
     return {"added": len(keys), "tasks": keys, "rejected": rejected}
 
 
+def _method_attr(spec: dict, attr: str) -> Any:
+    """An attribute of the spec's method (None for a name the registry does not know; validation rejects it later)."""
+    name = spec.get("method")
+    return getattr(methods.get(name), attr, None) if name in methods.names() else None
+
+
 def _drilldowns(supported: list[dict], types, display_patterns: list[str] = ()) -> list[dict]:
     """Drill into each supported rate finding's top segment by the next categorical (enabled packs'
     display-name columns first)."""
@@ -434,7 +420,7 @@ def _drilldowns(supported: list[dict], types, display_patterns: list[str] = ()) 
         hl = (r.get("result") or {}).get("highlights") or {}
         top = hl.get("top_segment")
         seg = spec.get("segment") or {}
-        if spec.get("method") != "rate_by_segment" or top is None or seg.get("type") != "column":
+        if not _method_attr(spec, "drill_down") or top is None or seg.get("type") != "column":
             continue
         cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c != seg.get("column")]
         cats = tmpl.prefer_display(cats, display_patterns)
@@ -459,7 +445,7 @@ def _matrix_continuations(results: list[dict], types, denied: list[str], roles: 
     template: dict[tuple[str, str], dict] = {}
     for r in results:
         spec = r["spec"]
-        if spec.get("method") not in ("rate_by_segment", "numeric_by_segment") or spec.get("filters"):
+        if not _method_attr(spec, "segment_matrix") or spec.get("filters"):
             continue
         out = spec.get("outcome") or {}
         key = (spec["asset"], stable_hash(out))
