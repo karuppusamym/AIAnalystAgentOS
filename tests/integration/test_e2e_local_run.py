@@ -72,7 +72,8 @@ def test_full_run_without_models(control_db, servicenow_url, monkeypatch):
 
         with session_scope() as s:
             admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
-            ws = create_workspace(s, admin, name="e2e local", objective="Find the drivers of SLA breaches in IT incidents")
+            ws = create_workspace(s, admin, name="e2e local", objective="Find the drivers of SLA breaches in IT incidents",
+                                  policy={"require_approved_metrics": False})  # the gate: test_semantic_layer.py
             s.flush()
             add_member(s, admin, ws.id, "approver@analystos.local", "approver")
             src = register_source(s, admin, ws.id, kind="servicenow", name="SN",
@@ -259,7 +260,8 @@ def test_replan_after_visualize_supersedes_bundle_artifacts(control_db, servicen
 
         with session_scope() as s:
             admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
-            ws = create_workspace(s, admin, name="replan", objective="Find the drivers of SLA breaches in IT incidents")
+            ws = create_workspace(s, admin, name="replan", objective="Find the drivers of SLA breaches in IT incidents",
+                                  policy={"require_approved_metrics": False})  # the gate: test_semantic_layer.py
             s.flush()
             src = register_source(s, admin, ws.id, kind="servicenow", name="SN",
                                   config={"instance_url": servicenow_url, "username": "admin", "tables": ["incident"]},

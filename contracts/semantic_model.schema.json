@@ -1,0 +1,478 @@
+{
+  "$defs": {
+    "DialectExpression": {
+      "properties": {
+        "dialect": {
+          "default": "ANSI_SQL",
+          "title": "Dialect",
+          "type": "string"
+        },
+        "expression": {
+          "title": "Expression",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "title": "DialectExpression",
+      "type": "object"
+    },
+    "SemanticDataset": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "primary_key": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Key"
+        },
+        "unique_keys": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unique Keys"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "ai_context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Context"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/SemanticField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "custom_extensions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Custom Extensions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "title": "SemanticDataset",
+      "type": "object"
+    },
+    "SemanticField": {
+      "description": "A row-level attribute; `dimension` is kept as Ossie spells it ({is_time}) so None stays None.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "expressions": {
+          "items": {
+            "$ref": "#/$defs/DialectExpression"
+          },
+          "title": "Expressions",
+          "type": "array"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimension"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "ai_context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Context"
+        },
+        "custom_extensions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Custom Extensions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "expressions"
+      ],
+      "title": "SemanticField",
+      "type": "object"
+    },
+    "SemanticMetricDef": {
+      "description": "One KPI definition. `expressions[0]` is the primary expression (what the platform executes).",
+      "properties": {
+        "name": {
+          "maxLength": 120,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "expressions": {
+          "items": {
+            "$ref": "#/$defs/DialectExpression"
+          },
+          "minItems": 1,
+          "title": "Expressions",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "ai_context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Context"
+        },
+        "custom_extensions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Custom Extensions",
+          "type": "array"
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "enum": [
+                "number",
+                "percent",
+                "hours",
+                "currency"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Format"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filters",
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "source_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Columns",
+          "type": "array"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset"
+        },
+        "datatype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Datatype"
+        }
+      },
+      "required": [
+        "name",
+        "expressions"
+      ],
+      "title": "SemanticMetricDef",
+      "type": "object"
+    },
+    "SemanticRelationship": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "title": "To",
+          "type": "string"
+        },
+        "from_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "From Columns",
+          "type": "array"
+        },
+        "to_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "To Columns",
+          "type": "array"
+        },
+        "ai_context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Context"
+        },
+        "custom_extensions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Custom Extensions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "from",
+        "to",
+        "from_columns",
+        "to_columns"
+      ],
+      "title": "SemanticRelationship",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "ai_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ai Context"
+    },
+    "datasets": {
+      "items": {
+        "$ref": "#/$defs/SemanticDataset"
+      },
+      "title": "Datasets",
+      "type": "array"
+    },
+    "relationships": {
+      "items": {
+        "$ref": "#/$defs/SemanticRelationship"
+      },
+      "title": "Relationships",
+      "type": "array"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/SemanticMetricDef"
+      },
+      "title": "Metrics",
+      "type": "array"
+    },
+    "custom_extensions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Custom Extensions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "SemanticModelDoc",
+  "type": "object"
+}

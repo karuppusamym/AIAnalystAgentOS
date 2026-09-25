@@ -1,0 +1,239 @@
+{
+  "version": "0.1.1",
+  "semantic_model": [
+    {
+      "name": "semantic_model",
+      "datasets": [
+        {
+          "name": "orders",
+          "source": "shop.main.fct_orders",
+          "primary_key": [
+            "order_id"
+          ],
+          "description": "One row per order.",
+          "fields": [
+            {
+              "name": "order_id",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "order_id"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "customer",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "customer_id"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "ordered_at",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "ordered_at"
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": true
+              }
+            },
+            {
+              "name": "channel",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "channel"
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              },
+              "description": "Sales channel."
+            },
+            {
+              "name": "order_total",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "amount"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "order_count",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "CASE WHEN order_id IS NOT NULL THEN 1 ELSE 0 END"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "returned_orders",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "CASE WHEN is_returned THEN 1 ELSE 0 END"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "customers",
+          "source": "shop.main.dim_customers",
+          "primary_key": [
+            "customer"
+          ],
+          "description": "One row per customer.",
+          "fields": [
+            {
+              "name": "customer",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "customer_id"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "region",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "region"
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "signed_up_at",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "signed_up_at"
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": true
+              }
+            },
+            {
+              "name": "customer_count",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "customer_id"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "relationships": [
+        {
+          "name": "orders__customers__customer",
+          "from": "orders",
+          "to": "customers",
+          "from_columns": [
+            "customer"
+          ],
+          "to_columns": [
+            "customer"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "name": "net_revenue",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "SUM(orders.amount)"
+              }
+            ]
+          },
+          "description": "Sum of order amounts."
+        },
+        {
+          "name": "orders",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END)"
+              }
+            ]
+          },
+          "description": ""
+        },
+        {
+          "name": "returned",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "SUM(CASE WHEN is_returned THEN 1 ELSE 0 END)"
+              }
+            ]
+          },
+          "description": ""
+        },
+        {
+          "name": "return_rate",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "(SUM(CASE WHEN is_returned THEN 1 ELSE 0 END)) / (SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END))"
+              }
+            ]
+          },
+          "description": "Share of orders returned."
+        },
+        {
+          "name": "customers_total",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "COUNT(DISTINCT customers.customer_id)"
+              }
+            ]
+          },
+          "description": ""
+        }
+      ]
+    }
+  ]
+}
