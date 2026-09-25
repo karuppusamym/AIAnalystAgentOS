@@ -1,0 +1,120 @@
+{
+  "started_at": "2026-09-25T23:35:50.487936+00:00",
+  "label": "after-fix",
+  "target": "1,000 workspaces",
+  "workspaces": 1000,
+  "concurrency": 32,
+  "seconds": 30,
+  "api_workers": 2,
+  "workspaces_created": 1000,
+  "create_errors": [],
+  "create_latency_ms": {
+    "n": 1000,
+    "p50": 143.1,
+    "p95": 229.2,
+    "p99": 313.2,
+    "max": 367.6
+  },
+  "create_wall_s": 8.1,
+  "creates_per_s": 122.7,
+  "admin_list_rows": 1000,
+  "admin_list_once_ms": 125.0,
+  "read_mix": {
+    "activity": {
+      "n": 497,
+      "p50": 159.7,
+      "p95": 558.3,
+      "p99": 772.4,
+      "max": 1540.4
+    },
+    "approvals": {
+      "n": 493,
+      "p50": 163.9,
+      "p95": 496.7,
+      "p99": 686.5,
+      "max": 838.1
+    },
+    "artifacts": {
+      "n": 500,
+      "p50": 165.8,
+      "p95": 543.8,
+      "p99": 689.6,
+      "max": 974.4
+    },
+    "builds": {
+      "n": 556,
+      "p50": 167.0,
+      "p95": 566.5,
+      "p99": 768.5,
+      "max": 1350.4
+    },
+    "runs": {
+      "n": 541,
+      "p50": 148.5,
+      "p95": 534.1,
+      "p99": 706.0,
+      "max": 866.4
+    },
+    "semantic": {
+      "n": 497,
+      "p50": 217.3,
+      "p95": 622.6,
+      "p99": 850.1,
+      "max": 1109.6
+    },
+    "workspace": {
+      "n": 506,
+      "p50": 275.7,
+      "p95": 723.7,
+      "p99": 918.4,
+      "max": 1313.5
+    },
+    "workspace_list": {
+      "n": 206,
+      "p50": 512.6,
+      "p95": 992.9,
+      "p99": 1136.0,
+      "max": 1227.4
+    }
+  },
+  "read_requests": 3796,
+  "read_errors": {},
+  "read_rps": 125.5,
+  "read_latency_all_ms": {
+    "n": 3796,
+    "p50": 197.3,
+    "p95": 653.6,
+    "p99": 861.0,
+    "max": 1540.4
+  },
+  "tenancy": {
+    "analyst_lists_exactly_their_workspaces": true,
+    "listed": 10,
+    "foreign_workspaces_sampled": 50,
+    "foreign_workspaces_refused": 50
+  },
+  "resources": {
+    "samples": 40,
+    "load1_max": 10.91,
+    "load1_mean": 8.6,
+    "platform_rss_mb_max": 481.8,
+    "platform_cpu_pct_mean": 116.4,
+    "platform_cpu_pct_max": 152.7,
+    "pg_connections_max": 41,
+    "cores": 4
+  },
+  "control_plane_rows": {
+    "workspace": 1000,
+    "workspace_member": 1010,
+    "workspace_policy": 1000,
+    "audit_event": 1012,
+    "run_event": 1000
+  },
+  "checks": {
+    "1000_workspaces_created": true,
+    "no_read_errors": true,
+    "tenancy_holds": true,
+    "workspace_reads_p95_under_1s": true,
+    "workspace_list_p95_under_1s": true
+  }
+}
