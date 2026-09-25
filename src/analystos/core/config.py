@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     orchestrator: str = "temporal"
 
     superset_url: str = "http://localhost:8088"
+    # Browser-facing base URL. In Docker, workers use ``superset_url`` over the
+    # Compose network while people open this URL from their host browser.
+    superset_public_url: str | None = None
     superset_username: str = "admin"
     superset_password: str = "admin"
     # How Superset reaches the analytics DB (from inside the compose network).

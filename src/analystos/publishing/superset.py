@@ -251,7 +251,8 @@ class SupersetPublisher:
 
             settings = get_settings()
         self.base_url = (base_url or settings.superset_url).rstrip("/")  # type: ignore[union-attr]
-        self.public_url = (public_url or self.base_url).rstrip("/")
+        configured_public_url = settings.superset_public_url if settings else None
+        self.public_url = (public_url or configured_public_url or self.base_url).rstrip("/")
         self.analytics_uri = analytics_sqlalchemy_uri or (settings.superset_analytics_sqlalchemy_uri if settings else "")
         self.role_prefix = getattr(settings, "analytics_workspace_role_prefix", "analystos_r_") if settings else "analystos_r_"
         self.client = SupersetClient(
