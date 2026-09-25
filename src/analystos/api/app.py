@@ -8,9 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from analystos.api.routers import admin, analysis, artifacts, auth, catalog, continuous, workspaces
+from analystos.api.routers import mcp as mcp_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
+from analystos.mcp import server as mcp_server
 
 configure_logging()
 log = get_logger("analystos.api")
@@ -21,6 +23,8 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_setting
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router):
     app.include_router(r)
+app.include_router(mcp_router.router)
+mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
 @app.exception_handler(AnalystOSError)

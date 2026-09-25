@@ -11,6 +11,7 @@ EVENT_TYPES = {
     "approval.requested", "approval.completed", "approval.invalidated", "policy.denied", "feedback.received",
     "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
+    "mcp.server.refreshed", "mcp.tool_called",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

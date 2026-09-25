@@ -1019,6 +1019,12 @@ _TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|img|a|system|instructions?)\b
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏ -‮⁠-⁤﻿]")
 
 
+def has_injection(s: str | None) -> bool:
+    """True when untrusted text contains an instruction-to-the-model pattern (the same test
+    `screen_text` uses to drop a sentence), so a caller can refuse the text rather than trim it."""
+    return bool(s) and bool(_INJECTION.search(_CTRL.sub(" ", str(s))))
+
+
 def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
     """Neutralise metadata text before it is shown to a model: drop code fences, markup, URLs,
     control/zero-width characters and any sentence that reads like an instruction to the model;

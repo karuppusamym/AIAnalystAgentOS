@@ -205,3 +205,16 @@ def resolve_entry(manifest: CapabilityManifest) -> Callable[..., Any]:
     for part in attr.split("."):
         obj = getattr(obj, part)
     return obj
+
+
+def overlay(base: Snapshot, manifests: Iterable[CapabilityManifest]) -> Snapshot:
+    """A snapshot with extra, already-validated manifests layered on top (e.g. one workspace's MCP
+    tools). An overlay can never replace a capability the base already defines."""
+    merged = dict(base.manifests)
+    problems = list(base.problems)
+    for m in manifests:
+        if m.id in merged:
+            problems.append(f"{m.source}: duplicate capability id {m.id} (already defined by {merged[m.id].source})")
+            continue
+        merged[m.id] = m
+    return Snapshot(manifests=merged, digest=stable_hash(sorted(m.ref for m in merged.values())), problems=tuple(problems))
