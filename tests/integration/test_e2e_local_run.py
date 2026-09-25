@@ -224,3 +224,81 @@ def test_phase3_schedule_monitor_report(control_db, servicenow_url, monkeypatch)
     finally:
         get_settings.cache_clear()
         default_router.cache_clear()
+
+
+def test_replan_after_visualize_supersedes_bundle_artifacts(control_db, servicenow_url, monkeypatch):
+    """P4-C07: a redirect after `visualize` must not let charts, metrics or dashboards of the
+    superseded plan version into the publish bundle. The oracle is the event log: every bundle
+    entry must have been (re)created after the replan."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("SERVICENOW_PASSWORD", "admin")
+    monkeypatch.setenv("ANALYSTOS_SUPERSET_URL", "http://127.0.0.1:9")
+    from analystos.core.config import get_settings
+    from analystos.runtime.context import default_router
+
+    get_settings.cache_clear()
+    default_router.cache_clear()
+    try:
+        from analystos.artifacts.registry import save_artifact
+        from analystos.db.base import session_scope
+        from analystos.db.models import AnalysisRun, Approval, RunEvent, RunTask, User
+        from analystos.services.runs import create_run, submit_feedback
+        from analystos.services.sources import discover_source, register_source, select_assets
+        from analystos.services.workspaces import create_workspace
+
+        with session_scope() as s:
+            admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
+            ws = create_workspace(s, admin, name="replan", objective="Find the drivers of SLA breaches in IT incidents")
+            s.flush()
+            src = register_source(s, admin, ws.id, kind="servicenow", name="SN",
+                                  config={"instance_url": servicenow_url, "username": "admin", "tables": ["incident"]},
+                                  secret_ref="env:SERVICENOW_PASSWORD")
+            s.flush()
+            ws_id, src_id = ws.id, src.id
+            s.expunge(admin)
+        discover_source(admin, src_id)
+        select_assets(admin, src_id, ["incident"])
+        run = create_run(admin, ws_id, objective=None)
+        assert _wait(run.id, {"WAITING_USER", "FAILED", "COMPLETED"}) == "WAITING_USER"
+        with session_scope() as s:
+            assert s.scalar(select(RunTask.status).where(RunTask.run_id == run.id, RunTask.key == "visualize")) == "COMPLETED"
+            first = s.scalar(select(Approval).where(Approval.run_id == run.id, Approval.status == "pending"))
+            first_id = first.id
+            # Plan-v1 outputs the redirected plan will not reproduce (e.g. a finding that no longer holds).
+            v1_chart, v1_metric = first.payload["charts"][0], first.payload["metrics"][0]
+            save_artifact(s, workspace_id=ws_id, run_id=run.id, type_="chart", name="finding_stale_v1",
+                          content={**v1_chart, "key": "finding_stale_v1"})
+            save_artifact(s, workspace_id=ws_id, run_id=run.id, type_="metric", name="stale_v1_metric",
+                          content={**v1_metric, "name": "stale_v1_metric"}, status="validated")
+
+        out = submit_feedback(admin, run.id, text="Focus only on Network Operations incidents", kind="redirect")
+        assert out["replan"]["plan_version"] == 2
+        with session_scope() as s:
+            replanned_at = s.scalar(select(RunEvent.id).where(RunEvent.run_id == run.id, RunEvent.type == "run.replanned")
+                                    .order_by(RunEvent.id.desc()))
+        deadline, second = time.time() + 900, None
+        while time.time() < deadline and second is None:
+            with session_scope() as s:
+                assert s.get(AnalysisRun, run.id).status != "FAILED"
+                second = s.scalar(select(Approval).where(Approval.run_id == run.id, Approval.status == "pending",
+                                                         Approval.id != first_id))
+                if second is not None:
+                    s.expunge(second)
+            time.sleep(0.5)
+        assert second is not None, "no new publication approval after the redirect"
+        with session_scope() as s:
+            assert s.get(Approval, first_id).status == "invalidated"
+            after = list(s.scalars(select(RunEvent).where(RunEvent.run_id == run.id, RunEvent.id > replanned_at)))
+        created = {"chart": {e.payload["key"] for e in after if e.type == "chart.created"},
+                   "metric": {e.payload["name"] for e in after if e.type == "metric.created"},
+                   "dashboard": {e.payload["key"] for e in after if e.type == "dashboard.created"}}
+        bundle = second.payload
+        assert bundle["charts"] and bundle["metrics"] and bundle["dashboards"]
+        assert "finding_stale_v1" not in {c["key"] for c in bundle["charts"]}
+        assert "stale_v1_metric" not in {m["name"] for m in bundle["metrics"]}
+        assert {c["key"] for c in bundle["charts"]} <= created["chart"], "stale charts in the bundle"
+        assert {m["name"] for m in bundle["metrics"]} <= created["metric"], "stale metrics in the bundle"
+        assert {d["key"] for d in bundle["dashboards"]} <= created["dashboard"], "stale dashboards in the bundle"
+    finally:
+        get_settings.cache_clear()
+        default_router.cache_clear()

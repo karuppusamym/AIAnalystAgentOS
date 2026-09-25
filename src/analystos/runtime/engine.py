@@ -4,10 +4,12 @@ Postgres; each task has a stable key (idempotency) and a plan_version (stale res
 from __future__ import annotations
 
 import traceback
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import delete, select, update
 
+from analystos.artifacts.registry import producing_plan
 from analystos.contracts.events import RUN_TERMINAL
 from analystos.core.errors import AnalystOSError, RunCancelled
 from analystos.core.ids import new_id, utcnow
@@ -183,7 +185,7 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
                 return {"status": "missing"}
             if task.status in ("COMPLETED", "SKIPPED"):
                 return {"status": task.status, "cached": True}
-            if task.status == "RUNNING" and task.started_at and (utcnow() - task.started_at).total_seconds() < CLAIM_TTL_SECONDS:
+            if task.status == "RUNNING" and task.started_at and _age_seconds(task.started_at) < CLAIM_TTL_SECONDS:
                 # Another worker holds it. A claim older than the activity timeout is from a crashed worker and is retaken.
                 return {"status": "in_progress"}
             task.status, task.attempts, task.started_at, task.error = "RUNNING", task.attempts + 1, utcnow(), None
@@ -191,6 +193,7 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             run = s.get(AnalysisRun, run_id)
             emit(run.workspace_id, "agent.started", {"task": key, "agent": task.agent_id, "attempt": task.attempts},
                  run_id=run_id, session=s)
+        plan_token = producing_plan.set((run_id, version))
         try:
             ctx = RunContext.load(run_id, key, services)
             output = dispatch(ctx) or {}
@@ -206,6 +209,8 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             if not _is_last_attempt(run_id, key):
                 _reset(run_id, key, error)
                 raise
+        finally:
+            producing_plan.reset(plan_token)
         with session_scope() as s:
             task = s.scalar(select(RunTask).where(RunTask.run_id == run_id, RunTask.key == key).with_for_update())
             run = s.get(AnalysisRun, run_id)
@@ -228,6 +233,11 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
         return {"status": status, "error": error}
     finally:
         run_id_var.reset(token)
+
+
+def _age_seconds(ts) -> float:
+    """Seconds since `ts`; a naive timestamp (a store without time zones) is read as UTC."""
+    return (utcnow() - (ts if ts.tzinfo else ts.replace(tzinfo=UTC))).total_seconds()
 
 
 def _is_last_attempt(run_id: str, key: str, max_attempts: int = 3) -> bool:
