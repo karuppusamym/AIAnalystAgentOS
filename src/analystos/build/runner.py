@@ -62,7 +62,7 @@ class Connection:
 def write_profile(profiles_dir: Path, conn: Connection | None, *, schema: str) -> Path:
     """profiles.yml with the password as `env_var(...)`. A parse-only profile (conn=None) points nowhere."""
     output: dict[str, Any] = {"type": "postgres", "threads": 1, "schema": schema, "connect_timeout": 10,
-                              "password": "{{ env_var('%s') }}" % PASSWORD_ENV}
+                              "password": "{{ env_var('" + PASSWORD_ENV + "') }}"}
     if conn is None:
         output.update(host="127.0.0.1", port=1, user="parse_only", dbname="parse_only")
     else:

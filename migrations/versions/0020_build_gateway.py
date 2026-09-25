@@ -1,7 +1,7 @@
 """build targets and build jobs: the write path (P4-E06 BuildGateway, P4-E04 dbt builder)
 
 Revision ID: 0020
-Revises: 0014
+Revises: 0017
 Create Date: 2026-09-25 23:30:00
 
 Hand-written (parallel increment-4 streams; the coordinator re-chains `down_revision` on merge).
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0020"
-down_revision = "0014"
+down_revision = "0017"
 branch_labels = None
 depends_on = None
 

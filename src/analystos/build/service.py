@@ -79,7 +79,9 @@ def start_build(user: User, workspace_id: str, *, from_run_id: str, target_schem
             raise InvalidInput(f"run {from_run_id} has no dataset to build")
         source_id = dataset.content.get("source_id")
     return create_run(user, workspace_id, objective=f"Build run {from_run_id}'s dataset and KPIs into {target_schema} with dbt",
-                      source_ids=[source_id] if source_id else None, autonomy_level=autonomy_level, playbook=PLAYBOOK,
+                      source_ids=[source_id] if source_id else None,
+                      # a build is human-in-the-loop by nature: never autonomous (the playbook is not certified for it)
+                      autonomy_level=min(2 if autonomy_level is None else autonomy_level, 2), playbook=PLAYBOOK,
                       origin={"type": "build", "from_run": from_run_id, "target_schema": target_schema, "engine": engine})
 
 
@@ -94,6 +96,30 @@ def _inputs(s: Session, workspace_id: str, from_run_id: str) -> tuple[Artifact, 
     if not datasets:
         raise InvalidInput(f"run {from_run_id} has no dataset to build")
     return datasets[-1], [a for a in arts if a.type == "metric"]
+
+
+def select_kpis(session: Session, workspace_id: str, policy: Any, metrics: list[MetricDef]) -> tuple[list[MetricDef], list[dict]]:
+    """The KPIs a build materializes as dbt metrics come from the workspace semantic model (P4-K03):
+    a run KPI whose name has an approved version with the same expression is built from that approved
+    definition. Under `require_approved_metrics` nothing else is built (the dataset still is); without
+    it, run-validated KPIs are built too and labelled as such."""
+    from analystos.semantic import ossie
+    from analystos.semantic.service import approved_metrics, to_metricdef
+
+    approved = approved_metrics(session, workspace_id)
+    out, skipped = [], []
+    for m in metrics:
+        row = approved.get(m.name)
+        if row is not None and row.normalized_expression == ossie.normalize_expression(m.sql_expression):
+            out.append(to_metricdef(row))
+        elif getattr(policy, "require_approved_metrics", False):
+            skipped.append({"metric": m.name, "reason": "not approved in the workspace semantic model "
+                                                        "(policy require_approved_metrics); approve it, then plan the build again"})
+        elif m.status in ("validated", "approved"):
+            out.append(m)
+        else:
+            skipped.append({"metric": m.name, "reason": f"status {m.status}: only validated or approved KPIs are built"})
+    return out, skipped
 
 
 def plan_build(ctx: Any) -> dict[str, Any]:
@@ -121,9 +147,8 @@ def plan_build(ctx: Any) -> dict[str, Any]:
     # no longer selected, stops the build before anything is generated.
     validated = validate_sql(ctx.scope, dataset["sql"], max_rows=1)
     allowed = sorted(set(validated.referenced_assets))
-    metrics = [m for m in metrics_all if m.status in ("validated", "approved")]
-    skipped_kpis = [{"metric": m.name, "reason": f"status {m.status}: only validated or approved KPIs are built"}
-                    for m in metrics_all if m.status not in ("validated", "approved")]
+    with session_scope() as s:
+        metrics, skipped_kpis = select_kpis(s, ctx.workspace.id, ctx.policy, metrics_all)
 
     # Dry run 1: candidate tests and the size, read through the query gateway (reader identity).
     candidates = dbt_project.candidate_tests(dataset)

@@ -32,7 +32,6 @@ TIME_SPINE_SQL = (
     "SELECT CAST(d AS DATE) AS date_day\n"
     "FROM generate_series(CAST('2000-01-01' AS DATE), CAST('2040-12-31' AS DATE), INTERVAL '1 day') AS d\n"
 )
-KEY_NAMES = ("sys_id", "id", "number")
 KEY_TYPES = ("id", "identifier", "key")
 DIMENSION_TYPES = ("categorical", "boolean", "category", "dimension", "flag", "code")
 MAX_DIMENSIONS = 30
@@ -103,7 +102,7 @@ def model_sql(dataset_sql: str, dialect: str = "postgres") -> tuple[str, list[tu
         if key not in found:
             found.append(key)
         token = f"aos_src_{found.index(key)}_"
-        placeholders[token] = "{{ source('%s', '%s') }}" % key
+        placeholders[token] = "{{ source('" + key[0] + "', '" + key[1] + "') }}"
         table.replace(exp.Table(this=exp.to_identifier(token), alias=table.args.get("alias")))
     sql = tree.sql(dialect=dialect, pretty=True)
     for token, ref in placeholders.items():
@@ -115,10 +114,14 @@ def model_sql(dataset_sql: str, dialect: str = "postgres") -> tuple[str, list[tu
 def candidate_tests(dataset: dict[str, Any]) -> list[dict[str, str]]:
     """Tests worth checking: not_null + unique on a key column, not_null on the time column. The dry
     run keeps only those the current data satisfies (verified through the query gateway)."""
+    from analystos.capabilities.packs import hints
+    from analystos.skills.quality import STRICT_KEY_NAMES
+
+    key_names = STRICT_KEY_NAMES | {k.lower() for k in hints().key_columns}  # domain surrogate keys come from packs
     cols = [c for c in dataset.get("columns") or [] if isinstance(c, dict) and c.get("name")]
     names = [c["name"] for c in cols]
     out: list[dict[str, str]] = []
-    key = next((c["name"] for c in cols if not c.get("derived") and c["name"] in KEY_NAMES), None) or \
+    key = next((c["name"] for c in cols if not c.get("derived") and c["name"].lower() in key_names), None) or \
         next((c["name"] for c in cols if not c.get("derived") and str(c.get("semantic_type") or "") in KEY_TYPES), None)
     if key:
         out += [{"column": key, "test": "not_null"}, {"column": key, "test": "unique"}]
@@ -299,26 +302,7 @@ def check_files(files: dict[str, str], *, allowed_sources: set[str]) -> None:
             continue
         if "{%" in text or "{#" in text:
             problems.append(f"{path}: Jinja statements are not allowed")
-        sql = text
-
-        def sub(m: re.Match) -> str:
-            inner = m.group(1)
-            if (s := _SOURCE.match(inner)) is not None:
-                if f"{s.group(1)}.{s.group(2)}" not in allowed_sources:
-                    problems.append(f"{path}: source {s.group(1)}.{s.group(2)} is outside the run's scope")
-                return f"{s.group(1)}.{s.group(2)}"
-            if (r := _REF.match(inner)) is not None:
-                if r.group(1) not in models:
-                    problems.append(f"{path}: ref to unknown model {r.group(1)}")
-                return r.group(1)
-            if (c := _CONFIG.match(inner)) is not None:
-                if c.group(1) not in MATERIALIZATIONS:
-                    problems.append(f"{path}: materialization {c.group(1)} is not allowed")
-                return ""
-            problems.append(f"{path}: Jinja expression {{{{{inner.strip()[:60]}}}}} is not allowed")
-            return "x"
-
-        sql = _JINJA.sub(sub, sql)
+        sql = _render(path, text, models=models, allowed_sources=allowed_sources, problems=problems)
         try:
             stmts = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
         except sqlglot.errors.ParseError:
@@ -334,6 +318,29 @@ def check_files(files: dict[str, str], *, allowed_sources: set[str]) -> None:
                 problems.append(f"{path}: function {node.sql_name()} is not allowed")
     if problems:
         raise PolicyDenied("build project refused: " + "; ".join(sorted(set(problems))[:8]))
+
+
+def _render(path: str, text: str, *, models: set[str], allowed_sources: set[str], problems: list[str]) -> str:
+    """Replace the only Jinja a model may contain (source, ref, config) with plain SQL; record the rest."""
+
+    def sub(m: re.Match) -> str:
+        inner = m.group(1)
+        if (s := _SOURCE.match(inner)) is not None:
+            if f"{s.group(1)}.{s.group(2)}" not in allowed_sources:
+                problems.append(f"{path}: source {s.group(1)}.{s.group(2)} is outside the run's scope")
+            return f"{s.group(1)}.{s.group(2)}"
+        if (r := _REF.match(inner)) is not None:
+            if r.group(1) not in models:
+                problems.append(f"{path}: ref to unknown model {r.group(1)}")
+            return r.group(1)
+        if (c := _CONFIG.match(inner)) is not None:
+            if c.group(1) not in MATERIALIZATIONS:
+                problems.append(f"{path}: materialization {c.group(1)} is not allowed")
+            return ""
+        problems.append(f"{path}: Jinja expression '{inner.strip()[:60]}' is not allowed")
+        return "x"
+
+    return _JINJA.sub(sub, text)
 
 
 def _check_yaml(path: str, doc: Any, allowed_sources: set[str]) -> list[str]:

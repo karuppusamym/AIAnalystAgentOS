@@ -9,6 +9,7 @@ x-app-env: &app-env
   ANALYSTOS_DATABASE_URL: postgresql+psycopg://analystos:analystos@postgres:5432/analystos
   ANALYSTOS_ANALYTICS_LOADER_URL: postgresql+psycopg://analystos_loader:loader@postgres:5432/analytics
   ANALYSTOS_ANALYTICS_READER_URL: postgresql+psycopg://analystos_reader:reader@postgres:5432/analytics
+  ANALYSTOS_ANALYTICS_BUILDER_URL: postgresql+psycopg://analystos_builder:builder@postgres:5432/analytics
   ANALYSTOS_REDIS_URL: redis://redis:6379/0
   ANALYSTOS_NEO4J_URI: bolt://neo4j:7687
   # Neo4j is an optional projection (off by default); start it with `--profile graph` and set this to true.
@@ -126,7 +127,8 @@ services:
 
   worker-crawl:
     build: {context: ., dockerfile: deploy/docker/Dockerfile}
-    # elt is a placeholder queue with no activities yet; it rides on the crawl pool until P4-E* gives it one.
+    # elt runs playbook.elt_build (P4-E04): dbt parse/build via ANALYSTOS_DBT_EXECUTABLE (a dbt Core venv or image
+    # with the `dbt` extra); it rides on the crawl pool until builds need their own.
     environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: "crawl,elt"}
     depends_on: [api, temporal]
     restart: unless-stopped

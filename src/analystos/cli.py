@@ -38,10 +38,17 @@ def provision_analytics_roles() -> dict:
         provision_loader_createrole(settings.database_url, make_url(settings.analytics_loader_url).username or "")
         with session_scope() as s:
             staged = [(r.id, r.workspace_id) for r in s.scalars(select(Source).where(Source.execution_mode == "staged"))]
-        return backfill(settings, staged)
+        out = backfill(settings, staged)
     except Exception as exc:  # noqa: BLE001
         log.warning("analytics role provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
         return {"error": type(exc).__name__}
+    try:  # the build (write) login of the BuildGateway (P4-E06); clusters from before it lack it
+        from analystos.build.targets import ensure_builder_login
+
+        out["builder_login"] = ensure_builder_login(settings)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("build login provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
+    return out
 
 
 def seed() -> None:

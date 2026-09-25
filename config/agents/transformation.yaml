@@ -1,20 +1,37 @@
 # Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+# The dbt builder of playbook.elt_build (P4-E04): deterministic, no model calls. It reads only through
+# the query gateway (`sql.execute`: test probes and the size estimate) and writes only through the
+# BuildGateway under an approved, hash-bound approval.
 apiVersion: analystos/v1
 kind: Agent
 id: agent.transformation
-version: 0.1.0
-summary: Transformation Agent
+version: 0.2.0
+summary: Transformation Agent (dbt builder)
+entry: python:analystos.build.service:plan_build
 determinism: deterministic
-side_effect: none
+side_effect: write_external
 cost_class: query
 certification:
-  status: draft
+  status: tested
+  evidence: tests/integration/test_elt_build.py
 tags:
 - transformation
 - materialization
 spec:
   role: Transformation Agent
-  goal: Generates minimal reusable transformations and materializations.
-  capabilities: []
-  tools: []
-  phase: phase2
+  goal: Turns a run's virtual dataset and approved KPIs into a dbt project, dry-runs and estimates it, requests an
+    approval bound to its hash, and runs it on the customer's engine through the BuildGateway.
+  behaviours:
+    run: python:analystos.build.service:run_build
+  tools:
+  - sql.execute
+  - artifact.write
+  budget:
+    llm_calls: 0
+    queries: 4
+  policies:
+    max_rows_extract: 500000
+    pii_access: restricted
+    approval_for_publish: true
+    max_iterations: 1
+  phase: mvp

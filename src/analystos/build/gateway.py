@@ -53,6 +53,20 @@ def approval_payload(job: BuildJob) -> dict[str, Any]:
             "rollback": list((job.rollback or {}).get("statements") or [])}
 
 
+def osi_conformance(document: dict[str, Any]) -> dict[str, Any]:
+    """dbt 1.12 derives an Ossie document from the generated semantic YAML; read it back through the
+    semantic layer's importer (P4-K03) so the job records whether it conforms and what it holds."""
+    from analystos.semantic.dbt import import_osi_document
+    from analystos.semantic.ossie import OssieError
+
+    try:
+        models, issues = import_osi_document(document)
+    except OssieError as exc:
+        return {"valid": False, "problems": [str(p) for p in getattr(exc, "problems", [str(exc)])][:20]}
+    return {"valid": True, "issues": issues[:20], "metrics": sorted(m.name for model in models for m in model.metrics),
+            "datasets": sorted(d.name for model in models for d in model.datasets)}
+
+
 def source_schemas(session: Any, workspace_id: str | None = None) -> set[str]:
     """Every staged source schema (all workspaces: a target may never shadow any source)."""
     return {s.staging_schema or staging_schema_for(s.id) for s in session.scalars(select(Source))}
@@ -176,7 +190,8 @@ class BuildGateway:
                 job.log_tail = result.log_tail
                 job.manifest = lineage.manifest_summary(result.manifest)
                 if result.osi_document:
-                    job.manifest = {**job.manifest, "osi_document": result.osi_document}
+                    job.manifest = {**job.manifest, "osi_document": result.osi_document,
+                                    "osi_conformance": osi_conformance(result.osi_document)}
                 job.run_results = lineage.run_results_summary(result.run_results)
                 builder = make_url(self.settings.analytics_builder_url)
                 job.openlineage = lineage.openlineage_events(
