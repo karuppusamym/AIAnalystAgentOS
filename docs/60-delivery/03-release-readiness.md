@@ -37,3 +37,9 @@
    between workspaces inside Superset relies on per-workspace datasets and Superset permissions,
    which are not configured by this release.
 5. **One source per run**; no cross-source federation.
+6. **Scheduling**: one `analystos scheduler` process per deployment is enough, and several are
+   safe (claim-then-execute), but there is no backlog alerting yet. Missed
+   firings during downtime are not back-filled: the next firing uses the next cron slot.
+7. **Notifications are in-app only**; email/chat/webhook delivery is deliberately absent until it
+   can be approval-gated.
+8. **PDF reports use a core font**: non-Latin characters render as `?` (a bundled Unicode font is needed).

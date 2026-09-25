@@ -6,6 +6,48 @@ Status vocabulary: **Done** (code + automated test, and live evidence where the 
 Evidence lives in the [capability register](02-capability-register.md). IDs are spec v1 §60 IDs.
 Last reconciled: 2026-09-25 (after live e2e `evidence/e2e-20260925-054942.md`, 26/26).
 
+## P. Current execution queue
+
+The only list of work in flight. A row moves to **Done** only with a test and, where it says
+"live", a dated evidence file in the [capability register](02-capability-register.md). Finished
+increments stay here as history.
+
+### Increment 1 — Phase 0 + Phase 1 MVP (2026-09-25) — **Done**
+Evidence: `evidence/e2e-20260925-054942.md` (26/26). Rows below in the phase tables.
+
+### Increment 2 — Phase 3: scheduled & continuous analytics (2026-09-25) — **Done**
+
+Evidence: `evidence/e2e-phase3-20260925-064436.md` (13/13, live) and the deterministic
+integration test `tests/integration/test_e2e_local_run.py::test_phase3_schedule_monitor_report`.
+
+| # | Scope (v1 IDs) | Status | Evidence / notes |
+|---|---|---|---|
+| P2-01 | Schedules + scheduler process + run audit (SCH-001, SCH-005) | Done | claim-then-execute; idempotent claim tested; ADR-0009 |
+| P2-02 | Scheduled dataset refresh for staged sources (SCH-002) | Done | `refresh_first` on re-analysis; `dataset_refresh` kind |
+| P2-03 | Scheduled re-analysis with "what changed" diff (SCH-004) | Done | carried-forward claims + stable KPI definitions; live diff 4 persisting / 0 resolved / 0 not re-tested on unchanged data |
+| P2-04 | Narrative report + PDF + Excel, on demand and scheduled (RPT-001..003, SCH-003) | Done | 63 renderer tests; live downloads pdf/xlsx/html |
+| P2-05 | Threshold, drift, change-point, data-quality monitors (MON-001..004) | Done | future-dated rows and incomplete periods excluded (found live) |
+| P2-06 | Alerts, notifications, JEV triage, automatic investigation (MON-005) | Done | live alert triaged by JEV; auto-investigation run completed |
+| P2-07 | UI: schedules, monitoring/alerts, notifications, reports | Done | 50 vitest tests; live smoke |
+| P2-08 | Live Phase-3 evidence | Done | 13/13 |
+
+Findings from the live runs that changed the design (kept for history): the first live pass was
+9/12 — monitors read future-dated and partial periods as a 97% volume drop (JEV rated it 0.88
+material, which is why detection stays deterministic); a later pass showed re-analysis diffs were
+noisy because each run asked different questions and KPI definitions drifted (fraction vs percent),
+fixed by carrying claims and KPI definitions forward.
+
+### Next candidates (not started — to be prioritised)
+
+| # | Scope | Why |
+|---|---|---|
+| N-1 | Phase 2 semantic layer: versioned semantic models, metric approval workflow (SEM-001..005) | KPIs are validated but not yet owned/approved objects |
+| N-2 | Existing-dashboard mode (BI-011/012) on top of `SupersetPublisher.inspect_dashboard` | v1 §35 |
+| N-3 | Approval-gated external delivery (email/webhook) for reports and alerts | completes SCH-003 delivery |
+| N-4 | Cross-source analysis (INT-001..005, TRN-004 Trino) | v1 Phase 2 |
+| N-5 | SSO/OIDC + ABAC (SEC-001..003) | pilot readiness |
+| N-6 | Sandbox in a network-less container; Unicode PDF font | readiness gaps |
+
 ## Phase 0 — Foundation
 
 | ID | Task | Status | Notes |
@@ -77,7 +119,7 @@ Last reconciled: 2026-09-25 (after live e2e `evidence/e2e-20260925-054942.md`, 2
 | ID range | Status |
 |---|---|
 | INT-001..005, TRN-001..004, SEM-001..005 (beyond Phase-1 KPI validation), PBI-001..002, BI-011..012 | Phase 2 — `inspect_dashboard` exists as a foundation for BI-011 |
-| SCH-001..005, RPT-001..003, MON-001..005 | Phase 3 — API returns an explicit "not available" error |
+| SCH-001..005, RPT-001..003, MON-001..005 | **Done** in increment 2 (see section P) — external delivery channels deliberately not included |
 | SEC-001..007, GOV-001..004, OPS-001..005 | Phase 4 — baseline RBAC, column policy, PII denial, destination and model allowlists already enforced; SSO/ABAC/row policy/HA/DR not started |
 | AUT-001..006 | Phase 5 — iteration loop, stop criteria and budgets exist in Phase-1 form |
 | PRO-001..006 | Phase 6 |

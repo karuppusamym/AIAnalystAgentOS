@@ -52,3 +52,31 @@ Superset publication. Highlights:
 | Superset publishing | `publishing/superset.py` | 64 unit tests; live integration (15 charts render data, idempotent republish, rollback) | e2e dashboards 21/22 | Report scheduling is Phase 3 |
 | Web UI | `web/` | 27 vitest tests, typecheck, build; live smoke across all screens | manual review against running API | Docker image build not verified in this sandbox |
 | CI | `.github/workflows/ci.yml` | lint, unit, integration with Postgres/Redis services, web build | green on `51c4e03` | Superset/Neo4j/Temporal tests skip in CI |
+
+## 2026-09-25 — Increment 2: Phase 3 (scheduled & continuous analytics)
+
+Same environment as above plus the `analystos scheduler` process.
+
+### Live evidence
+
+[`evidence/e2e-phase3-20260925-064436.md`](evidence/e2e-phase3-20260925-064436.md): **13/13**.
+Earlier pass [`e2e-phase3-20260925-061710.md`](evidence/e2e-phase3-20260925-061710.md) (12/12)
+is kept for history: its diff was noisy, which led to carrying claims and KPI definitions forward.
+
+* Scheduled re-analysis (Europe/London cron) re-tested all 4 previously verified claims with
+  identical specs: 4 persisting, 0 resolved, 0 not re-tested; 10 KPIs with 0.0 change on unchanged
+  data; publication tasks skipped; weekly report generated (PDF 212 KB, XLSX 36 KB, HTML 17 KB)
+  and downloaded through the audited, hash-checked endpoint.
+* Monitor schedule evaluated 4 monitors (drift, change point, threshold, data quality) through
+  the gateway; the threshold alert was triaged by JEV (`typesafe/jev-1.13`) and escalated; the
+  monitor's automatic investigation run completed with `origin: alert` and no publication.
+* Notifications for the report, the alert and the investigation.
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Scheduler | `services/schedules.py` | validation, timezone, idempotent claim, run-now path | ✅ | no back-fill of missed slots |
+| Re-analysis diff | `services/changes.py`, investigator carry-forward, semantic carry-forward | claim identity unit tests; same-data integration assertion (0 resolved / 0 not re-tested / equal KPIs) | ✅ | diff granularity is per claim, not per group value |
+| Reports | `reports/*`, `services/reports.py` | 63 renderer tests (escaping, formula injection, determinism) + integration download | ✅ | core PDF font |
+| Monitors + alerts | `services/monitors.py` | drift/threshold/change-point unit tests; integration (alert, de-dup, DQ baseline, auto-investigation) | ✅ | DQ monitor re-profiles each run (cost grows with columns) |
+| Notifications | `services/notifications.py` | integration | ✅ | in-app only |
+| Phase-3 UI | `web/src/pages/{Schedules,Monitoring,Reports}.tsx` | 23 new vitest tests | smoke | monitor config not editable after creation |
