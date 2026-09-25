@@ -15,6 +15,8 @@ def row(obj: Any, exclude: set[str] | None = None) -> dict[str, Any]:
         if exclude and key in exclude:
             continue
         value = getattr(obj, key)
+        if key == "capabilities" and isinstance(value, dict) and "manifests" in value:
+            value = {k: v for k, v in value.items() if k != "manifests"}  # a run's bound manifests: refs are enough here
         out[key] = value.isoformat() if isinstance(value, datetime) else value
     return out
 

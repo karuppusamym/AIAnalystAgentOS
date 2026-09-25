@@ -45,8 +45,14 @@ def build_bundle(ctx: RunContext, destination: str) -> PublishBundle:
     ds, _ = dataset_def(ctx.run.id)
     parts = load_bundle_parts(ctx.run.id)
     charts = [ChartSpec.model_validate({**c.model_dump(), "preview": {}}) for c in parts["charts"]]  # previews are not published
-    return PublishBundle(workspace_id=ctx.workspace.id, destination=destination, datasets=[ds], metrics=parts["metrics"],
-                         charts=charts, dashboards=parts["dashboards"])
+    bundle = PublishBundle(workspace_id=ctx.workspace.id, destination=destination, datasets=[ds], metrics=parts["metrics"],
+                           charts=charts, dashboards=parts["dashboards"])
+    # P4-K03: KPIs are published as their approved semantic-layer definitions; with the workspace policy
+    # require_approved_metrics an unapproved KPI refuses the bundle, here and again right before publishing.
+    from analystos.semantic.service import gate_bundle
+
+    with session_scope() as s:
+        return gate_bundle(s, ctx.workspace.id, ctx.policy, bundle)
 
 
 def governance_review(ctx: RunContext, bundle: PublishBundle) -> dict:
@@ -88,14 +94,14 @@ def request_publication(ctx: RunContext) -> dict:
         if decision.decision == "deny":
             raise PolicyDenied("publication denied: " + ", ".join(decision.reasons))
         run = s.get(AnalysisRun, ctx.run.id)
-        jev = ctx.jev.consequential(f"Publish {len(bundle.dashboards)} dashboards with {len(bundle.charts)} charts to {destination}",
-                                    ctx=ctx.call_ctx())
+        # No risk_check decision here (P4-T02): publication is always high tier and always needs an
+        # approval, so a model opinion could not change the next step.
         approval = request_approval(
             s, workspace_id=ctx.workspace.id, run_id=run.id, action="publish_dashboard", payload=payload, plan_hash=run.plan_hash,
             policy_version=run.policy_version, requested_by=run.requested_by, risk_tier="high", destination=destination,
             affected_assets=[d.name for d in bundle.datasets] + [d.key for d in bundle.dashboards],
             evidence={"governance_review": review, "policy": decision.model_dump(),
-                      "jev_consequential": jev.value if jev else None,
+                      "risk_tier_basis": "deterministic: publication is always high risk and approval-gated",
                       "charts": len(bundle.charts), "metrics": len(bundle.metrics)})
         task = s.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == "publish"))
         task.input = {**task.input, "approval_id": approval.id, "destination": destination}

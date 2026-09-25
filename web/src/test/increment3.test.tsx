@@ -547,10 +547,11 @@ describe("TokenSavingsView", () => {
 describe("Admin page gating", () => {
   it("shows admin-only tabs as a notice to non-admins without calling their endpoints", async () => {
     const fetchMock = mockApi([["GET", /\/api\/auth\/me$/, USER], ["GET", /\/api\/agents$/, []]]);
-    render(<AuthProvider><MemoryRouter><AdminPage /></MemoryRouter></AuthProvider>);
-    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    const settings = render(<AuthProvider><MemoryRouter><AdminPage section="settings" /></MemoryRouter></AuthProvider>);
     expect(screen.getByText(/platform administrators only/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "Token savings" }));
+    settings.unmount();
+    render(<AuthProvider><MemoryRouter><AdminPage section="usage" /></MemoryRouter></AuthProvider>);
+    expect(screen.getByRole("tab", { name: "Token savings", selected: true })).toBeTruthy();
     expect(screen.getByText(/platform administrators only/)).toBeTruthy();
     expect(calls(fetchMock, "GET", /\/admin\/(settings|token-savings|prompts)/)).toHaveLength(0);
   });

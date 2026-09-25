@@ -1,0 +1,83 @@
+# Sales analyst playbook as AnalysisSpec patterns (format: skills/hypothesis_templates.py).
+# The canonical questions first (returns by channel, order value by customer type, fulfilment time by
+# geography), then each outcome across every other dimension, a volume trend and a driver model.
+slots:
+  flag: {type: boolean, role: flag, limit: 1}
+  amount: {type: numeric, role: amount, not_name: count, limit: 1}
+  lead_time: {type: numeric, role: duration, limit: 1}
+  dims: {type: categorical, distinct: [2, 30], exclude_text: true, not_role: [identifier, foreign_key, text]}
+  channel_dim: {from: dims, name: "(channel|source|store|platform|medium)", limit: 1}
+  customer_dim: {from: dims, name: "(segment|tier|customer_type|customer_class|account_type)", limit: 1}
+  geo_dim: {from: dims, role: geo, limit: 1, fallback: geo_named}
+  geo_named: {from: dims, name: "(region|country|territory|market|state)", limit: 1}
+  order_time: {type: datetime, role: [date, timestamp], limit: 1}
+
+outcomes:
+  flag_rate:
+    kind: flag_rate
+    slot: flag
+    success_name: "(delivered|fulfilled|paid|on_time)"
+    success_prefix: "^(is_)?(delivered|fulfilled|paid)_?"
+  order_value: {kind: column, slot: amount}
+  fulfilment: {kind: column, slot: lead_time}
+
+segments:
+  dims:
+    - {slot: dims, limit: 5}
+
+templates:
+  - id: flag_rate_by_channel
+    method: rate_by_segment
+    outcome: flag_rate
+    segment: {slot: channel_dim}
+    priority: high
+    question: "Does the rate of {outcome} vary by {segment}?"
+    statement: "The rate of {outcome} differs materially across {segment}."
+  - id: order_value_by_customer_type
+    method: numeric_by_segment
+    outcome: order_value
+    segment: {slot: customer_dim}
+    priority: high
+    question: "Does {outcome} differ by {segment}?"
+    statement: "{Outcome} differs materially across {segment}."
+  - id: fulfilment_by_geography
+    method: numeric_by_segment
+    outcome: fulfilment
+    segment: {slot: geo_dim}
+    priority: high
+    question: "Does {outcome} differ by {segment}?"
+    statement: "{Outcome} differs materially across {segment}."
+  - id: flag_rate_by_dimension
+    method: rate_by_segment
+    outcome: flag_rate
+    segment: {group: dims}
+    priority: medium
+    question: "Does the rate of {outcome} vary by {segment}?"
+    statement: "The rate of {outcome} differs materially across {segment}."
+  - id: order_value_by_dimension
+    method: numeric_by_segment
+    outcome: order_value
+    segment: {group: dims}
+    priority: medium
+    question: "Does {outcome} differ by {segment}?"
+    statement: "{Outcome} differs materially across {segment}."
+  - id: fulfilment_by_dimension
+    method: numeric_by_segment
+    outcome: fulfilment
+    segment: {group: dims}
+    priority: medium
+    question: "Does {outcome} differ by {segment}?"
+    statement: "{Outcome} differs materially across {segment}."
+  - id: order_volume_trend
+    method: trend
+    time: {slot: order_time, grain: month}
+    priority: low
+    question: "How has order volume trended over time?"
+    statement: "Order volume shows a significant trend or change point."
+  - id: flag_drivers
+    method: driver_model
+    outcome: flag_rate
+    drivers: {group: dims, limit: 4, min: 2}
+    priority: medium
+    question: "Which factors jointly predict {outcome}?"
+    statement: "Several commercial factors jointly predict {outcome}."

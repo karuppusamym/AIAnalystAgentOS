@@ -9,6 +9,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth";
 import { api, session } from "../api";
+import { to } from "../routes";
 
 const LIVE = process.env.ANALYSTOS_LIVE_API;
 
@@ -31,30 +32,33 @@ describe.skipIf(!LIVE)("live API smoke", () => {
     const ws = workspaces.find((w) => (w.counts?.dashboard ?? 0) > 0) ?? workspaces[0];
     const errors: string[] = [];
     errors.push(...await visit("/", /Workspaces/));
-    errors.push(...await visit("/admin", /Agents/));
+    errors.push(...await visit(to.registry(), /Agents/));
+    errors.push(...await visit(to.settings(), /Platform settings/));
+    errors.push(...await visit(to.usage(), /Token savings/));
     if (ws) {
-      errors.push(...await visit(`/w/${ws.id}`, /Key verified insights/));
-      errors.push(...await visit(`/w/${ws.id}/sources`, /Relationships/));
-      errors.push(...await visit(`/w/${ws.id}/catalog`, /Catalog/));
-      errors.push(...await visit(`/w/${ws.id}/runs`, /Analysis runs/));
-      errors.push(...await visit(`/w/${ws.id}/ask`, /SQL console/));
-      errors.push(...await visit(`/w/${ws.id}/governance`, /Workspace policy/));
+      errors.push(...await visit(to.workspace(ws.id), /What changed/));
+      errors.push(...await visit(to.sources(ws.id), /Relationships/));
+      errors.push(...await visit(to.catalog(ws.id), /Catalog/));
+      errors.push(...await visit(to.investigations(ws.id), /Investigations/));
+      errors.push(...await visit(to.ask(ws.id), /SQL console/));
+      errors.push(...await visit(to.governance(ws.id), /Workspace policy/));
+      errors.push(...await visit(to.approvals(ws.id), /Approvals/));
       const runs = await api.listRuns(ws.id);
       if (runs[0]) {
-        errors.push(...await visit(`/w/${ws.id}/runs/${runs[0].id}`, /Investigation/));
-        errors.push(...await visit(`/w/${ws.id}/runs/${runs[0].id}/console`, /Agent console/));
+        errors.push(...await visit(to.run(ws.id, runs[0].id), /Investigation/));
+        errors.push(...await visit(to.runConsole(ws.id, runs[0].id), /Agent console/));
       }
-      errors.push(...await visit(`/w/${ws.id}/schedules`, /Schedules/));
-      errors.push(...await visit(`/w/${ws.id}/monitoring`, /Monitors/));
-      errors.push(...await visit(`/w/${ws.id}/monitoring?tab=alerts`, /Alerts/));
-      errors.push(...await visit(`/w/${ws.id}/reports`, /Generate report/));
+      errors.push(...await visit(to.schedules(ws.id), /Schedules/));
+      errors.push(...await visit(to.monitoring(ws.id), /Monitors/));
+      errors.push(...await visit(to.monitoring(ws.id, { tab: "alerts" }), /Alerts/));
+      errors.push(...await visit(to.reports(ws.id), /Generate report/));
       const scheduled = runs.find((r) => r.origin?.type === "schedule" && r.status === "COMPLETED");
-      if (scheduled) errors.push(...await visit(`/w/${ws.id}/runs/${scheduled.id}`, /What changed since the previous run/));
+      if (scheduled) errors.push(...await visit(to.run(ws.id, scheduled.id), /What changed since the previous run/));
       const insights = await api.listInsights(ws.id);
-      if (insights[0]) errors.push(...await visit(`/w/${ws.id}/insights/${insights[0].id}`, /REV verification/));
+      if (insights[0]) errors.push(...await visit(to.findings(ws.id, insights[0].id), /REV verification/));
       const dash = await api.listArtifacts(ws.id, { type: "dashboard" });
       if (dash[0]) {
-        errors.push(...await visit(`/w/${ws.id}/studio?artifact=${dash[0].id}`, /Versions/));
+        errors.push(...await visit(to.studio(ws.id, dash[0].id), /Versions/));
         expect(document.querySelectorAll(".dash-cell").length).toBeGreaterThan(0);
       }
     }

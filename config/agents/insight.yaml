@@ -1,23 +1,34 @@
-agent:
-  id: insight
-  version: '1.0'
-  name: Insight Analyst Agent
-  description: Converts supported, tested results into business findings with attached evidence, impact, caveats
-    and a numbers-guarded narrative.
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.insight
+version: 1.0.0
+summary: Insight Analyst Agent
+entry: python:analystos.agents.insight:build_insights
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- insight_generation
+- impact_estimation
+- narrative
+spec:
+  role: Insight Analyst Agent
+  goal: Converts supported, tested results into business findings with attached evidence, impact, caveats and a
+    numbers-guarded narrative.
   capabilities:
-  - insight_generation
-  - impact_estimation
-  - narrative
-  skills:
-  - variance_analysis
+  - skill.proportion_ci
   tools:
   - artifact.write
-  model_profile: low_cost
+  model_purposes:
+  - insight_narrative
   prompt_version: v1
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: true
   phase: mvp

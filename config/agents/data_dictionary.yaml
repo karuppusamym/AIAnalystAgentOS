@@ -1,0 +1,30 @@
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+# A declarative agent: no Python of its own. It runs under the generic propose -> validate -> execute
+# runtime (agents/generic.py) and may only use the read-only lookups bound below.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.data_dictionary
+version: 1.0.0
+summary: Data Dictionary Agent
+entry: builtin:generic
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: tested
+  evidence: tests/unit/test_generic_agent.py
+tags: [documentation, catalog]
+spec:
+  role: Data Dictionary Agent
+  goal: Summarise the selected tables for a business reader - what each table holds, its size, its key and
+    business columns and their completeness - using only catalog lookups (no source queries).
+  capabilities: [skill.catalog_lookup, skill.column_profile_lookup]
+  tools: [metadata.read, profile.table]
+  model_purpose: agent_actions
+  budget: {llm_calls: 3, usd: 0.05, queries: 0, max_steps: 3}
+  policies: {max_rows_extract: 1000, pii_access: none, approval_for_publish: true, max_iterations: 1}
+  phase: mvp
+  default_actions:
+    - capability: skill.catalog_lookup
+      input: {assets: $scope.assets}
+  output: {artifact_type: agent_output, artifact_name: Data dictionary}

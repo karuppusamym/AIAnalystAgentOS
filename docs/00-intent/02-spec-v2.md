@@ -160,6 +160,25 @@ registered disabled. An agent is *configuration + a behaviour*; capabilities liv
 (deterministic functions) and **tools** (gated, audited invocations). An agent can only invoke tools
 bound in its definition, and every invocation is policy-checked and recorded.
 
+Tool-gate coverage (P4-C11). Two paths act *as* a tool without being invoked by name; they pass
+the same policy check (tool enabled, workspace `tool_denylist`, role, autonomy) with the denial
+recorded as a `tool_execution` row, but not the per-agent binding, because the agent's bound tool
+(`profile.table`, `analysis.run`, …) is what it invoked:
+
+| Path | Gated as | Where | Per-use record |
+|---|---|---|---|
+| Skill and agent SQL in a run (`ctx.run_sql`, incl. REV re-runs) | `sql.execute` | `RunContext.authorize_tool`, once per step | `query_execution` row per statement |
+| Ask (NL→SQL outside a run) | `sql.execute` (bound to the SQL agent) | `agents/sql_agent.ask` | `query_execution` row per attempt |
+| Artifact persistence by an agent in a run | `artifact.write` | `artifacts/registry.save_artifact` | `artifact_version` + policy audit |
+
+Denylisting `sql.execute` or `artifact.write` therefore stops every path above. Exempt by design,
+and still governed by the gateway (scope, validator, per-workspace reader role, audit):
+the human SQL console (a user action under the caller's role, not an agent tool); monitors,
+scheduled checks and the metadata crawler (system actors governed by their own admin settings and
+`crawl.run`); and a run's own domain records (hypotheses, experiments, insights, lineage edges),
+which are provenance of the run rather than artifacts, so a denylist can never hide how a number
+was produced.
+
 | Agent | Phase-1 behaviour |
 |---|---|
 | Supervisor | frames the objective into questions (LLM), owns plan, finalizes (summary, episode memory, graph projection) |

@@ -32,9 +32,10 @@ Timestamp inputs are CAST to TIMESTAMP (DATETIME2 on tsql) so text-typed timesta
 ServiceNow extracts) work. Boolean derivations evaluate to integer 1/0 (NULL when the input is NULL),
 which makes `SUM()` count positives and `AVG()` compute a rate on every engine.
 
-Per method the compiler produces *aggregated* SQL where the statistic only needs aggregates
-(rate_by_segment, trend, pareto, numeric summaries) and a *bounded, deterministic row sample* where
-it needs row-level values (numeric distributions, correlation pairs, driver rows). The sample is
+Each analysis method (`analystos.methods`) assembles its queries from these primitives: *aggregated*
+SQL where its statistic only needs aggregates (rates, series, volumes, numeric summaries) and a
+*bounded, deterministic row sample* (`sample_query`) where it needs row-level values (distributions,
+pairs, driver rows). The sample is
 ordered by a hash of the selected values plus a per-duplicate row number (so identical tuples are
 still sampled row-by-row) and limited to ``sample_rows``: re-running on unchanged data returns the
 same sample, and nothing ever pulls a full table. Rows whose outcome/segment/driver derive to NULL
@@ -44,6 +45,7 @@ are excluded from the analysis *and counted* (``n_rows``/``n`` columns in aggreg
 from __future__ import annotations
 
 import datetime as _dt
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -59,15 +61,6 @@ BOOLEAN_DERIVATIONS = frozenset({"after_hours", "equals", "is_true"})
 TIME_DERIVATIONS = frozenset({"duration_hours", "after_hours", "date_trunc", "hour_of_day", "day_of_week"})
 TRUE_TEXT = ("true", "t", "1", "yes", "y")
 
-# Which queries exist for which method. "primary" always exists.
-METHOD_PURPOSES: dict[str, tuple[str, ...]] = {
-    "rate_by_segment": ("primary",),
-    "numeric_by_segment": ("primary", "summary"),
-    "trend": ("primary",),
-    "pareto": ("primary",),
-    "correlation": ("primary",),
-    "driver_model": ("primary",),
-}
 MAX_GROUPS = 1000  # cap on GROUP BY result rows for segment aggregates
 MAX_PERIODS = 5000
 MAX_PARETO_SEGMENTS = 5000
@@ -385,12 +378,12 @@ def derive(d: Derivation, dialect: str) -> exp.Expression:
 
 
 def time_period_expr(d: Derivation, dialect: str, default_grain: str = "month") -> exp.Expression:
-    """For `trend`: a date_trunc derivation is used as-is; a raw column is truncated to `grain` or month."""
+    """A spec's `time`: a date_trunc derivation is used as-is; a raw column is truncated to `grain` or month."""
     if d.type == "date_trunc":
         return derive(d, dialect)
     if d.type == "column":
         return trunc_expr(ts_expr(d.column, dialect), d.grain or default_grain, dialect)
-    raise InvalidInput("trend `time` must be a column or date_trunc derivation")
+    raise InvalidInput("`time` must be a column or date_trunc derivation")
 
 
 def describe(d: Derivation | None) -> str:
@@ -454,7 +447,7 @@ def render_derivation(d: Derivation, dialect: str, *, table_alias: str | None = 
     """SQL text of one derivation's value expression (quoted identifiers, dialect-correct).
 
     Boolean derivations render as 1/0/NULL; bucket renders its (string-sortable) label CASE. With
-    `table_alias`, every column is qualified (``"t"."opened_at"``) so the expression can be used in
+    `table_alias`, every column is qualified (``"t"."created_at"``) so the expression can be used in
     ``SELECT t.*, <expr> AS ... FROM <asset> AS t``.
     """
     dialect = _check_dialect(dialect)
@@ -470,7 +463,7 @@ def render_filter(f: Filter, dialect: str, *, table_alias: str | None = None) ->
 # --------------------------------------------------------------------------------------------
 # query assembly
 # --------------------------------------------------------------------------------------------
-def _base_select(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]]) -> exp.Select:
+def base_select(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]]) -> exp.Select:
     q = exp.select(*[e.as_(ident(a)) for a, e in cols]).from_(table(spec.asset))
     w = where_clause(spec.filters, dialect)
     if w is not None:
@@ -478,11 +471,11 @@ def _base_select(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Exp
     return q
 
 
-def _sub(q: exp.Select, alias: str) -> exp.Subquery:
+def subquery(q: exp.Select, alias: str) -> exp.Subquery:
     return exp.Subquery(this=q, alias=exp.TableAlias(this=ident(alias)))
 
 
-def _c(alias: str) -> exp.Column:
+def ref(alias: str) -> exp.Column:
     return col(alias)
 
 
@@ -503,7 +496,7 @@ def _hash_order(aliases: list[str], rn_alias: str, dialect: str, tbl: str) -> ex
     return exp.MD5(this=concat)
 
 
-def _sample_query(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]], sample_rows: int) -> exp.Select:
+def sample_query(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]], sample_rows: int) -> exp.Select:
     """Deterministic bounded sample of derived columns with NULL-exclusion counts.
 
     inner : derived columns under the spec filters
@@ -515,24 +508,24 @@ def _sample_query(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Ex
     to input columns rather than select-list aliases).
     """
     aliases = [a for a, _ in cols]
-    inner = _base_select(spec, dialect, cols)
+    inner = base_select(spec, dialect, cols)
     any_null = or_all([is_null(_qc(a, "d")) for a in aliases])
     rn = exp.Window(this=exp.RowNumber(), partition_by=[_qc(a, "d") for a in aliases],
                     order=exp.Order(expressions=[exp.Ordered(this=_qc(aliases[0], "d"), nulls_first=dialect == "tsql")]))
     total = exp.Window(this=count_star())
     excluded = exp.Window(this=exp.Sum(this=case([(any_null, num(1))], num(0))))
     middle = exp.select(*[_qc(a, "d").as_(ident(a)) for a in aliases], rn.as_(ident("_rn")),
-                        total.as_(ident("_rows_total")), excluded.as_(ident("_rows_excluded"))).from_(_sub(inner, "d"))
+                        total.as_(ident("_rows_total")), excluded.as_(ident("_rows_excluded"))).from_(subquery(inner, "d"))
     outer = (exp.select(*[_qc(a, "s").as_(ident(a)) for a in aliases], _qc("_rows_total", "s").as_(ident("_rows_total")),
                         _qc("_rows_excluded", "s").as_(ident("_rows_excluded")))
-             .from_(_sub(middle, "s"))
+             .from_(subquery(middle, "s"))
              .where(and_all([not_null(_qc(a, "s")) for a in aliases]))
              .order_by(_hash_order(aliases, "_rn", dialect, "s"), *[_qc(a, "s") for a in aliases])
              .limit(int(sample_rows)))
     return outer
 
 
-def _numeric(e: exp.Expression, dialect: str) -> exp.Expression:
+def as_double(e: exp.Expression, dialect: str) -> exp.Expression:
     return cast(e, "double", dialect)
 
 
@@ -544,11 +537,11 @@ def percentile_cont(e: exp.Expression, q: float, dialect: str) -> exp.Expression
                            expression=exp.Order(expressions=[exp.Ordered(this=e, nulls_first=dialect == "tsql")]))
 
 
-def _median(e: exp.Expression) -> exp.Expression:
+def median(e: exp.Expression) -> exp.Expression:
     return percentile_cont(e, 0.5, "postgres")
 
 
-def _segment_cols(spec: AnalysisSpec, dialect: str) -> tuple[list[tuple[str, exp.Expression]], bool]:
+def segment_cols(spec: AnalysisSpec, dialect: str) -> tuple[list[tuple[str, exp.Expression]], bool]:
     if spec.segment is None:
         raise InvalidInput(f"{spec.method} requires a `segment`")
     if spec.segment.type == "bucket":
@@ -557,7 +550,7 @@ def _segment_cols(spec: AnalysisSpec, dialect: str) -> tuple[list[tuple[str, exp
     return [("segment", derive(spec.segment, dialect))], False
 
 
-def _require(spec: AnalysisSpec, what: str) -> None:
+def require(spec: AnalysisSpec, what: str) -> None:
     if getattr(spec, what) is None:
         raise InvalidInput(f"{spec.method} requires `{what}`")
 
@@ -565,149 +558,46 @@ def _require(spec: AnalysisSpec, what: str) -> None:
 def compile_spec(spec: AnalysisSpec, dialect: str, *, purpose: str = "primary", sample_rows: int = 50000) -> CompiledQuery:
     """Compile one query of `spec` for `dialect`.
 
-    purpose: "primary" (every method) or "summary" (numeric_by_segment full-data aggregates).
+    The spec's method (a registered `analystos.methods` plugin) builds the statement from the
+    primitives above; `purpose` is one of the method's `purposes` ("primary" for every method).
     Returns a `CompiledQuery` whose `columns` maps roles (segment, outcome, n, positives, ...) to
     output column aliases.
     """
+    from analystos import methods
+
     dialect = _check_dialect(dialect)
-    purposes = METHOD_PURPOSES[spec.method]
-    if purpose not in purposes:
-        raise InvalidInput(f"method {spec.method} has no {purpose!r} query (available: {purposes})")
+    method = methods.get(spec.method)
+    if purpose not in method.purposes:
+        raise InvalidInput(f"method {spec.method} has no {purpose!r} query (available: {method.purposes})")
     if sample_rows <= 0:
         raise InvalidInput("sample_rows must be positive")
-    notes: list[str] = []
-    m = spec.method
-
-    if m == "rate_by_segment":
-        _require(spec, "outcome")
-        seg_cols, ordered = _segment_cols(spec, dialect)
-        out = spec.outcome
-        assert out is not None
-        if out.type not in BOOLEAN_DERIVATIONS:
-            out_e = is_true_expr(derive(out, dialect), dialect)
-            notes.append(f"outcome {describe(out)} interpreted as boolean (true/t/1/yes/y)")
-        else:
-            out_e = derive(out, dialect)
-        inner = _base_select(spec, dialect, [*seg_cols, ("outcome", out_e)])
-        group = [_c(a) for a, _ in seg_cols]
-        q = (exp.select(*group, count_star().as_(ident("n_rows")), exp.Count(this=_c("outcome")).as_(ident("n")),
-                        exp.Sum(this=_c("outcome")).as_(ident("positives")))
-             .from_(_sub(inner, "d")).group_by(*[g.copy() for g in group])
-             .order_by(exp.Ordered(this=_c("n_rows"), desc=True), *[g.copy() for g in group]).limit(MAX_GROUPS))
-        columns = {"segment": "segment", "n_rows": "n_rows", "n": "n", "positives": "positives"}
-        if ordered:
-            columns["segment_order"] = "segment_order"
-        notes.append("rows with NULL segment form their own group; rows with NULL outcome counted as n_rows - n")
-        return CompiledQuery(to_sql(q, dialect), columns, notes, purpose, dialect, MAX_GROUPS, "aggregate")
-
-    if m == "numeric_by_segment":
-        _require(spec, "outcome")
-        seg_cols, ordered = _segment_cols(spec, dialect)
-        out = spec.outcome
-        assert out is not None
-        out_e = _numeric(derive(out, dialect), dialect)
-        if purpose == "primary":
-            q = _sample_query(spec, dialect, [seg_cols[0], ("outcome", out_e)], sample_rows)
-            notes.append(f"deterministic hash-ordered sample of at most {sample_rows} (segment, outcome) rows")
-            return CompiledQuery(to_sql(q, dialect), {"segment": "segment", "outcome": "outcome",
-                                                      "rows_total": "_rows_total", "rows_excluded": "_rows_excluded"},
-                                 notes, purpose, dialect, sample_rows, "sample")
-        inner = _base_select(spec, dialect, [*seg_cols, ("outcome", out_e)])
-        group = [_c(a) for a, _ in seg_cols]
-        aggs = [count_star().as_(ident("n_rows")), exp.Count(this=_c("outcome")).as_(ident("n")),
-                exp.Avg(this=_c("outcome")).as_(ident("mean")), exp.Min(this=_c("outcome")).as_(ident("min")),
-                exp.Max(this=_c("outcome")).as_(ident("max"))]
-        columns = {"segment": "segment", "n_rows": "n_rows", "n": "n", "mean": "mean", "min": "min", "max": "max"}
-        if dialect != "tsql":
-            aggs.append(_median(_c("outcome")).as_(ident("median")))
-            columns["median"] = "median"
-        else:
-            notes.append("tsql: PERCENTILE_CONT is window-only; medians come from the row sample")
-        if ordered:
-            columns["segment_order"] = "segment_order"
-        q = (exp.select(*group, *aggs).from_(_sub(inner, "d")).group_by(*[g.copy() for g in group])
-             .order_by(exp.Ordered(this=_c("n_rows"), desc=True), *[g.copy() for g in group]).limit(MAX_GROUPS))
-        return CompiledQuery(to_sql(q, dialect), columns, notes, purpose, dialect, MAX_GROUPS, "aggregate")
-
-    if m == "trend":
-        _require(spec, "time")
-        assert spec.time is not None
-        period = time_period_expr(spec.time, dialect)
-        cols: list[tuple[str, exp.Expression]] = [("period", period)]
-        if spec.outcome is not None:
-            o = derive(spec.outcome, dialect)
-            cols.append(("outcome", _numeric(o, dialect)))
-        inner = _base_select(spec, dialect, cols)
-        aggs = [count_star().as_(ident("n_rows"))]
-        columns = {"period": "period", "n_rows": "n_rows"}
-        if spec.outcome is not None:
-            aggs += [exp.Count(this=_c("outcome")).as_(ident("n")), exp.Avg(this=_c("outcome")).as_(ident("value"))]
-            columns.update({"n": "n", "value": "value"})
-        if spec.segment is not None:
-            notes.append("trend ignores `segment`; use one spec per segment value (filters) to split series")
-        q = (exp.select(_c("period"), *aggs).from_(_sub(inner, "d")).group_by(_c("period"))
-             .order_by(_c("period")).limit(MAX_PERIODS))
-        notes.append("rows with NULL period form a NULL group and are excluded from the series")
-        return CompiledQuery(to_sql(q, dialect), columns, notes, purpose, dialect, MAX_PERIODS, "aggregate")
-
-    if m == "pareto":
-        seg_cols, ordered = _segment_cols(spec, dialect)
-        cols = [seg_cols[0]]
-        if spec.outcome is not None:
-            o = derive(spec.outcome, dialect)
-            if spec.outcome.type in BOOLEAN_DERIVATIONS:
-                cols.append(("outcome", o))
-            else:
-                cols.append(("outcome", _numeric(o, dialect)))
-            volume = exp.Sum(this=_c("outcome"))
-            notes.append(f"volume = SUM({describe(spec.outcome)})")
-        else:
-            volume = count_star()
-            notes.append("volume = COUNT(*)")
-        inner = _base_select(spec, dialect, cols)
-        q = (exp.select(_c("segment"), count_star().as_(ident("n_rows")), volume.as_(ident("volume")))
-             .from_(_sub(inner, "d")).group_by(_c("segment"))
-             .order_by(exp.Ordered(this=_c("volume"), desc=True), _c("segment")).limit(MAX_PARETO_SEGMENTS))
-        return CompiledQuery(to_sql(q, dialect), {"segment": "segment", "n_rows": "n_rows", "volume": "volume"},
-                             notes, purpose, dialect, MAX_PARETO_SEGMENTS, "aggregate")
-
-    if m == "correlation":
-        _require(spec, "outcome")
-        xd = spec.drivers[0] if spec.drivers else spec.segment
-        if xd is None:
-            raise InvalidInput("correlation requires drivers[0] (x) and outcome (y)")
-        assert spec.outcome is not None
-        cols = [("x", _numeric(derive(xd, dialect), dialect)), ("y", _numeric(derive(spec.outcome, dialect), dialect))]
-        q = _sample_query(spec, dialect, cols, sample_rows)
-        notes.append(f"x = {describe(xd)}, y = {describe(spec.outcome)}; sample of at most {sample_rows} pairs")
-        return CompiledQuery(to_sql(q, dialect), {"x": "x", "y": "y", "rows_total": "_rows_total",
-                                                  "rows_excluded": "_rows_excluded"}, notes, purpose, dialect,
-                             sample_rows, "sample")
-
-    if m == "driver_model":
-        _require(spec, "outcome")
-        if not spec.drivers:
-            raise InvalidInput("driver_model requires at least one driver")
-        assert spec.outcome is not None
-        o = spec.outcome
-        out_e = derive(o, dialect) if o.type in BOOLEAN_DERIVATIONS else is_true_expr(derive(o, dialect), dialect)
-        cols = []
-        columns = {}
-        for i, d in enumerate(spec.drivers):
-            e = derive(d, dialect)
-            cols.append((f"d_{i}", e))
-            columns[f"driver_{i}"] = f"d_{i}"
-        cols.append(("outcome", out_e))
-        columns.update({"outcome": "outcome", "rows_total": "_rows_total", "rows_excluded": "_rows_excluded"})
-        q = _sample_query(spec, dialect, cols, sample_rows)
-        notes.append(f"drivers: {[describe(d) for d in spec.drivers]}; sample of at most {sample_rows} rows")
-        return CompiledQuery(to_sql(q, dialect), columns, notes, purpose, dialect, sample_rows, "sample")
-
-    raise InvalidInput(f"unsupported method {m!r}")
+    return method.compile(spec, dialect, purpose=purpose, sample_rows=sample_rows)
 
 
 def compile_all(spec: AnalysisSpec, dialect: str, *, sample_rows: int = 50000) -> dict[str, CompiledQuery]:
     return {p: compile_spec(spec, dialect, purpose=p, sample_rows=sample_rows) for p in METHOD_PURPOSES[spec.method]}
+
+
+class _MethodPurposes(Mapping[str, tuple[str, ...]]):
+    """Which queries exist for which method, read from the method registry (never hand-kept)."""
+
+    def __getitem__(self, name: str) -> tuple[str, ...]:
+        from analystos import methods
+
+        return methods.get(name).purposes
+
+    def __iter__(self) -> Iterator[str]:
+        from analystos import methods
+
+        return iter(methods.names())
+
+    def __len__(self) -> int:
+        from analystos import methods
+
+        return len(methods.names())
+
+
+METHOD_PURPOSES: Mapping[str, tuple[str, ...]] = _MethodPurposes()
 
 
 def parses(sql: str, dialect: str) -> bool:

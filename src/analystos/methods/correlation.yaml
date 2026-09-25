@@ -1,0 +1,17 @@
+apiVersion: analystos/v1
+kind: Method
+id: method.correlation
+version: 1.0.0
+summary: Numeric vs numeric -> Spearman (+ Pearson and a bootstrap CI of the primary coefficient)
+entry: python:analystos.methods.correlation:Correlation
+determinism: seeded
+side_effect: read_source
+cost_class: query
+permissions: [scope:read]
+requires: [engine:sql]
+certification:
+  status: certified
+  evidence: tests/unit/test_skills_analysis.py
+tags: [statistical]
+spec:
+  order: 50

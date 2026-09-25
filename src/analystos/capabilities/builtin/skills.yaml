@@ -1,0 +1,59 @@
+# Action skills: typed, read-only capabilities a declarative agent can call through the generic
+# runtime (agents/generic.py). `spec.call: context` = the entry is fn(ctx, **input); `spec.tool` is
+# the tool gate the action passes (workspace policy, role, the agent's tool binding).
+- apiVersion: analystos/v1
+  kind: Skill
+  id: skill.catalog_lookup
+  version: 1.0.0
+  summary: Catalog entries of in-scope tables - business name, description, role, row count and columns (no source query)
+  entry: python:analystos.skills.lookup:catalog_lookup
+  determinism: deterministic
+  side_effect: none
+  cost_class: free
+  input_schema:
+    type: object
+    additionalProperties: false
+    required: [assets]
+    properties:
+      assets: {type: array, items: {type: string}, minItems: 1, maxItems: 50}
+      max_columns: {type: integer, minimum: 1, maximum: 200}
+  certification: {status: certified, evidence: tests/unit/test_generic_agent.py}
+  tags: [catalog]
+  spec: {call: context, tool: metadata.read}
+- apiVersion: analystos/v1
+  kind: Skill
+  id: skill.column_profile_lookup
+  version: 1.0.0
+  summary: Stored profile statistics of in-scope columns - completeness, distinct values, range (no source query)
+  entry: python:analystos.skills.lookup:column_profile_lookup
+  determinism: deterministic
+  side_effect: none
+  cost_class: free
+  input_schema:
+    type: object
+    additionalProperties: false
+    required: [asset]
+    properties:
+      asset: {type: string}
+      columns: {type: array, items: {type: string}, maxItems: 100}
+  certification: {status: certified, evidence: tests/unit/test_generic_agent.py}
+  tags: [catalog, profiling]
+  spec: {call: context, tool: profile.table}
+- apiVersion: analystos/v1
+  kind: Skill
+  id: skill.row_count
+  version: 1.0.0
+  summary: Current row count of one in-scope table, measured through the governed gateway
+  entry: python:analystos.skills.lookup:row_count
+  determinism: deterministic
+  side_effect: read_source
+  cost_class: query
+  input_schema:
+    type: object
+    additionalProperties: false
+    required: [asset]
+    properties:
+      asset: {type: string}
+  certification: {status: certified, evidence: tests/unit/test_generic_agent.py}
+  tags: [catalog]
+  spec: {call: context, tool: sql.execute}

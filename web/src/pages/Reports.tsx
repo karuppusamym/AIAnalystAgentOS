@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, saveBlob, type Artifact, type ReportContent } from "../api";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, Tag } from "../components/ui";
 import { fmtDate } from "../lib/format";
@@ -68,12 +69,12 @@ export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: stri
       </header>
       <div className="card-body">
         <div className="chip-row small">
-          {a.run_id && <Link to={`/w/${wsId}/runs/${a.run_id}`}>Source run</Link>}
+          {a.run_id && <Link to={to.run(wsId, a.run_id)}>Source run</Link>}
           {typeof c.insights === "number" && <span>{c.insights} findings</span>}
           {typeof c.metrics === "number" && <span>{c.metrics} metrics</span>}
           {typeof c.alerts === "number" && <span>{c.alerts} alerts</span>}
           <span className="muted">v{a.version}</span>
-          <Link to={`/w/${wsId}/studio?artifact=${a.id}`} className="muted">Lineage</Link>
+          <Link to={to.studio(wsId, a.id)} className="muted">Lineage</Link>
         </div>
         <div className="form-actions report-actions">
           {formats.length === 0 && <span className="muted small">No files recorded.</span>}

@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { to } from "../routes";
 import { api, type Alert, type Monitor } from "../api";
 import { EChart, canvasSupported } from "../components/Chart";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
@@ -7,7 +8,7 @@ import { buildMonitorOption, DARK, LIGHT } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, usePrefersDark } from "../lib/hooks";
 import {
-  GRAINS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, monitorMessage, monitorOverlay,
+  GRAINS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, explainTriage, monitorMessage, monitorOverlay,
   validateMonitorForm, type MonitorFormState,
 } from "../lib/monitors";
 import { severityTone } from "../lib/status";
@@ -29,7 +30,7 @@ export function MonitoringPage() {
   };
   return (
     <div className="page">
-      <PageHeader title="Monitoring"
+      <PageHeader title="Monitors & alerts"
         subtitle="Metric thresholds, drift, change points, forecast deviations and data quality — evaluated on a schedule, de-duplicated into alerts, triaged by JEV." />
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "monitors", label: `Monitors${monitors.data ? ` (${monitors.data.length})` : ""}` },
@@ -322,6 +323,7 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
   const [note, setNote] = useState<string | null>(null);
   const tone = severityTone(a.severity);
   const triage = a.data?.triage;
+  const explanation = explainTriage(a);
   const doAction = async (action: "acknowledge" | "resolve") => {
     const r = await act.run(() => api.alertAction(a.id, action));
     if (r) onChanged(r);
@@ -331,7 +333,7 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
     if (r === undefined) return;
     if (r.run_id) {
       onChanged({ ...a, investigation_run_id: r.run_id });
-      navigate(`/w/${wsId}/runs/${r.run_id}`);
+      navigate(to.run(wsId, r.run_id));
     } else {
       setNote("Investigation was not started (policy or autonomy does not allow it).");
     }
@@ -353,8 +355,12 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
           {typeof triage?.p_material === "number" && (
             <span title={triage.model ? `JEV triage by ${triage.model}` : "JEV triage"}><Tag tone="jev">p(material) {fmtPct(triage.p_material, 0)}</Tag></span>
           )}
-          {a.investigation_run_id && <Link to={`/w/${wsId}/runs/${a.investigation_run_id}`}>Investigation run</Link>}
+          {a.investigation_run_id && <Link to={to.run(wsId, a.investigation_run_id)}>Investigation run</Link>}
           {a.resolved_at && <span className="muted">resolved {fmtDate(a.resolved_at)}</span>}
+        </div>
+        <div className="triage" aria-label="Triage explanation">
+          <p className="small triage-title"><strong>Why this severity</strong>{explanation.escalated && <Tag tone="jev">escalated by JEV</Tag>}</p>
+          <ul className="small">{explanation.lines.map((l) => <li key={l}>{l}</li>)}</ul>
         </div>
         <div className="form-actions">
           {a.status === "open" && (

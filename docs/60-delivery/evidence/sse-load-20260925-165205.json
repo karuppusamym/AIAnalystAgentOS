@@ -1,0 +1,102 @@
+{
+  "started_at": "2026-09-25T16:52:05.663772+00:00",
+  "database": "localhost:5432/analystos_test_c",
+  "redis": false,
+  "streams": 200,
+  "runs": 50,
+  "seconds": 60.0,
+  "rate_per_run": 1.0,
+  "events_emitted": 3000,
+  "deliveries_expected": 12000,
+  "deliveries_received": 12000,
+  "streams_complete_in_order": 200,
+  "streams_ended_cleanly": 200,
+  "reconnected_streams": 20,
+  "reconnected_complete": 20,
+  "errors": [],
+  "latency_ms": {
+    "p50": 270.3,
+    "p95": 501.3,
+    "p99": 524.0,
+    "max": 630.6
+  },
+  "connect_ms_p95": 1617.7,
+  "loop_lag": {
+    "samples": 1274,
+    "p50_ms": 0.83,
+    "p95_ms": 4.16,
+    "p99_ms": 11.68,
+    "max_ms": 123.44,
+    "stalls_over_100ms": 1,
+    "gc_frozen": 141632,
+    "gc_tracked": 97037
+  },
+  "slow_callback_warnings": [],
+  "client_wall_seconds": 65.8,
+  "gc_pauses_at_s": [
+    [
+      0.4,
+      2,
+      36.8
+    ],
+    [
+      7.2,
+      2,
+      85.5
+    ],
+    [
+      14.7,
+      2,
+      65.2
+    ],
+    [
+      22.3,
+      2,
+      80.2
+    ],
+    [
+      29.6,
+      2,
+      110.2
+    ],
+    [
+      36.9,
+      2,
+      64.7
+    ],
+    [
+      44.1,
+      2,
+      82.9
+    ],
+    [
+      51.4,
+      2,
+      102.7
+    ],
+    [
+      58.5,
+      2,
+      59.3
+    ],
+    [
+      64.2,
+      1,
+      20.2
+    ]
+  ],
+  "stalls_at_s": [
+    [
+      0.4,
+      123.4
+    ]
+  ],
+  "checks": {
+    "p95_latency_below_1s": true,
+    "no_event_loop_stall_warnings": true,
+    "every_delivery_received_once_in_order": true,
+    "resume_with_last_event_id": true,
+    "every_stream_ended": true,
+    "no_errors": true
+  }
+}

@@ -6,11 +6,11 @@ import zlib
 from functools import cache
 
 import pytest
+from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportData, ReportInsight
 from analystos.reports import render
 from analystos.reports.pdf import build_pdf, pdf_text, render_pdf
-from analystos.reports.sample import sample_report
 
 
 def _text(pdf: bytes) -> str:

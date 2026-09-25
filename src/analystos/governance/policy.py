@@ -80,12 +80,38 @@ def _matches(pattern: str, fq: str) -> bool:
     return pattern == fq
 
 
+PII_ORDER = {"none": 0, "restricted": 1, "allowed": 2}
+
+
+def _selected_assets(session: Session, source_ids: list[str]) -> tuple[dict[str, list[tuple[str, str]]],
+                                                                       dict[str, list[tuple[str, list[str] | None]]]]:
+    """Selected assets per source as (asset id, `schema.name`) and their columns in ordinal order as
+    (name, tags): two reads for any number of sources and assets (P4-S02; was one per source and asset)."""
+    if not source_ids:
+        return {}, {}
+    in_scope = (SourceAsset.source_id.in_(source_ids), SourceAsset.selected.is_(True))
+    assets: dict[str, list[tuple[str, str]]] = {}
+    for asset_id, source_id, schema_name, name in session.execute(
+            select(SourceAsset.id, SourceAsset.source_id, SourceAsset.schema_name, SourceAsset.name).where(*in_scope)):
+        assets.setdefault(source_id, []).append((asset_id, f"{schema_name}.{name}"))
+    columns: dict[str, list[tuple[str, list[str] | None]]] = {}
+    for asset_id, name, tags in session.execute(
+            select(SourceColumn.asset_id, SourceColumn.name, SourceColumn.tags)
+            .join(SourceAsset, SourceAsset.id == SourceColumn.asset_id).where(*in_scope)
+            .order_by(SourceColumn.asset_id, SourceColumn.ordinal, SourceColumn.id)):
+        columns.setdefault(asset_id, []).append((name, tags))
+    return assets, columns
+
+
 def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids: list[str] | None = None,
-                  minimum_role: str = "analyst") -> DataScope:
-    """Server-side authorized data scope for this caller (§12.2). Selected assets only."""
+                  minimum_role: str = "analyst", pii_access: str | None = None) -> DataScope:
+    """Server-side authorized data scope for this caller (§12.2). Selected assets only.
+    `pii_access` (an agent manifest's policy) can only tighten the workspace policy."""
+    workspace = get_workspace(session, workspace_id)  # held, so require_role's lookup hits the identity map
     role = require_role(session, user, workspace_id, minimum_role)
-    workspace = get_workspace(session, workspace_id)
     policy = load_policy(session, workspace)
+    if pii_access is not None and PII_ORDER[pii_access] < PII_ORDER[policy.pii_access]:
+        policy.pii_access = pii_access
     sources = list(session.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.status == "ready")))
     if source_ids:
         sources = [s for s in sources if s.id in source_ids]
@@ -93,19 +119,18 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
         policy.pii_access == "restricted" and bool((user.attributes or {}).get("pii_clearance")))
     scope = DataScope(workspace_id=workspace_id, user_id=user.id, role=role, max_rows=policy.max_rows,
                       timeout_seconds=policy.query_timeout_seconds, policy_version=workspace.policy_version)
+    assets_by_source, cols_by_asset = _selected_assets(session, [s.id for s in sources])
     for source in sources:
         scope.source_ids.append(source.id)
         scope.source_dialects[source.id] = source_dialect(source.kind, source.execution_mode)
-        assets = session.scalars(select(SourceAsset).where(SourceAsset.source_id == source.id, SourceAsset.selected.is_(True)))
-        for asset in assets:
-            fq = f"{asset.schema_name}.{asset.name}"
+        for asset_id, fq in assets_by_source.get(source.id, []):
             scope.assets.append(fq)
             scope.asset_sources[fq] = source.id
-            cols = list(session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id).order_by(SourceColumn.ordinal)))
-            scope.columns[fq] = [c.name for c in cols]
-            for col in cols:
-                col_fq = f"{fq}.{col.name}"
-                tags = set(col.tags or [])
+            cols = cols_by_asset.get(asset_id, [])
+            scope.columns[fq] = [name for name, _ in cols]
+            for name, col_tags in cols:
+                col_fq = f"{fq}.{name}"
+                tags = set(col_tags or [])
                 restricted = "restricted" in tags or any(_matches(p, col_fq) for p in policy.restricted_columns)
                 pii = "pii" in tags or any(_matches(p, col_fq) for p in policy.pii_columns)
                 if restricted or (pii and not pii_cleared):

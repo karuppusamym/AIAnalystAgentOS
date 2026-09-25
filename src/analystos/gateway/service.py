@@ -7,7 +7,8 @@ execute():
   4. result cache lookup (Redis; key binds fingerprint + scope hash + source version + row cap);
   5. execute the *generated* SQL:
        staged sources  -> analytics DB with the READER identity only, READ ONLY transaction,
-                          SET LOCAL statement_timeout;
+                          SET LOCAL ROLE to the owning workspace's reader role (the reader login
+                          itself holds no grant on staged schemas), SET LOCAL statement_timeout;
        pushdown pg     -> connector.sqlalchemy_url(), READ ONLY transaction + statement_timeout;
        pushdown tsql   -> connector URL with the driver query timeout, plus the source-kind
                           catalog's session statements (connectors/kinds.py);
@@ -30,7 +31,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
-from analystos.connectors.naming import staging_schema_for
+from analystos.connectors.naming import is_safe_identifier, staging_schema_for, workspace_reader_role
 from analystos.contracts.policy import DataScope
 from analystos.core.errors import (
     AnalystOSError,
@@ -102,10 +103,10 @@ class _Runner:
         self.dialect = scope.source_dialects.get(source_id, "postgres")
 
     def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None,
-                 retain_rows: bool = True) -> QueryResult:
+                 retain_rows: bool = True, use_cache: bool = True) -> QueryResult:
         return self._gateway.execute(
             self._scope, sql, actor=self._actor, purpose=purpose, run_id=self._run_id, task_id=self._task_id,
-            max_rows=max_rows, retain_rows=retain_rows,
+            max_rows=max_rows, retain_rows=retain_rows, use_cache=use_cache,
         )
 
 
@@ -280,7 +281,10 @@ class QueryGateway:
 
     def _run(self, source: dict[str, Any], validated: ValidatedSQL, max_rows: int, timeout: int) -> tuple[list[str], list[list[Any]]]:
         if source["execution_mode"] == "staged":
-            return self._run_postgres(self.settings.analytics_reader_url, validated.executable_sql, max_rows, timeout)
+            role = workspace_reader_role(source["workspace_id"],
+                                         getattr(self.settings, "analytics_workspace_role_prefix", "analystos_r_"))
+            return self._run_postgres(self.settings.analytics_reader_url, validated.executable_sql, max_rows, timeout,
+                                      role=role)
         connector = self.connector_factory(_SourceView(source), self.settings)
         if getattr(connector, "execution_mode", "pushdown") != "pushdown":
             # The catalog does not allow this kind to be queried in place (e.g. a row marked
@@ -297,8 +301,13 @@ class QueryGateway:
             return self._run_generic(url, validated.executable_sql, max_rows, session_sql)
         raise InvalidInput(f"Unsupported pushdown dialect {dialect}")
 
-    def _run_postgres(self, url: str, sql: str, max_rows: int, timeout: int) -> tuple[list[str], list[list[Any]]]:
+    def _run_postgres(self, url: str, sql: str, max_rows: int, timeout: int,
+                      role: str | None = None) -> tuple[list[str], list[list[Any]]]:
+        """``role``: staged sources run as the owning workspace's reader role for this transaction only."""
         import psycopg
+
+        if role is not None and not is_safe_identifier(role):
+            raise Forbidden("workspace reader role name is not a safe identifier")
 
         engine = get_engine(url)
         try:
@@ -308,6 +317,12 @@ class QueryGateway:
                 try:
                     dbapi.rollback()  # start from a clean transaction (pool pre-ping may have opened one)
                     cur.execute("SET TRANSACTION READ ONLY")
+                    if role is not None:
+                        try:
+                            cur.execute(f'SET LOCAL ROLE "{role}"')
+                        except psycopg.Error:
+                            raise Forbidden(f"The workspace reader role {role} is not provisioned for this reader; "
+                                            "re-stage the source or run `analystos migrate`") from None
                     cur.execute(f"SET LOCAL statement_timeout = {int(timeout * 1000)}")
                     cur.execute("SET LOCAL idle_in_transaction_session_timeout = 60000")
                     cur.execute(sql)

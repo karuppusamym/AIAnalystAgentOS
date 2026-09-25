@@ -1,0 +1,17 @@
+apiVersion: analystos/v1
+kind: Method
+id: method.contribution_decomposition
+version: 1.0.0
+summary: Mix / volume / rate decomposition of a KPI change between two periods -> z test of the within-segment effect (+ stratified CMH / Stouffer check)
+entry: python:analystos.methods.contribution_decomposition:ContributionDecomposition
+determinism: deterministic
+side_effect: read_source
+cost_class: query
+permissions: [scope:read]
+requires: [engine:sql]
+certification:
+  status: certified
+  evidence: tests/methods/test_contribution_decomposition.py
+tags: [statistical, segment, time_series]
+spec:
+  order: 80

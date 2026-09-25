@@ -1,55 +1,41 @@
 """The analyst lifecycle as a versioned, hashed plan (§19, §40, §61).
 
-The step skeleton is deterministic (it *is* the method); the supervisor LLM tailors content
-(analytical questions, focus, audience) inside it. Dynamic tasks (one per hypothesis, follow-up
-rounds) are appended at runtime by the investigator. Dependencies ending in ':*' match every task
-with that prefix, so 'insights' waits for every test and follow-up round, including ones added later.
+The step skeleton comes from a playbook (capabilities/playbook.py, P4-X02) and is deterministic (it
+*is* the method); the supervisor LLM tailors content (analytical questions, focus, audience) inside
+it. Dynamic tasks (the playbook's `expands`) are appended at runtime by the steps that declare them.
+Dependencies ending in ':*' match every task with that prefix, so 'insights' waits for every test and
+follow-up round, including ones added later.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from analystos.core.ids import stable_hash
 
-# key, agent, title, depends_on, optional
-BASE_STEPS: list[tuple[str, str, str, list[str], bool]] = [
-    ("context", "context", "Load business context and resolve terminology", [], False),
-    ("metadata", "metadata", "Discover technical metadata of selected tables", [], False),
-    ("relationships", "metadata", "Discover and validate relationships", ["metadata"], True),
-    ("profile", "profiler", "Profile selected tables", ["metadata"], False),
-    ("quality", "data_quality", "Detect data-quality issues", ["profile", "relationships"], True),
-    ("hypotheses", "investigator", "Generate analytical questions and prioritised hypotheses", ["context", "profile", "quality"], False),
-    ("insights", "insight", "Turn supported results into evidence-backed findings", ["hypotheses", "test:*", "followups:*"], False),
-    ("verify", "critic", "REV verification of every finding", ["insights"], False),
-    ("dataset", "sql", "Build the reusable analytical dataset", ["verify"], False),
-    ("semantic", "semantic", "Define and validate KPIs", ["dataset"], False),
-    ("visualize", "visualization", "Design charts and executive + operational dashboards", ["semantic"], False),
-    ("publish_request", "publisher", "Governance review and publication approval request", ["visualize"], False),
-    ("publish", "publisher", "Publish approved bundle to the BI destination", ["publish_request"], True),
-    ("finalize", "supervisor", "Consolidate results, write episode memory and lineage graph", ["visualize", "publish"], False),
-]
-
-REPLAN_RESET = {"hypotheses", "insights", "verify", "dataset", "semantic", "visualize", "publish_request", "publish", "finalize"}
-DYNAMIC_PREFIXES = ("test:", "followups:")
+if TYPE_CHECKING:
+    from analystos.capabilities.playbook import Playbook
 
 
 def base_plan(objective: str, *, autonomy_level: int, questions: list[str] | None = None,
-              audience: list[str] | None = None, focus: list[str] | None = None) -> dict[str, Any]:
-    steps = []
-    if autonomy_level <= 2:
-        steps.append({"key": "plan_approval", "agent": "supervisor", "title": "Wait for plan approval", "depends_on": [], "optional": False})
-    for key, agent, title, deps, optional in BASE_STEPS:
-        d = list(deps)
-        if autonomy_level <= 2 and not d:
-            d = ["plan_approval"]
-        steps.append({"key": key, "agent": agent, "title": title, "depends_on": d, "optional": optional})
-    return {"objective": objective, "questions": questions or [], "audience": audience or ["executive", "operational"],
-            "focus": focus or [], "steps": steps}
+              audience: list[str] | None = None, focus: list[str] | None = None, playbook: Playbook | None = None) -> dict[str, Any]:
+    """The plan of a playbook (default: `playbook.investigate` from the registry) for these inputs."""
+    if playbook is None:
+        from analystos.capabilities import registry
+        from analystos.capabilities.playbook import DEFAULT_PLAYBOOK, parse
+
+        playbook = parse(registry.current().get(DEFAULT_PLAYBOOK))
+    return playbook.build_plan(objective, autonomy_level=autonomy_level, questions=questions, audience=audience, focus=focus)
 
 
-def plan_hash(plan: dict[str, Any], *, constraints: dict[str, Any], scope_hash: str, plan_version: int) -> str:
-    """What an approval binds to: plan content + user constraints + authorized scope + version."""
-    return stable_hash({"plan": plan, "constraints": constraints, "scope": scope_hash, "version": plan_version})
+def plan_hash(plan: dict[str, Any], *, constraints: dict[str, Any], scope_hash: str, plan_version: int,
+              capabilities: list[str] | None = None) -> str:
+    """What an approval binds to: plan content + user constraints + authorized scope + version, and the
+    `id@version` of every capability the plan binds (spec v3 §3.1), so an approval covers exact versions.
+    Without bindings the value is the v1 hash, which `investigate.v1` reproduces for the same inputs."""
+    body: dict[str, Any] = {"plan": plan, "constraints": constraints, "scope": scope_hash, "version": plan_version}
+    if capabilities:
+        body["capabilities"] = sorted(capabilities)
+    return stable_hash(body)
 
 
 def dep_satisfied(dep: str, tasks: dict[str, Any], waiting_key: str | None = None) -> bool:

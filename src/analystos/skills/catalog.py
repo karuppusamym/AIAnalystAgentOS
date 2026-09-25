@@ -295,7 +295,7 @@ _CONTACT = {"email", "phone", "mobile", "fax", "telephone", "address", "street",
 _CODE = {"code", "cd", "iso", "abbr", "abbreviation", "sku", "upc", "ean", "isbn"}
 _NAME = {"name", "title", "label", "surname", "firstname", "lastname"}
 _TEXT = {"description", "desc", "comment", "comments", "notes", "note", "text", "body", "summary", "message",
-         "remarks", "details", "narrative", "reason", "work_notes", "resolution_notes"}
+         "remarks", "details", "narrative", "reason"}
 _DATE_PART = {"year", "month", "quarter", "week", "weekday", "dow", "fiscal", "yr", "qtr", "hour"}
 _CATEGORICAL = {"status", "state", "type", "category", "priority", "severity", "impact", "urgency", "stage", "tier",
                 "segment", "channel", "group", "class", "level", "gender", "grade", "band", "source", "method",
@@ -329,7 +329,7 @@ def infer_column_semantics(column: DiscoveredColumn, asset: DiscoveredAsset | No
     def is_own_id() -> bool:
         head = [t for t in toks if t not in _ID_TAIL and t != "sys"]
         if not head:
-            return True  # "id", "sys_id", "key"
+            return True  # "id", "key", or an id behind a system prefix
         if " ".join(singularize(t) for t in head) == table_entity:
             return True
         # last-word match ("POLineID" in purchase_order_lines) only for the first id-like column,
@@ -349,7 +349,7 @@ def infer_column_semantics(column: DiscoveredColumn, asset: DiscoveredAsset | No
             ev.append("key column names another entity (composite key part)")
             role, conf = "foreign_key", 0.75
             ref_entity = " ".join(t for t in toks if t not in _ID_TAIL)
-    elif last in _ID_TAIL or column.name.lower() in {"sys_id", "uuid", "guid"}:
+    elif last in _ID_TAIL:
         if is_own_id():
             role, conf = "identifier", 0.75
             ev.append("id-like name matching the table entity")
@@ -463,10 +463,6 @@ DOMAIN_KEYWORDS: dict[str, frozenset[str]] = {
     "customer": frozenset({"customer", "client", "crm", "subscriber", "member", "loyalty", "churn", "nps", "csat",
                            "consumer", "household", "persona"}),
     "product": frozenset({"product", "sku", "item", "catalog", "brand", "variant", "upc", "ean", "assortment"}),
-    "it_operations": frozenset({"incident", "problem", "change", "ticket", "ci", "cmdb", "sla", "assignment", "caller",
-                                "outage", "alert", "server", "host", "deployment", "sys", "itsm", "knowledge",
-                                "escalation", "reassignment", "servicenow", "configuration", "resolved", "resolution",
-                                "urgency", "impact", "assigned", "request", "task"}),
     "hr": frozenset({"employee", "staff", "headcount", "payroll", "salary", "hire", "termination", "department",
                      "position", "job", "leave", "absence", "attendance", "compensation", "performance", "recruit",
                      "recruiting", "candidate", "applicant", "hr", "worker", "tenure", "manager", "benefit",
@@ -484,6 +480,16 @@ DOMAIN_KEYWORDS: dict[str, frozenset[str]] = {
                              "prescription", "medication", "admission", "discharge", "clinical", "lab", "ehr", "emr",
                              "physician", "hospital", "ward"}),
 }
+
+
+
+def domain_keywords() -> dict[str, frozenset[str]]:
+    """Core domains plus the vocabulary of every installed domain pack (a pack may add a domain or words)."""
+    from analystos.capabilities.packs import hints
+
+    extra = hints().domain_keywords
+    return {d: DOMAIN_KEYWORDS.get(d, frozenset()) | extra.get(d, frozenset()) for d in {**DOMAIN_KEYWORDS, **extra}}
+
 
 _EVENT_NAME = {"event", "events", "log", "logs", "click", "clicks", "pageview", "pageviews", "activity", "activities",
                "session", "sessions", "telemetry", "tracking", "hit", "hits"}
@@ -584,7 +590,7 @@ def _domain(name_tokens: list[str], cols: list[DiscoveredColumn]) -> tuple[str, 
     col_tokens: set[str] = set()
     for c in cols:
         col_tokens |= {singularize(t) for t in split_tokens(c.name)} | set(split_tokens(c.name))
-    for dom, kws in DOMAIN_KEYWORDS.items():
+    for dom, kws in domain_keywords().items():
         th = sorted(tset & kws)
         ch = sorted((col_tokens & kws) - set(th))
         s = 3.0 * len(th) + 1.0 * len(ch)
@@ -757,10 +763,15 @@ _PII_NAME_RULES: list[tuple[str, str, str]] = [
     ("person_name", "confidential", "person name column name"),
     ("free_text_risk", "internal", "free-text column may contain personal data"),
 ]
-_PERSON_NOUNS = {"customer", "employee", "contact", "caller", "user", "patient", "requester", "requestor", "assignee",
+_PERSON_NOUNS = {"customer", "employee", "contact", "user", "patient", "requester", "requestor", "assignee",
                  "manager", "owner", "author", "person", "member", "student", "driver", "applicant", "candidate",
-                 "recipient", "sender", "beneficiary", "guest", "client", "subscriber", "agent", "opened", "resolved",
-                 "assigned", "holder", "cardholder"}
+                 "recipient", "sender", "beneficiary", "guest", "client", "subscriber", "agent", "holder", "cardholder"}
+
+
+def _person_nouns() -> frozenset[str] | set[str]:
+    from analystos.capabilities.packs import hints
+
+    return _PERSON_NOUNS | hints().person_nouns
 
 
 def _pii_from_name(tokens: list[str]) -> str | None:
@@ -792,7 +803,7 @@ def _pii_from_name(tokens: list[str]) -> str | None:
     if t & {"firstname", "lastname", "surname", "fullname"} or ({"name"} & t and t & {"first", "last", "given",
                                                                                     "family", "middle", "full",
                                                                                     "maiden", "display"}) \
-            or ("name" in t and t & _PERSON_NOUNS):
+            or ("name" in t and t & _person_nouns()):
         return "person_name"
     if t & {"notes", "note", "comment", "comments", "remarks", "message", "body", "narrative", "freetext"} \
             or {"work", "notes"} <= t or {"free", "text"} <= t:
@@ -1017,6 +1028,12 @@ _URL = re.compile(r"(https?://|ftp://|www\.)\S+|\b[\w.-]+\.(com|net|org|io|ai|xy
 _FENCE = re.compile(r"```.*?(```|$)|~~~.*?(~~~|$)", re.S)
 _TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|img|a|system|instructions?)\b[^>]*>", re.I)
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏ -‮⁠-⁤﻿]")
+
+
+def has_injection(s: str | None) -> bool:
+    """True when untrusted text contains an instruction-to-the-model pattern (the same test
+    `screen_text` uses to drop a sentence), so a caller can refuse the text rather than trim it."""
+    return bool(s) and bool(_INJECTION.search(_CTRL.sub(" ", str(s))))
 
 
 def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:

@@ -49,3 +49,27 @@ Increment 3 (ADR-0010) added a `rules` path for `hypothesis_priority` and `stop_
 longer depends on an alpha endpoint for correctness, and air-gapped installs work on rules or a
 local classifier. Calibration needs labelled outcomes, so the UI has to capture accept, reject and
 dismiss signals (P4-U03, P4-U06).
+
+**Implementation (P4-T08, P4-T09; 2026-09-25).**
+
+- `src/analystos/decisions/`: `service.py` (`DecisionService.decide(purpose, state, question, facts=…)`),
+  `authority.py` (the five classes, enforced in code), `backends.py` (`jev`, `rules`,
+  `local_classifier`, `llm_structured`), `rules.py`, `breaker.py`, `store.py`, `calibration.py`.
+  Purposes, classes, backend order and timeouts are declared under `decisions:` in
+  `config/models.yaml`; admin knobs (backend order override, thresholds, pins) are
+  `PlatformSettings.decisions`.
+- `state` goes to models; `facts` (rounds, materiality inputs, match scores) stay in the platform and
+  feed rules and authority checks only.
+- `escalate_only` = `max(rule baseline, model proposal)` on the purpose's level scale.
+  `rev_second_opinion` is `escalate_only`: a model may add doubt (−0.1 confidence) but no longer adds
+  credit (+0.05 removed). `alert_triage`: an immaterial signal (too few periods, effect below
+  `monitors.min_material_effect`) is not sent to JEV; a JEV "not material" answer no longer blocks
+  auto-investigation.
+- `local_classifier` is a keyword/bigram logistic–softmax model with fixed weights in
+  `config/decisions/local_classifier.yaml` (no network, no ML dependency). It is available per
+  purpose through the admin backend order; the default chains do not use it except `ask_route`.
+- `risk_check` at publish is left to P4-T07 (removal); the feedback path uses the service.
+- Calibration: labels from finding accept/reject/dismiss, alert acknowledge/investigate/dismiss and
+  feedback-class corrections (`decision_outcome`); nightly in the scheduler (advisory lock, once per
+  24 h) or `analystos calibrate`; report at `GET /api/admin/decisions/calibration`; downgrade/restore
+  rows in `decision_calibration` (audited). `rules` is the last resort and is never downgraded.

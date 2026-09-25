@@ -5,11 +5,11 @@ import io
 import zipfile
 
 from openpyxl import load_workbook
+from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportChart, ReportData
 from analystos.reports import render
 from analystos.reports.excel import render_xlsx, sheet_title
-from analystos.reports.sample import sample_report
 
 FIXED = ["Summary", "KPIs", "Findings", "Evidence", "Quality", "Hypotheses", "Alerts"]
 

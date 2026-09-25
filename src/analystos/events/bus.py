@@ -5,6 +5,7 @@ import contextlib
 import json
 from typing import Any
 
+from sqlalchemy import event as sa_event
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,13 +36,44 @@ def emit(workspace_id: str, type_: str, payload: dict[str, Any] | None = None, *
     event = RunEvent(workspace_id=workspace_id, run_id=run_id, type=type_, payload=payload or {}, actor=actor)
     if session is not None:
         session.add(event)
+        if run_id:
+            _nudge_after_commit(session, run_id)
     else:
         with session_scope() as s:
             s.add(event)
+        if run_id:
+            _publish({run_id})
+
+
+def _publish(run_ids: set[str]) -> None:
     client = _redis_client()
-    if client is not None and run_id:
+    if client is None:
+        return
+    for run_id in run_ids:
         with contextlib.suppress(Exception):
-            client.publish(f"run:{run_id}", json.dumps({"type": type_}))
+            client.publish(f"run:{run_id}", json.dumps({"type": "nudge"}))
+
+
+_PENDING = "analystos.pending_nudges"
+
+
+def _nudge_after_commit(session: Session, run_id: str) -> None:
+    """A subscriber reads the rows when nudged, so the nudge must follow the commit that makes them visible."""
+    pending = session.info.setdefault(_PENDING, set())
+    if not sa_event.contains(session, "after_commit", _flush_nudges):
+        sa_event.listen(session, "after_commit", _flush_nudges)
+        sa_event.listen(session, "after_rollback", _drop_nudges)
+    pending.add(run_id)
+
+
+def _flush_nudges(session: Session) -> None:
+    pending = session.info.pop(_PENDING, None)
+    if pending:
+        _publish(pending)
+
+
+def _drop_nudges(session: Session) -> None:
+    session.info.pop(_PENDING, None)
 
 
 def list_events(session: Session, *, workspace_id: str, run_id: str | None = None, after_id: int = 0,

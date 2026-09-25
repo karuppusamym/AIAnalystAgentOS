@@ -7,13 +7,15 @@ from typing import Any
 import sqlglot
 from sqlalchemy import select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, llm_json, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, compact_json, compile_for, llm_json, task_output
 from analystos.artifacts.registry import link, save_artifact
+from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.contracts.bi import DatasetDef
 from analystos.core.errors import AnalystOSError, InvalidInput, SQLRejected
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset
+from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
 from analystos.runtime.context import RunContext
 
 
@@ -58,7 +60,9 @@ def build_dataset(ctx: RunContext) -> dict:
         for d in (spec.outcome, spec.segment, spec.time, *spec.drivers):
             if d is not None and d.type != "column":
                 derived.setdefault(derivation_alias(d), d)
-    time_col = next((c for c in raw_cols if types.get(c) == "datetime" and re.search(r"opened|created|start", c)), None) or \
+    hints = pack_registry.hints()
+    start_words = "|".join(map(re.escape, ("created", "start", *hints.event_start)))
+    time_col = next((c for c in raw_cols if types.get(c) == "datetime" and re.search(start_words, c)), None) or \
         next((c for c in raw_cols if types.get(c) == "datetime"), None)
     if time_col:
         for d in (Derivation(type="date_trunc", column=time_col, grain="month"), Derivation(type="day_of_week", column=time_col),
@@ -80,7 +84,8 @@ def build_dataset(ctx: RunContext) -> dict:
         tfq = f"{tgt.schema_name}.{tgt.name}"
         if tfq not in ctx.scope.assets or ctx.scope.asset_sources.get(tfq) != source_id or f"{r.from_column}_name" in raw_cols:
             continue
-        name_col = next((c for c in ctx.scope.columns.get(tfq, []) if c in ("name", "number", "u_name") and f"{tfq}.{c}" not in denied), None)
+        name_col = next((c for c in ctx.scope.columns.get(tfq, []) if c in ("name", "number", *hints.display_columns)
+                         and f"{tfq}.{c}" not in denied), None)
         if not name_col:
             continue
         alias = f"j{i}"
@@ -119,28 +124,96 @@ def build_dataset(ctx: RunContext) -> dict:
 
 
 # ------------------------------------------------------------------------------------------- ad hoc
-def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, Any]:
-    """NL question -> governed SQL -> result. Repairs use the gateway's rejection message."""
-    catalog = catalog_for_prompt(ctx)
+def _authorize_ask(ctx: Any) -> None:
+    """Ask runs model-written SQL as the SQL agent's ``sql.execute`` tool: same gate as a run."""
+    from analystos.contracts.policy import ExecutionIdentity
+    from analystos.tools.registry import ToolRuntime
+
+    identity = ExecutionIdentity(user_id=ctx.user.id, workspace_id=ctx.workspace.id, agent_id=ctx.agent.id, purpose=ASK_PURPOSE)
+    ToolRuntime(user=ctx.user, identity=identity, agent=ctx.agent).authorize("sql.execute", {"purpose": ASK_PURPOSE})
+
+
+def _check_budget(ctx: Any) -> None:
+    with session_scope() as s:
+        check_ask_budget(s, ctx.workspace.id, ctx.user.id, ctx.policy)
+
+
+def _result(result: Any) -> dict[str, Any]:
+    return {"query_id": result.query_id, "columns": result.columns, "rows": result.rows[:500], "row_count": result.row_count,
+            "truncated": result.truncated}
+
+
+def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Ladder rung L1 (P4-T05): answer from a verified query with no model call, or decline and ask
+    for a missing required parameter. None is a miss: the model path may answer."""
+    from analystos.llm.cache import estimate_tokens
+    from analystos.registries import verified_queries as vqr
+
+    with session_scope() as s:
+        hit = vqr.match(s, ctx.workspace.id, question, parameters)
+        if hit is None:
+            return None
+        entry = {"id": hit.entry.id, "name": hit.entry.name, "pattern": hit.pattern, "score": round(hit.score, 3)}
+        template, params, dialect = hit.entry.sql_template, list(hit.entry.parameters or []), hit.entry.dialect
+    avoided = estimate_tokens(compact_json({"question": question, "catalog": catalog_for_prompt(ctx)})) + 500
+    if hit.missing:
+        ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided,
+                               reason=f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}",
+                               rung="registry")
+        missing = [{k: p.get(k) for k in ("name", "type", "column", "values") if p.get(k) is not None} for p in hit.missing]
+        return {"status": "needs_input", "answered_by": "registry", "verified_query": entry, "parameters": hit.values,
+                "missing": missing, "sql": None, "model": None, "attempts": [], "result": None,
+                "explanation": f"This matches the verified query '{entry['name']}', which needs "
+                               f"{', '.join(p['name'] for p in hit.missing)}. Say which value to use; nothing was guessed."}
+    values = {p["name"]: vqr.coerce(p, hit.values[p["name"]]) for p in params}  # vocabulary spelling, typed
+    sql = vqr.render(template, params, values, dialect)
+    result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE, run_id=None, task_id=None)
+    ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=f"L1 registry: verified query {entry['name']}",
+                           rung="registry")
+    with session_scope() as s:
+        vqr.record_hit(s, entry["id"])
+    return {"status": "answered", "answered_by": "registry", "verified_query": entry, "parameters": values, "sql": sql,
+            "explanation": f"Answered by the verified query '{entry['name']}' (no model call).", "chart": None, "model": None,
+            "attempts": [], "result": _result(result)}
+
+
+def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
+        use_registry: bool = True) -> dict[str, Any]:
+    """NL question -> governed SQL -> result. Tool-first: the verified-query registry answers (or
+    declines) before any model is asked. Repairs use the gateway's rejection message.
+    Gate and budget are checked before any model call, and the budget again before every attempt."""
+    _authorize_ask(ctx)
+    _check_budget(ctx)
+    if use_registry:
+        answered = ask_registry(ctx, question, parameters)
+        if answered is not None:
+            return answered
+    catalog = catalog_for_prompt(ctx, objective=question, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
-    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog})
+    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1",
+                           compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
+                                       catalog=catalog, reference_text=question),
+                           prompt_vars={"dialect": dialect})
     if not isinstance(data, dict) or not data.get("sql"):
         raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
     attempts = []
     sql = str(data["sql"])
     for attempt in range(max_repairs + 1):
+        if attempt:
+            _check_budget(ctx)  # every attempt counts; over budget ends the loop (no repair)
         try:
-            result = ctx.services.gateway.execute(ctx.scope, sql, actor=f"agent:{ctx.agent.id}", purpose="ask",
+            result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
-            return {"sql": sql, "explanation": data.get("explanation"), "chart": data.get("chart"), "model": model,
-                    "attempts": attempts, "result": {"query_id": result.query_id, "columns": result.columns,
-                                                     "rows": result.rows[:500], "row_count": result.row_count, "truncated": result.truncated}}
+            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": data.get("explanation"),
+                    "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result)}
         except (SQLRejected, AnalystOSError) as exc:
             attempts.append({"sql": sql, "error": exc.message})
             if attempt == max_repairs:
                 raise
-            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1", {"question": question, "dialect": dialect, "sql": sql,
-                                                                  "error": exc.message, "catalog": catalog})
+            fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
+                              compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
+                                                              "error": exc.message}, objective=question, catalog=catalog,
+                                          reference_text=f"{sql}\n{exc.message}"))
             if not isinstance(fix, dict) or not fix.get("sql"):
                 raise
             sql = str(fix["sql"])

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from analystos.core.errors import Unauthenticated
 from analystos.core.ids import new_id
 from analystos.core.logging import correlation_id
-from analystos.db.base import SessionLocal
+from analystos.db.base import SessionLocal, session_scope
 from analystos.db.models import User
 from analystos.security.auth import decode_token
 
@@ -25,8 +25,7 @@ def db() -> Iterator[Session]:
         session.close()
 
 
-def current_user(authorization: str | None = Header(default=None), session: Session = Depends(db),
-                 x_correlation_id: str | None = Header(default=None)) -> User:
+def _authenticate(session: Session, authorization: str | None, x_correlation_id: str | None) -> User:
     correlation_id.set(x_correlation_id or new_id("req"))
     if not authorization or not authorization.lower().startswith("bearer "):
         raise Unauthenticated("missing bearer token")
@@ -36,6 +35,26 @@ def current_user(authorization: str | None = Header(default=None), session: Sess
         raise Unauthenticated("user inactive or unknown")
     session.expunge(user)
     return user
+
+
+def current_user(authorization: str | None = Header(default=None), session: Session = Depends(db),
+                 x_correlation_id: str | None = Header(default=None)) -> User:
+    return _authenticate(session, authorization, x_correlation_id)
+
+
+async def streaming_user(authorization: str | None = Header(default=None),
+                         x_correlation_id: str | None = Header(default=None)) -> User:
+    """For long-lived responses (SSE): a `db` dependency lives as long as the response, so one held
+    per open stream would exhaust the connection pool. Authenticate in a session closed right away,
+    in the same small worker pool the stream reads use (a reconnect storm cannot flood the loop)."""
+    from analystos.events.stream import run_blocking
+
+    correlation_id.set(x_correlation_id or new_id("req"))
+
+    def authenticate() -> User:
+        with session_scope() as session:
+            return _authenticate(session, authorization, x_correlation_id)
+    return await run_blocking(authenticate)
 
 
 def admin_user(user: User = Depends(current_user)) -> User:

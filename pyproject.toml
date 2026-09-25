@@ -34,6 +34,7 @@ dependencies = [
   "fpdf2>=2.7",
   "openpyxl>=3.1",
   "matplotlib>=3.9",
+  "jsonschema>=4.20",  # capability input schemas (the generic agent runtime validates every action)
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,8 @@ dev = [
   "types-PyYAML",
 ]
 sqlserver = ["pymssql>=2.3"]
+# MCP client and server (P4-X05/X06): the official SDK, streamable HTTP, protocol 2026-07-28.
+mcp = ["mcp>=2.2"]
 # Source drivers (config/source_kinds.yaml names the extra each kind needs).
 mysql = ["pymysql>=1.1"]
 oracle = ["oracledb>=2.0"]

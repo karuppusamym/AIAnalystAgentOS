@@ -9,7 +9,7 @@ import re
 
 from sqlalchemy import select
 
-from analystos.agents.common import llm_json, task_output
+from analystos.agents.common import compact_json, llm_json, task_output
 from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link
@@ -18,7 +18,9 @@ from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
+from analystos.decisions import Question
 from analystos.events.bus import emit
+from analystos.llm.cache import estimate_tokens
 from analystos.llm.config import family
 from analystos.runtime.context import RunContext
 from analystos.services.platform_settings import get as platform
@@ -29,6 +31,26 @@ MIN_N = 100
 
 def _dump(v):
     return v.model_dump() if hasattr(v, "model_dump") else v
+
+
+def narrative_family(narrative_source: str | None) -> str | None:
+    """Model family that wrote the finding's wording (``llm:<provider>/<model>``), which the
+    independent reviewer must not share. Template wording has no author model, so no family is
+    excluded; guessing one would only narrow the reviewer pool for no independence gain."""
+    if not narrative_source or not narrative_source.startswith("llm:"):
+        return None
+    model = narrative_source.split(":", 1)[1].strip()
+    if not model or model == "deterministic":
+        return None
+    return family(model)
+
+
+def representative_population(ctx: RunContext, asset: str) -> dict:
+    """P4-C12: a claim is about the population sampled. Fails when the staged snapshot was truncated
+    without a declared sample (or by first_n); records the sampling method either way."""
+    from analystos.staging.snapshots import population_for
+
+    return population_for(asset, ctx.scope.asset_sources.get(asset)).check()
 
 
 def verify_insights(ctx: RunContext) -> dict:
@@ -45,10 +67,12 @@ def verify_insights(ctx: RunContext) -> dict:
             ins = s.get(Insight, insight_id)
             h = s.get(Hypothesis, ins.hypothesis_id)
             exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == h.id, Experiment.role == "primary"))
-            originals = {q.id: (q.sql, q.result_hash) for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids)))}
+            originals = {q.id: (q.sql, q.result_hash, q.source_id)
+                         for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids)))}
             finding, spec_d, stat_d, narrative_source = ins.finding, dict(h.spec), dict(exp.result), ins.narrative_source
             statement = h.statement
         spec = with_constraints(AnalysisSpec.model_validate(spec_d), ctx.run.constraints)
+        primary_family = narrative_family(narrative_source)  # before any rewrite below: who wrote the claim
         run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
         alpha = ctx.policy.alpha
         # ---- Reason
@@ -67,6 +91,7 @@ def verify_insights(ctx: RunContext) -> dict:
         checks.append({"check": "significance_after_bh", "passed": p_adj is not None and p_adj < alpha, "detail": f"q={p_adj} alpha={alpha}"})
         checks.append({"check": "effect_size", "passed": bool(stat_d.get("supported")),
                        "detail": f"{stat_d.get('effect_label')}={stat_d.get('effect_size')}"})
+        checks.append(representative_population(ctx, spec.asset))
         overreach = bool(CAUSAL.search(finding))
         if overreach:
             _, finding = template_text(stat_d, spec_d)
@@ -76,10 +101,12 @@ def verify_insights(ctx: RunContext) -> dict:
               any(c in str(q.get("column") or "") for c in [d.get("column") for d in (spec_d.get("outcome") or {}, spec_d.get("segment") or {}) if d])]
         # ---- Verify: reproducibility
         reproducible, repro_detail = True, []
-        for qid, (sql, original_hash) in originals.items():
+        for qid, (sql, original_hash, source_id) in originals.items():
             try:
-                again = ctx.services.gateway.execute(ctx.scope, sql, actor=f"agent:{ctx.agent.id}", purpose="verification.rerun",
-                                                     run_id=ctx.run.id, task_id=ctx.task.id, use_cache=False)
+                # Same budgeted, tool-gated path as every other run statement (P4-C02); no cache, or
+                # the "re-run" would only replay the stored result.
+                rerun = ctx.run_sql(source_id or ctx.scope.asset_sources.get(spec.asset))
+                again = rerun(sql, purpose="verification.rerun", use_cache=False)
                 same = again.result_hash == original_hash
                 reproducible &= same
                 repro_detail.append(f"{qid}: {'identical' if same else 'DIFFERENT'} result hash")
@@ -99,16 +126,26 @@ def verify_insights(ctx: RunContext) -> dict:
                            f"effect={sd.get('effect_size')} agrees={agrees}"})
         except AnalystOSError as exc:
             checks.append({"check": "second_method", "passed": False, "detail": f"failed: {exc.code}"})
-        # ---- Verify: independent model family + JEV (recorded, not decisive)
-        primary_family = family(narrative_source.split(":", 1)[1]) if narrative_source.startswith("llm:") else "anthropic"
-        review, review_model = llm_json(ctx, "verification", "verification.v1",
-                                        {"claim": finding, "hypothesis": statement, "method": spec.method,
-                                         "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
-                                                                                   "effect_label", "highlights", "warnings")},
-                                         "checks": checks}, exclude_families=[primary_family])
-        jev = ctx.jev.probability("rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
-            "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
-            "Does `evidence` support `claim` as worded, without overreach?", ctx=ctx.call_ctx())
+        # ---- Verify: independent model family (policy opt-in, P4-T02) + JEV (recorded, not decisive)
+        review_payload = {"claim": finding, "hypothesis": statement, "method": spec.method,
+                          "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
+                                                                    "effect_label", "highlights", "warnings")},
+                          "checks": checks}
+        if ctx.policy.independent_model_verification:
+            review, review_model = llm_json(ctx, "verification", "verification.v1", review_payload,
+                                            exclude_families=[primary_family] if primary_family else [])
+        else:
+            review, review_model = None, "policy_off"
+            ctx.router.record_skip("verification", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(review_payload)) + 500,
+                                   reason="workspace policy: independent-model verification is opt-in; deterministic REV checks decide")
+        # ADR-0015 escalate_only: the second opinion can add doubt (lower confidence), never add credit.
+        second_opinion = ctx.decisions.decide(
+            "rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
+                "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
+            Question.escalation("Does `evidence` support `claim` as worded, without overreach?", levels=["none", "doubt"],
+                                baseline="none", escalate_to="doubt", escalate_at=0.3, escalate_when="low"),
+            ctx=ctx.call_ctx(), subject=f"insight:{insight_id}")
+        jev = second_opinion if second_opinion.by_model and second_opinion.p is not None else None
         # ---- Contradictions
         key = (spec.asset, (spec_d.get("outcome") or {}).get("column"), (spec_d.get("segment") or {}).get("column"))
         top = (stat_d.get("highlights") or {}).get("top_segment")
@@ -125,8 +162,8 @@ def verify_insights(ctx: RunContext) -> dict:
             conf += 0.05 if review.get("supports") else -0.1
             if review.get("suggested_caveat"):
                 caveats_extra.append(f"Reviewer: {str(review['suggested_caveat'])[:200]}")
-        if jev is not None:
-            conf += 0.05 if jev.value >= 0.7 else -0.1 if jev.value < 0.3 else 0.0
+        if second_opinion.value == "doubt":
+            conf -= 0.1
         if dq:
             caveats_extra.append("Data quality: " + "; ".join(dq[:2]))
             conf -= 0.05
@@ -136,7 +173,7 @@ def verify_insights(ctx: RunContext) -> dict:
         verification = {"reason": reason, "evaluate": checks, "verify": {
             "reproducible": reproducible, "second_method": _dump(second.stat) if second else None,
             "independent_model": {"model": review_model, "review": review} if isinstance(review, dict) else {"unavailable": review_model},
-            "jev": {"p_supports": jev.value, "model": jev.model} if jev else None,
+            "jev": {"p_supports": jev.p, "model": jev.model, "by": jev.backend, "decision_id": jev.id} if jev else None,
             "contradictions": contradiction}, "verified": deterministic_ok,
             "note": "Verification is grounded in deterministic checks and reproducible data; model opinions only adjust confidence."}
         with session_scope() as s:

@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { fmtValue } from "../lib/format";
+import { fmtValue, formatKnown, type ValueFormat } from "../lib/format";
 import { toneFor } from "../lib/status";
 
 export function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
@@ -91,8 +91,52 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
   );
 }
 
+// ------------------------------------------------------------------ state families (spec v3 §9)
+
+/**
+ * A number the platform did not report (null, undefined, NaN, "") is unknown, and unknown is
+ * never shown as 0: a missing cost is not a free run, and a missing count is not an empty one.
+ */
+export function Value({ value, format = "number", digits, suffix, unknownLabel = "unknown", unknownTitle }: {
+  value: unknown;
+  format?: ValueFormat;
+  digits?: number;
+  suffix?: string;
+  unknownLabel?: string;
+  unknownTitle?: string;
+}) {
+  const text = formatKnown(value, format, digits);
+  if (text === null) {
+    return (
+      <span className="value value-unknown" data-state="unknown" title={unknownTitle ?? "Not reported — unknown, not zero"}>
+        <span aria-hidden="true">?</span> {unknownLabel}
+      </span>
+    );
+  }
+  return <span className="value" data-state="known">{text}{suffix ? ` ${suffix}` : ""}</span>;
+}
+
+export type StateKind = "loading" | "empty" | "refused" | "failed" | "not-entitled" | "stale" | "unknown";
+
+const STATE_TONE: Record<StateKind, string> = {
+  loading: "running", empty: "neutral", refused: "warning", failed: "danger", "not-entitled": "warning", stale: "warning", unknown: "neutral",
+};
+
+/** One visual for each state family, so "refused" or "stale" reads the same on every screen. */
+export function StateView({ kind, title, children, action }: { kind: StateKind; title: string; children?: ReactNode; action?: ReactNode }) {
+  const tone = STATE_TONE[kind];
+  return (
+    <div className={`state state-${kind} state-tone-${tone}`} data-state={kind} role={kind === "failed" ? "alert" : "status"}>
+      <p className="state-title"><span className={`badge badge-${tone}`}><span className="badge-dot" aria-hidden="true" />{kind.replace("-", " ")}</span> {title}</p>
+      {children && <div className="state-body">{children}</div>}
+      {action && <div className="state-action">{action}</div>}
+    </div>
+  );
+}
+
 export function ConfidenceBar({ value }: { value: number | null | undefined }) {
-  const v = Math.max(0, Math.min(1, Number(value ?? 0)));
+  if (formatKnown(value, "number") === null) return <Value value={null} unknownTitle="Confidence not reported" />;
+  const v = Math.max(0, Math.min(1, Number(value)));
   const tone = v >= 0.7 ? "success" : v >= 0.45 ? "warning" : "danger";
   return (
     <div className="confidence" title={`confidence ${(v * 100).toFixed(0)}%`}>
@@ -178,6 +222,32 @@ export function JsonView({ value, collapsed = false, label = "JSON" }: { value: 
     );
   }
   return <pre className="json">{text}</pre>;
+}
+
+/**
+ * Raw JSON lives only here (spec v3 §9): a closed "Technical details" disclosure, so the default
+ * path of a screen reads as prose, numbers and badges. Tests assert every `.json` block on the
+ * board sits inside one of these.
+ */
+export function TechnicalDetails({ value, label = "Technical details", children }: { value?: unknown; label?: string; children?: ReactNode }) {
+  return (
+    <details className="technical" data-technical="">
+      <summary>{label}</summary>
+      {children}
+      {value !== undefined && <JsonView value={value} />}
+    </details>
+  );
+}
+
+/** An accessible on/off switch (role=switch) for enablement flags. */
+export function EnabledToggle({ enabled, disabled, onChange, label }: { enabled: boolean; disabled: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label className="switch">
+      <input type="checkbox" role="switch" checked={enabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
+      <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
+      <span className="small">{enabled ? "enabled" : "disabled"}</span>
+    </label>
+  );
 }
 
 export function KeyValue({ items }: { items: [string, ReactNode][] }) {

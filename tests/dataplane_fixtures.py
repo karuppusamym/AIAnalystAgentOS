@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import warnings
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +20,7 @@ from sqlalchemy.orm import sessionmaker
 from analystos.core.config import Settings
 from analystos.core.ids import new_id
 
-TEST_DB = "analystos_test_dp"
+TEST_DB = os.environ.get("ANALYSTOS_TEST_DP_DB", "analystos_test_dp")  # override per parallel test session
 ADMIN_URL = os.environ.get("ANALYSTOS_TEST_ADMIN_URL", "postgresql+psycopg://analystos:analystos@localhost:5432/analystos")
 
 
@@ -43,8 +44,28 @@ def _redis_reachable(url: str) -> bool:
         return False
 
 
+def reader_role(settings: Settings, workspace_id: str) -> str:
+    from analystos.staging.roles import role_for
+
+    return role_for(settings, workspace_id)
+
+
+@contextmanager
+def reader_as(settings: Settings, workspace_id: str | None):
+    """A raw reader-identity connection (no validator, no gateway), switched to a workspace's reader
+    role as the gateway does. ``workspace_id=None`` stays the bare reader login."""
+    engine = create_engine(settings.analytics_reader_url)
+    try:
+        with engine.connect() as conn:
+            if workspace_id is not None:
+                conn.execute(text(f'SET ROLE "{reader_role(settings, workspace_id)}"'))
+            yield conn
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(scope="session")
-def dp_control_url() -> Iterator[str]:
+def dp_control_url(analytics_plane) -> Iterator[str]:
     """A throwaway control-plane database with all ORM tables."""
     if not _pg_reachable():
         pytest.skip("Postgres (docker compose) is not reachable")
@@ -136,7 +157,8 @@ def staged_servicenow(dp_settings: Settings, dp_session_factory, dp_workspace, s
     assets = servicenow_connector.discover()
     loads = {}
     for asset in assets:
-        loads[asset.name] = loader.load(source_id, asset, servicenow_connector.extract(asset, max_rows=50_000))
+        loads[asset.name] = loader.load(source_id, asset, servicenow_connector.extract(asset, max_rows=50_000),
+                                        workspace_id=dp_workspace["workspace_id"])
     with dp_session_factory() as s:
         s.add(Source(id=source_id, workspace_id=dp_workspace["workspace_id"], kind="servicenow", name="ServiceNow mock",
                      config={"instance_url": "http://servicenow.test"}, status="ready", execution_mode="staged",

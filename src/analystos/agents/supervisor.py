@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from analystos.agents.common import catalog_for_prompt, llm_json, model_gate
+from analystos.agents.common import compile_for, llm_json, model_gate
 from analystos.artifacts.registry import link, save_artifact
 from analystos.context.service import add_entry
 from analystos.core.ids import utcnow
@@ -16,17 +17,24 @@ from analystos.graph.projection import project_workspace
 from analystos.runtime.context import RunContext, Services
 from analystos.runtime.plan import base_plan
 
+if TYPE_CHECKING:
+    from analystos.capabilities.playbook import Playbook
 
-def build_plan(run_id: str, services: Services) -> dict:
+
+def build_plan(run_id: str, services: Services, playbook: Playbook | None = None) -> dict:
+    """The run's playbook (default investigate.v1) instantiated for this objective, with the
+    supervisor's framing (questions, audience, focus) when the playbook asks for it."""
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id)
         objective, level, instructions = run.objective, run.autonomy_level, run.instructions
     framing: dict = {}
     # Framing needs the catalog, which needs a context; build a light pseudo-context for the supervisor.
     try:
+        if playbook is not None and not playbook.body.framing:
+            raise LookupError("this playbook does not frame")
         ctx = _supervisor_ctx(run_id, services)
-        payload = {"objective": objective, "user_instructions": [i.get("text") for i in instructions],
-                   "catalog": catalog_for_prompt(ctx, include_values=False)}
+        payload = compile_for(ctx, "planning", {"objective": objective,
+                                                "user_instructions": [i.get("text") for i in instructions]})
         # Framing is optional: the lifecycle skeleton is valid without it, so `auto` skips the model.
         data, model = llm_json(ctx, "planning", "planning.v1", payload) \
             if model_gate(ctx, "planning", payload, deterministic_ok=True) else (None, "deterministic")
@@ -39,7 +47,7 @@ def build_plan(run_id: str, services: Services) -> dict:
     questions = [str(q) for q in (framing.get("questions") or [])][:8]
     audience = [a for a in (framing.get("audience") or ["executive", "operational"]) if a in ("executive", "operational")]
     return base_plan(objective, autonomy_level=level, questions=questions, audience=audience or ["executive", "operational"],
-                     focus=[str(f) for f in (framing.get("focus") or [])][:6])
+                     focus=[str(f) for f in (framing.get("focus") or [])][:6], playbook=playbook)
 
 
 def _supervisor_ctx(run_id: str, services: Services) -> RunContext:
@@ -97,6 +105,9 @@ def finalize(ctx: RunContext) -> dict:
         link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", ("artifact", art.id), run_id=ctx.run.id)
         for i in facts:
             link(s, ctx.workspace.id, ("artifact", art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
+        from analystos.registries.hypotheses import register_run
+
+        registered = register_run(s, run.id)  # the hypothesis registry scheduled re-analysis replays (P4-T05)
         origin = run.origin or {}
         if origin.get("previous_run_id"):
             from analystos.services.changes import diff_runs
@@ -104,7 +115,9 @@ def finalize(ctx: RunContext) -> dict:
             changes = diff_runs(s, origin["previous_run_id"], run.id)
             run.summary = {**run.summary, "changes": changes}
             ctx.say(f"Compared with run {origin['previous_run_id']}: {len(changes['new'])} new, {len(changes['persisting'])} persisting, "
-                    f"{len(changes['changed'])} changed, {len(changes['resolved'])} resolved findings.", kind="decision")
+                    f"{len(changes['changed'])} changed, {len(changes['resolved'])} resolved findings"
+                    f"{'; ' + str(len(changes['new_questions'])) + ' new questions (novelty round)' if changes.get('new_questions') else ''}.",
+                    kind="decision")
         graph = project_workspace(s, ctx.workspace.id)
         run.summary = {**run.summary, "graph_projection": graph}
         emit(ctx.workspace.id, "analysis.completed", {"verified_insights": len(facts), "published": bool(published)},
@@ -122,4 +135,5 @@ def finalize(ctx: RunContext) -> dict:
             report_id = art.id
             run = s.get(AnalysisRun, ctx.run.id)
             run.summary = {**(run.summary or {}), "report_artifact_id": report_id}
-    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id}
+    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
+            "registered_hypotheses": registered}

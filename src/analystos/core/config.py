@@ -24,13 +24,23 @@ class Settings(BaseSettings):
     # the loader writes staged snapshots, the reader is the only identity the gateway uses.
     analytics_loader_url: str = "postgresql+psycopg://analystos_loader:loader@localhost:5432/analytics"
     analytics_reader_url: str = "postgresql+psycopg://analystos_reader:reader@localhost:5432/analytics"
+    # Per-workspace NOLOGIN roles (<prefix><workspace id>) hold SELECT on that workspace's staged
+    # schemas; the reader identity only reaches them via SET ROLE, so it cannot read across workspaces.
+    analytics_workspace_role_prefix: str = "analystos_r_"
     redis_url: str = "redis://localhost:6379/0"
+    # Neo4j is an optional projection of the Postgres lineage/relationship tables (spec v3 §8), off
+    # by default: lineage and table neighbourhood are served from Postgres unless this is on.
+    graph_enabled: bool = False
+    budget_counter_prefix: str = "aos:budget:"  # run/workspace/purpose budget counters (P4-T07)
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "analystos-neo4j"
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
-    temporal_task_queue: str = "analystos-analysis"
+    # Task queues are `<prefix>-<workload>` (analysis, compute, publish, crawl, elt); see
+    # config/task_queues.yaml. `analystos worker` serves `worker_queues` unless --queues is given.
+    temporal_queue_prefix: str = "analystos"
+    worker_queues: str = "all"
     # temporal | local. local runs the same durable steps in a background thread (tests, laptops).
     orchestrator: str = "temporal"
 

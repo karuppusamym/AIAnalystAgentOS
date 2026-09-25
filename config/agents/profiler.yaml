@@ -1,28 +1,35 @@
-agent:
-  id: profiler
-  version: '1.0'
-  name: Dataset Profiler Agent
-  description: 'Profiles every selected table with pushdown SQL: cardinality, nulls, distinct values, quantiles,
-    histograms, category frequency, time coverage, duplicates and outlier candidates.'
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.profiler
+version: 1.0.0
+summary: Dataset Profiler Agent
+entry: python:analystos.agents.profiler:profile_tables
+determinism: deterministic
+side_effect: write_internal
+cost_class: query
+certification:
+  status: certified
+  evidence: tests/integration/test_e2e_local_run.py
+tags:
+- profiling
+spec:
+  role: Dataset Profiler Agent
+  goal: 'Profiles every selected table with pushdown SQL: cardinality, nulls, distinct values, quantiles, histograms,
+    category frequency, time coverage, duplicates and outlier candidates.'
   capabilities:
-  - profiling
-  skills:
-  - numeric_profile
-  - categorical_profile
-  - datetime_profile
-  - outlier_detection
-  - uniqueness_analysis
-  - missingness_analysis
+  - skill.dataset_profile
+  - skill.column_semantics
   tools:
   - profile.table
   - sql.execute
   - artifact.write
-  model_profile: low_cost
   prompt_version: v1
+  budget:
+    llm_calls: 0
   policies:
     max_rows_extract: 500000
-    pii_access: restricted
+    pii_access: allowed
     approval_for_publish: true
     max_iterations: 3
-  verification_required: false
   phase: mvp

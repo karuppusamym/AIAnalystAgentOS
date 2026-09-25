@@ -14,6 +14,9 @@ class WorkspacePolicyDoc(BaseModel):
     max_rows: int = 50_000
     query_timeout_seconds: int = 30
     max_queries_per_run: int = 200
+    # Ad-hoc Ask (NL -> SQL outside a run): rolling one-hour statement budgets, repairs included.
+    ask_queries_per_user_per_hour: int = 60
+    ask_queries_per_workspace_per_hour: int = 600
     run_token_budget: int = 400_000
     run_cost_budget_usd: float = 2.0
     workspace_monthly_cost_budget_usd: float = 50.0
@@ -22,6 +25,9 @@ class WorkspacePolicyDoc(BaseModel):
     allowed_providers: list[str] = Field(default_factory=lambda: ["openrouter", "typesafe"])
     data_residency: str | None = None  # informational until providers expose region metadata
     send_data_samples_to_models: bool = False  # only aggregates/stats/schema leave the platform by default
+    # An extra review of every finding by a model of another family (spec v3 §4.2). Off by default: the
+    # deterministic REV checks decide verification; high-stakes workspaces may opt in.
+    independent_model_verification: bool = False
     restricted_columns: list[str] = Field(default_factory=list)  # "schema.table.column" or "*.column"
     pii_columns: list[str] = Field(default_factory=list)
     pii_access: Literal["none", "restricted", "allowed"] = "restricted"
@@ -32,6 +38,12 @@ class WorkspacePolicyDoc(BaseModel):
     approval_ttl_hours: int = 72
     max_iterations: int = 3
     alpha: float = 0.05
+    # Domain packs (spec v3 §3.6) whose templates and knowledge runs use: None = every installed pack
+    # whose applies_when matches the selected catalog; a list (even empty) = exactly these pack ids.
+    domain_packs: list[str] | None = None
+    # P4-K03: publication refuses a KPI that is not an approved metric of the workspace semantic model.
+    # False here keeps workspaces created before the semantic layer working; create_workspace sets True.
+    require_approved_metrics: bool = False
 
 
 class DataScope(BaseModel):

@@ -146,16 +146,19 @@
       "type": "object"
     }
   },
-  "description": "method:\nrate_by_segment      outcome boolean rate across segment groups           -> chi-square (+ logistic check)\nnumeric_by_segment   outcome numeric across segment groups                -> Mann-Whitney / Kruskal-Wallis\ntrend                outcome (count or numeric mean) over time            -> linear trend + change point\npareto               share of volume by segment                           -> concentration (top-k share, Gini)\ncorrelation          numeric vs numeric                                   -> Spearman (+ Pearson)\ndriver_model         boolean outcome vs several drivers                   -> logistic regression + feature importance",
+  "description": "One executable hypothesis test. `method` must be a registered analysis method: the vocabulary,\nits JSON Schema enum and the per-method requirements come from the method registry\n(`analystos.methods`, spec v3 \u00a73.5), never from a list kept here.",
   "properties": {
     "method": {
+      "description": "A registered analysis method:\nrate_by_segment: Boolean outcome rate across segment groups -> chi-square (+ grouped logistic and permutation check)\nnumeric_by_segment: Numeric outcome across segment groups -> Mann-Whitney / Kruskal-Wallis (+ bootstrap median difference)\ntrend: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)\npareto: Share of volume by segment -> concentration (top-k share, Gini, GOF) (+ multinomial bootstrap of the top share)\ncorrelation: Numeric vs numeric -> Spearman (+ Pearson and a bootstrap CI of the primary coefficient)\ndriver_model: Boolean outcome vs several drivers -> logistic regression (+ random-forest permutation importance)\ncohort_retention: Retention of entity cohorts over time buckets -> chi-square across cohorts (+ grouped logistic and permutation check)\ncontribution_decomposition: Mix / volume / rate decomposition of a KPI change between two periods -> z test of the within-segment effect (+ stratified CMH / Stouffer check)",
       "enum": [
         "rate_by_segment",
         "numeric_by_segment",
         "trend",
         "pareto",
         "correlation",
-        "driver_model"
+        "driver_model",
+        "cohort_retention",
+        "contribution_decomposition"
       ],
       "title": "Method",
       "type": "string"

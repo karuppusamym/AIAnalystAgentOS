@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { to } from "../routes";
 import type { Hypothesis, Insight } from "../api";
 import { fmtNumber, fmtP, fmtValue } from "../lib/format";
 import { hypothesisIcon, toneFor } from "../lib/status";
@@ -10,7 +11,7 @@ function Finding({ wsId, insight }: { wsId: string; insight: Insight }) {
     <li className="tree-finding">
       <div className="tree-finding-head">
         <span className="tree-kind">Finding</span>
-        <Link to={`/w/${wsId}/insights/${insight.id}`}><strong>{insight.code}</strong> {insight.title}</Link>
+        <Link to={to.findings(wsId, insight.id)}><strong>{insight.code}</strong> {insight.title}</Link>
         <StatusBadge status={insight.status} />
         {insight.verified && <span className="verified" title="Passed REV verification">✓ verified</span>}
       </div>

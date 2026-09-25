@@ -4,12 +4,19 @@
  * Every call sends `Authorization: Bearer <token>`. Errors come back as
  * {"error": {code, message, details, retryable}} and are raised as ApiError.
  */
+import type { components, paths } from "./generated/openapi";
 import { readSSE, type SSEMessage } from "./lib/sse";
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 export type Dict = Record<string, unknown>;
 
-// ----------------------------------------------------------------------------------- models
+// ----------------------------------------------------------------------------------- response shapes
+/*
+ * Response shapes. The FastAPI routers return untyped dicts (no `response_model`), so the
+ * OpenAPI schema says nothing about response bodies and these are maintained by hand against
+ * the routers. Request bodies, paths and query parameters are generated (see "generated
+ * contract" below); where a request type is named here it is an alias of the generated schema.
+ */
 export interface User {
   id: string;
   email: string;
@@ -18,6 +25,13 @@ export interface User {
   active: boolean;
   attributes: Dict;
   created_at: string;
+}
+
+export interface UserSummary {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
 }
 
 export interface LoginResponse {
@@ -251,6 +265,10 @@ export interface VerificationCheck {
   check: string;
   passed: boolean;
   detail: string;
+  /** representative_population (staging/snapshots.py): how the analysed rows were chosen. */
+  method?: string;
+  sampling?: Dict;
+  truncated?: boolean;
 }
 
 export interface Verification {
@@ -363,6 +381,8 @@ export interface Approval {
   reason: string | null;
   expires_at: string;
   evidence: Dict;
+  /** The proposal the approval binds to (list endpoint only; decisions return it without). */
+  payload?: Dict;
   created_at: string;
 }
 
@@ -484,12 +504,35 @@ export interface ModelCall {
   created_at: string;
 }
 
+export type AgentRunDetail = RunTask & { messages: AgentMessage[]; tool_calls: ToolExecution[]; model_calls: ModelCall[]; queries: QueryExecution[] };
+
 export interface ConsoleData {
   messages: AgentMessage[];
   tool_calls: ToolExecution[];
   model_calls: ModelCall[];
   queries: QueryExecution[];
-  cost: { usd: number; tokens: number; model_calls: number; jev_calls: number; failed_calls: number };
+  cost: ConsoleCost;
+}
+
+/** Run cost block (analysis.py console). Rung counts arrive with the execution ladder (P4-T*); render when present. */
+export interface ConsoleCost {
+  usd: number;
+  tokens: number;
+  model_calls: number;
+  jev_calls: number;
+  failed_calls: number;
+  cache_hits?: number;
+  deterministic_skips?: number;
+  tokens_saved?: number;
+  by_rung?: Record<string, RungSpend> | null;
+}
+
+/** Spend on one rung of the deterministic-first ladder (spec v3 §4.1): L0 cache … L5 strong model. */
+export interface RungSpend {
+  calls?: number;
+  tokens_used?: number;
+  tokens_saved?: number;
+  cost_usd?: number;
 }
 
 export interface QueryResult {
@@ -701,13 +744,8 @@ export interface Schedule {
   recent_runs?: ScheduleRun[];
 }
 
-export interface ScheduleInput {
-  name: string;
-  kind: string;
-  cron: string;
-  timezone: string;
-  config: ScheduleConfig;
-}
+/** Request body of POST …/schedules: the generated ScheduleIn with the typed kind-specific config. */
+export type ScheduleInput = Schemas["ScheduleIn"] & { timezone: string; config: ScheduleConfig };
 
 export type MonitorKind = "metric_threshold" | "metric_drift" | "change_point" | "forecast_deviation" | "data_quality";
 
@@ -883,12 +921,8 @@ export interface SourceKindInfo {
   enabled: boolean;
 }
 
-export interface SourceInput {
-  kind: string;
-  name: string;
-  config: Dict;
-  secret_ref?: string | null;
-}
+/** Request body of POST …/sources (generated). */
+export type SourceInput = Schemas["SourceIn"];
 
 export interface RetypedColumn {
   name: string;
@@ -961,13 +995,8 @@ export interface Crawl {
   finished_at: string | null;
 }
 
-export interface CrawlInput {
-  mode?: "full" | "incremental";
-  include?: string[];
-  exclude?: string[];
-  profile?: boolean;
-  enrich?: boolean;
-}
+/** Request body of POST …/sources/{id}/crawl (generated). */
+export type CrawlInput = Schemas["CrawlIn"];
 
 export interface PiiInfo {
   category: string | null;
@@ -1019,17 +1048,18 @@ export interface CatalogAsset {
   columns: CatalogColumn[];
 }
 
-export interface CatalogFilter {
-  q?: string;
-  domain?: string;
-  role?: string;
-  include_deprecated?: boolean;
-}
+/** Query of GET …/catalog (generated parameters). */
+export type CatalogFilter = NonNullable<paths["/api/workspaces/{workspace_id}/catalog"]["get"]["parameters"]["query"]>;
 
-export interface AssetMetadataPatch {
-  business_name?: string;
-  description?: string;
-  reviewed?: boolean;
+/** Request body of PATCH /assets/{id}/metadata (generated). */
+export type AssetMetadataPatch = Schemas["AssetMetadataIn"];
+
+export interface CuratedAsset {
+  id: string;
+  business_name: string | null;
+  description: string | null;
+  description_origin: string | null;
+  reviewed: boolean;
 }
 
 export interface SqlExplanation {
@@ -1133,6 +1163,79 @@ export interface TokenSavings {
     saved_share: number;
   };
   by_purpose: Record<string, TokenSavingsRow>;
+  /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
+  by_rung?: Record<string, RungSpend> | null;
+  by_model?: Record<string, RungSpend> | null;
+}
+
+// ----------------------------------------------------------------------------------- capabilities
+export type CapabilityKind = "Agent" | "Skill" | "Tool" | "Method" | "Connector" | "Engine" | "Publisher" | "DecisionPurpose"
+  | "Detector" | "Crawler" | "KnowledgePack" | "Playbook" | "Renderer";
+export type SideEffect = "none" | "read_source" | "write_internal" | "write_external";
+export type CertStatus = "draft" | "tested" | "certified" | "deprecated";
+
+/** One row of GET /api/capabilities (capabilities.py `_out`). Kinds and values are open: plugins add new ones. */
+export interface CapabilitySummary {
+  id: string;
+  kind: CapabilityKind | string;
+  version: string;
+  ref: string;
+  summary: string;
+  source: string;
+  entry: string | null;
+  determinism: string;
+  side_effect: SideEffect | string;
+  cost_class: string;
+  certification: { status: CertStatus | string; evidence?: string | null };
+  autonomous_ok: boolean;
+  needs_approval: boolean;
+  tags: string[];
+  /** Enablement in the requested workspace; null without `workspace_id`. */
+  enabled: boolean | null;
+}
+
+export interface CapabilityList {
+  digest: string;
+  capabilities: CapabilitySummary[];
+}
+
+/** The full manifest (GET /api/capabilities/{id}, contracts/capability.py). */
+export interface CapabilityManifest {
+  apiVersion?: string;
+  kind: CapabilityKind | string;
+  id: string;
+  version: string;
+  summary: string;
+  entry?: string | null;
+  input_schema?: Dict;
+  output_schema?: Dict;
+  determinism?: string;
+  side_effect?: SideEffect | string;
+  cost_class?: string;
+  permissions?: string[];
+  requires?: string[];
+  certification?: { status: CertStatus | string; evidence?: string | null };
+  ui?: { form?: "auto" | "none" | "custom" | string; renderer?: string | null };
+  tags?: string[];
+  spec?: Dict;
+  source?: string;
+}
+
+export interface CapabilityReload {
+  digest: string;
+  previous_digest: string;
+  count: number;
+  problems: string[];
+}
+
+/** Invocation result: MCP invoke (mcp.py) today; the generic capability invoke shares the shape. */
+export interface CapabilityInvocation {
+  status: "ok" | "error" | "approval_required" | string;
+  capability?: string;
+  side_effect?: string;
+  approval_id?: string;
+  result?: unknown;
+  [k: string]: unknown;
 }
 
 // ----------------------------------------------------------------------------------- errors
@@ -1266,19 +1369,71 @@ export async function request<T>(method: string, path: string, body?: unknown, i
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-const get = <T>(p: string) => request<T>("GET", p);
-const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
-const put = <T>(p: string, b: unknown) => request<T>("PUT", p, b);
-const patch = <T>(p: string, b: unknown) => request<T>("PATCH", p, b);
-const del = <T>(p: string) => request<T>("DELETE", p);
-const e = encodeURIComponent;
+// ----------------------------------------------------------------------------------- generated contract
+/*
+ * Paths, path parameters, query parameters and request bodies come from the generated OpenAPI
+ * types (src/generated/openapi.ts, `npm run gen:api` from the committed web/openapi.json). A
+ * renamed route, a removed parameter or a changed request body is a typecheck error here rather
+ * than a 404 or 422 at runtime. Response bodies are not in the schema yet: the routers return
+ * untyped dicts (no `response_model`), so each call names its response shape from the
+ * "Response shapes" section above.
+ */
+export type Schemas = components["schemas"];
+type Method = "get" | "post" | "put" | "patch" | "delete";
+type Operation<P extends keyof paths, M extends Method> = NonNullable<paths[P][M]>;
 
-function qs(params: Record<string, string | number | undefined | null>): string {
-  const parts = Object.entries(params)
+/** Every OpenAPI path that declares method M. */
+export type ApiPath<M extends Method> = {
+  [P in keyof paths]: [NonNullable<paths[P][M]>] extends [never] ? never : P;
+}[keyof paths];
+
+type PathParams<O> = O extends { parameters: { path: infer X } } ? X : never;
+type QueryParams<O> = O extends { parameters: { query?: infer X } } ? X : never;
+type JsonBody<O> = O extends { requestBody?: infer R }
+  ? NonNullable<R> extends { content: { "application/json": infer B } } ? B
+    : NonNullable<R> extends { content: { "multipart/form-data": unknown } } ? FormData : never
+  : never;
+
+export type CallOptions<O> = ([PathParams<O>] extends [never] ? { path?: undefined } : { path: PathParams<O> })
+  & { query?: QueryParams<O>; body?: JsonBody<O> };
+
+function qs(params: object | undefined): string {
+  if (!params) return "";
+  const parts = Object.entries(params as Record<string, unknown>)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => `${e(k)}=${e(String(v))}`);
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
   return parts.length ? `?${parts.join("&")}` : "";
 }
+
+/**
+ * Build the request path (relative to API_BASE) for a typed OpenAPI route: fills `{name}`
+ * segments (URL-encoded) and appends non-empty query parameters in the caller's order.
+ */
+export function apiPath<M extends Method, P extends ApiPath<M>>(_method: M, path: P, opts: CallOptions<Operation<P, M>>): string {
+  const params = (opts.path ?? {}) as Record<string, string | number>;
+  const filled = (path as string).replace(/\{(\w+)\}/g, (_m, k: string) => {
+    if (params[k] === undefined) throw new Error(`missing path parameter ${k} for ${path}`);
+    return encodeURIComponent(String(params[k]));
+  });
+  const rel = filled.startsWith(API_BASE) ? filled.slice(API_BASE.length) : filled;
+  return rel + qs(opts.query as object | undefined);
+}
+
+/**
+ * One typed call. The response is `unknown` because the schema does not describe it; each
+ * endpoint below states its response shape. POSTs without a body send `{}`, as the routers
+ * expect a JSON object.
+ */
+export function call<M extends Method, P extends ApiPath<M>>(method: M, path: P, opts: CallOptions<Operation<P, M>>): Promise<unknown> {
+  const body = opts.body !== undefined ? opts.body : method === "post" ? {} : undefined;
+  return request<unknown>(method.toUpperCase(), apiPath(method, path, opts), body);
+}
+
+const get = <P extends ApiPath<"get">>(path: P, opts: CallOptions<Operation<P, "get">>) => call("get", path, opts);
+const post = <P extends ApiPath<"post">>(path: P, opts: CallOptions<Operation<P, "post">>) => call("post", path, opts);
+const put = <P extends ApiPath<"put">>(path: P, opts: CallOptions<Operation<P, "put">>) => call("put", path, opts);
+const patch = <P extends ApiPath<"patch">>(path: P, opts: CallOptions<Operation<P, "patch">>) => call("patch", path, opts);
+const del = <P extends ApiPath<"delete">>(path: P, opts: CallOptions<Operation<P, "delete">>) => call("delete", path, opts);
 
 /** Filename from a Content-Disposition header (attachment; filename="x.pdf"). */
 export function filenameFromDisposition(header: string | null, fallback: string): string {
@@ -1330,139 +1485,189 @@ export function saveBlob(file: DownloadedFile): void {
 }
 
 // ----------------------------------------------------------------------------------- endpoints
+const W = (ws: string) => ({ workspace_id: ws });
+
 export const api = {
   // auth
-  login: (email: string, password: string) => request<LoginResponse>("POST", "/auth/login", { email, password }),
-  me: () => get<User>("/auth/me"),
-  users: () => get<{ id: string; email: string; name: string; is_admin: boolean }[]>("/users"),
+  login: (email: string, password: string) => post("/api/auth/login", { body: { email, password } }) as Promise<LoginResponse>,
+  me: () => get("/api/auth/me", {}) as Promise<User>,
+  users: () => get("/api/users", {}) as Promise<UserSummary[]>,
 
   // workspaces
-  listWorkspaces: () => get<Workspace[]>("/workspaces"),
-  createWorkspace: (body: { name: string; description: string; objective: string; autonomy_level: number }) =>
-    post<Workspace>("/workspaces", body),
-  getWorkspace: (ws: string) => get<WorkspaceDetail>(`/workspaces/${e(ws)}`),
-  updateWorkspace: (ws: string, body: Partial<Pick<Workspace, "name" | "description" | "objective" | "autonomy_level">>) =>
-    patch<Workspace>(`/workspaces/${e(ws)}`, body),
-  putPolicy: (ws: string, policy: Dict) => put<{ policy_version: number }>(`/workspaces/${e(ws)}/policy`, policy),
+  listWorkspaces: () => get("/api/workspaces", {}) as Promise<Workspace[]>,
+  createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
+  getWorkspace: (ws: string) =>
+    get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
+    patch("/api/workspaces/{workspace_id}", { path: W(ws), body }) as Promise<Workspace>,
+  putPolicy: (ws: string, policy: Dict) =>
+    put("/api/workspaces/{workspace_id}/policy", { path: W(ws), body: policy }) as Promise<{ policy_version: number }>,
   addMember: (ws: string, email: string, role: string) =>
-    post<{ user_id: string; role: string }>(`/workspaces/${e(ws)}/members`, { email, role }),
-  removeMember: (ws: string, userId: string) => del<{ removed: boolean }>(`/workspaces/${e(ws)}/members/${e(userId)}`),
-  workspaceAudit: (ws: string, limit = 200) => get<AuditEvent[]>(`/workspaces/${e(ws)}/audit${qs({ limit })}`),
+    post("/api/workspaces/{workspace_id}/members", { path: W(ws), body: { email, role } }) as Promise<{ user_id: string; role: string }>,
+  removeMember: (ws: string, userId: string) =>
+    del("/api/workspaces/{workspace_id}/members/{user_id}", { path: { workspace_id: ws, user_id: userId } }) as Promise<{ removed: boolean }>,
+  workspaceAudit: (ws: string, limit = 200) =>
+    get("/api/workspaces/{workspace_id}/audit", { path: W(ws), query: { limit } }) as Promise<AuditEvent[]>,
   activity: (ws: string, afterId = 0, limit = 100) =>
-    get<RunEvent[]>(`/workspaces/${e(ws)}/activity${qs({ after_id: afterId, limit })}`),
+    get("/api/workspaces/{workspace_id}/activity", { path: W(ws), query: { after_id: afterId, limit } }) as Promise<RunEvent[]>,
 
   // sources
-  listSources: (ws: string) => get<Source[]>(`/workspaces/${e(ws)}/sources`),
-  addSource: (ws: string, body: SourceInput) => post<Source>(`/workspaces/${e(ws)}/sources`, body),
-  sourceKinds: () => get<SourceKindInfo[]>("/source-kinds"),
-  discover: (ws: string, sourceId: string) => post<DiscoverResponse>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/discover`),
+  listSources: (ws: string) => get("/api/workspaces/{workspace_id}/sources", { path: W(ws) }) as Promise<Source[]>,
+  addSource: (ws: string, body: SourceInput) =>
+    post("/api/workspaces/{workspace_id}/sources", { path: W(ws), body }) as Promise<Source>,
+  sourceKinds: () => get("/api/source-kinds", {}) as Promise<SourceKindInfo[]>,
+  discover: (ws: string, sourceId: string) =>
+    post("/api/workspaces/{workspace_id}/sources/{source_id}/discover", { path: { workspace_id: ws, source_id: sourceId } }) as Promise<DiscoverResponse>,
   selectAssets: (ws: string, sourceId: string, assets: string[]) =>
-    put<{ selected: string[]; loaded: Dict[] }>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/selection`, { assets }),
+    put("/api/workspaces/{workspace_id}/sources/{source_id}/selection", { path: { workspace_id: ws, source_id: sourceId }, body: { assets } }) as Promise<{ selected: string[]; loaded: Dict[] }>,
   upload: (ws: string, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return request<{ path: string; bytes: number }>("POST", `/workspaces/${e(ws)}/uploads`, fd);
+    return post("/api/workspaces/{workspace_id}/uploads", { path: W(ws), body: fd }) as Promise<{ path: string; bytes: number }>;
   },
-  listAssets: (ws: string) => get<Asset[]>(`/workspaces/${e(ws)}/assets`),
+  listAssets: (ws: string) => get("/api/workspaces/{workspace_id}/assets", { path: W(ws) }) as Promise<Asset[]>,
   tagColumn: (assetId: string, column: string, tags: string[]) =>
-    put<SourceColumn>(`/assets/${e(assetId)}/columns/${e(column)}/tags`, { tags }),
-  relationships: (ws: string) => get<Relationship[]>(`/workspaces/${e(ws)}/relationships`),
+    put("/api/assets/{asset_id}/columns/{column}/tags", { path: { asset_id: assetId, column }, body: { tags } }) as Promise<SourceColumn>,
+  relationships: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/relationships", { path: W(ws) }) as Promise<Relationship[]>,
 
   // metadata crawls & catalog
   startCrawl: (ws: string, sourceId: string, body: CrawlInput = {}) =>
-    post<Crawl>(`/workspaces/${e(ws)}/sources/${e(sourceId)}/crawl`, body),
-  listCrawls: (ws: string, sourceId?: string) => get<Crawl[]>(`/workspaces/${e(ws)}/crawls${qs({ source_id: sourceId })}`),
-  getCrawl: (id: string) => get<Crawl>(`/crawls/${e(id)}`),
+    post("/api/workspaces/{workspace_id}/sources/{source_id}/crawl", { path: { workspace_id: ws, source_id: sourceId }, body }) as Promise<Crawl>,
+  listCrawls: (ws: string, sourceId?: string) =>
+    get("/api/workspaces/{workspace_id}/crawls", { path: W(ws), query: { source_id: sourceId } }) as Promise<Crawl[]>,
+  getCrawl: (id: string) => get("/api/crawls/{crawl_id}", { path: { crawl_id: id } }) as Promise<Crawl>,
   catalog: (ws: string, filter: CatalogFilter = {}) =>
-    get<CatalogAsset[]>(`/workspaces/${e(ws)}/catalog${qs({
-      q: filter.q, domain: filter.domain, role: filter.role, include_deprecated: filter.include_deprecated ? "true" : undefined,
-    })}`),
+    get("/api/workspaces/{workspace_id}/catalog", {
+      path: W(ws),
+      query: { q: filter.q, domain: filter.domain, role: filter.role, include_deprecated: filter.include_deprecated ? true : undefined },
+    }) as Promise<CatalogAsset[]>,
   curateAsset: (assetId: string, body: AssetMetadataPatch) =>
-    patch<{ id: string; business_name: string | null; description: string | null; description_origin: string | null; reviewed: boolean }>(
-      `/assets/${e(assetId)}/metadata`, body),
+    patch("/api/assets/{asset_id}/metadata", { path: { asset_id: assetId }, body }) as Promise<CuratedAsset>,
 
   // analysis
-  startRun: (ws: string, body: { objective?: string; source_ids?: string[]; autonomy_level?: number }) =>
-    post<Run>(`/workspaces/${e(ws)}/analysis`, body),
-  listRuns: (ws: string) => get<Run[]>(`/workspaces/${e(ws)}/analysis`),
-  getRun: (ws: string, run: string) => get<RunDetail>(`/workspaces/${e(ws)}/analysis/${e(run)}`),
+  startRun: (ws: string, body: Schemas["RunIn"]) =>
+    post("/api/workspaces/{workspace_id}/analysis", { path: W(ws), body }) as Promise<Run>,
+  listRuns: (ws: string) => get("/api/workspaces/{workspace_id}/analysis", { path: W(ws) }) as Promise<Run[]>,
+  getRun: (ws: string, run: string) =>
+    get("/api/workspaces/{workspace_id}/analysis/{run_id}", { path: { workspace_id: ws, run_id: run } }) as Promise<RunDetail>,
   controlRun: (ws: string, run: string, action: "pause" | "resume" | "cancel") =>
-    post<Run>(`/workspaces/${e(ws)}/analysis/${e(run)}/${action}`),
-  feedback: (ws: string, run: string, body: { text: string; kind?: string | null; target_type?: string | null; target_id?: string | null }) =>
-    post<FeedbackResponse>(`/workspaces/${e(ws)}/analysis/${e(run)}/feedback`, body),
-  console: (ws: string, run: string) => get<ConsoleData>(`/workspaces/${e(ws)}/analysis/${e(run)}/console`),
+    post(`/api/workspaces/{workspace_id}/analysis/{run_id}/${action}`, { path: { workspace_id: ws, run_id: run } }) as Promise<Run>,
+  feedback: (ws: string, run: string, body: Schemas["FeedbackIn"]) =>
+    post("/api/workspaces/{workspace_id}/analysis/{run_id}/feedback", { path: { workspace_id: ws, run_id: run }, body }) as Promise<FeedbackResponse>,
+  console: (ws: string, run: string) =>
+    get("/api/workspaces/{workspace_id}/analysis/{run_id}/console", { path: { workspace_id: ws, run_id: run } }) as Promise<ConsoleData>,
   agentRun: (taskId: string) =>
-    get<RunTask & { messages: AgentMessage[]; tool_calls: ToolExecution[]; model_calls: ModelCall[]; queries: QueryExecution[] }>(
-      `/agent-runs/${e(taskId)}`,
-    ),
-  patchHypothesis: (id: string, body: { statement?: string; priority?: string; status?: string }) =>
-    patch<Hypothesis>(`/hypotheses/${e(id)}`, body),
-  ask: (ws: string, question: string) => post<AskResponse>(`/workspaces/${e(ws)}/ask`, { question }),
+    get("/api/agent-runs/{task_id}", { path: { task_id: taskId } }) as Promise<AgentRunDetail>,
+  patchHypothesis: (id: string, body: Schemas["HypothesisPatch"]) =>
+    patch("/api/hypotheses/{hypothesis_id}", { path: { hypothesis_id: id }, body }) as Promise<Hypothesis>,
+  ask: (ws: string, question: string) =>
+    post("/api/workspaces/{workspace_id}/ask", { path: W(ws), body: { question } }) as Promise<AskResponse>,
   query: (ws: string, sql: string, maxRows?: number) =>
-    post<QueryResult>(`/workspaces/${e(ws)}/query`, { sql, max_rows: maxRows ?? null }),
+    post("/api/workspaces/{workspace_id}/query", { path: W(ws), body: { sql, max_rows: maxRows ?? null } }) as Promise<QueryResult>,
   explainQuery: (ws: string, sql: string, maxRows?: number) =>
-    post<SqlExplanation>(`/workspaces/${e(ws)}/query/explain`, { sql, max_rows: maxRows ?? null }),
+    post("/api/workspaces/{workspace_id}/query/explain", { path: W(ws), body: { sql, max_rows: maxRows ?? null } }) as Promise<SqlExplanation>,
 
   // artifacts, insights, approvals
   listArtifacts: (ws: string, filter: { type?: string; run_id?: string } = {}) =>
-    get<Artifact[]>(`/workspaces/${e(ws)}/artifacts${qs(filter)}`),
-  getArtifact: (id: string) => get<ArtifactDetail>(`/artifacts/${e(id)}`),
-  getQuery: (id: string) => get<QueryExecution>(`/queries/${e(id)}`),
-  listInsights: (ws: string) => get<Insight[]>(`/workspaces/${e(ws)}/insights`),
-  getInsight: (id: string) => get<InsightDetail>(`/insights/${e(id)}`),
-  listApprovals: (ws: string, status?: string) => get<Approval[]>(`/workspaces/${e(ws)}/approvals${qs({ status })}`),
-  approve: (id: string, reason?: string) => post<Approval>(`/approvals/${e(id)}/approve`, { reason: reason || null }),
-  reject: (id: string, reason?: string) => post<Approval>(`/approvals/${e(id)}/reject`, { reason: reason || null }),
+    get("/api/workspaces/{workspace_id}/artifacts", { path: W(ws), query: { type: filter.type, run_id: filter.run_id } }) as Promise<Artifact[]>,
+  getArtifact: (id: string) => get("/api/artifacts/{artifact_id}", { path: { artifact_id: id } }) as Promise<ArtifactDetail>,
+  getQuery: (id: string) => get("/api/queries/{query_id}", { path: { query_id: id } }) as Promise<QueryExecution>,
+  listInsights: (ws: string) => get("/api/workspaces/{workspace_id}/insights", { path: W(ws) }) as Promise<Insight[]>,
+  getInsight: (id: string) => get("/api/insights/{insight_id}", { path: { insight_id: id } }) as Promise<InsightDetail>,
+  listApprovals: (ws: string, status?: string) =>
+    get("/api/workspaces/{workspace_id}/approvals", { path: W(ws), query: { status } }) as Promise<Approval[]>,
+  approve: (id: string, reason?: string) =>
+    post("/api/approvals/{approval_id}/approve", { path: { approval_id: id }, body: { reason: reason || null } }) as Promise<Approval>,
+  reject: (id: string, reason?: string) =>
+    post("/api/approvals/{approval_id}/reject", { path: { approval_id: id }, body: { reason: reason || null } }) as Promise<Approval>,
   rollback: (publicationId: string) =>
-    post<{ removed: unknown; run_id: string | null }>(`/publications/${e(publicationId)}/rollback`),
+    post("/api/publications/{publication_id}/rollback", { path: { publication_id: publicationId } }) as Promise<{ removed: unknown; run_id: string | null }>,
 
   // schedules (§37)
-  listSchedules: (ws: string) => get<Schedule[]>(`/workspaces/${e(ws)}/schedules`),
-  createSchedule: (ws: string, body: ScheduleInput) => post<Schedule>(`/workspaces/${e(ws)}/schedules`, body),
-  updateSchedule: (id: string, body: Partial<Omit<ScheduleInput, "kind">> & { enabled?: boolean }) =>
-    patch<Schedule>(`/schedules/${e(id)}`, body),
-  deleteSchedule: (id: string) => del<{ deleted: boolean }>(`/schedules/${e(id)}`),
-  runScheduleNow: (id: string) => post<ScheduleRun>(`/schedules/${e(id)}/run`),
+  listSchedules: (ws: string) => get("/api/workspaces/{workspace_id}/schedules", { path: W(ws) }) as Promise<Schedule[]>,
+  createSchedule: (ws: string, body: ScheduleInput) =>
+    post("/api/workspaces/{workspace_id}/schedules", { path: W(ws), body }) as Promise<Schedule>,
+  updateSchedule: (id: string, body: Schemas["SchedulePatch"]) =>
+    patch("/api/schedules/{schedule_id}", { path: { schedule_id: id }, body }) as Promise<Schedule>,
+  deleteSchedule: (id: string) =>
+    del("/api/schedules/{schedule_id}", { path: { schedule_id: id } }) as Promise<{ deleted: boolean }>,
+  runScheduleNow: (id: string) =>
+    post("/api/schedules/{schedule_id}/run", { path: { schedule_id: id } }) as Promise<ScheduleRun>,
 
   // monitors & alerts (§38)
-  listMonitors: (ws: string) => get<Monitor[]>(`/workspaces/${e(ws)}/monitors`),
-  createMonitor: (ws: string, body: { name: string; kind: string; config: MonitorConfig; auto_investigate: boolean }) =>
-    post<Monitor>(`/workspaces/${e(ws)}/monitors`, body),
-  updateMonitor: (id: string, body: { enabled?: boolean; auto_investigate?: boolean; config?: MonitorConfig; name?: string }) =>
-    patch<Monitor>(`/monitors/${e(id)}`, body),
-  evaluateMonitor: (id: string) => post<MonitorResult>(`/monitors/${e(id)}/evaluate`),
-  monitorSeries: (id: string) => get<MonitorSeries>(`/monitors/${e(id)}/series`),
-  listAlerts: (ws: string, status?: string) => get<Alert[]>(`/workspaces/${e(ws)}/alerts${qs({ status })}`),
-  alertAction: (id: string, action: "acknowledge" | "resolve") => post<Alert>(`/alerts/${e(id)}/${action}`),
-  investigateAlert: (id: string) => post<{ run_id: string | null }>(`/alerts/${e(id)}/investigate`),
+  listMonitors: (ws: string) => get("/api/workspaces/{workspace_id}/monitors", { path: W(ws) }) as Promise<Monitor[]>,
+  createMonitor: (ws: string, body: Schemas["MonitorIn"] & { config: MonitorConfig }) =>
+    post("/api/workspaces/{workspace_id}/monitors", { path: W(ws), body }) as Promise<Monitor>,
+  updateMonitor: (id: string, body: Schemas["MonitorPatch"]) =>
+    patch("/api/monitors/{monitor_id}", { path: { monitor_id: id }, body }) as Promise<Monitor>,
+  evaluateMonitor: (id: string) =>
+    post("/api/monitors/{monitor_id}/evaluate", { path: { monitor_id: id } }) as Promise<MonitorResult>,
+  monitorSeries: (id: string) =>
+    get("/api/monitors/{monitor_id}/series", { path: { monitor_id: id } }) as Promise<MonitorSeries>,
+  listAlerts: (ws: string, status?: string) =>
+    get("/api/workspaces/{workspace_id}/alerts", { path: W(ws), query: { status } }) as Promise<Alert[]>,
+  alertAction: (id: string, action: "acknowledge" | "resolve") =>
+    post("/api/alerts/{alert_id}/{action}", { path: { alert_id: id, action } }) as Promise<Alert>,
+  investigateAlert: (id: string) =>
+    post("/api/alerts/{alert_id}/{action}", { path: { alert_id: id, action: "investigate" } }) as Promise<{ run_id: string | null }>,
 
   // notifications
-  notifications: (unread = false) => get<AppNotification[]>(`/notifications${qs({ unread: unread ? "true" : undefined })}`),
-  markNotificationsRead: (ids: number[]) => post<{ marked: number }>("/notifications/read", { ids }),
+  notifications: (unread = false) =>
+    get("/api/notifications", { query: { unread: unread ? true : undefined } }) as Promise<AppNotification[]>,
+  markNotificationsRead: (ids: number[]) =>
+    post("/api/notifications/read", { body: { ids } }) as Promise<{ marked: number }>,
 
   // reports (§43)
   createReport: (ws: string, body: { run_id?: string | null; kind: string; formats: string[] }) =>
-    post<Artifact>(`/workspaces/${e(ws)}/reports`, { ...body, run_id: body.run_id || null }),
-  downloadReport: (id: string, format: string) => downloadFile(`/artifacts/${e(id)}/download${qs({ format })}`, `report.${format}`),
+    post("/api/workspaces/{workspace_id}/reports", { path: W(ws), body: { ...body, run_id: body.run_id || null } }) as Promise<Artifact>,
+  downloadReport: (id: string, format: string) =>
+    downloadFile(apiPath("get", "/api/artifacts/{artifact_id}/download", { path: { artifact_id: id }, query: { format } }), `report.${format}`),
 
   // admin / registry
-  agents: () => get<AgentSpec[]>("/agents"),
-  patchAgent: (id: string, enabled: boolean) => patch<AgentSpec>(`/agents/${e(id)}`, { enabled }),
-  tools: () => get<ToolSpec[]>("/tools"),
-  patchTool: (id: string, enabled: boolean) => patch<ToolSpec>(`/tools/${e(id)}`, { enabled }),
-  skills: () => get<SkillSpec[]>("/skills"),
-  models: () => get<ModelsView>("/admin/models"),
-  usage: () => get<Usage>("/admin/usage"),
-  audit: (limit = 300) => get<AuditEvent[]>(`/admin/audit${qs({ limit })}`),
+  agents: () => get("/api/agents", {}) as Promise<AgentSpec[]>,
+  patchAgent: (id: string, enabled: boolean) =>
+    patch("/api/agents/{agent_id}", { path: { agent_id: id }, body: { enabled } }) as Promise<AgentSpec>,
+  tools: () => get("/api/tools", {}) as Promise<ToolSpec[]>,
+  patchTool: (id: string, enabled: boolean) =>
+    patch("/api/tools/{tool_id}", { path: { tool_id: id }, body: { enabled } }) as Promise<ToolSpec>,
+  skills: () => get("/api/skills", {}) as Promise<SkillSpec[]>,
+  models: () => get("/api/admin/models", {}) as Promise<ModelsView>,
+  usage: () => get("/api/admin/usage", {}) as Promise<Usage>,
+  audit: (limit = 300) => get("/api/admin/audit", { query: { limit } }) as Promise<AuditEvent[]>,
 
   // platform settings (admin only)
-  adminSettings: () => get<SettingsDocument>("/admin/settings"),
-  updateSettings: (patchDoc: Dict, note: string) => put<SettingsUpdateResult>("/admin/settings", { patch: patchDoc, note }),
-  applyPreset: (preset: string) => post<SettingsUpdateResult>("/admin/settings/preset", { preset }),
-  settingsHistory: () => get<SettingsVersion[]>("/admin/settings/history"),
-  rollbackSettings: (version: number) => post<SettingsUpdateResult>("/admin/settings/rollback", { version }),
-  prompts: () => get<PromptTemplate[]>("/admin/prompts"),
-  tokenSavings: (days = 30) => get<TokenSavings>(`/admin/token-savings${qs({ days })}`),
+  adminSettings: () => get("/api/admin/settings", {}) as Promise<SettingsDocument>,
+  updateSettings: (patchDoc: Dict, note: string) =>
+    put("/api/admin/settings", { body: { patch: patchDoc, note } }) as Promise<SettingsUpdateResult>,
+  applyPreset: (preset: string) =>
+    post("/api/admin/settings/preset", { body: { preset } }) as Promise<SettingsUpdateResult>,
+  settingsHistory: () => get("/api/admin/settings/history", {}) as Promise<SettingsVersion[]>,
+  rollbackSettings: (version: number) =>
+    post("/api/admin/settings/rollback", { body: { version } }) as Promise<SettingsUpdateResult>,
+  prompts: () => get("/api/admin/prompts", {}) as Promise<PromptTemplate[]>,
+  tokenSavings: (days = 30) => get("/api/admin/token-savings", { query: { days } }) as Promise<TokenSavings>,
+
+  // capability registry (P4-X01)
+  listCapabilities: (filter: { kind?: string; workspace_id?: string } = {}) =>
+    get("/api/capabilities", { query: filter }) as Promise<CapabilityList>,
+  getCapability: (id: string) =>
+    get("/api/capabilities/{capability_id}", { path: { capability_id: id } }) as Promise<CapabilityManifest>,
+  setCapabilityEnabled: (ws: string, id: string, enabled: boolean) =>
+    put("/api/workspaces/{workspace_id}/capabilities/{capability_id}", { path: { workspace_id: ws, capability_id: id }, body: { enabled } }) as
+      Promise<Dict>,
+  reloadCapabilities: () => post("/api/admin/capabilities/reload", {}) as Promise<CapabilityReload>,
+  mcpCapabilities: (ws: string) => get("/api/workspaces/{workspace_id}/mcp/capabilities", { path: W(ws) }) as Promise<CapabilityManifest[]>,
+  invokeMcpTool: (ws: string, server: string, tool: string, args: Dict) =>
+    post("/api/workspaces/{workspace_id}/mcp/servers/{server_name}/tools/{tool_name}/invoke",
+      { path: { workspace_id: ws, server_name: server, tool_name: tool }, body: { arguments: args } }) as Promise<CapabilityInvocation>,
+  /**
+   * Backend gap: there is no generic invoke route for built-in or plugin capabilities yet (only MCP
+   * tools). The call is untyped on purpose so the route can land without a client change; until it
+   * does the server answers 404/405 and the form shows a "not available" state.
+   */
+  invokeCapability: (ws: string, id: string, args: Dict) =>
+    request<CapabilityInvocation>("POST", `/workspaces/${encodeURIComponent(ws)}/capabilities/${encodeURIComponent(id)}/invoke`, { arguments: args }),
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)
@@ -1518,7 +1723,8 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
       let opened = false;
       try {
         await readSSE({
-          url: `${API_BASE}/workspaces/${e(ws)}/analysis/${e(run)}/events${qs({ after_id: last })}`,
+          url: API_BASE + apiPath("get", "/api/workspaces/{workspace_id}/analysis/{run_id}/events", {
+            path: { workspace_id: ws, run_id: run }, query: { after_id: last } }),
           headers: authHeaders(),
           signal: controller.signal,
           onOpen: () => {

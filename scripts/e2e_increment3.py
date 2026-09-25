@@ -13,20 +13,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 import time
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-import numpy as np
 
 PASSWORD = os.getenv("ANALYSTOS_DEMO_PASSWORD", "ChangeMe123!")
 OBJECTIVE = ("Understand what drives product returns, order value and shipping delays in our online retail orders, "
              "and which channels, regions and customer segments need attention.")
-SEED = 20260925
 
 
 class Api:
@@ -66,58 +63,18 @@ class Api:
 
 
 # ------------------------------------------------------------------------------------ data
-def build_shop_db(path: Path, *, drift: bool = False) -> dict:
-    """Retail orders with planted effects; `drift=True` adds a column (schema drift for the crawler)."""
-    rng = np.random.default_rng(SEED)
-    regions = [(1, "EMEA", "Germany"), (2, "North America", "United States"), (3, "APAC", "Singapore"), (4, "LATAM", "Brazil")]
-    categories = ["Electronics", "Home", "Apparel", "Beauty", "Sports"]
-    products = [(i + 1, f"Product {i + 1:03d}", categories[i % 5], round(float(rng.uniform(8, 400)), 2)) for i in range(60)]
-    segments = ["Consumer", "Small Business", "Enterprise"]
-    customers = []
-    for i in range(2500):
-        first, last = rng.choice(["Ana", "Ben", "Chen", "Dara", "Eli", "Fay", "Gus", "Hana"]), rng.choice(["Lee", "Ng", "Diaz", "Khan", "Moss"])
-        customers.append((i + 1, f"{first} {last}", f"{first.lower()}.{last.lower()}{i}@example.com",
-                          str(rng.choice(segments, p=[0.6, 0.3, 0.1])), int(rng.integers(1, 5)),
-                          str(date(2022, 1, 1) + timedelta(days=int(rng.integers(0, 900))))))
-    channels, payments = ["web", "mobile", "marketplace", "store"], ["card", "paypal", "invoice", "gift_card"]
-    orders = []
-    start = date(2024, 1, 1)
-    for i in range(24000):
-        c = customers[int(rng.integers(0, len(customers)))]
-        p = products[int(rng.integers(0, len(products)))]
-        day = int(min(max(rng.normal(300, 190), 0), 630))  # growth + a little seasonality through density
-        channel = str(rng.choice(channels, p=[0.4, 0.3, 0.2, 0.1]))
-        qty = int(rng.integers(1, 6))
-        discount = float(rng.choice([0, 0, 0.05, 0.1, 0.2]))
-        seg_mult = {"Consumer": 1.0, "Small Business": 1.3, "Enterprise": 2.1}[c[3]]  # planted: Enterprise ~2x order value
-        net = round(p[3] * qty * (1 - discount) * seg_mult * float(rng.uniform(0.9, 1.1)), 2)
-        region = next(r for r in regions if r[0] == c[4])[1]
-        ship = max(1, int(round(rng.normal(4.0 + (3.0 if region == "APAC" else 0.0), 1.2))))  # planted: APAC +3 days
-        ret_p = 0.18 if channel == "marketplace" else 0.06  # planted: marketplace ~3x returns
-        returned = int(rng.random() < ret_p)
-        payment = str(rng.choice(payments))  # null control: no effect
-        row = (i + 1, c[0], p[0], str(start + timedelta(days=day)), channel, region, c[3], qty, discount, net, ship, returned, payment)
-        orders.append(row + ((str(rng.choice(["", "SPRING10", "VIP"])),) if drift else ()))
-    path.unlink(missing_ok=True)
-    con = sqlite3.connect(path)
-    con.executescript(f"""
-        CREATE TABLE region (id INTEGER PRIMARY KEY, name VARCHAR(40) NOT NULL, country VARCHAR(60));
-        CREATE TABLE product (id INTEGER PRIMARY KEY, name VARCHAR(80), category VARCHAR(40), list_price NUMERIC(10,2));
-        CREATE TABLE customer (id INTEGER PRIMARY KEY, customer_name VARCHAR(80), email VARCHAR(120), segment VARCHAR(30),
-                               region_id INTEGER REFERENCES region(id), signup_date DATE);
-        CREATE TABLE orders (order_id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customer(id),
-                             product_id INTEGER REFERENCES product(id), order_date DATE, channel VARCHAR(20),
-                             sales_region VARCHAR(40), customer_segment VARCHAR(30), quantity INTEGER, discount_pct NUMERIC(4,2),
-                             net_amount NUMERIC(12,2), shipping_days INTEGER, returned BOOLEAN, payment_method VARCHAR(20)
-                             {', coupon_code VARCHAR(20)' if drift else ''});
-    """)
-    con.executemany("INSERT INTO region VALUES (?,?,?)", regions)
-    con.executemany("INSERT INTO product VALUES (?,?,?,?)", products)
-    con.executemany("INSERT INTO customer VALUES (?,?,?,?,?,?)", customers)
-    con.executemany(f"INSERT INTO orders VALUES ({','.join('?' * len(orders[0]))})", orders)
-    con.commit()
-    con.close()
-    return {"orders": len(orders), "customers": len(customers), "products": len(products)}
+def _load_generator():
+    """The retail benchmark lives in the sales domain pack (packs/sales/benchmark/generator.py)."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "packs" / "sales" / "benchmark" / "generator.py"
+    spec = importlib.util.spec_from_file_location("sales_benchmark_generator", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build_shop_db = _load_generator().build_shop_db
 
 
 def wait_run(api: Api, ws: str, run: str, predicate, timeout=2400) -> dict:
@@ -171,7 +128,9 @@ def main() -> int:
     try:
         # 3. workspace + an uploaded SQLite database registered as a source
         ws = admin.post("/api/workspaces", {"name": f"Retail orders (SQLite) {started:%Y%m%d-%H%M}", "objective": OBJECTIVE,
-                                            "description": "Increment 3 evidence: any database", "autonomy_level": 3})
+                                            "description": "Increment 3 evidence: any database", "autonomy_level": 3,
+                                            # predates the P4-K03 approved-metric gate (tests/integration/test_semantic_layer.py)
+                                            "policy": {"require_approved_metrics": False}})
         wid = ws["id"]
         admin.post(f"/api/workspaces/{wid}/members", {"email": "analyst@analystos.local", "role": "editor"})
         admin.post(f"/api/workspaces/{wid}/members", {"email": "approver@analystos.local", "role": "approver"})
