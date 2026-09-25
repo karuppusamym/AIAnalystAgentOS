@@ -2,9 +2,10 @@
 
 Only the *loader* identity (``settings.analytics_loader_url``) writes here. Each source gets its
 own schema ``src_<source_id>``; each asset is loaded into ``<name>__load`` with COPY and then
-swapped in atomically (drop old + rename, same transaction), after which the reader identity is
-granted USAGE on the schema and SELECT on its tables. Identifiers are sanitized to
-``[a-z0-9_]`` and always quoted.
+swapped in atomically (drop old + rename, same transaction), after which the owning workspace's
+reader role (``staging/roles.py``) is granted USAGE on the schema and SELECT on its tables; the
+reader login itself holds no direct grant. Identifiers are sanitized to ``[a-z0-9_]`` and always
+quoted.
 """
 from __future__ import annotations
 
@@ -16,13 +17,13 @@ from typing import Any
 
 import pyarrow as pa
 from psycopg import sql
-from sqlalchemy.engine import make_url
 
 from analystos.connectors.base import DiscoveredAsset
 from analystos.connectors.naming import is_safe_identifier, sanitize_identifier, staging_schema_for, unique_identifiers
 from analystos.core.errors import InvalidInput
 from analystos.core.logging import get_logger
 from analystos.gateway.engines import get_engine
+from analystos.staging.roles import ensure_workspace_role, grant_schema, reader_login, role_for
 
 LOAD_SUFFIX = "__load"
 MAX_TABLE_NAME = 63 - len(LOAD_SUFFIX)
@@ -107,18 +108,20 @@ class StagingLoader:
     def __init__(self, settings: Any, *, loader_url: str | None = None, reader_role: str | None = None) -> None:
         self.settings = settings
         self.loader_url = loader_url or settings.analytics_loader_url
-        reader_url = getattr(settings, "analytics_reader_url", None)
-        self.reader_role = reader_role or (make_url(reader_url).username if reader_url else "analystos_reader")
+        self.reader_role = reader_role or (reader_login(settings) if getattr(settings, "analytics_reader_url", None)
+                                           else "analystos_reader")
         if not self.reader_role or not is_safe_identifier(self.reader_role):
             raise InvalidInput("analytics reader role name is not a safe identifier")
 
     def _engine(self):  # noqa: ANN202
         return get_engine(self.loader_url)
 
-    def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch]) -> dict[str, Any]:
-        """Load ``batches`` as ``src_<source_id>.<asset name>`` and return
-        ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``."""
+    def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch], *,
+             workspace_id: str) -> dict[str, Any]:
+        """Load ``batches`` as ``src_<source_id>.<asset name>`` readable only by ``workspace_id``'s
+        reader role and return ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``."""
         schema_name = staging_schema_for(source_id)
+        ws_role = role_for(self.settings, workspace_id)
         raw_name = asset.name if isinstance(asset, DiscoveredAsset) else str(asset)
         table_name = sanitize_identifier(raw_name, max_length=MAX_TABLE_NAME, fallback="t")
         load_name = f"{table_name}{LOAD_SUFFIX}"
@@ -129,7 +132,6 @@ class StagingLoader:
         schema_ident = sql.Identifier(schema_name)
         load_ident = sql.Identifier(schema_name, load_name)
         final_ident = sql.Identifier(schema_name, table_name)
-        reader_ident = sql.Identifier(self.reader_role)
 
         iterator = iter(batches)
         first = next(iterator, None)
@@ -175,8 +177,8 @@ class StagingLoader:
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(final_ident))
                 cur.execute(sql.SQL("ALTER TABLE {} RENAME TO {}").format(load_ident, sql.Identifier(table_name)))
                 cur.execute(sql.SQL("ANALYZE {}").format(final_ident))
-                cur.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(schema_ident, reader_ident))
-                cur.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(schema_ident, reader_ident))
+                ensure_workspace_role(cur, ws_role, self.reader_role)
+                grant_schema(cur, schema_name, ws_role, self.reader_role)
             conn.commit()
         except Exception:
             try:

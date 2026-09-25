@@ -20,9 +20,17 @@ ARTIFACT_TYPES = {"query", "profile", "quality_report", "relationship_map", "con
 def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str, content: dict[str, Any],
                   run_id: str | None = None, creator_agent: str | None = None, creator_user: str | None = None,
                   status: str = "draft") -> Artifact:
-    """Upsert by (workspace, run, type, name): unchanged content is a no-op, changed content is a new version."""
+    """Upsert by (workspace, run, type, name): unchanged content is a no-op, changed content is a new version.
+
+    An agent writing inside a run passes the ``artifact.write`` tool gate (workspace ``tool_denylist``,
+    role, autonomy; spec v2 §6). Writes by a signed-in user are governed by their route's role check."""
     if type_ not in ARTIFACT_TYPES:
         raise ValueError(f"unknown artifact type {type_}")
+    if creator_agent and run_id:
+        from analystos.tools.registry import gate_agent_write
+
+        gate_agent_write(session, workspace_id=workspace_id, run_id=run_id, agent_id=creator_agent,
+                         inputs={"type": type_, "name": name})
     content_hash = stable_hash(content)
     existing = session.scalar(select(Artifact).where(Artifact.workspace_id == workspace_id, Artifact.run_id == run_id,
                                                      Artifact.type == type_, Artifact.name == name))
@@ -49,7 +57,8 @@ def link(session: Session, workspace_id: str, from_: tuple[str, str], relation: 
          run_id: str | None = None) -> None:
     stmt = insert(LineageEdge).values(workspace_id=workspace_id, run_id=run_id, from_type=from_[0], from_id=str(from_[1]),
                                       relation=relation, to_type=to[0], to_id=str(to[1]))
-    session.execute(stmt.on_conflict_do_nothing(index_elements=["from_type", "from_id", "relation", "to_type", "to_id"]))
+    session.execute(stmt.on_conflict_do_nothing(index_elements=["workspace_id", "from_type", "from_id", "relation",
+                                                                 "to_type", "to_id"]))
 
 
 def lineage_for(session: Session, workspace_id: str, node: tuple[str, str], *, depth: int = 6) -> dict[str, Any]:

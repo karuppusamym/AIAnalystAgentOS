@@ -129,7 +129,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
         for asset_id, source_name, name, schema, cols in selected:
             d = DiscoveredAsset(source_name=source_name, name=name, columns=cols, kind="api_table")
             max_rows = min(int(src.config.get("max_rows") or platform_max), platform_max)
-            info = loader.load(source_id, d, connector.extract(d, max_rows=max_rows))
+            info = loader.load(source_id, d, connector.extract(d, max_rows=max_rows), workspace_id=src.workspace_id)
             loaded.append({"asset": f"{schema}.{name}", **info})
             with session_scope() as s:
                 a = s.get(SourceAsset, asset_id)

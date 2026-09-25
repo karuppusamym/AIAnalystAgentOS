@@ -77,6 +77,7 @@ class RunContext:
     agent: AgentSpec
     services: Services
     notes: list[str] = field(default_factory=list)
+    _authorized: set[str] = field(default_factory=set, repr=False)
 
     # ------------------------------------------------------------------ construction
     @classmethod
@@ -122,8 +123,25 @@ class RunContext:
     def tools(self) -> ToolRuntime:
         return ToolRuntime(user=self.user, identity=self.identity, agent=self.agent)
 
+    def authorize_tool(self, tool_id: str) -> None:
+        """Implicit tool gate (spec v2 §6) for paths that act as a tool without invoking it by name.
+        Checked once per step: the context is rebuilt for every step, so a denylist change or a
+        revoked role applies from the next step on, as for invoked tools."""
+        if tool_id not in self._authorized:
+            self.tools().authorize(tool_id, {"implicit": True, "task": self.task.key}, bound=False)
+            self._authorized.add(tool_id)
+
+    def check_query_budget(self) -> None:
+        """Every statement a run executes (skills, verification re-runs) counts toward the per-run budget."""
+        with session_scope() as s:
+            used = s.scalar(select(func.count()).select_from(QueryExecution).where(QueryExecution.run_id == self.run.id))
+        if used >= self.policy.max_queries_per_run:
+            raise BudgetExceeded(f"per-run query budget ({self.policy.max_queries_per_run}) exhausted")
+
     def run_sql(self, source_id: str | None = None):
-        """Governed SQL runner for skills, with the per-run query budget enforced."""
+        """Governed SQL runner for skills and agents: tool gate (``sql.execute``), per-run query budget,
+        then the gateway."""
+        self.authorize_tool("sql.execute")
         gateway = self.services.gateway
         inner = gateway.run_sql_for(self.scope, actor=f"agent:{self.agent.id}", run_id=self.run.id, task_id=self.task.id,
                                     **({"source_id": source_id} if source_id else {}))
@@ -132,13 +150,12 @@ class RunContext:
         class _Budgeted:
             dialect = inner.dialect
 
-            def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None):
+            def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None, use_cache: bool = True):
                 ctx.check_control()
-                with session_scope() as s:
-                    used = s.scalar(select(func.count()).select_from(QueryExecution).where(QueryExecution.run_id == ctx.run.id))
-                if used >= ctx.policy.max_queries_per_run:
-                    raise BudgetExceeded(f"per-run query budget ({ctx.policy.max_queries_per_run}) exhausted")
-                return inner(sql, purpose=purpose, max_rows=max_rows)
+                ctx.check_query_budget()
+                if use_cache:
+                    return inner(sql, purpose=purpose, max_rows=max_rows)
+                return inner(sql, purpose=purpose, max_rows=max_rows, use_cache=False)
 
         return _Budgeted()
 

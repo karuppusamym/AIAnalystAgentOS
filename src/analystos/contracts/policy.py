@@ -14,6 +14,9 @@ class WorkspacePolicyDoc(BaseModel):
     max_rows: int = 50_000
     query_timeout_seconds: int = 30
     max_queries_per_run: int = 200
+    # Ad-hoc Ask (NL -> SQL outside a run): rolling one-hour statement budgets, repairs included.
+    ask_queries_per_user_per_hour: int = 60
+    ask_queries_per_workspace_per_hour: int = 600
     run_token_budget: int = 400_000
     run_cost_budget_usd: float = 2.0
     workspace_monthly_cost_budget_usd: float = 50.0

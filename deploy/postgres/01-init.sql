@@ -5,8 +5,12 @@
 --   temporal   created by temporalio/auto-setup
 -- The reader identity is the ONLY one the query gateway and Superset use for data. It cannot
 -- connect to the control-plane database (§45: control plane and query identity are separated).
-CREATE ROLE analystos_loader LOGIN PASSWORD 'loader';
-CREATE ROLE analystos_reader LOGIN PASSWORD 'reader';
+-- Staged schemas are readable only through per-workspace NOLOGIN roles (analystos_r_<workspace>)
+-- that the loader creates (hence CREATEROLE) and grants to the reader WITHOUT inheritance: the
+-- gateway does SET LOCAL ROLE per query, so the reader login alone reads no workspace's data.
+-- Clusters initialised before this: `analystos migrate` grants CREATEROLE and backfills the roles.
+CREATE ROLE analystos_loader LOGIN CREATEROLE PASSWORD 'loader';
+CREATE ROLE analystos_reader LOGIN NOINHERIT PASSWORD 'reader';
 CREATE ROLE superset LOGIN PASSWORD 'superset';
 
 CREATE DATABASE analytics OWNER analystos_loader;

@@ -322,6 +322,22 @@ def test_network_error_maps_to_upstream_unavailable():
 
 # -- publish ------------------------------------------------------------------------------------
 
+def test_database_connects_as_the_workspace_reader_role(router, fake):
+    """P4-C03: the reader login holds no grant on staged schemas; each workspace's Superset database
+    switches to that workspace's role at connect time, and older databases are moved over."""
+    from sqlalchemy.engine import make_url
+
+    res = publisher().publish(make_bundle(), idempotency_key="k-role")
+    url = make_url(fake.databases[res.external_ids["database"]]["sqlalchemy_uri"])
+    assert (url.username, url.host, url.database) == ("analystos_reader", "postgres", "analytics")
+    assert url.query["options"] == "-c role=analystos_r_ws_unit"
+    legacy = fake.databases[res.external_ids["database"]]
+    legacy["sqlalchemy_uri"] = "postgresql+psycopg2://analystos_reader:XXXXXXXXXX@postgres:5432/analytics"
+    db_id, created = publisher().ensure_database("ws_unit")
+    assert (db_id, created) == (legacy["id"], False)
+    assert make_url(fake.databases[db_id]["sqlalchemy_uri"]).query["options"] == "-c role=analystos_r_ws_unit"
+
+
 def test_publish_creates_everything(router, fake):
     res = publisher().publish(make_bundle(), idempotency_key="k1")
     assert res.status == "succeeded", res.errors

@@ -236,6 +236,7 @@ class SupersetPublisher:
         self.base_url = (base_url or settings.superset_url).rstrip("/")  # type: ignore[union-attr]
         self.public_url = (public_url or self.base_url).rstrip("/")
         self.analytics_uri = analytics_sqlalchemy_uri or (settings.superset_analytics_sqlalchemy_uri if settings else "")
+        self.role_prefix = getattr(settings, "analytics_workspace_role_prefix", "analystos_r_") if settings else "analystos_r_"
         self.client = SupersetClient(
             self.base_url,
             username or (settings.superset_username if settings else "admin"),
@@ -288,10 +289,41 @@ class SupersetPublisher:
                 return int(r["id"])
         return None
 
+    def analytics_uri_for(self, workspace_id: str) -> str:
+        """The reader identity, switched at connect time to this workspace's reader role: the reader
+        login holds no grant on staged schemas, so each workspace's database sees only its own data."""
+        from sqlalchemy.engine import make_url
+
+        from analystos.connectors.naming import workspace_reader_role
+
+        url = make_url(self.analytics_uri)
+        role = workspace_reader_role(workspace_id, self.role_prefix)
+        return url.update_query_dict({"options": f"-c role={role}"}).render_as_string(hide_password=False)
+
+    def _reconcile_database_uri(self, database_id: int, workspace_id: str) -> None:
+        """Databases created before per-workspace roles still connect as the bare reader; move them over."""
+        from sqlalchemy.engine import make_url
+
+        wanted = self.analytics_uri_for(workspace_id)
+        try:
+            current = (self.client.get(f"/api/v1/database/{database_id}") or {}).get("result") or {}
+            try:
+                options = make_url(str(current.get("sqlalchemy_uri") or "")).query.get("options")
+            except Exception:  # noqa: BLE001 - unparseable: rewrite it
+                options = None
+            if options == make_url(wanted).query.get("options"):
+                return
+            self.client.put(f"/api/v1/database/{database_id}", {"sqlalchemy_uri": wanted})
+        except AnalystOSError as exc:
+            log.warning("could not move Superset database %s to the workspace reader role: %s", database_id, exc.message)
+
     def ensure_database(self, workspace_id: str) -> tuple[int, bool]:
-        """(id, created). Read-only analytics identity; not exposed in SQL Lab; no DML."""
+        """(id, created). Read-only analytics identity bound to the workspace's reader role; not
+        exposed in SQL Lab; no DML."""
         existing = self.find_database(workspace_id)
         if existing is not None:
+            if self.analytics_uri:
+                self._reconcile_database_uri(existing, workspace_id)
             return existing, False
         if not self.analytics_uri:
             raise InvalidInput("superset_analytics_sqlalchemy_uri is not configured")
@@ -299,7 +331,7 @@ class SupersetPublisher:
             "/api/v1/database/",
             {
                 "database_name": self.database_name(workspace_id),
-                "sqlalchemy_uri": self.analytics_uri,
+                "sqlalchemy_uri": self.analytics_uri_for(workspace_id),
                 "expose_in_sqllab": False,
                 "allow_dml": False,
                 "allow_ctas": False,

@@ -31,6 +31,18 @@ def _dump(v):
     return v.model_dump() if hasattr(v, "model_dump") else v
 
 
+def narrative_family(narrative_source: str | None) -> str | None:
+    """Model family that wrote the finding's wording (``llm:<provider>/<model>``), which the
+    independent reviewer must not share. Template wording has no author model, so no family is
+    excluded; guessing one would only narrow the reviewer pool for no independence gain."""
+    if not narrative_source or not narrative_source.startswith("llm:"):
+        return None
+    model = narrative_source.split(":", 1)[1].strip()
+    if not model or model == "deterministic":
+        return None
+    return family(model)
+
+
 def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
@@ -45,10 +57,12 @@ def verify_insights(ctx: RunContext) -> dict:
             ins = s.get(Insight, insight_id)
             h = s.get(Hypothesis, ins.hypothesis_id)
             exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == h.id, Experiment.role == "primary"))
-            originals = {q.id: (q.sql, q.result_hash) for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids)))}
+            originals = {q.id: (q.sql, q.result_hash, q.source_id)
+                         for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids)))}
             finding, spec_d, stat_d, narrative_source = ins.finding, dict(h.spec), dict(exp.result), ins.narrative_source
             statement = h.statement
         spec = with_constraints(AnalysisSpec.model_validate(spec_d), ctx.run.constraints)
+        primary_family = narrative_family(narrative_source)  # before any rewrite below: who wrote the claim
         run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
         alpha = ctx.policy.alpha
         # ---- Reason
@@ -76,10 +90,12 @@ def verify_insights(ctx: RunContext) -> dict:
               any(c in str(q.get("column") or "") for c in [d.get("column") for d in (spec_d.get("outcome") or {}, spec_d.get("segment") or {}) if d])]
         # ---- Verify: reproducibility
         reproducible, repro_detail = True, []
-        for qid, (sql, original_hash) in originals.items():
+        for qid, (sql, original_hash, source_id) in originals.items():
             try:
-                again = ctx.services.gateway.execute(ctx.scope, sql, actor=f"agent:{ctx.agent.id}", purpose="verification.rerun",
-                                                     run_id=ctx.run.id, task_id=ctx.task.id, use_cache=False)
+                # Same budgeted, tool-gated path as every other run statement (P4-C02); no cache, or
+                # the "re-run" would only replay the stored result.
+                rerun = ctx.run_sql(source_id or ctx.scope.asset_sources.get(spec.asset))
+                again = rerun(sql, purpose="verification.rerun", use_cache=False)
                 same = again.result_hash == original_hash
                 reproducible &= same
                 repro_detail.append(f"{qid}: {'identical' if same else 'DIFFERENT'} result hash")
@@ -100,12 +116,11 @@ def verify_insights(ctx: RunContext) -> dict:
         except AnalystOSError as exc:
             checks.append({"check": "second_method", "passed": False, "detail": f"failed: {exc.code}"})
         # ---- Verify: independent model family + JEV (recorded, not decisive)
-        primary_family = family(narrative_source.split(":", 1)[1]) if narrative_source.startswith("llm:") else "anthropic"
         review, review_model = llm_json(ctx, "verification", "verification.v1",
                                         {"claim": finding, "hypothesis": statement, "method": spec.method,
                                          "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
                                                                                    "effect_label", "highlights", "warnings")},
-                                         "checks": checks}, exclude_families=[primary_family])
+                                         "checks": checks}, exclude_families=[primary_family] if primary_family else [])
         jev = ctx.jev.probability("rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (
             "test", "n", "p_adjusted", "effect_size", "effect_label", "highlights")})[:3000]},
             "Does `evidence` support `claim` as worded, without overreach?", ctx=ctx.call_ctx())

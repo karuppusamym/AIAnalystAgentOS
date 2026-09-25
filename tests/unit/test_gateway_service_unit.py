@@ -215,4 +215,5 @@ def test_reader_identity_guard() -> None:
     with pytest.raises(InvalidInput):
         QueryGateway(Settings(analytics_reader_url="postgresql+psycopg://analystos:analystos@localhost:5432/analystos"))
     with pytest.raises(InvalidInput):
-        QueryGateway(Settings(analytics_reader_url="postgresql+psycopg://analystos_loader:loader@localhost:5432/analytics"))
+        QueryGateway(Settings(analytics_loader_url="postgresql+psycopg://analystos_loader:loader@localhost:5432/analytics",
+                              analytics_reader_url="postgresql+psycopg://analystos_loader:loader@localhost:5432/analytics"))

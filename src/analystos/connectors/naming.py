@@ -50,3 +50,11 @@ def is_safe_identifier(name: str) -> bool:
 def staging_schema_for(source_id: str) -> str:
     """Analytics-DB schema that holds a staged source's snapshot."""
     return sanitize_identifier(f"src_{source_id}", fallback="src")
+
+
+def workspace_reader_role(workspace_id: str, prefix: str = "analystos_r_") -> str:
+    """NOLOGIN analytics-DB role that may read only this workspace's staged schemas (spec v3 tenant isolation)."""
+    role = sanitize_identifier(f"{prefix}{workspace_id}", fallback="analystos_r")
+    if not role.startswith(sanitize_identifier(prefix, fallback="analystos_r")) or not is_safe_identifier(role):
+        raise ValueError(f"cannot derive a safe reader role for workspace {workspace_id!r}")
+    return role

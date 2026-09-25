@@ -167,13 +167,13 @@ def test_reader_cannot_connect_to_control_plane(dp_settings) -> None:
     engine.dispose()
 
 
-def test_gateway_never_uses_loader_or_control_identity(gateway, servicenow_scope) -> None:
+def test_gateway_never_uses_loader_or_control_identity(gateway, servicenow_scope, dp_settings) -> None:
     res = gateway.execute(servicenow_scope, "SELECT COUNT(*) AS n FROM sys_user_group", actor="user:test", use_cache=False)
     assert res.rows == [[12]]
     from analystos.gateway import engines
 
     used = {make_url(u).username for u in engines._engines}
-    assert "analystos_reader" in used
+    assert make_url(dp_settings.analytics_reader_url).username in used
 
 
 # ------------------------------------------------------------------------------ pushdown postgres

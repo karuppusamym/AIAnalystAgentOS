@@ -440,10 +440,12 @@ class ArtifactVersion(Base):
 
 
 class LineageEdge(Base):
-    """Generic provenance edge between any two persisted objects (artifact, insight, query, table...)."""
+    """Generic provenance edge between any two persisted objects (artifact, insight, query, table...).
+    Unique per workspace: name-identified nodes (``table``, ``src_x.incident``) recur across workspaces."""
 
     __tablename__ = "lineage_edge"
-    __table_args__ = (UniqueConstraint("from_type", "from_id", "relation", "to_type", "to_id"),)
+    __table_args__ = (UniqueConstraint("workspace_id", "from_type", "from_id", "relation", "to_type", "to_id",
+                                       name="uq_lineage_edge_workspace_edge"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     workspace_id: Mapped[str] = mapped_column(String(40), index=True)
     run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)

@@ -83,13 +83,13 @@ def _scope(dp_workspace, source_id: str, assets: dict[str, list[str]], dialect: 
     )
 
 
-def _stage_all(connector, loader, source_id: str, assets: list[DiscoveredAsset]) -> dict[str, dict]:
+def _stage_all(connector, loader, source_id: str, assets: list[DiscoveredAsset], workspace_id: str) -> dict[str, dict]:
     """Stage like services.sources.select_assets: the asset is rebuilt from control-plane fields only
     (source_name, name, columns), so extraction must not depend on anything else."""
     loads = {}
     for a in assets:
         stored = DiscoveredAsset(source_name=a.source_name, name=a.name, columns=a.columns, kind="api_table")
-        loads[a.name] = loader.load(source_id, stored, connector.extract(stored, max_rows=100_000))
+        loads[a.name] = loader.load(source_id, stored, connector.extract(stored, max_rows=100_000), workspace_id=workspace_id)
     return loads
 
 
@@ -223,7 +223,7 @@ def test_mysql_extract_stage_and_gateway_query(mysql_config, dp_settings, dp_ses
     assets = con.discover()
     loader = StagingLoader(dp_settings)
     try:
-        loads = _stage_all(con, loader, source_id, assets)
+        loads = _stage_all(con, loader, source_id, assets, dp_workspace["workspace_id"])
         assert loads["customer"]["row_count"] == 3 and loads["orders"]["row_count"] == 4
         assert loads["paid_orders"]["row_count"] == 3
         types = {c["name"]: c["type"] for c in loads["orders"]["columns"]}
@@ -241,7 +241,7 @@ def test_mysql_extract_stage_and_gateway_query(mysql_config, dp_settings, dp_ses
             gateway.execute(scope, "SELECT email FROM customer", actor="user:test")
         from analystos.gateway import engines
 
-        assert "analystos_reader" in {make_url(u).username for u in engines._engines}
+        assert make_url(dp_settings.analytics_reader_url).username in {make_url(u).username for u in engines._engines}
     finally:
         loader.drop_source(source_id)
         con.close()
@@ -316,7 +316,7 @@ def test_file_database_discover_stage_and_query(kind, tmp_path, dp_settings, dp_
     loader = StagingLoader(dp_settings)
     schema = staging_schema_for(source_id)
     try:
-        loads = _stage_all(con, loader, source_id, list(assets.values()))
+        loads = _stage_all(con, loader, source_id, list(assets.values()), dp_workspace["workspace_id"])
         assert loads["sales_orders"]["row_count"] == 3 and loads["big_orders"]["row_count"] == 2
         scope = _scope(dp_workspace, source_id, {f"{schema}.{a.name}": [c.name for c in a.columns] for a in assets.values()},
                        dialect_for(kind, "staged"))

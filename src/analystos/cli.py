@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts"""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +16,32 @@ def migrate() -> None:
     cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
     cfg.set_main_option("sqlalchemy.url", get_settings().database_url)
     command.upgrade(cfg, "head")
+    provision_analytics_roles()
+
+
+def provision_analytics_roles() -> dict:
+    """Self-healing step for per-workspace analytics reader roles (spec v3 tenant isolation):
+    give the loader CREATEROLE when the control-plane identity may, then move every existing staged
+    schema from the shared reader grant to its workspace's role. Best effort: an unreachable
+    analytics DB must not block a control-plane migration (loads repair their own schema)."""
+    from sqlalchemy import select
+    from sqlalchemy.engine import make_url
+
+    from analystos.core.logging import get_logger
+    from analystos.db.base import session_scope
+    from analystos.db.models import Source
+    from analystos.staging.roles import backfill, provision_loader_createrole
+
+    log = get_logger(__name__)
+    settings = get_settings()
+    try:
+        provision_loader_createrole(settings.database_url, make_url(settings.analytics_loader_url).username or "")
+        with session_scope() as s:
+            staged = [(r.id, r.workspace_id) for r in s.scalars(select(Source).where(Source.execution_mode == "staged"))]
+        return backfill(settings, staged)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("analytics role provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
+        return {"error": type(exc).__name__}
 
 
 GLOSSARY = [
@@ -85,10 +111,12 @@ def export_contracts() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
-    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts"])
+    parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api", "export-contracts"])
     args = parser.parse_args(argv)
     if args.command == "migrate":
         migrate()
+    elif args.command == "provision-analytics-roles":
+        print(json.dumps(provision_analytics_roles(), indent=2))
     elif args.command == "seed":
         seed()
     elif args.command == "worker":

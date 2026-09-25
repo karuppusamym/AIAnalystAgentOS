@@ -14,6 +14,7 @@ from analystos.contracts.bi import DatasetDef
 from analystos.core.errors import AnalystOSError, InvalidInput, SQLRejected
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset
+from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
 from analystos.runtime.context import RunContext
 
 
@@ -119,8 +120,25 @@ def build_dataset(ctx: RunContext) -> dict:
 
 
 # ------------------------------------------------------------------------------------------- ad hoc
+def _authorize_ask(ctx: Any) -> None:
+    """Ask runs model-written SQL as the SQL agent's ``sql.execute`` tool: same gate as a run."""
+    from analystos.contracts.policy import ExecutionIdentity
+    from analystos.tools.registry import ToolRuntime
+
+    identity = ExecutionIdentity(user_id=ctx.user.id, workspace_id=ctx.workspace.id, agent_id=ctx.agent.id, purpose=ASK_PURPOSE)
+    ToolRuntime(user=ctx.user, identity=identity, agent=ctx.agent).authorize("sql.execute", {"purpose": ASK_PURPOSE})
+
+
+def _check_budget(ctx: Any) -> None:
+    with session_scope() as s:
+        check_ask_budget(s, ctx.workspace.id, ctx.user.id, ctx.policy)
+
+
 def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, Any]:
-    """NL question -> governed SQL -> result. Repairs use the gateway's rejection message."""
+    """NL question -> governed SQL -> result. Repairs use the gateway's rejection message.
+    Gate and budget are checked before any model call, and the budget again before every attempt."""
+    _authorize_ask(ctx)
+    _check_budget(ctx)
     catalog = catalog_for_prompt(ctx)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", {"question": question, "dialect": dialect, "catalog": catalog})
@@ -129,8 +147,10 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2) -> dict[str, An
     attempts = []
     sql = str(data["sql"])
     for attempt in range(max_repairs + 1):
+        if attempt:
+            _check_budget(ctx)  # every attempt counts; over budget ends the loop (no repair)
         try:
-            result = ctx.services.gateway.execute(ctx.scope, sql, actor=f"agent:{ctx.agent.id}", purpose="ask",
+            result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
             return {"sql": sql, "explanation": data.get("explanation"), "chart": data.get("chart"), "model": model,
                     "attempts": attempts, "result": {"query_id": result.query_id, "columns": result.columns,
