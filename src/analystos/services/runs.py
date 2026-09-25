@@ -22,7 +22,7 @@ TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
 
 
 def create_run(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
-               autonomy_level: int | None = None) -> AnalysisRun:
+               autonomy_level: int | None = None, origin: dict | None = None) -> AnalysisRun:
     with session_scope() as s:
         require_role(s, user, workspace_id, "analyst")
         ws = get_workspace(s, workspace_id)
@@ -41,7 +41,8 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
             raise PolicyDenied("analysis run denied: " + ", ".join(decision.reasons))
         run = AnalysisRun(id=new_id("run"), workspace_id=workspace_id, objective=objective, status="NEW", autonomy_level=level,
                           policy_version=ws.policy_version, requested_by=user.id,
-                          scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={})
+                          scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={},
+                          origin=origin or {"type": "user"})
         s.add(run)
         s.flush()
         emit(workspace_id, "run.created", {"objective": objective, "autonomy_level": level, "assets": scope.assets,

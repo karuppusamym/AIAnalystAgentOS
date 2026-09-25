@@ -378,6 +378,8 @@ export interface RunSummary {
   published?: boolean;
   publication?: Publication | null;
   cancel_outcome?: string;
+  changes?: RunChanges | null;
+  report_artifact_id?: string | null;
   [k: string]: unknown;
 }
 
@@ -400,6 +402,7 @@ export interface Run {
   cost_usd: number;
   error: string | null;
   summary: RunSummary;
+  origin?: RunOrigin | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -617,6 +620,224 @@ export interface AuditEvent {
   created_at: string;
 }
 
+// ----------------------------------------------------------------------------------- continuous (phase 3)
+export type ScheduleKind = "reanalysis" | "dataset_refresh" | "report" | "monitor";
+export type ReportKind = "executive" | "operational" | "statistical" | "exception" | "weekly_summary";
+export type ReportFormat = "md" | "html" | "pdf" | "xlsx";
+
+export interface ReportSpec {
+  kind?: ReportKind | string;
+  formats?: (ReportFormat | string)[];
+}
+
+/** Kind-specific schedule config (see services/schedules.py). */
+export interface ScheduleConfig {
+  objective?: string;
+  refresh_first?: boolean;
+  publish?: "skip" | "propose";
+  report?: ReportSpec | null;
+  kind?: ReportKind | string;
+  formats?: (ReportFormat | string)[];
+  run_id?: string;
+  monitor_ids?: string[];
+  source_ids?: string[];
+  [k: string]: unknown;
+}
+
+export interface ScheduleRunResult {
+  run_id?: string;
+  previous_run_id?: string | null;
+  report_artifact_id?: string | null;
+  changes?: { new?: number; persisting?: number; changed?: number; resolved?: number };
+  [k: string]: unknown;
+}
+
+export interface ScheduleRun {
+  id: string;
+  schedule_id: string;
+  workspace_id: string;
+  fire_key: string;
+  scheduled_for: string;
+  trigger: string;
+  status: string;
+  result: ScheduleRunResult;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface Schedule {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: ScheduleKind | string;
+  cron: string;
+  timezone: string;
+  config: ScheduleConfig;
+  enabled: boolean;
+  owner_id: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  created_at: string;
+  recent_runs?: ScheduleRun[];
+}
+
+export interface ScheduleInput {
+  name: string;
+  kind: string;
+  cron: string;
+  timezone: string;
+  config: ScheduleConfig;
+}
+
+export type MonitorKind = "metric_threshold" | "metric_drift" | "change_point" | "data_quality";
+
+export interface MonitorConfig {
+  metric?: string;
+  grain?: "day" | "week" | "month";
+  op?: ">" | ">=" | "<" | "<=";
+  value?: number;
+  severity?: string;
+  lookback?: number;
+  z_threshold?: number;
+  recent_periods?: number;
+  assets?: string[];
+  [k: string]: unknown;
+}
+
+export interface MonitorResult {
+  alert?: boolean;
+  message?: string;
+  reason?: string;
+  error?: string;
+  period?: string;
+  value?: number;
+  baseline_median?: number | null;
+  z?: number | null;
+  threshold?: string;
+  series_tail?: [string, number][] | null;
+  alert_id?: string | null;
+  [k: string]: unknown;
+}
+
+export interface Monitor {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: MonitorKind | string;
+  config: MonitorConfig;
+  enabled: boolean;
+  auto_investigate: boolean;
+  state: string;
+  last_evaluated_at: string | null;
+  last_result: MonitorResult;
+  created_by: string;
+  created_at: string;
+}
+
+export interface MonitorSeries {
+  label: string;
+  expression?: string;
+  grain: string;
+  points: [string, number][];
+  query_id?: string;
+}
+
+export interface Alert {
+  id: string;
+  workspace_id: string;
+  monitor_id: string | null;
+  severity: string;
+  title: string;
+  message: string;
+  data: Dict & { triage?: { p_material?: number; model?: string } | null };
+  dedupe_key: string;
+  status: string;
+  investigation_run_id: string | null;
+  acknowledged_by: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface NotificationLink {
+  type?: "alert" | "artifact" | "run" | "schedule" | string;
+  id?: string;
+}
+
+export interface AppNotification {
+  id: number;
+  workspace_id: string;
+  user_id: string | null;
+  kind: string;
+  title: string;
+  body: string;
+  link: NotificationLink;
+  read_by: string[];
+  read: boolean;
+  created_at: string;
+}
+
+export interface RunOrigin {
+  type?: "user" | "schedule" | "alert" | string;
+  schedule_id?: string;
+  schedule_run_id?: string;
+  previous_run_id?: string | null;
+  alert_id?: string;
+  publish?: "skip" | "propose" | string;
+  automatic?: boolean;
+  [k: string]: unknown;
+}
+
+export interface ChangedFinding {
+  code?: string;
+  title?: string;
+  finding?: string;
+  id?: string;
+  effect?: number | null;
+  previous_effect?: number | null;
+  [k: string]: unknown;
+}
+
+export interface MetricDelta {
+  name: string;
+  value: number | null;
+  previous_value: number | null;
+  pct_change: number | null;
+}
+
+export interface RunChanges {
+  previous_run_id?: string;
+  new?: ChangedFinding[];
+  persisting?: ChangedFinding[];
+  changed?: ChangedFinding[];
+  resolved?: ChangedFinding[];
+  metrics?: MetricDelta[];
+}
+
+export interface ReportFile {
+  sha256: string;
+  bytes: number;
+  mime: string;
+  ext: string;
+  path?: string;
+}
+
+export interface ReportContent {
+  kind?: string;
+  title?: string;
+  report_data_hash?: string;
+  files?: Record<string, ReportFile>;
+  insights?: number;
+  metrics?: number;
+  alerts?: number;
+  [k: string]: unknown;
+}
+
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string;
+}
+
 // ----------------------------------------------------------------------------------- errors
 export class ApiError extends Error {
   readonly status: number;
@@ -762,6 +983,55 @@ function qs(params: Record<string, string | number | undefined | null>): string 
   return parts.length ? `?${parts.join("&")}` : "";
 }
 
+/** Filename from a Content-Disposition header (attachment; filename="x.pdf"). */
+export function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      /* fall through */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : fallback;
+}
+
+/** GET a binary file with the bearer header (an <a href> cannot send it). */
+export async function downloadFile(path: string, fallbackName: string): Promise<DownloadedFile> {
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}${path}`, { method: "GET", headers: { ...authHeaders() } });
+  } catch (err) {
+    throw new ApiError(0, "network_error", `API unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!resp.ok) {
+    const err = await parseError(resp);
+    if (resp.status === 401) unauthorizedHandler?.();
+    throw err;
+  }
+  const blob = await resp.blob();
+  return { blob, filename: filenameFromDisposition(resp.headers.get("Content-Disposition"), fallbackName) };
+}
+
+/** Hand a downloaded blob to the browser as a file save, via a short-lived object URL. */
+export function saveBlob(file: DownloadedFile): void {
+  const url = URL.createObjectURL(file.blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = file.filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+}
+
 // ----------------------------------------------------------------------------------- endpoints
 export const api = {
   // auth
@@ -833,6 +1103,35 @@ export const api = {
   reject: (id: string, reason?: string) => post<Approval>(`/approvals/${e(id)}/reject`, { reason: reason || null }),
   rollback: (publicationId: string) =>
     post<{ removed: unknown; run_id: string | null }>(`/publications/${e(publicationId)}/rollback`),
+
+  // schedules (§37)
+  listSchedules: (ws: string) => get<Schedule[]>(`/workspaces/${e(ws)}/schedules`),
+  createSchedule: (ws: string, body: ScheduleInput) => post<Schedule>(`/workspaces/${e(ws)}/schedules`, body),
+  updateSchedule: (id: string, body: Partial<Omit<ScheduleInput, "kind">> & { enabled?: boolean }) =>
+    patch<Schedule>(`/schedules/${e(id)}`, body),
+  deleteSchedule: (id: string) => del<{ deleted: boolean }>(`/schedules/${e(id)}`),
+  runScheduleNow: (id: string) => post<ScheduleRun>(`/schedules/${e(id)}/run`),
+
+  // monitors & alerts (§38)
+  listMonitors: (ws: string) => get<Monitor[]>(`/workspaces/${e(ws)}/monitors`),
+  createMonitor: (ws: string, body: { name: string; kind: string; config: MonitorConfig; auto_investigate: boolean }) =>
+    post<Monitor>(`/workspaces/${e(ws)}/monitors`, body),
+  updateMonitor: (id: string, body: { enabled?: boolean; auto_investigate?: boolean; config?: MonitorConfig; name?: string }) =>
+    patch<Monitor>(`/monitors/${e(id)}`, body),
+  evaluateMonitor: (id: string) => post<MonitorResult>(`/monitors/${e(id)}/evaluate`),
+  monitorSeries: (id: string) => get<MonitorSeries>(`/monitors/${e(id)}/series`),
+  listAlerts: (ws: string, status?: string) => get<Alert[]>(`/workspaces/${e(ws)}/alerts${qs({ status })}`),
+  alertAction: (id: string, action: "acknowledge" | "resolve") => post<Alert>(`/alerts/${e(id)}/${action}`),
+  investigateAlert: (id: string) => post<{ run_id: string | null }>(`/alerts/${e(id)}/investigate`),
+
+  // notifications
+  notifications: (unread = false) => get<AppNotification[]>(`/notifications${qs({ unread: unread ? "true" : undefined })}`),
+  markNotificationsRead: (ids: number[]) => post<{ marked: number }>("/notifications/read", { ids }),
+
+  // reports (§43)
+  createReport: (ws: string, body: { run_id?: string | null; kind: string; formats: string[] }) =>
+    post<Artifact>(`/workspaces/${e(ws)}/reports`, { ...body, run_id: body.run_id || null }),
+  downloadReport: (id: string, format: string) => downloadFile(`/artifacts/${e(id)}/download${qs({ format })}`, `report.${format}`),
 
   // admin / registry
   agents: () => get<AgentSpec[]>("/agents"),

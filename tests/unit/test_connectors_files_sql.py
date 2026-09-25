@@ -248,3 +248,12 @@ def test_registry_builds_by_kind(tmp_path: Path) -> None:
 )
 def test_arrow_to_postgres_types(dtype: pa.DataType, pg: str) -> None:
     assert pg_type_for(dtype) == pg
+
+
+def test_corrupt_file_is_skipped_not_fatal(upload_dir: Path) -> None:
+    from analystos.connectors.csv_file import CSVFileConnector
+
+    con = CSVFileConnector({"path": str(upload_dir)}, allowed_dir=upload_dir.parent)
+    names = {a.source_name for a in con.discover()}
+    assert "notes.xlsx" not in names and names
+    assert any(s["file"] == "notes.xlsx" for s in con.skipped)

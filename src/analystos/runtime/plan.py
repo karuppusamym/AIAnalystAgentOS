@@ -26,7 +26,7 @@ BASE_STEPS: list[tuple[str, str, str, list[str], bool]] = [
     ("visualize", "visualization", "Design charts and executive + operational dashboards", ["semantic"], False),
     ("publish_request", "publisher", "Governance review and publication approval request", ["visualize"], False),
     ("publish", "publisher", "Publish approved bundle to the BI destination", ["publish_request"], True),
-    ("finalize", "supervisor", "Consolidate results, write episode memory and lineage graph", ["publish"], False),
+    ("finalize", "supervisor", "Consolidate results, write episode memory and lineage graph", ["visualize", "publish"], False),
 ]
 
 REPLAN_RESET = {"hypotheses", "insights", "verify", "dataset", "semantic", "visualize", "publish_request", "publish", "finalize"}

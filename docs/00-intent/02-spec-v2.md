@@ -63,7 +63,11 @@ publication and evidence inspectable for every KPI and finding.
   autonomy level including 4. Level 4 is recorded but cannot remove this gate in this release.
 * **Superset only** as a live BI destination (`preview` destination when unreachable). Power BI is Phase 2.
 * **Local identity (JWT)** with an OIDC-shaped token; SSO is Phase 4. Workspace roles are enforced now.
-* **Scheduling, monitoring, report export** are Phase 3 and return an explicit "not available" error.
+* **Scheduling, monitoring and reports (Phase 3)** were added in increment 2 (ADR-0009): scheduled
+  dataset refresh and re-analysis with a claim-based "what changed" diff, narrative/PDF/Excel
+  reports, metric threshold/drift/change-point and data-quality monitors, alerts with JEV triage,
+  policy-gated automatic investigations, in-app notifications. External delivery (email/chat/
+  webhook) remains out of scope until it can go through the approval model.
 
 ### 3.3 What v2 changes relative to v1, and why
 
@@ -226,6 +230,7 @@ Decisions API, which returns typed answers with probabilities:
 | `chart_selection` | `choice` among rule-valid types | override chart default when p ≥ 0.6 | presentation only |
 | `rev_second_opinion` | `noul` | P(evidence supports claim as worded) | confidence only |
 | `stop_check` | `noul` | P(objective answered) ≥ 0.85 stops follow-up rounds | early stop only |
+| `alert_triage` | `noul` | P(monitored change is material) ≥ 0.8 raises alert severity | **escalate only** |
 
 Only trusted text enters JEV `state` (objective, statements, computed statistics, registry
 descriptions) — never raw result rows. Every call is logged with latency and cost; when JEV is

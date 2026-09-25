@@ -93,9 +93,29 @@ def finalize(ctx: RunContext) -> dict:
         link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", ("artifact", art.id), run_id=ctx.run.id)
         for i in facts:
             link(s, ctx.workspace.id, ("artifact", art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
+        origin = run.origin or {}
+        if origin.get("previous_run_id"):
+            from analystos.services.changes import diff_runs
+
+            changes = diff_runs(s, origin["previous_run_id"], run.id)
+            run.summary = {**run.summary, "changes": changes}
+            ctx.say(f"Compared with run {origin['previous_run_id']}: {len(changes['new'])} new, {len(changes['persisting'])} persisting, "
+                    f"{len(changes['changed'])} changed, {len(changes['resolved'])} resolved findings.", kind="decision")
         graph = project_workspace(s, ctx.workspace.id)
         run.summary = {**run.summary, "graph_projection": graph}
         emit(ctx.workspace.id, "analysis.completed", {"verified_insights": len(facts), "published": bool(published)},
              run_id=ctx.run.id, session=s)
         run.finished_at = utcnow()
-    return {"verified_insights": len(facts), "published": bool(published), "graph": graph}
+    report_id = None
+    report_cfg = (ctx.run.origin or {}).get("report")
+    if report_cfg:
+        from analystos.services.reports import generate_report
+
+        with session_scope() as s:
+            art = generate_report(s, ctx.run.id, kind=report_cfg.get("kind", "weekly_summary"),
+                                  formats=tuple(report_cfg.get("formats", ["html", "pdf", "xlsx"])), actor=f"agent:{ctx.agent.id}",
+                                  finalizing=True)
+            report_id = art.id
+            run = s.get(AnalysisRun, ctx.run.id)
+            run.summary = {**(run.summary or {}), "report_artifact_id": report_id}
+    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id}

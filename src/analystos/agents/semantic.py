@@ -66,12 +66,30 @@ def _valid_expression(expr: str, columns: set[str], dialect: str) -> str | None:
     return None
 
 
+def previous_metrics(ctx: RunContext) -> list[MetricDef]:
+    previous = (ctx.run.origin or {}).get("previous_run_id")
+    if not previous:
+        return []
+    from sqlalchemy import select
+
+    from analystos.db.models import Artifact
+
+    with session_scope() as s:
+        out = []
+        for a in s.scalars(select(Artifact).where(Artifact.run_id == previous, Artifact.type == "metric").order_by(Artifact.created_at)):
+            m = MetricDef.model_validate(a.content)
+            out.append(m.model_copy(update={"status": "proposed", "validation": {}}))
+        return out
+
+
 def define_metrics(ctx: RunContext) -> dict:
     ds, content = dataset_def(ctx.run.id)
     dialect = content.get("dialect", "postgres")
     columns = {c["name"] for c in ds.columns}
-    candidates = default_metrics(ds)
-    data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v1",
+    # Recurring analysis keeps KPI definitions stable: previous validated metrics come first, so
+    # equivalent proposals de-duplicate onto the existing names and deltas compare like with like.
+    candidates = previous_metrics(ctx) + default_metrics(ds)
+    data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2",
                            {"objective": ctx.run.objective, "dataset_columns": ds.columns, "existing": [m.name for m in candidates]})
     for m in (data or {}).get("metrics", []) if isinstance(data, dict) else []:
         try:
@@ -94,6 +112,9 @@ def define_metrics(ctx: RunContext) -> dict:
             value = r.rows[0][0]
         except AnalystOSError as exc:
             rejected.append({"metric": m.name, "reason": f"execution failed: {exc.message[:200]}"})
+            continue
+        if m.format == "percent" and isinstance(value, (int, float)) and not 0 <= value <= 1:
+            rejected.append({"metric": m.name, "reason": f"percent metrics must be fractions in [0, 1]; got {value}"})
             continue
         seen[norm] = m.name
         m.validation = {"value": value, "query_id": r.query_id, "validated_by": "execution"}

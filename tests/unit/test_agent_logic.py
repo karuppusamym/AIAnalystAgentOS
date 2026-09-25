@@ -115,3 +115,20 @@ def test_template_keeps_acronyms():
     stat = {"highlights": {"top_segment": "3+", "top_rate": 0.3, "baseline_segment": "1", "baseline_rate": 0.1, "rate_ratio": 3.0}}
     title, _ = template_text(stat, spec(outcome={"type": "equals", "column": "made_sla", "value": False, "label": "missed SLA"}).model_dump())
     assert title.startswith("Missed SLA")
+
+
+def test_finalize_waits_for_the_analysis_even_when_publication_is_skipped():
+    p = base_plan("objective", autonomy_level=3)
+    finalize = next(s for s in p["steps"] if s["key"] == "finalize")
+    assert "visualize" in finalize["depends_on"]
+
+
+def test_claim_identity_distinguishes_driver_sets_and_filters():
+    from analystos.services.changes import claim_key
+
+    dm = lambda cols, filters=(): {"method": "driver_model", "outcome": {"column": "made_sla"},  # noqa: E731
+                                   "drivers": [{"column": c} for c in cols], "filters": list(filters)}
+    hl = {"top_driver": "reassignment_count"}
+    assert claim_key(dm(["a", "b"]), hl) == claim_key(dm(["b", "a"]), hl)
+    assert claim_key(dm(["a", "b"]), hl) != claim_key(dm(["a", "c"]), hl)
+    assert claim_key(dm(["a"], [{"column": "priority", "op": "=", "value": 1}]), hl) != claim_key(dm(["a"]), hl)

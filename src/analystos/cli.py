@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | seed | worker | api | demo-servicenow | export-contracts"""
+"""analystos CLI: migrate | seed | worker | scheduler | api | export-contracts"""
 from __future__ import annotations
 
 import argparse
@@ -84,7 +84,7 @@ def export_contracts() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
-    parser.add_argument("command", choices=["migrate", "seed", "worker", "api", "export-contracts"])
+    parser.add_argument("command", choices=["migrate", "seed", "worker", "scheduler", "api", "export-contracts"])
     args = parser.parse_args(argv)
     if args.command == "migrate":
         migrate()
@@ -94,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         from analystos.workflows.worker import run_worker
 
         run_worker()
+    elif args.command == "scheduler":
+        from analystos.services.schedules import run_scheduler
+
+        run_scheduler()
     elif args.command == "api":
         import uvicorn
 

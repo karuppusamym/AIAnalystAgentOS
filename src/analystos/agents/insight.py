@@ -139,15 +139,18 @@ def build_insights(ctx: RunContext) -> dict:
             elif h.status == "supported":
                 candidates.append((h.id, h.code, h.statement, dict(h.spec), dict(res), eid, list(exps[eid].query_ids), h.priority_score))
     candidates.sort(key=lambda c: (-(c[7] or 0), c[4].get("p_adjusted") or 1))
-    # One finding per (outcome, segment, top segment): drill-downs that restate a parent finding are merged.
+    # One finding per claim (method, outcome, segment/drivers, filters, top group): drill-downs that restate a
+    # parent are merged. Carried-forward claims win ties so recurring analyses stay comparable.
+    from analystos.services.changes import claim_key
+
+    with session_scope() as s:
+        carried = {h.id for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == ctx.run.id, Hypothesis.origin == "carried"))}
     seen_claims: dict[tuple, str] = {}
     unique = []
-    for c in sorted(candidates, key=lambda c: (len(c[3].get("filters") or []), -(c[4].get("effect_size") or 0))):
-        spec, stat = c[3], c[4]
-        claim = (spec.get("method"), (spec.get("outcome") or {}).get("column"), (spec.get("segment") or {}).get("column"),
-                 str((stat.get("highlights") or {}).get("top_segment")))
+    for c in sorted(candidates, key=lambda c: (c[0] not in carried, len(c[3].get("filters") or []), -(c[4].get("effect_size") or 0))):
+        claim = claim_key(c[3], c[4].get("highlights"))
         if claim in seen_claims:
-            ctx.say(f"{c[1]} restates the finding of {seen_claims[claim]} (same outcome, segment and top group); merged.", kind="decision")
+            ctx.say(f"{c[1]} restates the finding of {seen_claims[claim]} (same claim); merged.", kind="decision")
             continue
         seen_claims[claim] = c[1]
         unique.append(c)

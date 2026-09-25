@@ -291,10 +291,15 @@ def generate_hypotheses(ctx: RunContext) -> dict:
                "constraints": ctx.run.constraints, "catalog": catalog_for_prompt(ctx),
                "resolved_terms": context.get("resolved_terms"),
                "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
-    data, model = llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
     seen: set[str] = set()
+    # Recurring analysis: re-test every previously verified claim with the identical spec first, so
+    # "resolved" means the evidence changed — not that a different question was asked this time.
+    carried, rejected = _accept(ctx, carried_forward(ctx), types, origin="carried", seen=seen)
+    payload["already_testing"] = [c["statement"] for c in carried]
+    data, model = llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
     llm_props = [{**p, "origin": "agent"} for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
-    accepted, rejected = _accept(ctx, llm_props, types, origin="agent", seen=seen)
+    accepted, rejected_llm = _accept(ctx, llm_props, types, origin="agent", seen=seen)
+    rejected += rejected_llm
     source = f"llm:{model}" if llm_props else f"heuristic ({model})"
     if len(accepted) < 4:
         more, rej2 = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
@@ -304,16 +309,34 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     for r in rejected:
         ctx.say(f"Dropped proposal '{(r.get('statement') or '')[:100]}': {r['reason']}", kind="decision")
     by = _prioritise(ctx, accepted)
-    accepted = diverse_top(accepted, MAX_ROUND1)
+    accepted = diverse_top(accepted, max(MAX_ROUND1 - len(carried), 3))
+    for c in carried:
+        c.update(priority="high", priority_score=1.0, priority_by="carried_forward")
+    accepted = carried + accepted
     keys = _persist(ctx, accepted, iteration=1, round_key="hypotheses")
     with session_scope() as s:
         run = s.get(AnalysisRun, ctx.run.id, with_for_update=True)
         if ctx.policy.max_iterations > 1:
             add_task(s, run, key="followups:1", agent="investigator", title="Review results and propose follow-up hypotheses (round 2)",
                      depends_on=["test:*"], optional=True, input={"round": 1}, seq=90, from_version=ctx.task.plan_version)
-    ctx.say(f"Proposed {len(accepted)} hypotheses (source: {source}; priority by {by}); {len(rejected)} proposals rejected by validation.",
+    ctx.say(f"Proposed {len(accepted)} hypotheses ({len(carried)} carried forward from the previous run; source: {source}; "
+            f"priority by {by}); {len(rejected)} proposals rejected by validation.",
             kind="decision", data={"questions": (data or {}).get("questions") if isinstance(data, dict) else None})
     return {"hypotheses": len(accepted), "tasks": keys, "rejected": rejected, "source": source, "priority_by": by}
+
+
+def carried_forward(ctx: RunContext) -> list[dict]:
+    """Verified claims of the previous run of the same recurring analysis, as proposals."""
+    previous = (ctx.run.origin or {}).get("previous_run_id")
+    if not previous:
+        return []
+    from analystos.db.models import Insight
+
+    with session_scope() as s:
+        rows = s.execute(select(Hypothesis, Insight.code).join(Insight, Insight.hypothesis_id == Hypothesis.id)
+                         .where(Insight.run_id == previous, Insight.status == "verified")).all()
+        return [{"question": h.question, "statement": h.statement, "rationale": f"Re-test of {code} from run {previous}",
+                 "spec": {k: v for k, v in h.spec.items()}, "priority": "high", "origin": "carried"} for h, code in rows]
 
 
 def _results_summary(run_id: str) -> list[dict]:

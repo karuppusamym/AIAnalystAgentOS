@@ -43,6 +43,12 @@ describe.skipIf(!LIVE)("live API smoke", () => {
         errors.push(...await visit(`/w/${ws.id}/runs/${runs[0].id}`, /Investigation/));
         errors.push(...await visit(`/w/${ws.id}/runs/${runs[0].id}/console`, /Agent console/));
       }
+      errors.push(...await visit(`/w/${ws.id}/schedules`, /Schedules/));
+      errors.push(...await visit(`/w/${ws.id}/monitoring`, /Monitors/));
+      errors.push(...await visit(`/w/${ws.id}/monitoring?tab=alerts`, /Alerts/));
+      errors.push(...await visit(`/w/${ws.id}/reports`, /Generate report/));
+      const scheduled = runs.find((r) => r.origin?.type === "schedule" && r.status === "COMPLETED");
+      if (scheduled) errors.push(...await visit(`/w/${ws.id}/runs/${scheduled.id}`, /What changed since the previous run/));
       const insights = await api.listInsights(ws.id);
       if (insights[0]) errors.push(...await visit(`/w/${ws.id}/insights/${insights[0].id}`, /REV verification/));
       const dash = await api.listArtifacts(ws.id, { type: "dashboard" });

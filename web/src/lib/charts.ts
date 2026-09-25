@@ -269,3 +269,65 @@ export function guessChart(columns: string[], rows: unknown[][], hint?: string |
   }
   return null;
 }
+
+// ------------------------------------------------------------------------------------ monitors
+export interface MonitorOverlay {
+  /** Drift monitors: median of the lookback window before the latest point. */
+  baselineMedian?: number | null;
+  /** Threshold monitors: the configured bound. */
+  threshold?: { op: string; value: number } | null;
+  /** Colour the latest point as alerting. */
+  alerting?: boolean;
+}
+
+export function median(values: number[]): number | null {
+  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+/** The drift baseline as the evaluator computes it: median of the `lookback` points before the latest. */
+export function driftBaseline(points: [string, number][], lookback = 8): number | null {
+  if (points.length < 2) return null;
+  return median(points.slice(Math.max(0, points.length - 1 - lookback), -1).map(([, v]) => v));
+}
+
+/**
+ * Line chart for a monitored metric series: the latest period is marked, plus the drift baseline
+ * median or the threshold as a dashed reference line. `compact` renders a sparkline without axes.
+ */
+export function buildMonitorOption(points: [string, number][], overlay: MonitorOverlay = {}, palette: ChartPalette = LIGHT,
+  compact = false) {
+  if (!points.length) return null;
+  const p = palette;
+  const b = base(p);
+  const ax = axisCommon(p);
+  const [lastX, lastY] = points[points.length - 1];
+  const markColor = overlay.alerting ? p.series[7] : p.series[0];
+  const lines: object[] = [];
+  if (overlay.baselineMedian !== null && overlay.baselineMedian !== undefined && Number.isFinite(overlay.baselineMedian)) {
+    lines.push({ name: "baseline median", yAxis: overlay.baselineMedian, label: { formatter: "baseline median", color: p.textMuted, fontSize: 10, position: "insideEndTop" } });
+  }
+  if (overlay.threshold && Number.isFinite(overlay.threshold.value)) {
+    lines.push({ name: "threshold", yAxis: overlay.threshold.value,
+      label: { formatter: `threshold ${overlay.threshold.op} ${overlay.threshold.value}`, color: p.textMuted, fontSize: 10, position: "insideEndTop" } });
+  }
+  return {
+    ...b,
+    grid: compact ? { left: 4, right: 4, top: 6, bottom: 4, containLabel: false } : b.grid,
+    tooltip: { ...b.tooltip, trigger: "axis" },
+    xAxis: { type: "category", data: points.map(([x]) => label(x)), boundaryGap: false, show: !compact, ...ax, splitLine: { show: false } },
+    yAxis: { type: "value", scale: true, show: !compact, ...ax },
+    series: [{
+      type: "line", name: "value", data: points.map(([, v]) => v), showSymbol: false, lineStyle: { width: compact ? 1.5 : 2, color: p.series[0] },
+      itemStyle: { color: p.series[0] },
+      markPoint: {
+        symbol: "circle", symbolSize: compact ? 7 : 10,
+        data: [{ name: "latest", coord: [label(lastX), lastY], itemStyle: { color: markColor, borderColor: p.surface, borderWidth: 2 },
+          label: { show: false } }],
+      },
+      ...(lines.length ? { markLine: { symbol: "none", silent: true, lineStyle: { type: "dashed", color: p.textMuted, width: 1 }, data: lines } } : {}),
+    }],
+  };
+}

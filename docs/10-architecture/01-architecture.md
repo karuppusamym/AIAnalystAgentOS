@@ -29,7 +29,8 @@ runtime flows. Decisions are recorded as ADRs in [`adr/`](adr/).
                           └── Superset (reads analytics as analystos_reader)      ServiceNow / PG / SQL Server / files
 ```
 
-Process roles share one image (ADR-0001). The API never runs agent work in the request; it writes
+Process roles share one image (ADR-0001): `api`, `worker` (Temporal) and `scheduler`
+(claim-then-execute cron loop, ADR-0009). The API never runs agent work in the request; it writes
 state and signals the workflow.
 
 ## Component view
@@ -97,4 +98,7 @@ sources (`source`, `source_asset`, `source_column`, `relationship`); memory (`co
 | Model Router | `llm/` |
 | Policy / Governance | `governance/` |
 | Observability / Cost | `model_call`, `tool_execution`, `query_execution`, `/api/admin/usage`, `/api/health` |
-| Scheduler / Monitoring / Notification | Phase 3 (not built; endpoints return an explicit error) |
+| Scheduler | `services/schedules.py` (`analystos scheduler`) |
+| Monitoring Engine | `services/monitors.py` |
+| Notification Service | `services/notifications.py` (in-app) |
+| Reporting | `services/reports.py`, `reports/` (md/html/pdf/xlsx renderers) |

@@ -9,8 +9,11 @@ import { ConsolePage } from "./pages/Console";
 import { GovernancePage } from "./pages/Governance";
 import { InsightsPage } from "./pages/Insights";
 import { LoginPage } from "./pages/Login";
+import { MonitoringPage } from "./pages/Monitoring";
+import { ReportsPage } from "./pages/Reports";
 import { RunsPage } from "./pages/Runs";
 import { RunViewPage } from "./pages/RunView";
+import { SchedulesPage } from "./pages/Schedules";
 import { SourcesPage } from "./pages/Sources";
 import { StudioPage } from "./pages/Studio";
 import { WorkspaceHomePage } from "./pages/WorkspaceHome";
@@ -39,6 +42,9 @@ export function AppRoutes() {
           <Route path="insights" element={<InsightsPage />} />
           <Route path="insights/:insightId" element={<InsightsPage />} />
           <Route path="studio" element={<StudioPage />} />
+          <Route path="schedules" element={<SchedulesPage />} />
+          <Route path="monitoring" element={<MonitoringPage />} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route path="ask" element={<AskPage />} />
           <Route path="governance" element={<GovernancePage />} />
         </Route>

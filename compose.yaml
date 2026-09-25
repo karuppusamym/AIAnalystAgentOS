@@ -98,6 +98,12 @@ services:
     depends_on: [api, temporal]
     command: ["analystos", "worker"]
 
+  scheduler:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile}
+    environment: *app-env
+    depends_on: [api]
+    command: ["analystos", "scheduler"]
+
   web:
     build: {context: ./web, dockerfile: Dockerfile}
     depends_on: [api]

@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from analystos.api.routers import admin, analysis, artifacts, auth, workspaces
+from analystos.api.routers import admin, analysis, artifacts, auth, continuous, workspaces
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -19,7 +19,7 @@ app = FastAPI(title="Context2AI AnalystOS", version="0.1.0",
               description="Autonomous, governed data & analytics agent operating system (Phase 1 MVP).")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router):
+for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router):
     app.include_router(r)
 
 

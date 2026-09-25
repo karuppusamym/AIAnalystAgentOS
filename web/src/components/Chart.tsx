@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as echarts from "echarts/core";
 import { BarChart, HeatmapChart, LineChart, PieChart, ScatterChart, TreemapChart } from "echarts/charts";
-import { GridComponent, LegendComponent, TitleComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
+import { GridComponent, LegendComponent, MarkLineComponent, MarkPointComponent, TitleComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { buildOption, DARK, formatKpi, kpiValue, LIGHT, type Preview } from "../lib/charts";
 import { usePrefersDark } from "../lib/hooks";
 import { DataTable, EmptyState } from "./ui";
 
 echarts.use([BarChart, HeatmapChart, LineChart, PieChart, ScatterChart, TreemapChart, GridComponent, LegendComponent,
-  TitleComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
+  MarkLineComponent, MarkPointComponent, TitleComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
 
 let canvasOk: boolean | null = null;
 /** False where a 2D canvas is unavailable (e.g. jsdom): charts then fall back to their table. */
@@ -23,7 +23,7 @@ export function canvasSupported(): boolean {
   return canvasOk;
 }
 
-function EChart({ option, height, label }: { option: object; height: number | string; label: string }) {
+export function EChart({ option, height, label }: { option: object; height: number | string; label: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const inst = useRef<echarts.ECharts | null>(null);
 

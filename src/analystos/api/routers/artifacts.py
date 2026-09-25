@@ -164,7 +164,8 @@ def publish_dashboard(artifact_id: str, user: User = Depends(current_user), sess
 
 @router.post("/dashboards/{artifact_id}/schedule")
 def schedule_dashboard(artifact_id: str, user: User = Depends(current_user)):
-    raise InvalidInput("scheduling is Phase 3 (SCH-001..005) and not available in this release")
+    raise InvalidInput("create a schedule with POST /api/workspaces/{id}/schedules (kind 'reanalysis' refreshes findings and "
+                       "reports; publication of a refreshed dashboard always goes through a new approval)")
 
 
 @router.post("/publications/{publication_id}/rollback")

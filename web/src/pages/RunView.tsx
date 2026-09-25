@@ -1,10 +1,11 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, subscribeRunEvents, type FeedbackResponse, type Publication, type RunEvent, type RunTask } from "../api";
+import { api, subscribeRunEvents, type FeedbackResponse, type Publication, type RunEvent, type RunOrigin, type RunTask } from "../api";
 import { ApprovalsPanel } from "../components/ApprovalsPanel";
+import { ChangesPanel } from "../components/ChangesPanel";
 import { InvestigationTree } from "../components/InvestigationTree";
 import { Markdown } from "../components/Markdown";
-import { Card, EmptyState, ErrorBox, Field, JsonView, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, JsonView, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
 import { durationBetween, fmtDate, fmtPct, fmtTime, fmtUsd, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { TERMINAL_RUN } from "../lib/status";
@@ -72,7 +73,7 @@ export function RunViewPage() {
       <PageHeader
         title={<span className="run-title">{r.objective}</span>}
         subtitle={<>
-          <StatusBadge status={r.status} /> <span className="muted small">run <code>{r.id}</code> · L{r.autonomy_level} · plan v{r.plan_version}
+          <StatusBadge status={r.status} /> <OriginBadge wsId={wsId} origin={r.origin} /> <span className="muted small">run <code>{r.id}</code> · L{r.autonomy_level} · plan v{r.plan_version}
             {r.plan_hash ? <> (<code title={r.plan_hash}>{shortHash(r.plan_hash, 10)}</code>)</> : null} · iteration {r.iteration}</span>
         </>}
         actions={<>
@@ -98,6 +99,11 @@ export function RunViewPage() {
           ["Findings", `${r.insights.filter((i) => i.verified).length} verified / ${r.insights.length}`],
         ]} />
       </div>
+
+      {r.summary?.changes && <ChangesPanel changes={r.summary.changes} wsId={wsId} reportArtifactId={r.summary.report_artifact_id} />}
+      {!r.summary?.changes && r.summary?.report_artifact_id && (
+        <Notice tone="info">A report was generated for this run: <Link to={`/w/${wsId}/reports?artifact=${r.summary.report_artifact_id}`}>open in Reports</Link>.</Notice>
+      )}
 
       {(r.summary?.summary_markdown || pub) && (
         <Card title="Result summary" actions={r.summary?.summary_source ? <span className="muted small">source: {r.summary.summary_source}</span> : undefined}>
@@ -146,6 +152,30 @@ export function RunViewPage() {
       </div>
     </div>
   );
+}
+
+/** Where a run came from: a schedule firing or an alert investigation (user runs show nothing). */
+export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin | null | undefined }) {
+  if (!origin || !origin.type || origin.type === "user") return null;
+  if (origin.type === "schedule") {
+    return (
+      <span className="origin">
+        <Tag tone="info">scheduled</Tag>{" "}
+        {origin.schedule_id && <Link className="small" to={`/w/${wsId}/schedules?schedule=${origin.schedule_id}`}>schedule</Link>}
+        {origin.previous_run_id && <> · <Link className="small" to={`/w/${wsId}/runs/${origin.previous_run_id}`}>previous run</Link></>}
+        {origin.publish && <span className="muted small"> · publish: {origin.publish}</span>}
+      </span>
+    );
+  }
+  if (origin.type === "alert") {
+    return (
+      <span className="origin">
+        <Tag tone="warning">{origin.automatic ? "alert investigation (automatic)" : "alert investigation"}</Tag>{" "}
+        {origin.alert_id && <Link className="small" to={`/w/${wsId}/monitoring?tab=alerts&alert=${origin.alert_id}`}>alert</Link>}
+      </span>
+    );
+  }
+  return <Tag>{origin.type}</Tag>;
 }
 
 function StreamIndicator({ state, error }: { state: StreamState; error?: string }) {

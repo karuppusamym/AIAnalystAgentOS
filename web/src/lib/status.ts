@@ -8,23 +8,29 @@ const TONES: Record<string, Tone> = {
   // success
   completed: "success", ok: "success", verified: "success", supported: "success", approved: "success",
   executed: "success", succeeded: "success", published: "success", ready: "success", allow: "success",
-  final: "success", discovered: "info", validated: "success",
+  final: "success", discovered: "info", validated: "success", resolved: "success",
   // in progress
   running: "running", planning: "running", testing: "running", started: "running", in_progress: "running",
   // needs attention
   waiting_user: "warning", paused: "warning", pending: "warning", inconclusive: "warning", partial: "warning",
-  approval_required: "warning", proposed: "info", registered: "info", new: "neutral", approved_plan: "warning",
+  approval_required: "warning", open: "warning", acknowledged: "info", proposed: "info", registered: "info", new: "neutral", approved_plan: "warning",
   // bad
   failed: "danger", rejected: "danger", error: "danger", denied: "danger", deny: "danger", failed_verification: "danger",
-  timeout: "danger", invalidated: "danger",
+  timeout: "danger", invalidated: "danger", alerting: "danger",
   // inert
   cancelled: "neutral", superseded: "neutral", skipped: "neutral", draft: "neutral", expired: "neutral",
-  rolled_back: "neutral",
+  rolled_back: "neutral", unknown: "neutral", disabled: "neutral",
 };
 
 export function toneFor(status: string | null | undefined): Tone {
   if (!status) return "neutral";
   return TONES[status.toLowerCase()] ?? "neutral";
+}
+
+/** Alert severity -> tone (critical red, warning amber, info violet-blue). */
+export function severityTone(severity: string | null | undefined): Tone {
+  const s = (severity ?? "").toLowerCase();
+  return s === "critical" ? "danger" : s === "warning" ? "warning" : s === "info" ? "info" : "neutral";
 }
 
 const HYPOTHESIS_ICONS: Record<string, string> = {

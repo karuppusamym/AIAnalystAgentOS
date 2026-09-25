@@ -9,7 +9,7 @@ EVENT_TYPES = {
     "dashboard.published", "report.generated", "schedule.executed", "agent.started", "agent.completed",
     "agent.failed", "agent.message", "task.updated", "run.created", "run.status", "run.replanned",
     "approval.requested", "approval.completed", "approval.invalidated", "policy.denied", "feedback.received",
-    "model.called", "budget.warning",
+    "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

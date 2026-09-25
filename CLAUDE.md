@@ -38,9 +38,11 @@ docker compose up -d postgres redis neo4j temporal superset # infra (Superset im
 .venv/bin/ruff check src tests
 .venv/bin/uvicorn analystos.api.app:app --reload            # API :8000
 .venv/bin/analystos worker                                  # Temporal worker
+.venv/bin/analystos scheduler                               # schedules + monitors (claim-then-execute)
 .venv/bin/uvicorn analystos.connectors.servicenow_mock:app --port 8090   # demo source
 cd web && npm install && npm run dev                        # UI :5173
 .venv/bin/python scripts/e2e_demo.py                        # live v1 §62 scenario + evidence report
+.venv/bin/python scripts/e2e_phase3.py                      # live Phase-3 (schedules, reports, monitors) evidence
 ```
 
 Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` / `ChangeMe123!`.
@@ -58,6 +60,7 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `src/analystos/skills/`, `sandbox/` | deterministic analytics |
 | `src/analystos/llm/` | router, JEV, redaction; `config/models.yaml` |
 | `src/analystos/publishing/` | BI publisher interface, Superset adapter, preview |
+| `src/analystos/services/{schedules,monitors,reports,changes,notifications}.py`, `src/analystos/reports/` | Phase 3: scheduling, monitoring, reports |
 | `config/agents/*.yaml` | agent catalog (config-driven agents) |
 | `migrations/` | Alembic; regenerate with `alembic revision --autogenerate` after model changes |
 | `docs/` | intent/spec v2, architecture + ADRs, runbooks, delivery tracker/register/readiness |

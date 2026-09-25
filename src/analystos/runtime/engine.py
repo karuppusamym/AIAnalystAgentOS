@@ -20,6 +20,7 @@ from analystos.runtime.context import RunContext, Services, default_services
 from analystos.runtime.plan import DYNAMIC_PREFIXES, REPLAN_RESET, dep_satisfied, plan_hash
 
 log = get_logger(__name__)
+CLAIM_TTL_SECONDS = 30 * 60  # equals the Temporal start_to_close timeout for execute_task
 NON_RETRYABLE = ("Forbidden", "PolicyDenied", "SQLRejected", "ApprovalRequired", "InvalidInput", "BudgetExceeded",
                  "RunCancelled", "NotFound", "Conflict")
 
@@ -52,9 +53,14 @@ def add_task(session, run: AnalysisRun, *, key: str, agent: str, title: str, dep
 
 
 def materialize_plan(session, run: AnalysisRun) -> None:
+    skip_publish = (run.origin or {}).get("publish") == "skip"
     for i, step in enumerate(run.plan["steps"]):
-        add_task(session, run, key=step["key"], agent=step["agent"], title=step["title"], depends_on=step["depends_on"],
-                 optional=step.get("optional", False), seq=i * 10)
+        task = add_task(session, run, key=step["key"], agent=step["agent"], title=step["title"], depends_on=step["depends_on"],
+                        optional=step.get("optional", False), seq=i * 10)
+        if skip_publish and step["key"] in ("publish_request", "publish"):
+            # Scheduled re-analyses and alert investigations refresh findings and reports; they do not
+            # propose publication unless the schedule asks for it.
+            task.status, task.error = "SKIPPED", "publication not requested for this run"
     run.plan_hash = plan_hash(run.plan, constraints=run.constraints, scope_hash=run.scope.get("hash", ""),
                               plan_version=run.plan_version)
 
@@ -177,6 +183,9 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
                 return {"status": "missing"}
             if task.status in ("COMPLETED", "SKIPPED"):
                 return {"status": task.status, "cached": True}
+            if task.status == "RUNNING" and task.started_at and (utcnow() - task.started_at).total_seconds() < CLAIM_TTL_SECONDS:
+                # Another worker holds it. A claim older than the activity timeout is from a crashed worker and is retaken.
+                return {"status": "in_progress"}
             task.status, task.attempts, task.started_at, task.error = "RUNNING", task.attempts + 1, utcnow(), None
             version = task.plan_version
             run = s.get(AnalysisRun, run_id)
@@ -237,6 +246,7 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
         run = s.get(AnalysisRun, run_id, with_for_update=True)
         if run.status in RUN_TERMINAL:
             return
+        notify_needed = False
         if outcome == "CANCELLED":
             s.execute(update(RunTask).where(RunTask.run_id == run_id, RunTask.status.in_(["NEW", "READY", "WAITING_USER"]))
                       .values(status="CANCELLED"))
@@ -244,6 +254,11 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
             published = s.scalar(select(RunTask.status).where(RunTask.run_id == run_id, RunTask.key == "publish")) == "COMPLETED"
             run.summary = {**(run.summary or {}), "cancel_outcome": "cancelled_after_publication" if published else "cancelled_before_side_effects"}
         set_run_status(s, run, outcome, **({"error": error} if error else {}))
+        notify_needed = (run.origin or {}).get("type") in ("schedule", "alert")
+    if notify_needed:
+        from analystos.services.schedules import complete_from_run
+
+        complete_from_run(run_id)
 
 
 DOWNSTREAM_OF_VERIFY = {"dataset", "semantic", "visualize", "publish_request", "publish", "finalize"}

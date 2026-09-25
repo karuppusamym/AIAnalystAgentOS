@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge } from "../components/ui";
+import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge, Tag } from "../components/ui";
 import { durationBetween, fmtDate, fmtUsd } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 
@@ -23,7 +23,9 @@ export function RunsPage() {
             <tbody>
               {runs.data.map((r) => (
                 <tr key={r.id}>
-                  <td><Link to={`/w/${wsId}/runs/${r.id}`} className="clamp-2">{r.objective}</Link><div className="muted small"><code>{r.id}</code></div></td>
+                  <td><Link to={`/w/${wsId}/runs/${r.id}`} className="clamp-2">{r.objective}</Link><div className="muted small"><code>{r.id}</code>
+                    {r.origin?.type === "schedule" && <> <Tag tone="info">scheduled</Tag></>}
+                    {r.origin?.type === "alert" && <> <Tag tone="warning">alert investigation</Tag></>}</div></td>
                   <td><StatusBadge status={r.status} /></td>
                   <td>L{r.autonomy_level}</td>
                   <td className="small">{fmtDate(r.started_at ?? r.created_at)}</td>

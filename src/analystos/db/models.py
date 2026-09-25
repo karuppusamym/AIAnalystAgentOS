@@ -217,6 +217,9 @@ class AnalysisRun(Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # How the run was started: {"type": "user"} or {"type": "schedule", "schedule_id", "schedule_run_id",
+    # "previous_run_id", "publish": "skip"|"propose", "report": {...}} or {"type": "alert", "alert_id"}
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = _ts()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -508,4 +511,90 @@ class AuditEvent(Base):
     decision: Mapped[str | None] = mapped_column(String(30), nullable=True)  # allow | deny | approval_required
     reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = _ts()
+
+
+# ------------------------------------------------------------------------------------------ Phase 3
+class Schedule(Base):
+    """Recurring work (§37). Executes with the owner's CURRENT permissions, re-checked at fire time."""
+
+    __tablename__ = "schedule"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(30))  # reanalysis | dataset_refresh | report | monitor
+    cron: Mapped[str] = mapped_column(String(120))
+    timezone: Mapped[str] = mapped_column(String(60), default="UTC")
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("app_user.id"))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class ScheduleRun(Base):
+    """One firing (SCH-005). `fire_key` makes concurrent schedulers and retries idempotent."""
+
+    __tablename__ = "schedule_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    schedule_id: Mapped[str] = mapped_column(ForeignKey("schedule.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    fire_key: Mapped[str] = mapped_column(String(120), unique=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    trigger: Mapped[str] = mapped_column(String(20), default="cron")  # cron | manual
+    status: Mapped[str] = mapped_column(String(20), default="started")  # started | running | succeeded | failed | skipped
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Monitor(Base):
+    """Continuous analytics (§38): a metric or data-quality signal evaluated on a schedule."""
+
+    __tablename__ = "monitor"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(30))  # metric_threshold | metric_drift | change_point | data_quality
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_investigate: Mapped[bool] = mapped_column(Boolean, default=False)
+    state: Mapped[str] = mapped_column(String(20), default="unknown")  # unknown | ok | alerting | error
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class Alert(Base):
+    __tablename__ = "alert"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    monitor_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    severity: Mapped[str] = mapped_column(String(10))  # info | warning | critical
+    title: Mapped[str] = mapped_column(String(300))
+    message: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    dedupe_key: Mapped[str] = mapped_column(String(200), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | acknowledged | resolved
+    investigation_run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Notification(Base):
+    """In-app notifications. External delivery (email/webhook) is approval-gated (§39) and not in this release."""
+
+    __tablename__ = "notification"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)  # null = all members
+    kind: Mapped[str] = mapped_column(String(40))  # alert | report | approval | run
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    link: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type, id}
+    read_by: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = _ts()

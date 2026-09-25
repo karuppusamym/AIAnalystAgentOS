@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { api, type Workspace } from "../api";
 import { useAuth } from "../auth";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { NotificationBell } from "./NotificationBell";
 
 function WorkspaceNav({ wsId }: { wsId: string }) {
   const [ws, setWs] = useState<Workspace | null>(null);
@@ -20,6 +21,9 @@ function WorkspaceNav({ wsId }: { wsId: string }) {
     [`${base}/runs`, "Analysis runs"],
     [`${base}/insights`, "Insights"],
     [`${base}/studio`, "Studio"],
+    [`${base}/schedules`, "Schedules"],
+    [`${base}/monitoring`, "Monitoring"],
+    [`${base}/reports`, "Reports"],
     [`${base}/ask`, "Ask (SQL)"],
     [`${base}/governance`, "Policy & members"],
   ];
@@ -64,6 +68,7 @@ export function Layout() {
         <div className="topbar-spacer" />
         {user && (
           <div className="topbar-user">
+            <NotificationBell />
             <span className="user-name" title={user.email}>{user.name || user.email}</span>
             {user.is_admin && <span className="tag tag-info">admin</span>}
             <button type="button" className="btn btn-sm" onClick={logout}>Log out</button>

@@ -35,14 +35,19 @@ def default_upload_dir(settings: Any | None = None) -> Path:
     return Path(configured) if configured else REPO_ROOT / "var" / "uploads"
 
 
-def excel_engine_available() -> bool:
-    for module in ("fastexcel", "openpyxl"):
+def excel_engine() -> str | None:
+    """Polars engine name for the first installed Excel reader (fastexcel is polars' default)."""
+    for module, engine in (("fastexcel", "calamine"), ("openpyxl", "openpyxl")):
         try:
             __import__(module)
-            return True
+            return engine
         except ImportError:
             continue
-    return False
+    return None
+
+
+def excel_engine_available() -> bool:
+    return excel_engine() is not None
 
 
 def normalize_polars_dtype(dtype: pl.DataType) -> str:
@@ -116,7 +121,7 @@ class CSVFileConnector:
             kwargs: dict[str, Any] = {}
             if self.sheet:
                 kwargs["sheet_name"] = self.sheet
-            return pl.read_excel(file, **kwargs).lazy()
+            return pl.read_excel(file, engine=excel_engine(), **kwargs).lazy()
         sep = self.delimiter or ("\t" if suffix == ".tsv" else ",")
         return pl.scan_csv(file, separator=sep, infer_schema_length=INFER_ROWS, try_parse_dates=True, ignore_errors=False)
 
@@ -140,14 +145,23 @@ class CSVFileConnector:
         )
 
     def discover(self) -> list[DiscoveredAsset]:
+        """Every readable file becomes an asset; unreadable ones are skipped and listed in
+        `self.skipped` so one corrupt upload cannot hide the rest of the folder."""
         assets = []
-        for name, file in self._asset_names(self._files()).items():
+        self.skipped: list[dict[str, str]] = []
+        files = self._asset_names(self._files())
+        for name, file in files.items():
             try:
                 lf = self._scan(file)
                 schema = lf.collect_schema()
                 row_count = int(lf.select(pl.len()).collect().item())
             except Exception as exc:  # noqa: BLE001
-                raise InvalidInput(f"Could not read {file.name}: {str(exc).splitlines()[0]}") from None
+                reason = f"Could not read {file.name}: {str(exc).splitlines()[0]}"
+                if len(files) == 1:
+                    raise InvalidInput(reason) from None
+                self.skipped.append({"file": file.name, "reason": reason})
+                _log.warning(reason)
+                continue
             col_names = unique_identifiers(list(schema.names()))
             columns = [
                 DiscoveredColumn(

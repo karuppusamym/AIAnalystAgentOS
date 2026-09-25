@@ -63,10 +63,11 @@ Return JSON: {"sql": str, "explanation": str, "chart": {"type": bar|line|table|k
     "sql_repair.v1": """The gateway rejected or failed your SQL. Fix it using the error message; keep the same intent.
 Use only catalog tables/columns. Return JSON: {"sql": str, "explanation": str}.""",
 
-    "semantic_modeling.v1": """You are the Semantic Model Agent. Propose KPI definitions over the analytical dataset columns.
+    "semantic_modeling.v2": """You are the Semantic Model Agent. Propose KPI definitions over the analytical dataset columns.
 Each metric: {"name": snake_case, "display_name", "definition": plain-language business definition,
 "sql_expression": an aggregate SQL expression over dataset columns only (e.g. AVG(resolution_hours)),
 "format": number|percent|hours|currency, "grain", "dimensions": [dataset columns useful for slicing]}.
+Percent metrics are FRACTIONS between 0 and 1 (e.g. AVG(CASE WHEN x THEN 1.0 ELSE 0.0 END)); never multiply by 100.
 Return JSON {"metrics": [...]} with 4-7 metrics that directly serve the objective and the verified findings.""",
 
     "feedback_interpretation.v1": """Convert the user's redirect instruction into structured constraints for an analysis run.

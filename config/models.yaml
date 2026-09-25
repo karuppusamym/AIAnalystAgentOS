@@ -76,3 +76,4 @@ routing:
   chart_selection: decision
   rev_second_opinion: decision
   stop_check: decision
+  alert_triage: decision
