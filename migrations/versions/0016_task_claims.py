@@ -1,7 +1,7 @@
 """optimistic task claims and per-artifact lineage lookups (P4-S02)
 
 Revision ID: 0016
-Revises: 0011
+Revises: 0015
 Create Date: 2026-09-25 23:00:00.000000
 
 Hand-written.
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision = "0016"
-down_revision = "0011"
+down_revision = "0015"
 branch_labels = None
 depends_on = None
 
