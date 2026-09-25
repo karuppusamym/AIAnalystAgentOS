@@ -236,12 +236,40 @@ Only trusted text enters JEV `state` (objective, statements, computed statistics
 descriptions) — never raw result rows. Every call is logged with latency and cost; when JEV is
 unavailable each decision falls back to its deterministic rule and records `by: rules`.
 
+### 10.1 Token economy and admin control (increment 3, ADR-0010)
+
+Every purpose has an administrator-set mode:
+- `off`: deterministic path only; the router refuses the call.
+- `auto`: rules first; the model runs only if the rules are insufficient.
+- `always`: the default.
+
+Around every call:
+- responses are cached by purpose, candidate models and payload;
+- estimated-oversize prompts are refused;
+- runs below 25% of their budget downgrade to `low_cost`;
+- catalog prompts are ranked and capped.
+
+Every avoided call is recorded in `model_call` as `skipped`, `cache_hit` or `refused`, with its
+`tokens_saved`. Platform settings are versioned, admin-only, audited, validated against
+`config/models.yaml` and can be rolled back. Presets: `balanced`, `token_saver`, `max_quality`,
+`offline`.
+
 ## 11. Data plane (v1 §16–§18, §48)
 
-* ServiceNow (Table API, `sysparm_display_value=all`, reference display columns `<field>_name`),
-  CSV/Parquet/Excel → **staged** snapshot (atomic swap) in `analytics.src_<id>`.
-* PostgreSQL, SQL Server → **pushdown**.
-* Query cache key = fingerprint + scope hash + source version + row cap (Redis).
+* **Source-kind catalog** (`config/source_kinds.yaml`). Kinds: PostgreSQL, SQL Server, MySQL,
+  MariaDB, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, DuckDB, SQLite,
+  ServiceNow and CSV/Parquet/Excel. Every SQL kind uses one generic connector (SQLAlchemy
+  inspector, read-only session, Arrow batches).
+* **Pushdown** only where the gateway validates the dialect and the session can be made read-only
+  (PostgreSQL, SQL Server). Everything else is a **staged** snapshot (atomic swap) in
+  `analytics.src_<id>`.
+* **Metadata crawler** (`services/crawler.py`): full or incremental; include/exclude patterns;
+  structural fingerprints and a drift diff (new / changed / missing / deprecated / rename
+  candidates); deterministic semantics (business names, table role/domain/grain, column
+  role/unit); PII from names plus gateway-sampled values; declared relationships; glossary links;
+  context-store and graph refresh; optional batched model descriptions. Crawls can be scheduled
+  (`crawl` schedule kind). Owner curation always wins; tags only tighten.
+* **Query cache** key = fingerprint + scope hash + source version + row cap (Redis).
 
 ## 12. Publishing (v1 §32–§35)
 

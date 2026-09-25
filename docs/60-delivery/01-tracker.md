@@ -4,7 +4,7 @@ Status vocabulary: **Done** (code + automated test, and live evidence where the 
 **Done (mock)** (built and tested only against a mock/synthetic system — not certified) ·
 **Partial** (usable, with a named gap) · **Not started** · **Phase N** (deliberately out of this release).
 Evidence lives in the [capability register](02-capability-register.md). IDs are spec v1 §60 IDs.
-Last reconciled: 2026-09-25 (after live e2e `evidence/e2e-20260925-054942.md`, 26/26).
+Last reconciled: 2026-09-25 (after increment 3 live evidence).
 
 ## P. Current execution queue
 
@@ -36,6 +36,41 @@ Findings from the live runs that changed the design (kept for history): the firs
 material, which is why detection stays deterministic); a later pass showed re-analysis diffs were
 noisy because each run asked different questions and KPI definitions drifted (fraction vs percent),
 fixed by carrying claims and KPI definitions forward.
+
+### Increment 3 — Universal sources, crawler, token economy, admin control plane (2026-09-25) — **Done**
+
+Requested: connect any database (ServiceNow is only a sample), crawl metadata like the sibling
+projects, deterministic-first to reduce tokens, everything controllable from admin. Design:
+[ADR-0010](../10-architecture/adr/0010-universal-sources-crawler-token-economy.md). Evidence:
+`evidence/e2e-increment3-20260925-150550.md` (live) plus the tests named per row.
+
+| # | Scope (v1 IDs) | Status | Evidence / notes |
+|---|---|---|---|
+| P3-01 | Source-kind catalog + generic SQL connector; pushdown vs staged by dialect (META-002, v1 §16, §17) | Done (partly certified) | 15 kinds. **Live-tested against a real engine:** Postgres, MySQL 8.4, SQLite, DuckDB (`test_generic_sources.py`). **Catalog + unit tests only, not certified:** SQL Server, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, MariaDB. |
+| P3-02 | Metadata crawler: full/incremental, include/exclude, fingerprints, drift, deterministic semantics/PII/glossary links, optional batched LLM enrichment, vector + graph, scheduled (META-005/006, CTX-004, v1 §13.3) | Done | `tests/integration/test_crawler.py`: lifecycle, drift, curation kept, deprecation rules, re-staging. Live: drift detected, curation kept, 0 model calls. |
+| P3-03 | Token economy: response cache, per-purpose LLM mode (off/auto/always), prompt compaction, pre-call estimate + downgrade, savings accounting (MOD-003, v1 §51) | Done | 9 router unit tests. Live under `token_saver`: every avoided call recorded as `skipped` with `tokens_saved`. |
+| P3-04 | Admin control plane: versioned platform settings (routing, modes, limits, crawl defaults, source kinds, flags) applied at runtime (v1 §52.8) | Done | `tests/integration/test_platform_settings.py`: admin-only, validation, preset → router, rollback, no stale merge. Live: preset applied at runtime, then rolled back. |
+| P3-05 | Agents/tools/skills: catalog steward agent, crawl/enrich/explain tools, forecasting skill + forecast-deviation monitor, role-driven hypothesis playbook, KPI × dimension follow-ups | Done | `test_skills_catalog.py` (72), `test_skills_forecast.py` (18), `test_sqlexplain.py`, `test_agent_logic.py`, `test_continuous_logic.py` |
+| P3-06 | UI for sources catalog, crawls, catalog curation, SQL explain, admin settings, token savings | Done | 76 vitest tests, typecheck, build; live smoke including Catalog |
+| P3-07 | Live evidence for increment 3 | Done | `evidence/e2e-increment3-20260925-150550.md` |
+
+Findings from the live runs and the governance review that changed the design (kept for history):
+- **Silent crawl failure.** The API crawl endpoint scheduled its background task before its
+  `crawl_run` row was committed, so the crawl silently never ran. Fixed by committing first; crawls
+  with no progress for 10 minutes are recovered as interrupted.
+- **Stale staged snapshot.** A drift in a staged source updated the catalog but not the snapshot,
+  so profiling (and any analysis) referenced a column the snapshot lacked. Changed selected assets
+  are now re-staged within the crawl.
+- **Stored PII samples.** The review found that PII value samples would persist in the gateway
+  audit preview and the result cache. Added `retain_rows=False`.
+- **Budget downgrade.** The review found that the downgrade bypassed the workspace model allowlist.
+  It now uses the same model resolution as every call and never applies to verification.
+- **Hypothesis breadth.** The first live pass tested only one outcome, and three findings said the
+  same thing under one generic title. Added: descriptive driver-model titles, driver-model
+  deduplication, a role-driven playbook, outcome-diverse selection, and deterministic KPI × dimension
+  follow-ups (no follow-up model calls).
+- **Tag-wiping re-discovery.** `discover_source` used to drop owner `restricted` tags on every
+  re-discovery. It now runs through the crawler, which never removes tags.
 
 ### Next candidates (not started — to be prioritised)
 
@@ -82,9 +117,9 @@ fixed by carrying claims and KPI definitions forward.
 | CTX-002 | Semantic search | Done | pgvector + deterministic embeddings (ADR-0007) |
 | CTX-003 | Neo4j relationship adapter | Done | projection + neighborhood query |
 | CTX-004 | Business-term resolver | Done | glossary `mapped_columns` → scope columns |
-| CTX-005 | Context caching | Not started | retrieval is fast enough locally; Redis cache for Context2AI calls to add with the live adapter |
+| CTX-005 | Context caching | Partial | LLM response cache added in increment 3; the Redis cache for Context2AI calls comes with the live adapter |
 | META-001 | PostgreSQL connector | Done | pushdown; integration-tested against compose Postgres |
-| META-002 | SQL Server connector | Partial | metadata + dialect + validator tested; never run against a live SQL Server |
+| META-002 | SQL Server connector | Partial | metadata + dialect + validator tested; never run against a live SQL Server (other databases: see P3-01) |
 | META-003 | CSV connector | Done | CSV/Parquet; Excel skipped when no engine installed |
 | META-004 | ServiceNow connector | Done (mock) | Table API + display values; tested only against the bundled mock |
 | META-005 | Metadata normalization | Done | `DiscoveredAsset/Column` |
@@ -97,7 +132,7 @@ fixed by carrying claims and KPI definitions forward.
 | MOD-004 | Prompt version registry | Done | `agents/prompts.py`, version on every call |
 | QRY-001..005 | Gateway, read-only validation, timeout, row limit, audit | Done | 109-case validator security suite + live tests |
 | QRY-006 | Query cache | Done | Redis, key includes scope hash + source version |
-| QRY-007 | Dialect abstraction | Done | postgres + tsql |
+| QRY-007 | Dialect abstraction | Done | pushdown in postgres + tsql; every other kind staged and validated as postgres (ADR-0010) |
 | DEX-001 | DuckDB engine | Partial | used for file inspection and skill tests; analysis runs as pushdown SQL |
 | DEX-002 | Polars engine | Done | extraction/transforms, profiling inputs |
 | DEX-003..005 | Python sandbox, memory, timeout | Done | rlimits + AST allowlist; not a hard security boundary (see readiness) |

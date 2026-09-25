@@ -80,3 +80,80 @@ is kept for history: its diff was noisy, which led to carrying claims and KPI de
 | Monitors + alerts | `services/monitors.py` | drift/threshold/change-point unit tests; integration (alert, de-dup, DQ baseline, auto-investigation) | ✅ | DQ monitor re-profiles each run (cost grows with columns) |
 | Notifications | `services/notifications.py` | integration | ✅ | in-app only |
 | Phase-3 UI | `web/src/pages/{Schedules,Monitoring,Reports}.tsx` | 23 new vitest tests | smoke | monitor config not editable after creation |
+
+## 2026-09-25 — Increment 3: universal sources, metadata crawler, token economy, admin control plane
+
+Same environment as above. The source for the live run is a seeded **SQLite** retail database, not
+ServiceNow: 24,000 orders, 2,500 customers, 60 products, 4 regions. It contains three planted
+effects and null controls:
+- marketplace orders are returned about 3× as often;
+- Enterprise order value is about 2.1× higher;
+- APAC shipping takes about 3 days longer;
+- payment method, discount and coupon have no effect.
+
+### Live evidence
+
+[`evidence/e2e-increment3-20260925-150550.md`](evidence/e2e-increment3-20260925-150550.md): **13/13**.
+
+The run went through the HTTP API, with the Temporal orchestrator, real model calls under the
+`token_saver` preset, and a real Superset publication. Earlier passes are kept for history:
+- [`…145158`](evidence/e2e-increment3-20260925-145158.md) (12/13): three duplicate driver-model
+  findings, and only the boolean outcome was tested.
+- [`…145827`](evidence/e2e-increment3-20260925-145827.md) (12/13): measures were tested against one
+  dimension only.
+- [`…150310`](evidence/e2e-increment3-20260925-150310.md) (12/13): KPI × dimension follow-ups ran,
+  but were ordered naively.
+
+Each of those passes changed the investigator (see tracker P3 findings).
+
+**Catalog and crawl**
+- **Any database.** `/api/source-kinds` lists 15 kinds. The SQLite file was uploaded and registered
+  as a `sqlite` source, which is staged.
+- **Discovery.** Discovery is a full crawl with **0 model calls**. It derived role/domain/grain for all
+  4 tables (orders = fact, sales, "one row per order", confidence 0.82). It tagged `customer.email`
+  and `customer.customer_name` as PII by name rules, recorded 3 declared relationships and wrote 4
+  context entries plus the graph.
+- **Incremental crawl** after staging: 4 unchanged, 0 touched, 4 profiled and value-sampled through
+  the gateway.
+- **Drift.** A column `coupon_code` was added and a full crawl run. It reported exactly one changed
+  table with `added: [coupon_code]` and nothing deprecated. It **re-staged** the changed selected
+  table and profiled with 0 errors. The owner's reviewed description was kept, and a
+  `schema_change` notification was raised.
+
+**SQL and admin**
+- **Explain.** Deterministic, with no execution. The PII column query was rejected by the gateway
+  with its reason, and the rejection was audited.
+- **Admin.** The `token_saver` preset was applied at runtime (`/api/admin/models` shows
+  `hypothesis_generation: auto`, `verification: always`). The previous settings version was
+  restored at the end.
+
+**Analysis**
+- **Run:** 14 hypotheses over 3 rounds, all deterministic: rule playbook and KPI × dimension
+  follow-ups.
+- **Found:** 4 verified findings, all 3 planted effects:
+  - returns driven mainly by channel (marketplace odds ratio ≈ 3.25);
+  - returns concentrate in channel = marketplace;
+  - APAC has the longest shipping;
+  - Enterprise has the highest order value.
+- **Rejected:** all 10 non-planted combinations.
+- **Model use:** 10 model calls (verification and JEV where required), **15 deterministic skips**.
+  Cost **$0.023**, 8,048 tokens. This is not directly comparable with the MVP run's $0.32, which
+  used another dataset and the default `always` modes.
+- **Publication:** after approver approval, to Superset (dashboards 39/40, 7 KPIs, 9 charts).
+
+**Monitoring and scheduling**
+- A forecast-deviation monitor was evaluated on weekly orders.
+- A `crawl` schedule run-now succeeded.
+
+### Capabilities
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| Source-kind catalog + generic SQL connector | `config/source_kinds.yaml`, `connectors/{kinds,generic_sql}.py` | 120 unit tests; integration against MySQL 8.4 (docker), SQLite, DuckDB and Postgres: discovery, read-only session, staging, gateway query with a denied column | SQLite (this run) | Not certified: SQL Server, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, MariaDB |
+| Metadata crawler | `services/crawler.py`, `skills/catalog.py` | 72 catalog-skill tests; crawler rule tests; integration lifecycle (drift, curation kept, deprecation only on full uncapped crawls, re-staging) | ✅ | English keyword heuristics; renames are candidates only |
+| Token economy | `llm/router.py`, `llm/cache.py`, `agents/common.model_gate` | router tests: off/auto, cache, oversize refusal, overrides, downgrade within allowlists | ✅ 15 skips in one run | `tokens_saved` for skips is an estimate (prompt-size heuristic) |
+| Admin control plane | `contracts/platform.py`, `services/platform_settings.py`, `api/routers/admin.py` | integration: admin-only, reference validation, preset → router, rollback, stale-merge guard | ✅ preset + rollback | 5 s propagation between processes |
+| SQL explain | `skills/sqlexplain.py` | unit tests | ✅ | Explains structure, not intent |
+| Forecasting + forecast-deviation monitor | `skills/forecast.py`, `services/monitors.py` | 18 forecast tests (coverage over 30 seeds) + monitor test | ✅ | Holt-Winters ~0.1–0.3 s per series |
+| Investigator breadth | `agents/investigator.py` | role playbook, outcome-diverse selection, driver-model deduplication, KPI × dimension continuation tests | ✅ 3/3 planted, 0 false | Continuation is one dimension per outcome per round |
+| Increment-3 UI | `web/src/pages/{Catalog,AdminSettings}.tsx`, `components/CrawlPanel.tsx` | 26 new vitest tests (76 total) | smoke incl. Catalog | Column-level curation not in the UI |

@@ -11,7 +11,7 @@
 | | Visible limits and unsupported paths | ✅ Phase-3 endpoints return explicit errors; fallbacks are labelled; this document |
 | Controlled pilot | Named owners and users | ❌ Needs the business owner to nominate |
 | | Workspace access checks, positive + negative | ✅ Integration tests (scope, roles, SoD, revocation, expiry, cross-workspace 404) |
-| | Each pilot connector tested against a real source | ❌ ServiceNow tested only against the mock; SQL Server never run live; PostgreSQL ✅ |
+| | Each pilot connector tested against a real source | ⚠️ Live against a real engine: PostgreSQL, MySQL 8.4, SQLite, DuckDB. Mock only: ServiceNow. Catalog and unit tests only: SQL Server, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, MariaDB |
 | | Audit and approval paths exercised | ✅ Live e2e exercises approval, role denial, pause/redirect |
 | | Operational monitoring, rollback/recovery documented | ⚠️ Health endpoint, usage/audit APIs, rollback endpoint and runbook exist; no alerting/dashboards |
 | | Unverified capabilities labelled | ✅ SSO, residency, connectors, scale are labelled here and in the tracker |
@@ -43,3 +43,13 @@
 7. **Notifications are in-app only**; email/chat/webhook delivery is deliberately absent until it
    can be approval-gated.
 8. **PDF reports use a core font**: non-Latin characters render as `?` (a bundled Unicode font is needed).
+9. **Source kinds without a session read-only switch** (SQL Server, Oracle, Snowflake, BigQuery,
+   Databricks, Trino, Redshift, ClickHouse) rely on a least-privilege, read-only login. All of them
+   except SQL Server are staged, so the gateway reads a snapshot with the reader identity; their
+   extract still runs as the source login.
+10. **Crawler semantics are English, keyword-based heuristics.** Descriptions are template sentences
+    built from metadata. Model descriptions are optional (`crawl.llm_enrichment`, off by default),
+    screened and never override curated text. PII detection from names and values is a safety net,
+    not a data-classification programme: an owner's tags remain authoritative.
+11. **Platform settings** are cached for 5 s in each process; a change reaches other processes within
+    that window. A settings-table read error keeps the last-known-good document.

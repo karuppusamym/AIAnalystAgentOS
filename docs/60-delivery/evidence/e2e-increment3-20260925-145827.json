@@ -1,0 +1,797 @@
+{
+  "api": "http://localhost:8000",
+  "started_at": "2026-09-25T14:58:27.782401+00:00",
+  "checks": {
+    "1_any_database_kind_catalog": true,
+    "2_admin_preset_applied_at_runtime": true,
+    "3_sqlite_source_registered": true,
+    "4_crawl_semantics_and_pii": true,
+    "5_incremental_crawl_skips_unchanged": true,
+    "6_schema_drift_detected_and_curation_kept": true,
+    "7_sql_explained_without_model": true,
+    "8_analysis_on_generic_database_completed": true,
+    "9_planted_effects_found": false,
+    "10_no_false_payment_method_finding": true,
+    "11_tokens_saved_accounted": true,
+    "12_forecast_monitor_evaluated": true,
+    "13_scheduled_crawl_succeeded": true
+  },
+  "kinds": [
+    {
+      "kind": "postgres",
+      "category": "database",
+      "execution_mode": "pushdown",
+      "driver_installed": true
+    },
+    {
+      "kind": "redshift",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "mysql",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "mariadb",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "sqlserver",
+      "category": "database",
+      "execution_mode": "pushdown",
+      "driver_installed": false
+    },
+    {
+      "kind": "oracle",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "snowflake",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "bigquery",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "databricks",
+      "category": "lakehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "trino",
+      "category": "engine",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "clickhouse",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "duckdb",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "sqlite",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "servicenow",
+      "category": "api",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "csv",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    }
+  ],
+  "settings": {
+    "base_version": 6,
+    "modes": {
+      "planning": "auto",
+      "hypothesis_generation": "auto",
+      "follow_up_generation": "auto",
+      "sql_generation": "always",
+      "sql_repair": "always",
+      "statistical_interpretation": "always",
+      "insight_narrative": "auto",
+      "semantic_modeling": "auto",
+      "dashboard_design": "auto",
+      "feedback_interpretation": "auto",
+      "summarization": "auto",
+      "metadata_enrichment": "auto",
+      "verification": "always",
+      "hypothesis_priority": "auto",
+      "risk_check": "always",
+      "feedback_classification": "auto",
+      "chart_selection": "auto",
+      "rev_second_opinion": "always",
+      "stop_check": "auto",
+      "alert_triage": "always"
+    },
+    "history_top": [
+      {
+        "version": 7,
+        "note": "preset token_saver",
+        "created_by": "usr_2e236a8f5d12",
+        "created_at": "2026-09-25T14:58:28.255581+00:00"
+      },
+      {
+        "version": 6,
+        "note": "rollback to v4",
+        "created_by": "usr_2e236a8f5d12",
+        "created_at": "2026-09-25T14:53:49.263688+00:00"
+      },
+      {
+        "version": 5,
+        "note": "preset token_saver",
+        "created_by": "usr_2e236a8f5d12",
+        "created_at": "2026-09-25T14:51:58.855665+00:00"
+      }
+    ]
+  },
+  "data": {
+    "orders": 24000,
+    "customers": 2500,
+    "products": 60
+  },
+  "crawl_full": {
+    "stats": {
+      "tokens_saved": 2880,
+      "model_calls": 0,
+      "discovered": 4,
+      "in_scope": 4,
+      "truncated": 0,
+      "latency_ms": 8,
+      "new": 4,
+      "changed": 0,
+      "unchanged": 0,
+      "missing": 0,
+      "deprecated": 0,
+      "renamed": 0,
+      "described_by_rules": 4,
+      "pii_columns_by_name": 2,
+      "touched": 4,
+      "relationships_declared": 3,
+      "glossary_links": 0,
+      "needs_enrichment": 0,
+      "context_entries": 4,
+      "graph": true
+    },
+    "semantics": {
+      "customer": {
+        "role": "dimension",
+        "domain": "customer",
+        "grain": "one row per customer",
+        "confidence": 0.79,
+        "description_origin": "rule"
+      },
+      "orders": {
+        "role": "fact",
+        "domain": "sales",
+        "grain": "one row per order",
+        "confidence": 0.82,
+        "description_origin": "rule"
+      },
+      "product": {
+        "role": "dimension",
+        "domain": "product",
+        "grain": "one row per product",
+        "confidence": 0.79,
+        "description_origin": "rule"
+      },
+      "region": {
+        "role": "dimension",
+        "domain": "generic",
+        "grain": "one row per region",
+        "confidence": 0.69,
+        "description_origin": "rule"
+      }
+    },
+    "pii": {
+      "customer.customer_name": "person_name",
+      "customer.email": "email"
+    }
+  },
+  "crawl_incremental": {
+    "stats": {
+      "new": 0,
+      "graph": true,
+      "changed": 0,
+      "missing": 0,
+      "renamed": 0,
+      "touched": 0,
+      "in_scope": 4,
+      "profiled": 4,
+      "truncated": 0,
+      "unchanged": 4,
+      "deprecated": 0,
+      "discovered": 4,
+      "latency_ms": 2,
+      "model_calls": 0,
+      "tokens_saved": 0,
+      "glossary_links": 0,
+      "profile_errors": 0,
+      "context_entries": 0,
+      "needs_enrichment": 0,
+      "described_by_rules": 0,
+      "pii_columns_by_name": 0,
+      "pii_columns_by_value": 0,
+      "value_sampled_assets": 4,
+      "relationships_declared": 0
+    },
+    "loaded": [
+      {
+        "asset": "src_src_a782f7feb659.region",
+        "row_count": 4,
+        "schema": "src_src_a782f7feb659",
+        "table": "region",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "country",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "asset": "src_src_a782f7feb659.orders",
+        "row_count": 24000,
+        "schema": "src_src_a782f7feb659",
+        "table": "orders",
+        "columns": [
+          {
+            "name": "order_id",
+            "type": "bigint"
+          },
+          {
+            "name": "customer_id",
+            "type": "bigint"
+          },
+          {
+            "name": "product_id",
+            "type": "bigint"
+          },
+          {
+            "name": "order_date",
+            "type": "date"
+          },
+          {
+            "name": "channel",
+            "type": "text"
+          },
+          {
+            "name": "sales_region",
+            "type": "text"
+          },
+          {
+            "name": "customer_segment",
+            "type": "text"
+          },
+          {
+            "name": "quantity",
+            "type": "bigint"
+          },
+          {
+            "name": "discount_pct",
+            "type": "double precision"
+          },
+          {
+            "name": "net_amount",
+            "type": "double precision"
+          },
+          {
+            "name": "shipping_days",
+            "type": "bigint"
+          },
+          {
+            "name": "returned",
+            "type": "boolean"
+          },
+          {
+            "name": "payment_method",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "asset": "src_src_a782f7feb659.customer",
+        "row_count": 2500,
+        "schema": "src_src_a782f7feb659",
+        "table": "customer",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "customer_name",
+            "type": "text"
+          },
+          {
+            "name": "email",
+            "type": "text"
+          },
+          {
+            "name": "segment",
+            "type": "text"
+          },
+          {
+            "name": "region_id",
+            "type": "bigint"
+          },
+          {
+            "name": "signup_date",
+            "type": "date"
+          }
+        ]
+      },
+      {
+        "asset": "src_src_a782f7feb659.product",
+        "row_count": 60,
+        "schema": "src_src_a782f7feb659",
+        "table": "product",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "category",
+            "type": "text"
+          },
+          {
+            "name": "list_price",
+            "type": "double precision"
+          }
+        ]
+      }
+    ]
+  },
+  "crawl_drift": {
+    "stats": {
+      "new": 0,
+      "graph": true,
+      "changed": 1,
+      "missing": 0,
+      "renamed": 0,
+      "touched": 4,
+      "in_scope": 4,
+      "profiled": 4,
+      "restaged": 1,
+      "truncated": 0,
+      "unchanged": 3,
+      "deprecated": 0,
+      "discovered": 4,
+      "latency_ms": 3,
+      "model_calls": 0,
+      "tokens_saved": 2880,
+      "glossary_links": 0,
+      "profile_errors": 0,
+      "context_entries": 4,
+      "needs_enrichment": 0,
+      "described_by_rules": 3,
+      "pii_columns_by_name": 0,
+      "pii_columns_by_value": 0,
+      "value_sampled_assets": 4,
+      "relationships_declared": 0
+    },
+    "changes": {
+      "new": [],
+      "changed": [
+        {
+          "key": "main.orders",
+          "added": [
+            "coupon_code"
+          ],
+          "removed": [],
+          "retyped": [],
+          "fingerprint": "ffce009a4ad8a64aca2e904f747dc4e02d13e9c59a8a08d65fe74aa9435a634a",
+          "attributes_changed": false,
+          "previous_fingerprint": "544110be3e2d55fa5cbec5de856867882504607e7e82d94d1fd8593c4dcb9388"
+        }
+      ],
+      "missing": [],
+      "deprecated": [],
+      "rename_candidates": []
+    },
+    "notification": "Schema changed in Retail shop (SQLite)"
+  },
+  "explain": {
+    "accepted": "Returns channel and average of net_amount from src_src_a782f7feb659.orders, keeping rows where returned, grouped by channel, ordered by avg_value descending.",
+    "rejected": {
+      "accepted": false,
+      "code": "sql_rejected",
+      "reason": "Column src_src_a782f7feb659.customer.email is restricted by policy and cannot be referenced. Remove it from the query."
+    }
+  },
+  "analysis": {
+    "run_id": "run_624852ce8552",
+    "verified": [
+      "Returned is driven mainly by channel",
+      "Returned concentrates in channel = marketplace"
+    ],
+    "planted": {
+      "returns_by_channel": true,
+      "value_by_segment": false,
+      "shipping_by_region": false
+    },
+    "cost_usd": 0.052028716,
+    "tokens": 13759,
+    "model_calls": 7,
+    "cache_hits": 0,
+    "tokens_saved": 7040,
+    "deterministic_skips": [
+      [
+        "planning",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "hypothesis_generation",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "hypothesis_priority",
+        "mode=auto: rule decision"
+      ],
+      [
+        "stop_check",
+        "mode=auto: rule decision"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "summarization",
+        "mode=auto: deterministic result used"
+      ]
+    ],
+    "publication": {
+      "urls": {
+        "executive": "http://localhost:8088/superset/dashboard/33/",
+        "operational": "http://localhost:8088/superset/dashboard/34/"
+      },
+      "status": "succeeded",
+      "external_ids": {
+        "charts": {
+          "detail_table": 213,
+          "trend_volume": 217,
+          "heat_dow_hour": 219,
+          "kpi_record_count": 212,
+          "kpi_avg_order_value": 216,
+          "kpi_avg_discount_pct": 215,
+          "kpi_delayed_shipping_rate": 214,
+          "trend_delayed_shipping_rate": 218
+        },
+        "metrics": {
+          "aos_understand_what_drives_product_ce8552:record_count": 78,
+          "aos_understand_what_drives_product_ce8552:avg_order_value": 81,
+          "aos_understand_what_drives_product_ce8552:avg_discount_pct": 80,
+          "aos_understand_what_drives_product_ce8552:avg_shipping_days": 83,
+          "aos_understand_what_drives_product_ce8552:total_net_revenue": 82,
+          "aos_understand_what_drives_product_ce8552:delayed_shipping_rate": 79
+        },
+        "database": 17,
+        "datasets": {
+          "aos_understand_what_drives_product_ce8552": 17
+        },
+        "dashboards": {
+          "executive": 33,
+          "operational": 34
+        },
+        "bundle_hash": "4107dbf19adbf033086772eb737ebc888ee5f76762d5c39b28591b619cbdbf3b",
+        "idempotency_key": "run_624852ce8552:4107dbf19adbf033086772eb737ebc88",
+        "database_created": true
+      },
+      "publication_id": "pub_d132972a01a3"
+    }
+  },
+  "token_savings": {
+    "days": 1,
+    "totals": {
+      "calls": 548,
+      "tokens_used": 865889,
+      "tokens_saved": 59312,
+      "cost_usd": 2.876617014000001,
+      "cache_hits": 0,
+      "deterministic_skips": 39,
+      "refused": 0,
+      "saved_share": 0.0641
+    },
+    "by_purpose": {
+      "rev_second_opinion": {
+        "calls": 79,
+        "tokens_used": 48623,
+        "tokens_saved": 0,
+        "cost_usd": 0.001975806,
+        "by_status": {
+          "ok": 79
+        }
+      },
+      "verification": {
+        "calls": 79,
+        "tokens_used": 64923,
+        "tokens_saved": 0,
+        "cost_usd": 0.0941985,
+        "by_status": {
+          "ok": 79
+        }
+      },
+      "planning": {
+        "calls": 16,
+        "tokens_used": 54247,
+        "tokens_saved": 6109,
+        "cost_usd": 0.19639,
+        "by_status": {
+          "skipped": 3,
+          "error": 2,
+          "ok": 14
+        }
+      },
+      "stop_check": {
+        "calls": 33,
+        "tokens_used": 18921,
+        "tokens_saved": 2000,
+        "cost_usd": 0.0007669619999999999,
+        "by_status": {
+          "skipped": 5,
+          "ok": 33
+        }
+      },
+      "hypothesis_generation": {
+        "calls": 90,
+        "tokens_used": 98012,
+        "tokens_saved": 8647,
+        "cost_usd": 0.5481250000000001,
+        "by_status": {
+          "error": 81,
+          "ok": 9,
+          "skipped": 3
+        }
+      },
+      "hypothesis_priority": {
+        "calls": 51,
+        "tokens_used": 49159,
+        "tokens_saved": 2400,
+        "cost_usd": 0.0018618600000000008,
+        "by_status": {
+          "skipped": 6,
+          "ok": 51
+        }
+      },
+      "follow_up_generation": {
+        "calls": 43,
+        "tokens_used": 422829,
+        "tokens_saved": 11272,
+        "cost_usd": 1.7352100000000004,
+        "by_status": {
+          "ok": 34,
+          "error": 9,
+          "skipped": 2
+        }
+      },
+      "semantic_modeling": {
+        "calls": 16,
+        "tokens_used": 39069,
+        "tokens_saved": 0,
+        "cost_usd": 0.2480625,
+        "by_status": {
+          "error": 3,
+          "ok": 13
+        }
+      },
+      "summarization": {
+        "calls": 9,
+        "tokens_used": 8381,
+        "tokens_saved": 1465,
+        "cost_usd": 0.0063533,
+        "by_status": {
+          "skipped": 2,
+          "ok": 9
+        }
+      },
+      "feedback_interpretation": {
+        "calls": 6,
+        "tokens_used": 4419,
+        "tokens_saved": 0,
+        "cost_usd": 0.015918,
+        "by_status": {
+          "ok": 6
+        }
+      },
+      "alert_triage": {
+        "calls": 9,
+        "tokens_used": 2914,
+        "tokens_saved": 0,
+        "cost_usd": 0.000116508,
+        "by_status": {
+          "error": 2,
+          "ok": 7
+        }
+      },
+      "risk_check": {
+        "calls": 11,
+        "tokens_used": 3777,
+        "tokens_saved": 0,
+        "cost_usd": 0.000148008,
+        "by_status": {
+          "ok": 11
+        }
+      },
+      "insight_narrative": {
+        "calls": 74,
+        "tokens_used": 36400,
+        "tokens_saved": 7259,
+        "cost_usd": 0.02695360000000001,
+        "by_status": {
+          "skipped": 11,
+          "error": 1,
+          "ok": 73
+        }
+      },
+      "feedback_classification": {
+        "calls": 6,
+        "tokens_used": 3264,
+        "tokens_saved": 0,
+        "cost_usd": 0.00012247200000000002,
+        "by_status": {
+          "ok": 6
+        }
+      },
+      "chart_selection": {
+        "calls": 26,
+        "tokens_used": 10951,
+        "tokens_saved": 0,
+        "cost_usd": 0.0004144979999999999,
+        "by_status": {
+          "ok": 26
+        }
+      },
+      "metadata_enrichment": {
+        "calls": 0,
+        "tokens_used": 0,
+        "tokens_saved": 20160,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 7
+        }
+      }
+    }
+  },
+  "monitor": {
+    "period": "2025-09-15",
+    "value": 82.0,
+    "points": 90,
+    "series_tail": [
+      [
+        "2025-06-30",
+        135.0
+      ],
+      [
+        "2025-07-07",
+        121.0
+      ],
+      [
+        "2025-07-14",
+        140.0
+      ],
+      [
+        "2025-07-21",
+        113.0
+      ],
+      [
+        "2025-07-28",
+        130.0
+      ],
+      [
+        "2025-08-04",
+        115.0
+      ],
+      [
+        "2025-08-11",
+        129.0
+      ],
+      [
+        "2025-08-18",
+        87.0
+      ],
+      [
+        "2025-08-25",
+        106.0
+      ],
+      [
+        "2025-09-01",
+        101.0
+      ],
+      [
+        "2025-09-08",
+        80.0
+      ],
+      [
+        "2025-09-15",
+        82.0
+      ]
+    ],
+    "alert": false,
+    "severity": "warning",
+    "expected": 78.9048,
+    "lower": 24.1342,
+    "upper": 129.3374,
+    "z": 0.1471,
+    "direction": "above",
+    "pct_change": 0.0392,
+    "forecast_method": "holt_winters",
+    "warnings": [
+      "fewer than two full seasons of 52; seasonality not modelled"
+    ],
+    "message": "Record volume was 82 for 2025-09-15; the forecast from 59 prior periods expected 78.9 (interval 24.13 to 129.3), +3.9%.",
+    "metric": "Record volume",
+    "query_id": "qry_2ef587e5cb80",
+    "grain": "week",
+    "excluded_future_rows": 0,
+    "dropped_incomplete_period": "2025-09-22",
+    "alert_id": null
+  },
+  "scheduled_crawl": {
+    "id": "srun_8935a3682db6",
+    "schedule_id": "sch_d3b5f0b3c364",
+    "workspace_id": "ws_6eaa038961de",
+    "fire_key": "sch_d3b5f0b3c364:manual:2026-09-25T14:59:32.626914+00:00",
+    "scheduled_for": "2026-09-25T14:59:32.626914+00:00",
+    "trigger": "manual",
+    "status": "succeeded",
+    "result": {
+      "crawls": {
+        "src_a782f7feb659": {
+          "new": 0,
+          "changed": 0,
+          "crawl_id": "crl_bc16d7a8cd5d",
+          "profiled": null,
+          "deprecated": 0
+        }
+      }
+    },
+    "error": null,
+    "started_at": "2026-09-25T14:59:32.623306+00:00",
+    "finished_at": "2026-09-25T14:59:32.872067+00:00"
+  }
+}

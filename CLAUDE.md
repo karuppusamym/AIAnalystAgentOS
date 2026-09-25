@@ -43,6 +43,7 @@ docker compose up -d postgres redis neo4j temporal superset # infra (Superset im
 cd web && npm install && npm run dev                        # UI :5173
 .venv/bin/python scripts/e2e_demo.py                        # live v1 §62 scenario + evidence report
 .venv/bin/python scripts/e2e_phase3.py                      # live Phase-3 (schedules, reports, monitors) evidence
+.venv/bin/python scripts/e2e_increment3.py                  # live increment-3 (any database, crawler, token economy) evidence
 ```
 
 Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` / `ChangeMe123!`.
@@ -56,7 +57,9 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `src/analystos/agents/` | agent behaviours; `dispatch.py` maps task keys → behaviours |
 | `src/analystos/workflows/` | Temporal workflow + activities; `orchestrator.py` local runner |
 | `src/analystos/governance/` | scope, policy decisions, approvals, audit |
-| `src/analystos/gateway/`, `connectors/`, `staging/` | data plane |
+| `src/analystos/gateway/`, `connectors/`, `staging/` | data plane; `config/source_kinds.yaml` + `connectors/kinds.py` + `generic_sql.py` = every database kind |
+| `src/analystos/services/crawler.py`, `skills/catalog.py` | metadata crawler (deterministic semantics/PII/drift; model optional) |
+| `src/analystos/contracts/platform.py`, `services/platform_settings.py` | admin control plane: versioned runtime settings, LLM modes, presets |
 | `src/analystos/skills/`, `sandbox/` | deterministic analytics |
 | `src/analystos/llm/` | router, JEV, redaction; `config/models.yaml` |
 | `src/analystos/publishing/` | BI publisher interface, Superset adapter, preview |
@@ -68,6 +71,10 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 ## Conventions
 
 * Match surrounding code: short docstrings that explain *why*, typed signatures, no comment noise.
+* Deterministic first: a new model use needs a purpose in `config/models.yaml`, a rule path where one
+  can exist (so `off`/`auto` modes work), and `model_gate`/`record_skip` so avoided calls show as savings.
+* Crawler invariants: owner tags and reviewed/user descriptions are never overwritten; tags only tighten;
+  data-touching crawl steps go through the gateway on selected assets only.
 * Errors: raise `core/errors.py` classes (they carry HTTP status and retryability).
 * Every new persisted concept needs: model + migration + lineage edge where it has provenance +
   an event type in `contracts/events.py` if the UI should see it.
