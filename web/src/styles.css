@@ -670,3 +670,18 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .field-check { flex-direction: row; flex-wrap: wrap; align-items: center; }
 .field-check .field-hint { flex-basis: 100%; }
 [aria-invalid="true"] { border-color: var(--danger) !important; }
+
+/* ---------------------------------------------------------------- Ask (P4-U02) */
+.ask-layout { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr) minmax(300px, 380px); gap: 1rem; align-items: start; }
+.ask-threads, .ask-inspector { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow: auto; }
+@media (max-width: 1250px) { .ask-layout { grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); } .ask-inspector { grid-column: 1 / -1; position: static; max-height: none; } }
+@media (max-width: 860px) { .ask-layout { grid-template-columns: minmax(0, 1fr); } .ask-threads { position: static; max-height: none; } }
+.ask-turn { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.ask-turn-selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.ask-question { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
+.ask-question p { margin: 0; }
+.pill-row { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.ask-stages { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.ask-stage-current { font-weight: 600; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.h-sm { font-size: 0.85rem; margin: 0.25rem 0; }

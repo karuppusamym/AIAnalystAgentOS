@@ -329,21 +329,20 @@ describe("investigation board", () => {
     expect(within(dialog).queryByLabelText("passed")).toBeNull();
   });
 
-  it("captures accept and reject signals through the feedback endpoint", async () => {
+  it("captures accept (finding outcome) and reject (feedback) signals", async () => {
     const fetchMock = mockFetch();
     renderAt(`/w/${WS}/investigate/${RUN}`);
     const f1 = await screen.findByRole("article", { name: "Finding F1" });
     fireEvent.click(within(f1).getByRole("button", { name: "Accept" }));
-    // The server has no "accept" feedback kind yet: the refusal is shown, not hidden.
-    expect(await within(f1).findByText("Accept not recorded")).toBeTruthy();
-    const [, acceptInit] = calls(fetchMock, "POST", /\/analysis\/run_demo\/feedback$/)[0];
-    expect(JSON.parse(String(acceptInit.body))).toMatchObject({ kind: "accept", target_type: "insight", target_id: "ins_demo" });
+    expect(await within(f1).findByText(/Accepted — signal recorded for calibration/)).toBeTruthy();
+    const [, acceptInit] = calls(fetchMock, "POST", /\/insights\/ins_demo\/outcome$/)[0];
+    expect(JSON.parse(String(acceptInit.body))).toEqual({ signal: "accept" });
 
     fireEvent.click(within(f1).getByRole("button", { name: "Reject" }));
     fireEvent.change(within(f1).getByLabelText(/Why is F1 wrong/), { target: { value: "Network was reorganised in August." } });
     fireEvent.click(within(f1).getByRole("button", { name: "Reject finding" }));
     expect(await within(f1).findByText(/Replanned to plan v2/)).toBeTruthy();
-    const [, rejectInit] = calls(fetchMock, "POST", /\/feedback$/)[1];
+    const [, rejectInit] = calls(fetchMock, "POST", /\/feedback$/)[0];
     expect(JSON.parse(String(rejectInit.body))).toEqual({
       text: "Network was reorganised in August.", kind: "reject_finding", target_type: "insight", target_id: "ins_demo" });
   });

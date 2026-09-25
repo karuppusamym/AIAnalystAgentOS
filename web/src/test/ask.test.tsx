@@ -1,0 +1,175 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import axe from "axe-core";
+import { session, streamAskTurn, type AskThread } from "../api";
+import { AppRoutes } from "../App";
+import { AuthProvider } from "../auth";
+import {
+  REFUSAL_VIEWS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, refusalView, stalenessPill,
+} from "../lib/ask";
+import { askTurn, mockBackend, RUN, THREAD_NEW, THREAD_OLD, USER, WS } from "./mockBackend";
+
+vi.setConfig({ testTimeout: 20000 });
+
+function mockFetch() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    const r = mockBackend(method, String(input), typeof init?.body === "string" ? init.body : null);
+    return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
+  });
+}
+
+function calls(fetchMock: ReturnType<typeof mockFetch>, method: string, re: RegExp): [string, RequestInit][] {
+  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
+    .filter(([u, i]) => (i?.method ?? "GET").toUpperCase() === method && re.test(String(u)))
+    .map(([u, i]) => [String(u), i ?? {}]);
+}
+
+function renderAt(path: string) {
+  return render(<AuthProvider><MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter></AuthProvider>);
+}
+
+async function ask(question: string) {
+  fireEvent.change(await screen.findByLabelText("Question"), { target: { value: question } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+}
+
+beforeEach(() => session.set("mock-token", USER));
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  session.clear();
+});
+
+// ------------------------------------------------------------------------------------ helpers
+describe("Ask helpers", () => {
+  const thread = (id: string, updated: string): AskThread => ({ id, workspace_id: WS, user_id: "u", title: id, archived: false, created_at: updated, updated_at: updated });
+
+  it("groups threads by recency, newest first, dropping empty groups", () => {
+    const now = new Date("2026-09-25T12:00:00Z");
+    const g = groupThreads([thread("old", "2026-08-01T00:00:00Z"), thread("today", "2026-09-25T10:00:00Z"),
+      thread("week", "2026-09-22T10:00:00Z"), thread("today2", "2026-09-25T11:00:00Z")], now);
+    expect(g.map((x) => [x.label, x.items.map((t) => t.id)])).toEqual([
+      ["Today", ["today2", "today"]], ["Previous 7 days", ["week"]], ["Earlier", ["old"]]]);
+    expect(groupThreads([], now)).toEqual([]);
+  });
+
+  it("names who answered, the gateway and the tables; staleness has its own tone", () => {
+    const pills = provenancePills(askTurn("t", "q"));
+    expect(pills.map((p) => p.label)).toEqual(["Generated SQL · openrouter/auto", "Validated by the query gateway", "Incidents (stg_sn.incident)"]);
+    const reg = provenancePills(askTurn("t", "q", { answered_by: "registry", model: null, provenance: { verified_query: { id: "vq", name: "p1_by_group" } } }));
+    expect(reg[0]).toMatchObject({ tone: "success", label: "Verified query: p1_by_group" });
+    expect(stalenessPill({ state: "stale", label: "Data as of 9 days ago", data_as_of: null }).tone).toBe("danger");
+    expect(stalenessPill(undefined).label).toBe("Data freshness unknown");
+  });
+
+  it("has one refusal state per kind, each with a remedy action; unknown kinds read as failures", () => {
+    for (const kind of ["needs_input", "clarify", "sql_rejected", "policy_denied", "budget_exceeded", "no_model", "no_scope", "timeout", "unavailable", "failed"]) {
+      expect(REFUSAL_VIEWS[kind]?.actionLabel).toBeTruthy();
+    }
+    expect(refusalView({ kind: "policy_denied", title: "", message: "", remedy: "", details: {} }).state).toBe("not-entitled");
+    expect(refusalView({ kind: "teleport", title: "", message: "", remedy: "", details: {} })).toBe(REFUSAL_VIEWS.failed);
+  });
+
+  it("describes promotions and decisions in words", () => {
+    expect(promotionText({ target: "dashboard", id: "a", status: "approval_required" })).toMatch(/Waiting for approval/);
+    expect(promotionText({ target: "metric", id: "m", status: "proposed", name: "p1" })).toMatch(/an approver approves it/);
+    expect(canPromote(askTurn("t", "q", { status: "clarify", result: null }))).toBe(false);
+    expect(decisionLine({ id: "d", purpose: "ask_route", authority: "route", backend: "rules", model: null, answer: "verified_query",
+      proposal: null, probabilities: {}, confidence: null, fallback_reason: null, attempts: [], enforced: [], subject: null, latency_ms: 0,
+      created_at: "" })).toBe("ask_route: verified_query — decided by rule");
+  });
+
+  it("streams stages then the persisted turn over a POST", async () => {
+    mockFetch();
+    const stages: string[] = [];
+    const turn = await streamAskTurn(THREAD_NEW, "How many P1 incidents per assignment group?", undefined, { onStage: (s) => stages.push(s.key) });
+    expect(stages).toEqual(["scope", "registry", "route", "context", "generate", "execute", "done"]);
+    expect(turn.status).toBe("answered");
+  });
+});
+
+// ------------------------------------------------------------------------------------ page
+describe("Ask page (P4-U02)", () => {
+  it("asks in a new thread: streamed stages, answer card with chart, table and pills, inspector tabs", async () => {
+    const fetchMock = mockFetch();
+    const { container } = renderAt(`/w/${WS}/ask`);
+    await ask("How many P1 incidents per assignment group?");
+    const answer = await screen.findByRole("article", { name: "Question 1" });
+    expect(within(answer).getByText("P1 incidents by assignment group.")).toBeTruthy();
+    const pills = within(answer).getByRole("list", { name: "Provenance" });
+    expect(within(pills).getByText("Validated by the query gateway")).toBeTruthy();
+    expect(within(pills).getByText("Data as of 3 hours ago")).toBeTruthy();
+    expect(within(answer).getAllByRole("table").length).toBeGreaterThan(0);
+    const [, init] = calls(fetchMock, "POST", /\/ask\/threads\/ask_new\/turns$/)[0];
+    expect((init.headers as Record<string, string>).Accept).toBe("text/event-stream");
+
+    const inspector = screen.getByRole("complementary", { name: "Answer inspector" });
+    fireEvent.click(within(inspector).getByRole("tab", { name: "Decision" }));
+    expect(await within(inspector).findByText(/ask_route: generate — decided by rule/)).toBeTruthy();
+    expect(within(inspector).getByText(/clarify_needed: answer — decided by jev \(typesafe\/jev-1\)/)).toBeTruthy();
+    fireEvent.click(within(inspector).getByRole("tab", { name: "Evidence" }));
+    expect(within(inspector).getByText("P1 = priority 1 (critical)")).toBeTruthy();
+    fireEvent.click(within(inspector).getByRole("tab", { name: "SQL" }));
+    expect(within(inspector).getByText(/LIMIT 5001/)).toBeTruthy();
+    const result = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(result.violations.map((v) => v.id)).toEqual([]);
+  });
+
+  it("shows the clarify refusal with its remedy, and nothing ran", async () => {
+    mockFetch();
+    renderAt(`/w/${WS}/ask`);
+    await ask("what about it?");
+    const turn = await screen.findByRole("article", { name: "Question 1" });
+    expect(within(turn).getByText("The question needs more detail")).toBeTruthy();
+    expect(within(turn).getByText(/Say what to measure/)).toBeTruthy();
+    fireEvent.click(within(turn).getByRole("button", { name: "Rephrase the question" }));
+    expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe("what about it?");
+    expect(within(turn).queryByRole("region", { name: "Promote this answer" })).toBeNull();
+  });
+
+  it("promotes to a monitor through the form, then investigates why", async () => {
+    const fetchMock = mockFetch();
+    renderAt(`/w/${WS}/ask`);
+    await ask("How many P1 incidents per assignment group?");
+    const promote = await screen.findByRole("region", { name: "Promote this answer" });
+    fireEvent.click(within(promote).getByRole("button", { name: "Monitor this" }));
+    const form = within(promote).getByRole("form", { name: "New monitor" });
+    fireEvent.change(within(form).getByLabelText("Watch for"), { target: { value: "metric_threshold" } });
+    fireEvent.change(within(form).getByLabelText("Threshold"), { target: { value: "150" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Create monitor" }));
+    expect(await within(promote).findByText(/Monitor "P1 incidents per assignment group" created/)).toBeTruthy();
+    const [, init] = calls(fetchMock, "POST", /\/ask\/turns\/askt_1\/promote$/)[0];
+    expect(JSON.parse(String(init.body))).toEqual({ target: "monitor", kind: "metric_threshold", op: ">", value: 150, grain: "week" });
+
+    fireEvent.click(within(promote).getByRole("button", { name: "Add to dashboard" }));
+    expect(await within(promote).findByText(/Waiting for approval/)).toBeTruthy();
+    fireEvent.click(within(promote).getByRole("button", { name: "Investigate why" }));
+    expect(await screen.findByRole("heading", { level: 1, name: /Why are P1 resolution times rising/ })).toBeTruthy();
+    await waitFor(() => expect(calls(fetchMock, "GET", new RegExp(`/analysis/${RUN}$`)).length).toBeGreaterThan(0));
+  });
+
+  it("lists, searches and reopens threads", async () => {
+    const fetchMock = mockFetch();
+    renderAt(`/w/${WS}/ask`);
+    const threads = await screen.findByRole("navigation", { name: "Threads" });
+    fireEvent.click(await within(threads).findByRole("button", { name: /Weekly P1 volume/ }));
+    expect((await screen.findAllByText("How many P1 incidents per week?")).length).toBeGreaterThan(0);
+    expect(calls(fetchMock, "GET", new RegExp(`/ask/threads/${THREAD_OLD}$`))).toHaveLength(1);
+    fireEvent.change(within(threads).getByLabelText("Search threads"), { target: { value: "volume" } });
+    await waitFor(() => expect(calls(fetchMock, "GET", /\/ask\/threads\?q=volume$/)).toHaveLength(1));
+  });
+
+  it("explains pasted SQL with the source plan and runs nothing", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => new Response(JSON.stringify(String(input).endsWith("/query/explain") ? {
+      statement: "SELECT", summary: "Counts incidents by priority.", tables: ["stg.incident"], gateway: { accepted: true },
+      plan: { available: true, node: "Aggregate", estimated_rows: 5, total_cost: 12.5, nodes: ["Aggregate", "Seq Scan"], relations: ["stg.incident"] },
+    } : []), { status: 200, headers: { "Content-Type": "application/json" } }));
+    renderAt(`/w/${WS}/ask`);
+    fireEvent.change(await screen.findByLabelText("SQL (read-only)"), { target: { value: "SELECT priority, COUNT(*) FROM stg.incident GROUP BY 1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Explain" }));
+    expect(await screen.findByText(/Source plan/)).toBeTruthy();
+    expect(screen.getByText(/Aggregate → Seq Scan/)).toBeTruthy();
+  });
+});
