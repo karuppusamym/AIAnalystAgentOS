@@ -685,3 +685,25 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .ask-stage-current { font-weight: 600; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .h-sm { font-size: 0.85rem; margin: 0.25rem 0; }
+
+/* ---------------------------------------------------------------- Build studio (P4-U05) */
+.steps { list-style: none; margin: 0 0 0.75rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; }
+.step { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.step-mark { display: inline-flex; justify-content: center; width: 1.2rem; font-weight: 700; color: var(--text-3); }
+.step-done .step-mark { color: var(--success); }
+.step-current .step-mark { color: var(--running); }
+.step-failed .step-mark { color: var(--danger); }
+.step-current strong { color: var(--running); }
+.rel { margin-right: 0.35rem; }
+.diff-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.diff-files summary { cursor: pointer; }
+.diff-body { margin: 0.35rem 0 0; padding: 0.5rem 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); max-height: 360px; overflow: auto; font-size: 0.8rem; line-height: 1.45; }
+.dl { display: block; padding: 0 0.65rem; white-space: pre; color: var(--text); }
+.dl-add { background: var(--success-bg); color: var(--success); }
+.dl-del { background: var(--danger-bg); color: var(--danger); }
+.dl-hunk { color: var(--info); background: var(--info-bg); }
+.dl-meta { color: var(--text-2); font-weight: 600; }
+.kpi-check { min-height: 1.4rem; }
+.warn-list { margin: 0.25rem 0; padding-left: 1.1rem; }
+.designate { margin: 0.25rem 0 0.75rem; }
+.designate summary { cursor: pointer; color: var(--accent); }

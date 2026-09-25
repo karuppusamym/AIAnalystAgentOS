@@ -1,4 +1,4 @@
-import { INSIGHT, RUN, THREAD_NEW, WS } from "../src/test/mockBackend";
+import { BUILD_NEW, BUILD_PREV, INSIGHT, RUN, THREAD_NEW, WS } from "../src/test/mockBackend";
 import { axeViolations, expect, signIn, test } from "./fixtures";
 
 test.describe("five-journey IA", () => {
@@ -138,6 +138,72 @@ test.describe("investigation board (P4-U03)", () => {
   });
 });
 
+test.describe("build (P4-U05)", () => {
+  test("plan build → diff and dry run → approval in the inbox → approved → status", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/build/studio?tab=builds`);
+    await expect(page.getByRole("tab", { name: "dbt builds", selected: true })).toBeVisible();
+    const jobs = page.getByRole("list", { name: "Build jobs" });
+    await expect(jobs.getByRole("listitem")).toHaveCount(1);
+
+    // Plan: the elt_build run generates and dry-runs the project, then asks for an approval.
+    const plan = page.getByRole("form", { name: "Plan a build" });
+    await expect(plan.getByLabel("Target schema")).toHaveValue("aos_mart");
+    await plan.getByRole("button", { name: "Plan build" }).click();
+    await expect(jobs.getByRole("listitem")).toHaveCount(2);
+
+    // Review: the files against the previous job for this target, the dry run and the estimate.
+    await expect(page.getByText(`Compared with job ${BUILD_PREV}`)).toBeVisible();
+    await expect(page.getByText("1 added, 2 modified, 0 removed")).toBeVisible();
+    await expect(page.getByLabel("Diff of models/p1_incidents.sql")).toContainText("+where priority = '1'");
+    await expect(page.getByLabel("Estimate")).toContainText("4,210");
+    await expect(page.getByText("fails: dropped")).toBeVisible();
+    const steps = page.getByRole("list", { name: "Build status" });
+    await expect(steps.locator("li[aria-current=step]")).toContainText("waiting for an approver in the inbox");
+    await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+
+    // Approve: in the approvals inbox, bound to the payload hash like every other side effect.
+    await page.getByRole("link", { name: "Review in the approvals inbox" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/operate/approvals`);
+    const card = page.locator("article.approval", { hasText: "Build with dbt" });
+    await expect(card.getByText("postgres:analytics/aos_mart")).toBeVisible();
+    await expect(card.getByText("risk: high")).toBeVisible();
+    await card.getByLabel("Reason").fill("diff reviewed");
+    await card.getByRole("button", { name: "Approve" }).click();
+    await expect(card).toHaveCount(0); // decided: it leaves the Pending tab
+    await page.getByRole("tab", { name: "All" }).click();
+    await expect(card.locator(".badge", { hasText: "approved" })).toBeVisible();
+
+    // Status: back in Build, the resumed run has built the tables.
+    const nav = page.getByRole("navigation", { name: "Main" });
+    await nav.getByRole("group", { name: "Build" }).getByRole("link", { name: "Studio" }).click();
+    await page.getByRole("tab", { name: "dbt builds" }).click();
+    await jobs.getByRole("listitem").first().getByRole("button").click();
+    await expect(page).toHaveURL(new RegExp(`job=${BUILD_NEW}`));
+    await expect(page.getByRole("heading", { name: "Result" })).toBeVisible();
+    await expect(page.getByText("success: 2")).toBeVisible();
+    await expect(steps.locator("li.step-done")).toHaveCount(4);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("KPI editor: live validation, propose, separation of duties", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/build/studio?tab=kpis`);
+    const form = page.getByRole("form", { name: "Propose a KPI" });
+    await form.getByLabel("Name", { exact: true }).fill("p1_count");
+    await form.getByLabel("Expression").fill("priority");
+    await expect(form.getByText("not an aggregate expression")).toBeVisible();
+    await form.getByLabel("Expression").fill("COUNT(*)");
+    await expect(form.getByText(/well-formed aggregate/)).toBeVisible();
+    await form.getByRole("button", { name: "Propose KPI" }).click();
+    await expect(form.getByText(/waits for an approver who is not you/)).toBeVisible();
+    await expect(page.getByText(/You proposed this version/)).toBeVisible();
+
+    await page.getByRole("list", { name: "KPIs" }).getByRole("button", { name: /mttr hours/ }).click();
+    await page.getByRole("button", { name: "Approve v2" }).click();
+    await expect(page.getByRole("button", { name: "Approve v2" })).toHaveCount(0);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
 test.describe("operate (P4-U06, P4-U07)", () => {
   test("registry lists a newly installed plugin and runs it from its generated form", async ({ page, api }) => {
     await signIn(page, "/operate/registry");
@@ -191,6 +257,9 @@ const SCREENS: [string, string, RegExp][] = [
   ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
   ["Knowledge", `/w/${WS}/knowledge/catalog`, /One row per incident/],
   ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
+  ["Build · dbt build", `/w/${WS}/build/studio?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
+  ["Build · KPIs", `/w/${WS}/build/studio?tab=kpis&kpi=mttr_hours`, /Approve v2/],
+  ["Build · dashboards", `/w/${WS}/build/studio?tab=dashboards&dashboard=art_dash`, /P1 MTTR by assignment group/],
   ["Operate", `/w/${WS}/operate/approvals`, /Publish dashboards/],
   ["Operate · settings", "/operate/settings", /Purpose/],
   ["Operate · usage", "/operate/usage", /Spend by rung not reported/],

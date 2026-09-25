@@ -64,7 +64,7 @@ export const SCREENS: Screen[] = [
     keywords: "connect discover crawl drift data" },
 
   { id: "studio", journey: "build", path: "/w/:wsId/build/studio", title: "Studio", nav: true, workspace: true,
-    keywords: "datasets metrics charts dashboards artifacts" },
+    keywords: "datasets metrics charts dashboards artifacts dbt builds kpis semantic publish" },
   { id: "reports", journey: "build", path: "/w/:wsId/build/reports", title: "Reports", nav: true, workspace: true },
 
   { id: "approvals", journey: "operate", path: "/w/:wsId/operate/approvals", title: "Approvals", nav: true, workspace: true,
@@ -124,6 +124,9 @@ export const to = {
   sources: (ws: string) => fillPath(screen("sources").path, { wsId: ws }),
   catalog: (ws: string) => fillPath(screen("catalog").path, { wsId: ws }),
   studio: (ws: string, artifact?: string) => withQuery(fillPath(screen("studio").path, { wsId: ws }), { artifact }),
+  /** Build studio tabs (P4-U05): builds (dbt jobs), kpis (semantic layer), dashboards (preview → publish). */
+  build: (ws: string, tab: "builds" | "kpis" | "dashboards", q: { job?: string; kpi?: string; dashboard?: string } = {}) =>
+    withQuery(fillPath(screen("studio").path, { wsId: ws }), { tab, ...q }),
   reports: (ws: string, artifact?: string) => withQuery(fillPath(screen("reports").path, { wsId: ws }), { artifact }),
   approvals: (ws: string) => fillPath(screen("approvals").path, { wsId: ws }),
   monitoring: (ws: string, q: { tab?: string; alert?: string } = {}) =>

@@ -1,10 +1,11 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { mockBackend } from "../src/test/mockBackend";
+import { mockBackend, resetMockState } from "../src/test/mockBackend";
 
 /** Every /api request is answered by the shared in-memory backend; nothing reaches a server. */
 async function mockApi(page: Page): Promise<string[]> {
   const unmatched: string[] = [];
+  resetMockState(); // the build journey and KPI editor change mock state; every test starts clean
   await page.route("**/api/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
