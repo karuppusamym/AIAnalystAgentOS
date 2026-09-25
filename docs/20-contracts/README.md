@@ -3,6 +3,10 @@
 Source of truth: Pydantic models in `src/analystos/contracts/`. JSON Schemas are generated into
 [`/contracts`](../../contracts) by `analystos export-contracts` — regenerate, never hand-edit.
 
+The [workbench API evolution](02-workbench-api.md) specifies future workspace briefs, work orders,
+ML/pipeline resources and common concurrency/recovery semantics. It is a design contract, not
+generated schema or evidence of live endpoints; implementation is tracked in P4–P6.
+
 | Contract | Model | Spec |
 |---|---|---|
 | Agent definition | `registry.AgentSpec` (YAML in `config/agents/`) | v1 §12.1 |

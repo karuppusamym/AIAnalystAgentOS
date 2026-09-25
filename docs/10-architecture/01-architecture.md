@@ -3,6 +3,12 @@
 See [spec v2](../00-intent/02-spec-v2.md) for the rules; this document shows the structure and the
 runtime flows. Decisions are recorded as ADRs in [`adr/`](adr/).
 
+This page describes the implemented architecture. The proposed workspace-adaptive extension is
+[ADR-0011](adr/0011-workspace-workflows-and-evidence.md), with a
+[workbench interaction design](02-workbench-ux.md) and [API evolution contract](../20-contracts/02-workbench-api.md).
+It preserves the modular monolith and adds typed workflows, evidence versions, isolated compute
+and retry-safe dispatch in increments P4–P6; these additions are not implemented yet.
+
 ## Deployment view (compose / Kubernetes)
 
 ```
@@ -25,7 +31,7 @@ runtime flows. Decisions are recorded as ADRs in [`adr/`](adr/).
                           ▼                                      ▼        ▼                       ▼
    Postgres: analystos (control) · analytics (staged, reader)  Redis   Neo4j (projection)   OpenRouter
    · superset · temporal                                       cache                        chat + JEV decisions
-                          ▲                                                                       
+                          ▲
                           └── Superset (reads analytics as analystos_reader)      ServiceNow / PG / SQL Server / files
 ```
 
@@ -71,13 +77,19 @@ hypotheses include the filter (`origin: user_redirect`) → a new approval is re
 
 ## Data model
 
-29 control-plane tables ([migration 0001](../../migrations/versions/0001_control_plane_schema_v1.py)).
+Initial control-plane schema ([migration 0001](../../migrations/versions/0001_control_plane_schema_v1.py));
+the following groups describe that baseline, not the complete current table inventory.
 Groups: identity & workspace (`app_user`, `workspace`, `workspace_member`, `workspace_policy`);
 sources (`source`, `source_asset`, `source_column`, `relationship`); memory (`context_entry` with
 `vector(256)`); registries (`agent_definition`, `tool_definition`, `skill_definition`); runs
 (`analysis_run`, `run_task`, `run_event`, `agent_message`); audit (`model_call`, `tool_execution`,
 `query_execution`, `audit_event`); analysis (`hypothesis`, `experiment`, `insight`); outputs
 (`artifact`, `artifact_version`, `lineage_edge`); control (`approval`, `publication`, `feedback`).
+
+Later migrations extend narrative provenance (0002), add schedules/monitors/alerts/notifications
+(0003), platform settings and token savings (0004), and crawler state/history (0005). The
+[`migrations/versions`](../../migrations/versions) directory is the schema history; consult it
+alongside the ORM models rather than treating the initial table count as current.
 
 ## Where each spec §8 module lives
 

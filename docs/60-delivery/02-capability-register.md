@@ -157,3 +157,15 @@ Each of those passes changed the investigator (see tracker P3 findings).
 | Forecasting + forecast-deviation monitor | `skills/forecast.py`, `services/monitors.py` | 18 forecast tests (coverage over 30 seeds) + monitor test | ✅ | Holt-Winters ~0.1–0.3 s per series |
 | Investigator breadth | `agents/investigator.py` | role playbook, outcome-diverse selection, driver-model deduplication, KPI × dimension continuation tests | ✅ 3/3 planted, 0 false | Continuation is one dimension per outcome per round |
 | Increment-3 UI | `web/src/pages/{Catalog,AdminSettings}.tsx`, `components/CrawlPanel.tsx` | 26 new vitest tests (76 total) | smoke incl. Catalog | Column-level curation not in the UI |
+
+## 2026-09-25 — Design review and next delivery scope
+
+The [design review](04-design-review.md) inspected spec v2, architecture/ADRs, the existing
+tracker/readiness/evidence, the UI screen map and relevant API, service, contract and verification
+code. The resulting target design covers workspace semantics, UI/API evolution, ML, engineering,
+evidence and evaluation. P4–P6 in the tracker contain the implementation acceptance criteria.
+
+This is documentary evidence only. No runtime capability, test count, connector certification
+or release-readiness promotion is added. Existing live runs were not repeated. Validation for
+this change checks changed Markdown links, code fences, tracker IDs/status consistency and diff
+whitespace; application tests and browser execution are not part of this documentation change.
