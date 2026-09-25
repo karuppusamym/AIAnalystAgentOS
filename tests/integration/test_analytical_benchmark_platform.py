@@ -24,7 +24,7 @@ def no_models(control_db, monkeypatch):
 
 @pytest.mark.parametrize("domain", ["itsm", "sales", "finance"])
 def test_platform_benchmark_meets_thresholds(no_models, domain):
-    from analystos.evaluation.analytical import check, run_platform, summarize
+    from evaluation.analytical import check, run_platform, summarize
 
     scores = [run_platform(domain, 1, effects=True), run_platform(domain, 101, effects=False)]
     summary = summarize(scores, "platform")

@@ -1,6 +1,6 @@
 """Analytical benchmark (P4-V01, spec v3 §10): precision and recall of *verified* findings and the
 false-discovery rate against the nominal α, across ITSM, sales and finance, on seeded datasets with
-planted effects and null controls (analystos.evaluation.datasets).
+planted effects and null controls (evaluation.datasets).
 
 Two tiers score the same way:
 
@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
-from analystos.evaluation.datasets import Dataset, build, node
+from evaluation.datasets import Dataset, build, node
 
 ALPHA = 0.05
 DOMAINS = ("itsm", "sales", "finance")
@@ -134,7 +134,7 @@ def _score(score: ReplicateScore, ds: Dataset) -> ReplicateScore:
 def _duck(ds: Dataset):
     import duckdb
 
-    from analystos.evaluation.duck import DuckRunSQL
+    from evaluation.duck import DuckRunSQL
 
     con = duckdb.connect()
     con.execute(f"CREATE SCHEMA {SCHEMA}")

@@ -5,9 +5,8 @@ and the platform tier (staging + gateway + a real run) in tests/integration/test
 from __future__ import annotations
 
 import pytest
-
-from analystos.evaluation import datasets
-from analystos.evaluation.analytical import check, classify, run_component_suite
+from evaluation import datasets
+from evaluation.analytical import check, classify, run_component_suite
 
 
 def test_component_benchmark_meets_thresholds():

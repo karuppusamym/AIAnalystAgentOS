@@ -10,7 +10,7 @@ seeded ITSM, sales and finance datasets with planted effects and null controls.
   python scripts/benchmark_analytical.py --tier platform --models live --report auto
 
 `--report auto` writes docs/60-delivery/evidence/<date>-analytical-benchmark-<tier>-<models>.md (+ .json).
-Exit code 1 with --check when a threshold (analystos.evaluation.analytical.THRESHOLDS) is missed.
+Exit code 1 with --check when a threshold (evaluation.analytical.THRESHOLDS) is missed.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))  # the evaluation harness lives outside the product package
 
 
 LIMITS = """## Scope and limits
@@ -57,7 +58,7 @@ def _fmt(x) -> str:
 
 
 def render(results: dict, args: argparse.Namespace, problems: list[str]) -> str:
-    from analystos.evaluation.analytical import ALPHA, THRESHOLDS
+    from evaluation.analytical import ALPHA, THRESHOLDS
 
     now = datetime.now(UTC)
     rev = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -67,7 +68,7 @@ def render(results: dict, args: argparse.Namespace, problems: list[str]) -> str:
              + (f" ({os.environ.get('ANALYSTOS_MODELS_CONFIG', 'config/models.yaml')}"
                 f"{', air-gapped' if os.environ.get('ANALYSTOS_AIR_GAPPED', '').lower() == 'true' else ''})" if args.models == "live" else
                 " (no provider key: every model purpose takes its rule path)") + ".", "",
-             "Datasets: `analystos.evaluation.datasets` — one table per domain generated from an explicit causal graph "
+             "Datasets: `evaluation.datasets` — one table per domain generated from an explicit causal graph "
              "(ITSM incidents with 4 planted effects, sales orders with 3, accounts-payable invoices with 3; two null columns "
              "each, drawn independently of everything). Global-null replicates regenerate the same tables with every planted "
              "effect set to zero. A verified finding is *true* when its outcome and segment share an ancestor in the graph; "
@@ -119,7 +120,7 @@ def main() -> int:
             os.environ.pop(key, None)
     os.environ.setdefault("ANALYSTOS_ORCHESTRATOR", "local")
 
-    from analystos.evaluation.analytical import as_dict, check, run_component_suite, run_platform_suite
+    from evaluation.analytical import as_dict, check, run_component_suite, run_platform_suite
 
     domains = tuple(d.strip() for d in args.domains.split(",") if d.strip())
     results = {}

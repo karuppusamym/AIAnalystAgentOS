@@ -32,7 +32,7 @@ jobs:
         run: |
           psql -h localhost -U analystos -d analystos -f deploy/postgres/01-init.sql
           POSTGRES_USER=analystos PGHOST=localhost sh deploy/postgres/02-extensions.sh
-      - run: .venv/bin/ruff check src tests
+      - run: .venv/bin/ruff check src tests evaluation
       - name: OpenAPI schema is current (the web client is generated from web/openapi.json)
         run: |
           PYTHONPATH=src .venv/bin/python scripts/export_openapi.py
