@@ -256,6 +256,15 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
         totals["cache_hits"] += n if status == "cache_hit" else 0
         totals["deterministic_skips"] += n if status == "skipped" else 0
         totals["refused"] += n if status == "refused" else 0
+    # By model: spend of calls a provider served; avoided calls (skips) carry no model and stay out.
+    by_model: dict[str, dict] = {}
+    for model, status, n, used, saved, cost in session.execute(
+            select(ModelCall.model, ModelCall.status, func.count(),
+                   func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0),
+                   func.coalesce(func.sum(ModelCall.tokens_saved), 0), func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
+            .where(ModelCall.created_at >= since, ModelCall.status.in_(("ok", "error", "cache_hit")))
+            .group_by(ModelCall.model, ModelCall.status)).all():
+        add(by_model.setdefault(model or "unknown", bucket()), status, n, used, saved, cost)
     denom = totals["tokens_used"] + totals["tokens_saved"]
     totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
     # A model with no price and no provider-reported cost: its spend is unknown, not $0.
@@ -264,7 +273,7 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
                                .group_by(ModelCall.model)).all()
     missing = [{"model": m, "calls": n, "tokens": int(t)} for m, n, t in unpriced]
     totals["missing_price_calls"] = sum(m["calls"] for m in missing)
-    return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung,
+    return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung, "by_model": by_model,
             "missing_price": missing, "prices_version": load_models_config().prices_version,
             "cost_complete": not missing}
 

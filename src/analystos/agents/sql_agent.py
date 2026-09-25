@@ -124,6 +124,20 @@ def build_dataset(ctx: RunContext) -> dict:
 
 
 # ------------------------------------------------------------------------------------------- ad hoc
+# ask_route options (spec v3 §4.2): the ladder, tool-first. A rule decides; a model may only break a tie.
+ASK_ROUTES = {"verified_query": "Answer from a verified query in the registry (no model call)",
+              "tool": "Answer with a registered parameterised tool",
+              "generate": "Write new SQL with the model, then validate and run it through the gateway",
+              "decline": "Do not answer yet: a required input is missing, ask the user for it"}
+
+
+def _stage(ctx: Any, key: str, text: str, **data: Any) -> None:
+    """Report a plain-language step to whoever streams this Ask (the SSE route); a no-op elsewhere."""
+    fn = getattr(ctx, "on_stage", None)
+    if fn is not None:
+        fn(key, text, data)
+
+
 def _authorize_ask(ctx: Any) -> None:
     """Ask runs model-written SQL as the SQL agent's ``sql.execute`` tool: same gate as a run."""
     from analystos.contracts.policy import ExecutionIdentity
@@ -140,36 +154,79 @@ def _check_budget(ctx: Any) -> None:
 
 def _result(result: Any) -> dict[str, Any]:
     return {"query_id": result.query_id, "columns": result.columns, "rows": result.rows[:500], "row_count": result.row_count,
-            "truncated": result.truncated}
+            "truncated": result.truncated, "referenced_assets": list(getattr(result, "referenced_assets", None) or []),
+            "cache_hit": bool(getattr(result, "cache_hit", False)), "result_hash": getattr(result, "result_hash", None),
+            "duration_ms": getattr(result, "duration_ms", None)}
 
 
-def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Ladder rung L1 (P4-T05): answer from a verified query with no model call, or decline and ask
-    for a missing required parameter. None is a miss: the model path may answer."""
-    from analystos.llm.cache import estimate_tokens
+def decide(ctx: Any, purpose: str, state: dict[str, Any], question: Any, facts: dict[str, Any]) -> dict[str, Any]:
+    """One DecisionService decision for Ask, recorded against the Ask turn (`task_id`). A context with
+    no model router (tests, embedded callers) gets the purpose's rule directly: the same answer the
+    service's `rules` backend gives, not recorded."""
+    from analystos.decisions.rules import RULES
+
+    services = getattr(ctx, "services", None)
+    if getattr(services, "router", None) is not None and hasattr(ctx, "call_ctx"):
+        d = services.decisions.decide(purpose, state, question, facts=facts, ctx=ctx.call_ctx(),
+                                      subject=getattr(ctx, "subject", None))
+        return {**d.summary(), "authority": d.authority, "probabilities": d.probabilities, "enforced": d.enforced,
+                "details": d.details, "note": next((a.get("reason") for a in reversed(d.attempts) if a.get("outcome") == "answered"), None)}
+    proposal = RULES[purpose](state, facts, question)
+    value = proposal.value if proposal is not None else question.default
+    return {"id": None, "purpose": purpose, "backend": "rules" if proposal is not None else "default", "value": value,
+            "p": None, "model": None, "fallback_reason": None, "authority": None,
+            "probabilities": proposal.probabilities if proposal else {}, "enforced": [], "details": proposal.details if proposal else {},
+            "note": proposal.note if proposal else None}
+
+
+def verified_match_score(score: float) -> float:
+    """A registry match (coverage + precision, each past its floor) on the 0..1 scale of `ask_route`:
+    the weakest accepted match maps to 0.8, so every match the registry accepts is routed to it by the
+    rule, exactly as before the decision existed."""
+    from analystos.registries.verified_queries import MIN_COVERAGE, MIN_PRECISION
+
+    floor = MIN_COVERAGE + MIN_PRECISION
+    return round(0.8 + 0.2 * max(0.0, min(1.0, (score - floor) / (2.0 - floor))), 4)
+
+
+def _registry_match(ctx: Any, question: str, parameters: dict[str, Any] | None) -> Any:
     from analystos.registries import verified_queries as vqr
 
     with session_scope() as s:
         hit = vqr.match(s, ctx.workspace.id, question, parameters)
-        if hit is None:
-            return None
-        entry = {"id": hit.entry.id, "name": hit.entry.name, "pattern": hit.pattern, "score": round(hit.score, 3)}
-        template, params, dialect = hit.entry.sql_template, list(hit.entry.parameters or []), hit.entry.dialect
+        if hit is not None:
+            s.expunge(hit.entry)
+        return hit
+
+
+def _record_skip(ctx: Any, reason: str, avoided: int) -> None:
+    router = getattr(ctx, "router", None)
+    if router is not None:
+        router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=reason, rung="registry")
+
+
+def _registry_answer(ctx: Any, question: str, hit: Any) -> dict[str, Any]:
+    """Ladder rung L1 (P4-T05): answer from a verified query with no model call, or decline and ask
+    for a missing required parameter."""
+    from analystos.llm.cache import estimate_tokens
+    from analystos.registries import verified_queries as vqr
+
+    entry = {"id": hit.entry.id, "name": hit.entry.name, "pattern": hit.pattern, "score": round(hit.score, 3)}
+    template, params, dialect = hit.entry.sql_template, list(hit.entry.parameters or []), hit.entry.dialect
     avoided = estimate_tokens(compact_json({"question": question, "catalog": catalog_for_prompt(ctx)})) + 500
     if hit.missing:
-        ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided,
-                               reason=f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}",
-                               rung="registry")
+        _record_skip(ctx, f"L1 registry: declined, {entry['name']} needs {', '.join(p['name'] for p in hit.missing)}", avoided)
         missing = [{k: p.get(k) for k in ("name", "type", "column", "values") if p.get(k) is not None} for p in hit.missing]
         return {"status": "needs_input", "answered_by": "registry", "verified_query": entry, "parameters": hit.values,
                 "missing": missing, "sql": None, "model": None, "attempts": [], "result": None,
                 "explanation": f"This matches the verified query '{entry['name']}', which needs "
                                f"{', '.join(p['name'] for p in hit.missing)}. Say which value to use; nothing was guessed."}
+    _stage(ctx, "registry", f"Found a verified answer: '{entry['name']}'", verified_query=entry["id"])
     values = {p["name"]: vqr.coerce(p, hit.values[p["name"]]) for p in params}  # vocabulary spelling, typed
     sql = vqr.render(template, params, values, dialect)
+    _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
     result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE, run_id=None, task_id=None)
-    ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=f"L1 registry: verified query {entry['name']}",
-                           rung="registry")
+    _record_skip(ctx, f"L1 registry: verified query {entry['name']}", avoided)
     with session_scope() as s:
         vqr.record_hit(s, entry["id"])
     return {"status": "answered", "answered_by": "registry", "verified_query": entry, "parameters": values, "sql": sql,
@@ -177,19 +234,73 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
             "attempts": [], "result": _result(result)}
 
 
+def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The registry rung alone; None is a miss (the model path may answer)."""
+    hit = _registry_match(ctx, question, parameters)
+    return None if hit is None else _registry_answer(ctx, question, hit)
+
+
+def route(ctx: Any, question: str, hit: Any) -> dict[str, Any]:
+    """`ask_route` (authority `route`): verified query > tool > generate, decline when a required input
+    is missing. The facts are deterministic; the rule answers every case but a close tie."""
+    from analystos.decisions.types import Question
+
+    facts = {"verified_match": verified_match_score(hit.score) if hit is not None else 0.0,
+             "tool_match": 0.0,  # no parameterised Ask tools are registered yet: the rung is never matched
+             "missing_inputs": [p["name"] for p in hit.missing] if hit is not None else []}
+    return decide(ctx, "ask_route", {"question": question},
+                  Question.choice("How should this analytics question be answered?", ASK_ROUTES, default="generate"), facts)
+
+
+def clarify(ctx: Any, question: str) -> dict[str, Any]:
+    """`clarify_needed` (authority `escalate_only`): ask the user when the question names nothing to
+    measure; a model may only add a question, never remove one."""
+    from analystos.decisions.types import Question
+    from analystos.registries.verified_queries import tokens
+
+    missing = [] if tokens(question) else ["what to measure"]
+    q = Question.escalation("Is this analytics question too ambiguous to answer without asking the user?",
+                            levels=["answer", "clarify"], baseline="answer", escalate_to="clarify", escalate_at=0.7)
+    return {**decide(ctx, "clarify_needed", {"question": question}, q, {"missing_inputs": missing}), "missing_inputs": missing}
+
 def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
         use_registry: bool = True) -> dict[str, Any]:
-    """NL question -> governed SQL -> result. Tool-first: the verified-query registry answers (or
-    declines) before any model is asked. Repairs use the gateway's rejection message.
+    """NL question -> governed SQL -> result. Tool-first: `ask_route` sends a registry match to the
+    verified query (or declines for a missing parameter) before any model is asked; `clarify_needed`
+    may stop an ambiguous question before generation. The decisions choose a path only: the SQL
+    still goes through the gateway validator and scope. Repairs use the gateway's rejection message.
     Gate and budget are checked before any model call, and the budget again before every attempt."""
+    _stage(ctx, "scope", "Checking what you are allowed to see")
     _authorize_ask(ctx)
     _check_budget(ctx)
+    hit = None
     if use_registry:
-        answered = ask_registry(ctx, question, parameters)
-        if answered is not None:
-            return answered
+        _stage(ctx, "registry", "Looking for a verified answer to this question")
+        hit = _registry_match(ctx, question, parameters)
+    chosen = route(ctx, question, hit)
+    decisions = [chosen]
+    path = chosen["value"]
+    if path == "tool" or (path in ("verified_query", "decline") and hit is None):
+        path = "verified_query" if hit is not None else "generate"  # nothing to run on that rung: the next one
+    _stage(ctx, "route", {"verified_query": "Answering from the verified query registry",
+                          "decline": "A required input is missing",
+                          "generate": "No verified answer fits: writing new SQL"}[path], route=chosen["value"])
+    if path in ("verified_query", "decline"):
+        out = _registry_answer(ctx, question, hit)
+        return {**out, "route": chosen["value"], "decisions": decisions}
+    asked = clarify(ctx, question)
+    decisions.append(asked)
+    if asked["value"] == "clarify":
+        _stage(ctx, "clarify", "The question needs more detail before it can be answered")
+        return {"status": "clarify", "answered_by": None, "route": chosen["value"], "decisions": decisions, "sql": None,
+                "model": None, "attempts": [], "result": None,
+                "missing": [{"name": n} for n in asked["missing_inputs"]],
+                "explanation": "This question is too open to answer safely. Say what to measure (a count, a rate, an "
+                               "average), over which records and period, and how to group it."}
+    _stage(ctx, "context", "Finding the tables that answer this")
     catalog = catalog_for_prompt(ctx, objective=question, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
+    _stage(ctx, "generate", "Writing the SQL")
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1",
                            compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
                                        catalog=catalog, reference_text=question),
@@ -202,14 +313,17 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
         if attempt:
             _check_budget(ctx)  # every attempt counts; over budget ends the loop (no repair)
         try:
+            _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
             result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
             return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": data.get("explanation"),
-                    "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result)}
+                    "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result),
+                    "route": chosen["value"], "decisions": decisions}
         except (SQLRejected, AnalystOSError) as exc:
             attempts.append({"sql": sql, "error": exc.message})
             if attempt == max_repairs:
                 raise
+            _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
                               compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
                                                               "error": exc.message}, objective=question, catalog=catalog,

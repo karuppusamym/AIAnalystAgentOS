@@ -901,3 +901,49 @@ class RegisteredHypothesis(Base):
     times_verified: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ------------------------------------------------------------------------------ Ask threads (P4-U02)
+class AskThread(Base):
+    """A persisted Ask conversation. Private to its creator; the workspace scopes what it can read."""
+
+    __tablename__ = "ask_thread"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(String(40), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AskTurn(Base):
+    """One question and its governed answer or refusal. `stages` are the plain-language steps streamed
+    while it ran; `decision` and `model_call` rows of the turn carry `task_id = id` (the inspector's
+    Decision tab); `promotions` records what the answer became (verified query, metric, monitor, run)."""
+
+    __tablename__ = "ask_turn"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("ask_thread.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    user_id: Mapped[str] = mapped_column(String(40))
+    seq: Mapped[int] = mapped_column(Integer, default=1)
+    question: Mapped[str] = mapped_column(Text)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | answered | needs_input | clarify | refused
+    route: Mapped[str | None] = mapped_column(String(30), nullable=True)  # ask_route decision: verified_query | tool | generate | decline
+    answered_by: Mapped[str | None] = mapped_column(String(20), nullable=True)  # registry | model
+    refusal: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # {kind, message, remedy, details}
+    sql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chart: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    verified_query: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    attempts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    stages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # summaries; full rows in `decision`
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    promotions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _ts()

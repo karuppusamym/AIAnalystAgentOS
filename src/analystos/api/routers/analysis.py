@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -25,8 +23,9 @@ from analystos.db.models import (
     ToolExecution,
     User,
 )
-from analystos.governance.policy import get_workspace, load_policy, require_role, resolve_scope
+from analystos.governance.policy import require_role, resolve_scope
 from analystos.services import runs as run_svc
+from analystos.services.ask import AdhocContext, adhoc_context, explain_sql
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -150,7 +149,21 @@ def console(workspace_id: str, run_id: str, user: User = Depends(current_user), 
                      "failed_calls": sum(1 for c in calls if c.status == "error"),
                      "cache_hits": sum(1 for c in calls if c.status == "cache_hit"),
                      "deterministic_skips": sum(1 for c in calls if c.status == "skipped"),
-                     "tokens_saved": sum(c.tokens_saved or 0 for c in calls)}}
+                     "tokens_saved": sum(c.tokens_saved or 0 for c in calls),
+                     "by_rung": _spend_by(calls, lambda c: c.answered_by or "llm_large"),
+                     "by_model": _spend_by([c for c in calls if c.status in ("ok", "error", "cache_hit")], lambda c: c.model)}}
+
+
+def _spend_by(calls: list, key) -> dict:
+    """Per rung or model: provider requests, tokens spent and avoided, cost (the Operate breakdown, per run)."""
+    out: dict[str, dict] = {}
+    for c in calls:
+        b = out.setdefault(key(c) or "unknown", {"calls": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0})
+        b["calls"] += 1 if c.status in ("ok", "error") else 0
+        b["tokens_used"] += (c.input_tokens or 0) + (c.output_tokens or 0)
+        b["tokens_saved"] += c.tokens_saved or 0
+        b["cost_usd"] += float(c.cost_usd or 0.0)
+    return out
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/events")
@@ -193,47 +206,9 @@ def edit_hypothesis(hypothesis_id: str, body: HypothesisPatch, user: User = Depe
 
 
 # --------------------------------------------------------------------------------------- ad hoc
-@dataclass
-class _AdhocCtx:
-    """Minimal context for the SQL agent outside a run (Ask box / query console)."""
-
-    user: User
-    workspace: object
-    scope: object
-    policy: object
-    agent: object
-    services: object
-    run: object = None
-    task: object = None
-
-    @property
-    def router(self):
-        return self.services.router
-
-    @property
-    def jev(self):
-        return self.services.jev
-
-    def call_ctx(self, exclude_families=None):
-        from analystos.llm.router import CallContext
-
-        return CallContext(workspace_id=self.workspace.id, agent_id="sql", prompt_version="sql.v1",
-                           allowed_models=self.policy.allowed_models, exclude_families=exclude_families or [])
-
-    def say(self, *a, **k):
-        return None
-
-
-def _adhoc(session: Session, user: User, workspace_id: str) -> _AdhocCtx:
-    from analystos.runtime.context import default_services
-    from analystos.tools.registry import get_agent_spec
-
-    scope = resolve_scope(session, session.merge(user), workspace_id)
-    ws = get_workspace(session, workspace_id)
-    ctx = _AdhocCtx(user=user, workspace=ws, scope=scope, policy=load_policy(session, ws), agent=get_agent_spec(session, "sql"),
-                    services=default_services())
-    session.expunge_all()
-    return ctx
+def _adhoc(session: Session, user: User, workspace_id: str) -> AdhocContext:
+    """The SQL agent's context outside a run (Ask box, console, MCP `ask`): services/ask.py."""
+    return adhoc_context(session, user, workspace_id)
 
 
 @router.post("/workspaces/{workspace_id}/ask")
@@ -255,22 +230,6 @@ def query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), se
 
 @router.post("/workspaces/{workspace_id}/query/explain")
 def explain_query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db)):
-    """Deterministic explanation (no model, no execution) plus the gateway validator's verdict for this caller."""
-    from analystos.core.errors import AnalystOSError
-    from analystos.gateway.validator import validate_sql
-    from analystos.skills.sqlexplain import explain_sql
-
-    scope = resolve_scope(session, session.merge(user), workspace_id)
-    dialect = next(iter(scope.source_dialects.values()), "postgres")
-    out = explain_sql(body.sql, dialect)
-    try:
-        validate_sql(scope, body.sql, max_rows=body.max_rows or scope.max_rows)
-        out["gateway"] = {"accepted": True}
-    except AnalystOSError as exc:
-        out["gateway"] = {"accepted": False, "code": exc.code, "reason": exc.message}
-        from analystos.governance.audit import audit
-
-        # A rejected probe is audited like a rejected console query: explain must not be a silent scope oracle.
-        audit(f"user:{user.id}", "query.explain_rejected", workspace_id=workspace_id, decision="deny",
-              details={"code": exc.code, "reason": exc.message[:300], "sql": body.sql[:2000]}, session=session)
-    return out
+    """Deterministic explanation (no model, no execution), the gateway validator's verdict for this
+    caller and, when accepted, the source's plan through the gateway (EXPLAIN only)."""
+    return explain_sql(session, user, workspace_id, body.sql, body.max_rows)
