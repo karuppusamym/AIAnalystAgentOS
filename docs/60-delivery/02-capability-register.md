@@ -272,3 +272,21 @@ cost gate is unchanged (7 and 3 calls).
 | Metric approval workflow | `semantic/service.py`, `governance/approvals.py` (`ALWAYS_SEPARATE_DUTIES`) | `test_semantic_layer.py` | ✅ deterministic run: run 1 refused at publish, approved, run 2 publishes (37 s) | Semantic-model structure versions have no approve endpoint |
 | dbt 1.12 import/export | `semantic/dbt.py` | `test_semantic_ossie.py` fixtures from real `dbt parse` | ✅ by hand (dbt-core 1.12.0 + metricflow 0.213.0) | dbt is not in the project environment; metricflow mangles percent KPIs (export warns) |
 | Publish gate on approved metrics | `semantic/service.gate_bundle`, `build_bundle` | `test_semantic_ossie.py`, `test_semantic_layer.py` | ✅ | Existing workspaces default to off; new ones on |
+
+## 2026-09-25 — Increment 4, waves 4–6: build, Ask, self-hosting, evaluation (E04–E06, U02, S04, V01)
+
+Migrations 0017 → 0020 (build gateway) → 0021 (Ask threads) → 0023 (user identity); up/down/up verified.
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| BuildGateway write identity | `build/gateway.py`, `build/targets.py`, `deploy/postgres/01-init.sql` | `test_elt_build.py` (Postgres refuses non-target, source and `public` writes; approval tamper/expiry) | ✅ | Postgres analytics engine only |
+| dbt builder playbook | `build/project.py`, `build/runner.py`, `build/lineage.py`, `playbooks/elt_build.v1.yaml` | `test_build_project.py`, `test_elt_build.py` | ✅ dbt Core 1.12.5, 20,000 rows, 3/3 tests (`evidence/elt-build-dbt-20260925.md`) | dbt lives in a separate venv (`ANALYSTOS_DBT_EXECUTABLE`), not in the worker image; tables only (no incremental) |
+| dlt vs staged loader | `scripts/spike_dlt_vs_staged.py`, ADR-0016 | — | ✅ measured | Static mock data |
+| Ask threads, stages, decisions, promote | `services/ask.py`, `api/routers/ask.py`, `agents/sql_agent.py` | `test_ask_threads.py`, `test_ask_threads_api.py`, vitest, Playwright | — | Tool rung unused; dashboard promote creates an approved chart, not a Superset publish |
+| Capability invoke | `capabilities/invoke.py` | `test_ask_threads*.py` | — | Methods run only inside investigations |
+| Paste-SQL explain | `QueryGateway.explain` | `test_ask_threads_api.py` | — | Postgres plans only |
+| Model providers + air-gapped egress guard | `llm/providers.py`, `config/models.airgapped.yaml` | `test_model_providers.py` | ❌ no local model run | Bedrock against a double |
+| OIDC SSO + ABAC | `security/oidc.py`, `governance/policy.py` | `test_oidc_abac.py`, `test_oidc_sso.py` (fake IdP) | ❌ | No real IdP login yet |
+| Sandbox network isolation | `sandbox/` | sandbox tests | ✅ | Falls back to not isolated under the chart's default seccomp; NetworkPolicy is the boundary |
+| Helm chart, offline bundle | `deploy/helm/analystos`, `scripts/bundle_images.sh` | `test_helm_chart.py` (skips without helm) | — | helm not in CI |
+| Analytical benchmark | `evaluation/`, `scripts/benchmark_analytical.py` | CI `--check` (precision/recall ≥ 0.90, FDR ≤ α) | ✅ deterministic + platform tiers (`evidence/2026-09-25-analytical-benchmark-*.md`) | No live-model report; effects well above materiality |
