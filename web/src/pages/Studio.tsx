@@ -1,11 +1,16 @@
-import { useMemo } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useCallback, useMemo } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Artifact, type ArtifactDetail } from "../api";
+import { useAuth } from "../auth";
+import { BuildPanel } from "../components/BuildPanel";
+import { DashboardsPanel } from "../components/DashboardPublish";
+import { KpiEditor } from "../components/KpiEditor";
+import { to } from "../routes";
 import { ChartView } from "../components/Chart";
 import { DashboardPreview } from "../components/DashboardPreview";
 import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
-import { Card, CodeBlock, EmptyState, ErrorBox, JsonView, KeyValue, Loading, PageHeader, RecordTable, StatusBadge } from "../components/ui";
+import { Card, CodeBlock, EmptyState, ErrorBox, JsonView, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, Tabs } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct, shortHash } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 import type { Preview } from "../lib/charts";
@@ -13,9 +18,53 @@ import type { Preview } from "../lib/charts";
 const TYPE_ORDER = ["dashboard", "chart", "metric", "dataset", "narrative", "profile", "quality_report", "relationship_map", "query",
   "context_package", "plan", "report"];
 
+type StudioTab = "artifacts" | "builds" | "kpis" | "dashboards";
+const TABS: { id: StudioTab; label: string }[] = [
+  { id: "artifacts", label: "Artifacts" }, { id: "builds", label: "dbt builds" }, { id: "kpis", label: "KPIs" }, { id: "dashboards", label: "Dashboards" },
+];
+
+/**
+ * Build → Studio: one screen, four tabs (P4-U05 stays inside the 20-screen budget). Artifacts are
+ * what runs produced; dbt builds plan, diff and follow `elt_build` jobs; KPIs edit the semantic
+ * layer; dashboards preview natively and go to publication through the approvals inbox.
+ */
 export function StudioPage() {
   const { wsId = "" } = useParams();
   const [params, setParams] = useSearchParams();
+  const tab = (TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "artifacts") as StudioTab;
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  const { user } = useAuth();
+  const set = useCallback((patch: Record<string, string | null>) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "") next.delete(k);
+        else next.set(k, v);
+      }
+      return next;
+    });
+  }, [setParams]);
+  const selectJob = useCallback((id: string | null) => set({ job: id }), [set]);
+  const selectKpi = useCallback((id: string | null) => set({ kpi: id }), [set]);
+  const selectDashboard = useCallback((id: string | null) => set({ dashboard: id }), [set]);
+
+  return (
+    <div className="page">
+      <PageHeader title="Studio" subtitle={<>Datasets, metrics, charts and dashboards produced by runs — versioned, with lineage — and what is built from them.
+        Reports are under <Link to={to.reports(wsId)}>Reports</Link>.</>} />
+      <Tabs value={tab} onChange={(t) => set({ tab: t === "artifacts" ? null : t })} tabs={TABS} />
+      <div className="tab-panel">
+        {tab === "artifacts" && <ArtifactsTab wsId={wsId} params={params} set={set} />}
+        {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
+          canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
+        {tab === "kpis" && <KpiEditor wsId={wsId} selected={params.get("kpi")} onSelect={selectKpi} />}
+        {tab === "dashboards" && <DashboardsPanel wsId={wsId} selected={params.get("dashboard")} onSelect={selectDashboard} />}
+      </div>
+    </div>
+  );
+}
+
+function ArtifactsTab({ wsId, params, set }: { wsId: string; params: URLSearchParams; set: (patch: Record<string, string | null>) => void }) {
   const selected = params.get("artifact");
   const typeFilter = params.get("type") ?? "";
   const list = useAsync(() => api.listArtifacts(wsId), [wsId]);
@@ -33,18 +82,8 @@ export function StudioPage() {
     });
   }, [list.data]);
 
-  const set = (patch: Record<string, string | null>) => {
-    const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === "") next.delete(k);
-      else next.set(k, v);
-    }
-    setParams(next);
-  };
-
   return (
-    <div className="page">
-      <PageHeader title="Studio" subtitle="Datasets, metrics, charts and dashboards produced by runs — versioned, with lineage." />
+    <>
       <ErrorBox error={list.error} onRetry={list.reload} />
       {list.loading && !list.data && <Loading />}
       {list.data?.length === 0 && <EmptyState title="No artifacts yet">Runs create profiles, datasets, metrics, charts and dashboards.</EmptyState>}
@@ -84,7 +123,7 @@ export function StudioPage() {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }
 

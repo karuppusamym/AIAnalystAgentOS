@@ -67,14 +67,34 @@ class TagsIn(BaseModel):
     tags: list[str]
 
 
+_COUNTED_ARTIFACTS = ("query", "dataset", "metric", "chart", "dashboard")
+_IN_CHUNK = 500
+
+
+def _summaries(session: Session, workspaces: list) -> list[dict]:
+    """Workspaces with their counts, in four grouped queries per chunk of workspaces rather than eight
+    per workspace (P4-S05: at 1,000 workspaces the per-workspace counts made the list take ~6 s alone
+    and time out under concurrent load)."""
+    counts: dict[str, dict[str, int]] = {ws.id: {k: 0 for k in (*_COUNTED_ARTIFACTS, "runs", "verified_insights", "sources")}
+                                         for ws in workspaces}
+    ids = list(counts)
+    for i in range(0, len(ids), _IN_CHUNK):
+        chunk = ids[i:i + _IN_CHUNK]
+        for ws_id, kind, n in session.execute(select(Artifact.workspace_id, Artifact.type, func.count()).where(
+                Artifact.workspace_id.in_(chunk), Artifact.type.in_(_COUNTED_ARTIFACTS)).group_by(Artifact.workspace_id, Artifact.type)):
+            counts[ws_id][kind] = n
+        for key, model, extra in (("runs", AnalysisRun, None), ("verified_insights", Insight, Insight.status == "verified"),
+                                  ("sources", Source, None)):
+            stmt = select(model.workspace_id, func.count()).where(model.workspace_id.in_(chunk))
+            if extra is not None:
+                stmt = stmt.where(extra)
+            for ws_id, n in session.execute(stmt.group_by(model.workspace_id)):
+                counts[ws_id][key] = n
+    return [{**row(ws), "counts": counts[ws.id]} for ws in workspaces]
+
+
 def _summary(session: Session, ws) -> dict:
-    counts = {t: session.scalar(select(func.count()).select_from(Artifact).where(Artifact.workspace_id == ws.id, Artifact.type == t))
-              for t in ("query", "dataset", "metric", "chart", "dashboard")}
-    counts["runs"] = session.scalar(select(func.count()).select_from(AnalysisRun).where(AnalysisRun.workspace_id == ws.id))
-    counts["verified_insights"] = session.scalar(select(func.count()).select_from(Insight).where(
-        Insight.workspace_id == ws.id, Insight.status == "verified"))
-    counts["sources"] = session.scalar(select(func.count()).select_from(Source).where(Source.workspace_id == ws.id))
-    return {**row(ws), "counts": counts}
+    return _summaries(session, [ws])[0]
 
 
 @router.post("/workspaces")
@@ -86,7 +106,7 @@ def create(body: WorkspaceIn, user: User = Depends(current_user), session: Sessi
 
 @router.get("/workspaces")
 def list_(user: User = Depends(current_user), session: Session = Depends(db)):
-    return [_summary(session, ws) for ws in ws_svc.list_workspaces(session, user)]
+    return _summaries(session, ws_svc.list_workspaces(session, user))
 
 
 @router.get("/workspaces/{workspace_id}")

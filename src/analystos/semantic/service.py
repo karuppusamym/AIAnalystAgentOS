@@ -170,7 +170,7 @@ def propose_metric(session: Session, workspace_id: str, defn: SemanticMetricDef,
 
     problem = ossie.metric_problem(defn)
     if problem and via == "user":
-        raise InvalidInput(f"metric {defn.name}: {problem}")
+        raise InvalidInput(f"metric {defn.name}: {problem}", details={"problems": [{"field": "expression", "message": problem}]})
     norm = _normalize(defn)
     history = metric_rows(session, workspace_id, name=defn.name)
     for row in reversed(history):
@@ -209,11 +209,59 @@ def propose_metric(session: Session, workspace_id: str, defn: SemanticMetricDef,
     return row, True
 
 
+def _definition_from_input(body: MetricProposalIn) -> tuple[SemanticMetricDef | None, list[dict[str, str]]]:
+    """The definition a user proposal would record, or the field problems that stop it (the KPI editor
+    shows these next to the fields; a malformed name is a 422, not a server error)."""
+    from pydantic import ValidationError
+
+    try:
+        defn = SemanticMetricDef(name=body.name, expressions=[DialectExpression(dialect=body.dialect, expression=body.expression)],
+                                 description=body.description, ai_context=body.ai_context, display_name=body.display_name,
+                                 format=body.format, grain=body.grain, filters=body.filters, dimensions=body.dimensions,
+                                 dataset=body.dataset)
+    except ValidationError as exc:
+        fields = {"name": "name", "expressions": "expression"}
+        return None, [{"field": fields.get(str(e["loc"][0]), str(e["loc"][0])) if e["loc"] else "definition",
+                       "message": "use letters, digits and underscores, starting with a letter or underscore (max 120)"
+                       if e["loc"] and e["loc"][0] == "name" else e["msg"]} for e in exc.errors()]
+    problems = []
+    if not defn.expression.strip():
+        problems.append({"field": "expression", "message": "an expression is required"})
+    elif (problem := ossie.metric_problem(defn)) is not None:
+        problems.append({"field": "expression", "message": problem})
+    return defn, problems
+
+
+def validate_proposal(session: Session, workspace_id: str, body: MetricProposalIn) -> dict[str, Any]:
+    """Check a KPI proposal without recording anything: the SEM-003 shape rule, the name, and the
+    SEM-005 conflicts it would create against the live (proposed or approved) definitions."""
+    defn, problems = _definition_from_input(body)
+    if defn is None or problems:
+        return {"ok": False, "problems": problems, "conflicts": [], "normalized_expression": None, "existing": None}
+    norm = _normalize(defn)
+    live = [r for r in metric_rows(session, workspace_id) if r.status in ACTIVE]
+    same_name = [r for r in live if r.name == defn.name]
+    unchanged = next((r for r in same_name if r.normalized_expression == norm), None)
+    found = []
+    dup = sorted({r.name for r in live if r.normalized_expression == norm and r.name != defn.name})
+    if dup:
+        found.append({"kind": "duplicate_expression", "names": [defn.name, *dup],
+                      "detail": f"{', '.join(dup)} already compute this expression; reuse that name or keep one"})
+    competing = [r for r in same_name if r.normalized_expression != norm]
+    if competing:
+        found.append({"kind": "conflicting_definition", "names": [defn.name],
+                      "detail": f"{defn.name} already has {len(competing)} live definition(s) "
+                                f"({', '.join(f'v{r.version} {r.status}' for r in competing)}); "
+                                "approving this one deprecates the approved version"})
+    return {"ok": True, "problems": [], "conflicts": found, "normalized_expression": norm,
+            "existing": {"version": unchanged.version, "status": unchanged.status} if unchanged else None}
+
+
 def propose_from_input(session: Session, workspace_id: str, body: MetricProposalIn, user: User) -> tuple[SemanticMetric, bool]:
-    defn = SemanticMetricDef(name=body.name, expressions=[DialectExpression(dialect=body.dialect, expression=body.expression)],
-                             description=body.description, ai_context=body.ai_context, display_name=body.display_name,
-                             format=body.format, grain=body.grain, filters=body.filters, dimensions=body.dimensions,
-                             dataset=body.dataset)
+    defn, problems = _definition_from_input(body)
+    if defn is None:
+        raise InvalidInput(f"metric {body.name}: " + "; ".join(f"{p['field']}: {p['message']}" for p in problems),
+                           details={"problems": problems})
     return propose_metric(session, workspace_id, defn, proposed_by=user.id, via="user")
 
 

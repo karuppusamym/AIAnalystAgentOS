@@ -712,6 +712,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/builds/{job_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Build Diff
+         * @description The generated dbt project file by file against the previous job for the same target (or `against`,
+         *     another job of the same workspace). Read-only: what the approver reviews, not what they approve —
+         *     the approval binds the whole project hash.
+         */
+        get: operations["build_diff_api_builds__job_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/capabilities": {
         parameters: {
             query?: never;
@@ -2125,6 +2147,27 @@ export interface paths {
         put?: never;
         /** Propose */
         post: operations["propose_api_workspaces__workspace_id__semantic_metrics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/metrics/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate
+         * @description Check a proposal without recording it (the KPI editor's live validation): field problems and the
+         *     conflicts it would create. Proposing still re-checks everything.
+         */
+        post: operations["validate_api_workspaces__workspace_id__semantic_metrics_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4470,6 +4513,42 @@ export interface operations {
     get_build_api_builds__job_id__get: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    build_diff_api_builds__job_id__diff_get: {
+        parameters: {
+            query?: {
+                against?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
@@ -7835,6 +7914,44 @@ export interface operations {
         };
     };
     propose_api_workspaces__workspace_id__semantic_metrics_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricProposalIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_api_workspaces__workspace_id__semantic_metrics_validate_post: {
         parameters: {
             query?: never;
             header?: {

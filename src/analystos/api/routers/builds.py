@@ -14,7 +14,7 @@ from analystos.api.serialize import row, rows
 from analystos.build import service as build_svc
 from analystos.build.targets import DEFAULT_ENGINE
 from analystos.core.errors import NotFound
-from analystos.db.models import BuildJob, BuildTarget, User
+from analystos.db.models import Approval, BuildJob, BuildTarget, User
 from analystos.governance.policy import require_role
 
 router = APIRouter(prefix="/api", tags=["builds"])
@@ -57,13 +57,31 @@ def start_build(workspace_id: str, body: BuildIn, user: User = Depends(current_u
 def list_builds(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
     require_role(session, user, workspace_id, "viewer")
     jobs = session.scalars(select(BuildJob).where(BuildJob.workspace_id == workspace_id).order_by(BuildJob.created_at.desc()))
-    return rows(jobs, exclude=_SUMMARY_EXCLUDE)
+    out = rows(jobs, exclude=_SUMMARY_EXCLUDE)
+    ids = [j["approval_id"] for j in out if j.get("approval_id")]
+    status = dict(session.execute(select(Approval.id, Approval.status).where(Approval.id.in_(ids))).all()) if ids else {}
+    for j in out:
+        j["approval_status"] = status.get(j.get("approval_id"))
+    return out
 
 
-@router.get("/builds/{job_id}")
-def get_build(job_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def _job(session: Session, user: User, job_id: str) -> BuildJob:
     job = session.get(BuildJob, job_id)
     if job is None:
         raise NotFound("build job not found")
     require_role(session, user, job.workspace_id, "viewer")
-    return row(job)
+    return job
+
+
+@router.get("/builds/{job_id}")
+def get_build(job_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+    job = _job(session, user, job_id)
+    return {**row(job), "approval": build_svc.approval_summary(session, job)}
+
+
+@router.get("/builds/{job_id}/diff")
+def build_diff(job_id: str, against: str | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+    """The generated dbt project file by file against the previous job for the same target (or `against`,
+    another job of the same workspace). Read-only: what the approver reviews, not what they approve —
+    the approval binds the whole project hash."""
+    return build_svc.job_diff(session, _job(session, user, job_id), against)

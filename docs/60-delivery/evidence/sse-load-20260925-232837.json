@@ -1,0 +1,72 @@
+{
+  "started_at": "2026-09-25T23:28:37.326311+00:00",
+  "database": "localhost:5432/analystos_load_s05s",
+  "redis": true,
+  "streams": 500,
+  "runs": 50,
+  "seconds": 30.0,
+  "rate_per_run": 1.0,
+  "events_emitted": 1500,
+  "deliveries_expected": 15000,
+  "deliveries_received": 15000,
+  "streams_complete_in_order": 500,
+  "streams_ended_cleanly": 500,
+  "reconnected_streams": 50,
+  "reconnected_complete": 50,
+  "errors": [],
+  "latency_ms": {
+    "p50": 19.7,
+    "p95": 154.4,
+    "p99": 1084.6,
+    "max": 1369.7
+  },
+  "connect_ms_p95": 3714.4,
+  "loop_lag": {
+    "samples": 687,
+    "p50_ms": 0.47,
+    "p95_ms": 5.7,
+    "p99_ms": 22.44,
+    "max_ms": 175.56,
+    "stalls_over_100ms": 1,
+    "gc_frozen": 234672,
+    "gc_tracked": 61189
+  },
+  "slow_callback_warnings": [],
+  "client_wall_seconds": 35.5,
+  "gc_pauses_at_s": [
+    [
+      0.6,
+      2,
+      22.1
+    ],
+    [
+      2.9,
+      2,
+      42.3
+    ],
+    [
+      15.1,
+      2,
+      50.7
+    ],
+    [
+      29.1,
+      2,
+      73.3
+    ]
+  ],
+  "stalls_at_s": [
+    [
+      0.8,
+      175.6
+    ]
+  ],
+  "checks": {
+    "p95_latency_below_1s": true,
+    "no_event_loop_stall_warnings": true,
+    "every_delivery_received_once_in_order": true,
+    "resume_with_last_event_id": true,
+    "every_stream_ended": true,
+    "no_errors": true
+  }
+}
