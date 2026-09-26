@@ -105,6 +105,70 @@ class RecipeComputeWorkflow:
                                                **_queue_kwargs(opts, "compute"))
 
 
+ISOLATED_RETRY = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2.0,
+                             maximum_interval=timedelta(seconds=30), maximum_attempts=3)
+
+
+def _failed(dispatch: dict[str, Any], code: str, message: str, retryable: bool) -> dict[str, Any]:
+    env = dispatch["envelope"]
+    error = {"code": code, "message": message, "retryable": retryable, "details": {}}
+    return {"task_id": env["task_id"], "idempotency_key": env["idempotency_key"], "status": "failed", "outputs": {},
+            "result": {}, "error": error, "usage": {}, "events": [
+                {"task_id": env["task_id"], "type": "task.failed", "seq": 0, "at": 0.0, "data": {"error": error}}]}
+
+
+@workflow.defn(name="IsolatedTaskWorkflow")
+class IsolatedTaskWorkflow:
+    """One TaskEnvelope on an isolated pool (ADR-0022, P7-06). Hosted by the analysis worker; the task runs as
+    `run_isolated_task` on `<prefix>-<pool>`, whose worker signals each task event here. Events are persisted
+    through the control plane (`record_task_events`, analysis queue) as they arrive. A lost worker is a
+    heartbeat timeout, retried under the same idempotency key; a task that never reports its end gets a
+    synthetic `task.failed`."""
+
+    def __init__(self) -> None:
+        self._events: list[dict[str, Any]] = []
+        self._seen_end = False
+
+    @workflow.signal
+    def task_event(self, event: dict[str, Any]) -> None:
+        self._events.append(event)
+
+    @workflow.run
+    async def run(self, dispatch: dict[str, Any], opts: dict[str, Any] | None = None) -> dict:
+        from temporalio.exceptions import ActivityError, ApplicationError
+
+        opts = opts or fallback_options(workflow.info().task_queue.removesuffix("-analysis"))
+        pool, task_id = dispatch["pool"], dispatch["envelope"]["task_id"]
+        quick = {**QUICK, "task_queue": _queue_kwargs(opts, "analysis")["task_queue"]}
+        handle = workflow.start_activity("run_isolated_task", args=[dispatch], retry_policy=ISOLATED_RETRY,
+                                         **_queue_kwargs(opts, pool))
+
+        async def flush() -> None:
+            batch, self._events = self._events, []
+            self._seen_end = self._seen_end or any(e.get("type") in ("task.completed", "task.failed") for e in batch)
+            await workflow.execute_activity("record_task_events", args=[task_id, batch], **quick)
+
+        while True:
+            await workflow.wait_condition(lambda: bool(self._events) or handle.done())
+            if self._events:
+                await flush()
+            if handle.done() and not self._events:
+                break
+        try:
+            result = await handle
+        except ActivityError as err:
+            cause = err.cause
+            if isinstance(cause, ApplicationError) and cause.details and isinstance(cause.details[0], dict):
+                result = cause.details[0]  # a retryable job failure, after its last attempt
+            else:
+                result = _failed(dispatch, "worker_unavailable", f"the {pool} worker was lost: {cause or err}", True)
+            if not self._seen_end:
+                self._events = [e for e in result.get("events", []) if e.get("type") == "task.failed"][-1:]
+                if self._events:
+                    await flush()
+        return result
+
+
 @workflow.defn(name="CrawlWorkflow")
 class CrawlWorkflow:
     """One metadata crawl on the `crawl` pool. `run_crawl` records failure on the crawl_run row

@@ -38,6 +38,8 @@ EVENT_TYPES = {
     # Transformation recipes (P6-04..07) and file ingestion (P6-06)
     "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
     "recipe.run.refused", "recipe.run.failed", "file.ingested",
+    # Isolated compute pools (P7-06, ADR-0022): a task dispatched to compute-py / compute-ml, as its worker reports it
+    "task.started", "task.progress", "task.completed", "task.failed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

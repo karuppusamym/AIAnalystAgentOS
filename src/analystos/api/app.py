@@ -21,6 +21,7 @@ from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
 from analystos.api.routers import work_orders as work_orders_router
+from analystos.api.routers import worker as worker_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -78,6 +79,7 @@ app.include_router(evidence_router.router)
 app.include_router(definitions_router.router)
 app.include_router(work_orders_router.router)
 app.include_router(recipes_router.router)
+app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 

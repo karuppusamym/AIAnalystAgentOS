@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     # config/task_queues.yaml. `analystos worker` serves `worker_queues` unless --queues is given.
     temporal_queue_prefix: str = "analystos"
     worker_queues: str = "all"
+    # Isolated compute pools (ADR-0022, P7-06), opt-in: comma-separated pools this installation runs
+    # (compute-py, compute-ml). Empty = none: recipe snapshot jobs run on the compute queue / in-process as
+    # before, and capabilities that require a pool (`requires: [pool:compute-ml]`) are unavailable with the reason.
+    isolated_pools: str = ""
+    # How the control plane reaches them: temporal (the `<prefix>-<pool>` queues) | subprocess (local worker
+    # processes started by the API, lite) | auto = temporal when the orchestrator is temporal, else subprocess.
+    isolated_transport: Literal["auto", "temporal", "subprocess"] = "auto"
+    # HMAC key of scoped worker task tokens; None = derived from jwt_secret (domain-separated). Only the
+    # control plane and the artifact store (the API) hold it; never give it to a worker.
+    worker_token_secret: str | None = None
+    # The artifact store as isolated workers reach it (the API's base URL on their network).
+    worker_artifact_url: str = "http://localhost:8000"
     # temporal | local. local runs the same engine in-process (lite profile, tests, laptops); lite's default.
     orchestrator: str = "temporal"
     # Local orchestrator (ADR-0025): None = the profile default (lite: 4, otherwise tasks run inline in
@@ -215,6 +227,10 @@ class Settings(BaseSettings):
     @property
     def run_inprocess_scheduler(self) -> bool:
         return self.inprocess_scheduler if self.inprocess_scheduler is not None else self.profile == "lite"
+
+    @property
+    def isolated_pool_set(self) -> set[str]:
+        return {p.strip() for p in self.isolated_pools.split(",") if p.strip()}
 
     @property
     def spend_store(self) -> str:

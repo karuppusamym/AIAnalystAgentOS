@@ -1,7 +1,8 @@
 """What this installation has (ADR-0025): optional Python extras and deployment features.
 
 A feature that needs something the installation lacks is *unavailable with a reason*, never a broken
-button: capability manifests declare `requires: [profile:bi]` or `requires: [extra:ml]`, the registry
+button: capability manifests declare `requires: [profile:bi]`, `[extra:ml]` or an isolated compute pool
+(`[pool:compute-ml]`, ADR-0022), the registry
 reports the reason (capabilities/registry.py `unavailable_reason`), and code paths that need an extra
 call `require_extra` so a direct call fails with `FeatureUnavailable` naming the remedy.
 
@@ -108,6 +109,10 @@ def requirement_reason(req: str, settings: Any = None) -> str | None:
         return feature_reason(req.split(":", 1)[1], settings)
     if req.startswith("extra:"):
         return extra_reason(req.split(":", 1)[1])
+    if req.startswith("pool:"):  # an isolated compute pool (ADR-0022, P7-06), e.g. pool:compute-ml
+        from analystos.workers.dispatch import pool_reason
+
+        return pool_reason(req.split(":", 1)[1], settings)
     return None
 
 

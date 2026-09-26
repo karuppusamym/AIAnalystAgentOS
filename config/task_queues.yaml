@@ -8,6 +8,7 @@
 #   heartbeat_seconds       an attempt that stops heartbeating this long is declared hung and retried.
 #                           Activities heartbeat from a pump thread every heartbeat_seconds / 3.
 #   max_concurrent          activity slots per worker process (the process-pool size for `process`).
+#   isolated                true for the credential-free pools below (ADR-0022); never served by `--queues all`.
 #   executor                thread (I/O-bound) | process (CPU-bound: a hung or GIL-holding statistic
 #                           cannot starve the worker's event loop, its heartbeats or other runs).
 #   max_tasks_per_child     process executor only: recycle a pool process after this many tasks.
@@ -40,3 +41,19 @@ queues:
     heartbeat_seconds: 120
     max_concurrent: 2
     executor: thread
+  # Isolated pools (ADR-0022, P7-06): opt-in (ANALYSTOS_ISOLATED_POOLS), run by `analystos worker --queues compute-py`
+  # as a separate deployment with no database or provider credentials and egress to the artifact store only.
+  # Each task runs in a child process under its TaskEnvelope budget; `budget` is the default envelope budget.
+  # The worker process itself runs I/O (artifact downloads/uploads), so `max_concurrent` is child processes.
+  compute-py:          # recipe snapshot jobs (P6-04), later notebook Python cells (P7-12)
+    isolated: true
+    start_to_close_seconds: 1800
+    heartbeat_seconds: 60
+    max_concurrent: 2
+    budget: {cpu_seconds: 600, memory_mb: 2048, wall_seconds: 900, max_output_bytes: 268435456}
+  compute-ml:          # classical ML with a bounded search (P5-04, ADR-0024); the only image with the ML stack
+    isolated: true
+    start_to_close_seconds: 3600
+    heartbeat_seconds: 60
+    max_concurrent: 2
+    budget: {cpu_seconds: 1800, memory_mb: 4096, wall_seconds: 1800, max_output_bytes: 536870912, max_trials: 50}
