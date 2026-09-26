@@ -1,7 +1,7 @@
 """Pipeline API (P6-01..P6-03): PipelineSpec versions, dry runs, runs, managed-writer destinations,
 materialization under a hash-bound approval, rollback, and watermark refresh of staged tables (P6-02).
 Every child id is bound to the path's workspace through a scoped loader. Documented in
-docs/30-runbooks/10-pipelines-api.md."""
+docs/30-runbooks/05-pipelines.md."""
 from __future__ import annotations
 
 from datetime import datetime
