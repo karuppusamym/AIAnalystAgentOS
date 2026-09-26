@@ -25,6 +25,9 @@ EVENT_TYPES = {
     "crawl.facet_failed", "knowledge.ingested",
     # Typed evidence (P4-03): a newer snapshot of an analysed asset made a finding stale
     "insight.stale",
+    # Transformation recipes (P6-04..07) and file ingestion (P6-06)
+    "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
+    "recipe.run.refused", "recipe.run.failed", "file.ingested",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

@@ -105,7 +105,7 @@ def list_packs() -> None:
 
 def export_contracts() -> None:
     from analystos.capabilities.agents import AgentBody
-    from analystos.contracts import analysis, bi, capability, evidence, platform, policy, registry, semantic
+    from analystos.contracts import analysis, bi, capability, evidence, platform, policy, recipe, registry, semantic
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)
@@ -116,7 +116,8 @@ def export_contracts() -> None:
               "platform_settings": platform.PlatformSettings, "capability": capability.CapabilityManifest,
               "semantic_model": semantic.SemanticModelDoc, "semantic_metric": semantic.SemanticMetricDef,
               "semantic_query": semantic.SemanticQuery,
-              "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact}
+              "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact,
+              "recipe": recipe.Recipe}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
