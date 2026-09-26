@@ -736,3 +736,54 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .line-sample { color: var(--text-2); flex: none; }
 .graph-edges summary { cursor: pointer; }
 .receipt code { font-size: 0.8em; }
+
+/* ---- light IA (spec v4 §15, P7-18) ---- */
+.nav-area-settings { margin-top: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+a.chip { display: inline-block; text-decoration: none; }
+a.chip:hover { text-decoration: none; border-color: var(--accent); }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.checklist-step { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); }
+.checklist-step.next { background: var(--accent-soft); }
+.checklist-step.done, .checklist-step.later { color: var(--text-2); }
+.checklist-mark { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 999px; border: 1px solid var(--border-strong); display: inline-flex;
+  align-items: center; justify-content: center; font-size: 0.85rem; background: var(--surface); }
+.checklist-step.done .checklist-mark { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+.checklist-step.next .checklist-mark { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.checklist-body { display: grid; gap: 0.35rem; min-width: 0; flex: 1; }
+.checklist-body p { margin: 0; }
+.at-a-glance > summary, .generate-report > summary { cursor: pointer; padding: 0.6rem 0.9rem; font-weight: 600; }
+details.advanced > summary { cursor: pointer; padding: 0.35rem 0; font-weight: 500; color: var(--text-2); }
+.generate-report { margin-bottom: 0.75rem; }
+.drawer-wide { width: min(640px, 100%); }
+.job-kinds { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.5rem; }
+.job-kind-button { display: block; width: 100%; text-align: left; font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; cursor: pointer; }
+button.job-kind-button:hover { border-color: var(--accent); background: var(--accent-soft); }
+button.job-kind-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.job-kind-disabled .job-kind-button { cursor: default; background: var(--surface-2); border-style: dashed; }
+.job-kind-reason { color: var(--warning); margin-top: 0.2rem; }
+.preflight { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; }
+.preflight h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+.void-cause { color: var(--warning); display: block; }
+.verification-badge .void-cause { display: inline; }
+.why-numbers { list-style: none; margin: 0.4rem 0; padding: 0; }
+.why-chip { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.15rem 0.4rem; }
+.why-number h3 { display: flex; align-items: center; gap: 0.5rem; }
+.why-value { font-variant-numeric: tabular-nums; }
+.pins { border-top: 1px solid var(--border); margin-top: 0.5rem; padding-top: 0.5rem; display: grid; gap: 0.35rem; }
+.pins p { margin: 0; }
+.candidate, .definition { display: grid; gap: 0.35rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.candidate p { margin: 0; }
+.recipe-detail h3 { margin: 0.5rem 0 0; }
+@media (max-width: 600px) {
+  .job-kind-button { padding: 0.5rem; }
+  .why-chip { flex-wrap: wrap; }
+  .checklist-step { padding: 0.4rem; }
+}
+/* Phone widths: the top bar keeps its controls on one line (the brand name stays for screen readers). */
+@media (max-width: 520px) {
+  .topbar { gap: 0.35rem; padding: 0 0.5rem; }
+  .brand > span:not(.brand-mark) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .topbar-user { gap: 0.25rem; }
+  .topbar-user .tag { display: none; }
+}

@@ -27,10 +27,10 @@ export const test = base.extend<{ api: { unmatched: string[] } }>({
 export { expect };
 
 /** Sign in through the real login form (the mock accepts the seeded dev password). */
-export async function signIn(page: Page, next = "/"): Promise<void> {
+export async function signIn(page: Page, next = "/", email = "admin@analystos.local"): Promise<void> {
   await page.goto(next);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.getByLabel("Email").fill("admin@analystos.local");
+  await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("ChangeMe123!");
   await page.getByRole("button", { name: "Sign in" }).click();
 }
