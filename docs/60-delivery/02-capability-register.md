@@ -353,3 +353,18 @@ Verification on 2026-09-26, merged with `origin/claude/gracious-knuth-ievauj` 35
   - `test_duckdb_engine_run` (result-hash determinism) fails identically on base 35781ac.
   - `test_workspace_list_counts` depends on test order and passes when run alone; its writes use `run_id=None`, which the output contract does not check.
 - No migration: `agent_definition.spec` is JSON.
+
+## 2026-09-26 — Combined head: run determinism, re-embed pool, final test pass, $1-capped live run
+
+| Capability | Code | Coverage | Measured |
+|---|---|---|---|
+| Identical runs build identical datasets, KPIs and chart previews | `db/models.by_code` on run-scoped Hypothesis/Insight reads (critic, insight, investigator, sql_agent, supervisor, visualization); `artifacts/registry.save_artifact` gives each artifact its own `created_at`; explicit orders in `governance/policy.resolve_scope`, registry replay, profiling histograms | `tests/unit/test_run_ordering.py`, `test_skills_profiling_quality.py`; `tests/integration/test_duckdb_engine_run.py` | Passed 4 runs in a row (previously failed on shared `created_at` ties) |
+| Re-embed does not break other pooled connections | `knowledge/index._use_provider` disposes the engine pool once the retype commits | `test_knowledge_pack.py::test_reembed_changes_dimension_and_rebuilds_the_hnsw_index` | 3/3 green (previously flaky in the full suite) |
+| Deterministic rungs first; the model is used only when rules cannot answer | `config/models.yaml` ladders; `scripts/e2e_demo.py` check `decisions_recorded_with_rung` (replaces `jev_decisioning_used`, which wrongly required a billed decision call) | [`evidence/e2e-20260926-060649.md`](evidence/e2e-20260926-060649.md) 26/26; [`evidence/ask-live-20260926.md`](evidence/ask-live-20260926.md) | Full scenario: 0 billed calls, 35,825 tokens saved. Ask SQL generation: `gpt-5.4-mini`, $0.00265, no escalation |
+
+Final pass on the combined head (determinism fix, FND-006 and the re-embed fix):
+- `ruff`: clean.
+- Unit suite: all passed.
+- Integration, first run: one failure, `test_workspace_list_counts`. It depends on test order: it passed when run alone and in the second full run.
+- Integration, second run: one failure, the re-embed test. It is fixed above.
+- Web: build passes, vitest 188 passed, Playwright 59 passed.
