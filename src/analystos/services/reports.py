@@ -83,6 +83,15 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
     bad = [f for f in formats if f not in FORMATS]
     if bad or not formats:
         raise InvalidInput(f"formats must be within {FORMATS}")
+    from analystos.reports import unavailable_formats
+
+    unavailable = unavailable_formats(formats)
+    if unavailable and len(unavailable) == len(formats):
+        from analystos.core.errors import FeatureUnavailable
+
+        raise FeatureUnavailable(f"report formats {', '.join(formats)} are unavailable: {next(iter(unavailable.values()))}",
+                                 details={"unavailable_formats": unavailable})
+    formats = tuple(f for f in formats if f not in unavailable)  # the rest render; the artifact says why not all
     data = build_report_data(session, run_id, kind, finalizing=finalizing)
     run = session.get(AnalysisRun, run_id)
     directory = Path(get_settings().artifact_dir) / run.workspace_id / "reports"
@@ -97,6 +106,7 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
         files[fmt] = {"path": str(path), "sha256": digest, "bytes": len(content), "mime": mime, "ext": ext}
     art = save_artifact(session, workspace_id=run.workspace_id, run_id=run_id, type_="report", name=f"{kind} report",
                         content={"kind": kind, "title": data.title, "report_data_hash": data_hash, "files": files,
+                                 **({"unavailable_formats": unavailable} if unavailable else {}),
                                  "insights": len(data.insights), "metrics": len(data.metrics), "alerts": len(data.alerts)},
                         creator_agent="insight" if actor == "system" else None,
                         creator_user=None if actor == "system" else actor.split(":", 1)[-1], status="final")

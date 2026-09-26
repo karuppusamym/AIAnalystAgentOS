@@ -21,11 +21,27 @@ FORMATS: dict[str, tuple[str, str]] = {
 }
 
 
+# PDF and XLSX need the `reports` extra (matplotlib, fpdf2, openpyxl; ADR-0025). Markdown and HTML never do.
+EXTRA_FORMATS = ("pdf", "xlsx")
+
+
+def unavailable_formats(formats: tuple[str, ...] | list[str]) -> dict[str, str]:
+    """format -> why it cannot be rendered on this installation (empty = all can)."""
+    from analystos.core.profiles import extra_reason
+
+    reason = extra_reason("reports")
+    return {f: reason for f in formats if f in EXTRA_FORMATS and reason}
+
+
 def render(data: ReportData, fmt: ReportFormat) -> tuple[bytes, str, str]:
     """Render `data` as `fmt`; returns (content bytes, MIME type, file extension)."""
     if fmt not in FORMATS:
         raise InvalidInput(f"unsupported report format {fmt!r}; expected one of {sorted(FORMATS)}")
     mime, ext = FORMATS[fmt]
+    if fmt in EXTRA_FORMATS:
+        from analystos.core.profiles import require_extra
+
+        require_extra("reports", f"{fmt.upper()} reports")
     if fmt == "md":
         from analystos.reports.narrative import render_markdown
 
@@ -43,4 +59,4 @@ def render(data: ReportData, fmt: ReportFormat) -> tuple[bytes, str, str]:
     return render_xlsx(data), mime, ext
 
 
-__all__ = ["FORMATS", "ReportFormat", "render"]
+__all__ = ["EXTRA_FORMATS", "FORMATS", "ReportFormat", "render", "unavailable_formats"]

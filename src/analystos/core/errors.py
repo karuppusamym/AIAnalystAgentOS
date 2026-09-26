@@ -165,3 +165,11 @@ class ContextOverBudget(AnalystOSError):
     never cut to make it fit."""
 
     code, http_status = "context_over_budget", 422
+
+
+class FeatureUnavailable(AnalystOSError):
+    """The installation lacks what a feature needs: an optional extra (`pip install analystos[ml]`) or a
+    deployment profile (`bi`, `standard`, ...; ADR-0025). `details` names what is missing and the remedy;
+    the UI shows it as unavailable with that reason, never as a broken button."""
+
+    code, http_status = "feature_unavailable", 501

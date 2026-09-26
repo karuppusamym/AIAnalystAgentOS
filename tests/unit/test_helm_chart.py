@@ -161,3 +161,58 @@ def test_pool_settings_render_and_pgbouncer_is_opt_in():
     assert "t-analystos-pgbouncer" in _kind(docs, "Service")
     r = subprocess.run([HELM, "template", "t", str(CHART), "--set", "pgbouncer.enabled=true"], capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and "is required when pgbouncer.enabled" in r.stderr
+
+
+def _merged(*files: str) -> dict:
+    """Helm's values merge: maps merge key by key, a null removes the key, anything else replaces."""
+    def merge(base, over):
+        out = dict(base)
+        for k, v in over.items():
+            if v is None:
+                out.pop(k, None)
+            elif isinstance(v, dict) and isinstance(out.get(k), dict):
+                out[k] = merge(out[k], v)
+            else:
+                out[k] = v
+        return out
+
+    values = _values()
+    for f in files:
+        values = merge(values, _values(f))
+    return values
+
+
+def _cpu(v) -> float:
+    return float(v[:-1]) / 1000 if str(v).endswith("m") else float(v)
+
+
+def _mem_gi(v) -> float:
+    return float(v[:-2]) / 1024 if v.endswith("Mi") else float(v[:-2])
+
+
+def test_small_values_fit_one_two_cpu_four_gib_node():
+    """P7-17: one API, one worker on every queue, one web pod, no PDBs, requests within 2 CPU / 4 GiB."""
+    from analystos.workflows.queues import WORKLOADS, parse_workloads
+
+    v = _merged("values-small.yaml")
+    assert list(v["workers"]) == ["all"] and parse_workloads(v["workers"]["all"]["queues"]) == list(WORKLOADS)
+    assert v["api"]["replicas"] == 1 and v["web"]["replicas"] == 1 and v["workers"]["all"]["replicas"] == 1
+    assert v["scheduler"]["replicas"] == 0 and v["config"]["extra"]["ANALYSTOS_INPROCESS_SCHEDULER"] == "true"
+    components = [v["api"], v["web"], v["workers"]["all"], v["scheduler"]]
+    assert not [c for c in components if (c.get("pdb") or {}).get("enabled")]
+    assert not v["pgbouncer"]["enabled"] and not v["api"]["autoscaling"]["enabled"]
+    running = [c for c in components if c["replicas"]]
+    cpu = sum(_cpu(c["resources"]["requests"]["cpu"]) * c["replicas"] for c in running)
+    mem = sum(_mem_gi(c["resources"]["requests"]["memory"]) * c["replicas"] for c in running)
+    assert cpu <= 1.0 and mem <= 2.0, (cpu, mem)  # half the node: system pods and headroom keep the rest
+    assert v["config"]["supersetUrl"] == ""  # no bi profile: preview publishing
+
+
+@needs_helm
+def test_small_render_has_one_worker_and_no_pdbs():
+    docs = _render("values-small.yaml")
+    deployments = _kind(docs, "Deployment")
+    assert [n for n in deployments if "-worker-" in n] == ["t-analystos-worker-all"]
+    env = deployments["t-analystos-worker-all"]["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert {"name": "ANALYSTOS_WORKER_QUEUES", "value": "all"} in env
+    assert not _kind(docs, "PodDisruptionBudget") and not _kind(docs, "HorizontalPodAutoscaler")

@@ -33,10 +33,25 @@ def _semantic(ctx_types: dict[str, dict[str, str]], asset: str, column: str) -> 
     return ctx_types.get(asset, {}).get(column)
 
 
+def _method_unavailable(method: str) -> str | None:
+    """A method whose manifest needs an extra this installation lacks (e.g. `extra:ml`, ADR-0025)
+    is refused here with the reason, before it could fail mid-analysis."""
+    manifest = methods.manifests().get(method)
+    if manifest is None:
+        return None
+    from analystos.core.profiles import requirement_reason
+
+    reason = next((r for req in manifest.requires if (r := requirement_reason(req))), None)
+    return f"method {method} is unavailable on this installation: {reason}" if reason else None
+
+
 def validate_spec(spec: AnalysisSpec, scope, types: dict[str, dict[str, str]]) -> list[str]:
     errors: list[str] = []
     if spec.asset not in scope.assets:
         return [f"asset {spec.asset} is not in the authorized scope"]
+    unavailable = _method_unavailable(spec.method)
+    if unavailable:
+        return [unavailable]
     cols = set(scope.columns.get(spec.asset, []))
     denied = set(scope.denied_columns)
     derivs = [d for d in (spec.outcome, spec.segment, spec.time, *spec.drivers) if d is not None]

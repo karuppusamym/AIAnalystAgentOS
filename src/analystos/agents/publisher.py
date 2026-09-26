@@ -31,6 +31,10 @@ def choose_destination(ctx: RunContext) -> str:
     if not platform().features.superset_publishing:
         ctx.say("Superset publishing is turned off by the administrator; using the local preview destination.", kind="decision")
         return "preview"
+    if "superset" in ctx.policy.publish_destinations and not get_settings().superset_url:
+        ctx.say("Superset is not part of this installation (no `bi` profile); publication targets the local preview "
+                "destination.", kind="decision")
+        return "preview"
     if "superset" in ctx.policy.publish_destinations:
         try:
             status = get_publisher("superset", get_settings()).test_connection()
