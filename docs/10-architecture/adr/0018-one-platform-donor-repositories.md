@@ -1,6 +1,9 @@
 # ADR-0018 — One platform; Atlas and DataPilot become donor repositories
 
-**Status:** accepted by the owner (2026-09-26); implementation tracked as P7-09..P7-14.
+**Status:** accepted by the owner (2026-09-26); implementation tracked as P7-09..P7-15.
+**Revised 2026-09-26** (same day) with measured port verdicts from the
+[build-right study](../../70-reviews/2026-09-26-build-right-study.md): the donors are mostly
+specifications and test corpora, not code to lift.
 **Amends** [ADR-0017](0017-cross-repo-contract-alignment.md): its shared contracts still apply while
 the donor products run, but its statement that "nothing moves code between repositories" no
 longer holds. Source: the
@@ -47,27 +50,50 @@ analyst, DS, DE and ML capabilities behind one gateway, one policy model and one
      is *not* adopted platform-wide, because AnalystOS stages and analyses data by design. It is adopted
      for the query-memory and lineage features that store SQL (literals redacted before storage).
    * No proprietary or non-permissive dependency is ported (DataPilot's `actaclad-agentguard`).
-4. **Port list, first wave** (tracker rows in brackets):
+4. **Port verdicts** (measured 2026-09-26; evidence in the
+   [build-right study](../../70-reviews/2026-09-26-build-right-study.md) §4). Legend:
+   * **PORT**: lift nearly verbatim, with its tests.
+   * **REWRITE**: donor tests and fixtures are the spec; write a thinner implementation on
+     AnalystOS's gateway.
+   * **IDEA**: take only the idea.
+   * **SKIP**: AnalystOS already has it, or it is better.
 
-   | From | Module(s) | Into | Row |
-   |---|---|---|---|
-   | Atlas | `relationship_intelligence.py`, `relationship_naming.py`, `composite_key_inference.py`; validation rules from `relationship_validation.py` | `semantic/relationships.py`, feeds relationship cardinality (ADR-0019) | P7-09 |
-   | Atlas | `sql_guard.py` adversarial corpus, `sql_redaction.py`, `question_redaction.py` | `gateway/validator` test corpus; `llm/redaction.py` | P7-10 |
-   | Atlas | `prompt_risk.py`, `injection_defense.py` + corpus | `security/injection.py`, applied at knowledge ingest and before prompts | P7-10 |
-   | Atlas | `sql_lineage_parser.py`, `dbt_artifacts.py`, `dbt_column_lineage.py`, `openlineage.py` intake | `evidence/lineage/`, executed and imported column lineage | P6-07 |
-   | Atlas | `data_quality.py` (volume, null-rate, schema fingerprint, seasonal/month-end baselines), `runtime_contracts.py` rules | `skills/dq.py` and monitors | P6-05 |
-   | Atlas | `semantic_diff.py`, `metric_formula_signature.py` | `semantic/diff.py`, duplicate-metric detection | P7-02 |
-   | Atlas | compare-and-set claim from `governance_decision_service.py` | `governance/approvals.py` concurrency | P7-10 |
-   | DataPilot | `staging.py` load modes, `file_profiles.py`, file mapping from `routers/files.py` | `staging/files.py` (CSV/JSON/Excel/Parquet upload → mapped staged tables) | P6-06 |
-   | DataPilot | `quality.py` rule→condition compiler and quarantine tables | recipe DQ gates (ADR-0023) | P6-05 |
-   | DataPilot | `pipeline_codegen/` planner, dbt/Dataform emitters and validators | recipe compilers (ADR-0023) | P6-04 |
-   | DataPilot | `tool_runtime.py` HTTP tool execution with SSRF block (validator replaced by `jsonschema`) | `tools/http.py` capability kind | P7-11 |
-   | DataPilot | governed query-tool lifecycle (draft → tested → published → retired) and MCP JSON-RPC handler | published definitions (ADR-0021), MCP server surface | P7-11 |
-   | DataPilot | notebook runtime (SQL + restricted Python cells, versioned executions) | workspace notebooks over the gateway + `compute-py` pool | P7-12 |
+   Lines are estimated additions to AnalystOS.
 
-   Not ported: donor web UIs (Atlas and DataPilot are not the AnalystOS React app), DataPilot's
-   1.7k-line agent activity module (rebuild against playbooks), Atlas's fleet scheduler, gateway and
-   MCP server (tied to its schema; AnalystOS has its own), Atlas's GraphQL facade.
+   | From | Module(s) | Verdict | Why | Into | Row |
+   |---|---|---|---|---|---|
+   | Atlas | `injection_defense.py` + corpus + unseen set | **PORT** (~700) | Catches 38/40 unseen attacks vs 8/40 for `skills/catalog.has_injection`; 0 vs 2 false positives | `security/injection.py`, at knowledge ingest and before prompts | P7-10 |
+   | Atlas | `question_redaction.py` | **PORT** (~130) | Catches SSN/IBAN/account numbers that `llm/redaction.py` leaves in; restorable tokens | `llm/redaction.py` | P7-10 |
+   | Atlas | `prompt_risk.py` (generic signals only; drop the bank-specific ones) | **PORT** (~70) | No equivalent for user questions | `security/injection.py` | P7-10 |
+   | Atlas | adversarial SQL corpus (106 cases) | **PORT as a test fixture** (~120 incl. an expectations file) | Found 2 real gateway gaps on first run | `tests/unit/gateway/` | P7-15 |
+   | Atlas | `sql_guard.py` | SKIP | `gateway/validator.py` is stronger (scope allowlist, qualify, regenerated SQL) | — | — |
+   | Atlas | `semantic_diff.py` | **PORT** (~60) | Pure field-level diff; nothing equivalent | `semantic/diff.py` | P7-02 |
+   | Atlas | `metric_formula_signature.py` | SKIP | Atlas metrics have no SQL; `semantic/service.conflicts` normalises real expressions | — | — |
+   | Atlas | `data_quality.py` | **PORT the baselines only** (~70) | Weekday and month-end baselines are new; the rest is weaker than the MAD/change-point checks in `services/monitors.py` | `services/monitors.py` | P6-05 |
+   | Atlas | `sql_redaction.py` | REWRITE (~50) | Good reasoning; the procedure-body lexer is not needed here | `llm/redaction.py` (SQL literals) | P7-10 |
+   | Atlas | `sql_lineage_parser.py` | REWRITE (~200) on sqlglot `qualify` + `lineage` | Hand-rolled resolver stops at CTEs (confirmed defect) | `evidence/lineage/` | P6-07 |
+   | Atlas | `dbt_column_lineage.py` | IDEA (~50) | Maps a compiled relation to its dbt node id; on top of the rewrite above | `evidence/lineage/` | P6-07 |
+   | Atlas | `dbt_artifacts.py` | SKIP | AnalystOS has three manifest readers already | — | — |
+   | Atlas | `composite_key_inference.py` | REWRITE (~60) | Guesses from single-column stats because Atlas can't query; we can measure `COUNT(DISTINCT (a, b))`. Keep its search bounds and tests. | `skills/relationships.py` | P7-09 |
+   | Atlas | `relationship_intelligence.py`, `relationship_validation.py` | IDEA (~120) | Metadata-only scoring is weaker than our measured containment/uniqueness; keep the composite FK candidates and the `assess_relationship` rules (generic names, two PKs sharing a name, reversed direction, fan-out warning) | `skills/relationships.py` | P7-09 |
+   | Atlas | `relationship_naming.py` | SKIP (+2 tokens) | Duplicates `catalog.split_tokens` | — | — |
+   | Atlas | compare-and-set from `governance_decision_service.py` | IDEA (~15 + a two-thread Postgres test) | One guarded `UPDATE … WHERE status='pending'` plus a rowcount check | `governance/approvals.py` | P7-10 |
+   | DataPilot | `tool_runtime.py` HTTP call (allowlist, resolve, private-address block, IP pinning with SNI, byte cap) | **PORT** (~110), with `not ip.is_global` (the donor lets 100.64/10 through) and `jsonschema` | Solid; also guards the MCP client, which only disables redirects today | `tools/http.py`, `mcp/client.py` | P7-11 |
+   | DataPilot | `quality.py` + `quality_rules.py` | REWRITE (~100) | Rule types and quarantine are right; the code runs on the raw engine (breaks rule 4) and has only API-level tests | recipe DQ gates (ADR-0023) | P6-05 |
+   | DataPilot | `staging.py` load modes | IDEA (~80) | Row-dict inserts, bad values turned silently into NULL, dates stored as text; our Arrow + COPY loader is stronger. Take append/merge modes and the null-key and column-mismatch refusals. | `staging/loader.py` | P6-06 |
+   | DataPilot | file mapping in `routers/files.py` | IDEA (~40) | The source-column and unique-target checks become a pydantic contract | `staging/files.py` | P6-06 |
+   | DataPilot | `file_profiles.py` | SKIP (+JSON arrays, ~15) | `connectors/csv_file.py` (polars, path confinement) is stronger | — | — |
+   | DataPilot | `pipeline_codegen/` | SKIP; optional IDEA for a Dataform `.sqlx` emitter | f-string SQL and an ORM-bound planner; `build/project.py` renders with sqlglot and guards hooks and macros | — | P6-04 |
+   | DataPilot | notebook runtime | SKIP the runtime; IDEA the cell model (~80) | Arithmetic-only evaluator; SQL cells bypass the gateway | notebooks as steps | P7-12 |
+   | DataPilot | lineage BFS | SKIP (+ direction filter and `truncated` flag, ~15) | `artifacts/registry.lineage_for` (recursive CTE) is better | — | — |
+
+   Total: about **2.1k lines added against about 10.4k donor lines** (Atlas 6.3k, DataPilot 4.1k).
+
+   Not ported at all:
+   * the donor web UIs;
+   * DataPilot's 1.7k-line agent activity module;
+   * Atlas's fleet scheduler, gateway, MCP server and GraphQL facade (all tied to its schema).
+
 5. **Donor repositories after parity.** Each donor keeps working for its current users until the
    owner confirms the ported features cover them (P7-14 parity checklist). Then it is frozen
    (read-only, README pointing here). Until then, ADR-0017's three contracts (OKF pin,

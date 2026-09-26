@@ -45,6 +45,15 @@ not:
    sqlglot tree that must reference only its declared `dataset` columns; approval refuses an
    expression that doesn't parse for the declared dialect.
 
+6. **Also adopted (patterns seen in AgentSwarms, re-implemented, not copied; ELv2).**
+   * Fan-out: refuse first, with the edge named. A multi-fact plan (one branch per fact, joined
+     on a shared dimension spine) is a later compiler feature. It is never a silent fallback.
+   * Row filters may reference user attributes (`region IN {{user.regions}}`). A missing attribute
+     fails closed. Masked or denied fields are absent from the catalog the planner sees, not only
+     from the results.
+   * `analystos check-semantics` validates model files offline (names, expressions parse for their
+     dialect, relationship references, cycles) and runs in CI on every change to a semantic model.
+
 **Consequences.** The same question about an approved metric returns the same SQL for the same
 model version, so it can be cached (L0) and scheduled without drift. Relationship cardinality
 becomes a required review step before multi-table metrics are approvable. The fan-out refusal will

@@ -49,6 +49,13 @@ Replanning already supersedes a run's hypotheses and insights and invalidates it
    that can be reconstructed. Records whose dependencies can't be reconstructed are labelled
    `legacy` and shown without a verification badge.
 
+7. **Presentation rules (patterns seen in AgentSwarms, re-implemented).**
+   * **A void is shown, never hidden:** the badge turns *void* with its cause and stays visible.
+   * **Offered, not applied:** when the same question is asked again, a prior matching verdict is
+     offered for comparison and never attached to the new answer.
+   * **A reason is required:** marking a finding *wrong* needs one, which is stored with the record
+     and feeds negative knowledge.
+
 **Consequences.** "Change the SQL or the metric and watch the badge go away" becomes a test,
 not a promise. More verdicts will void than users expect (a glossary edit voids findings that cited
 it); the UI groups voids by cause and offers one-click re-verification. Pushdown sources with no

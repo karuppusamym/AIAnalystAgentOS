@@ -50,14 +50,14 @@ approve/reject publication at any point; redirects replan and invalidate stale a
   escalation, feedback classification, chart choice, verification second opinion, stop check).
 * **Durable execution.** Temporal workflows over idempotent, plan-versioned tasks in Postgres.
 * **Full provenance.** Queries, experiments, artifacts (versioned), approvals, publications,
-  model/tool calls; lineage mirrored to Neo4j.
+  model/tool calls; lineage in Postgres (optionally projected to Neo4j with `--profile graph`).
 
 ## Quick start
 
 ```bash
 cp .env.example .env              # add OPENROUTER_API_KEY — never commit .env
 uv venv -p 3.11 .venv && uv pip install -e ".[dev]"
-docker compose up -d postgres redis neo4j temporal superset
+docker compose up -d postgres redis temporal superset   # Neo4j is optional: --profile graph
 .venv/bin/analystos migrate && .venv/bin/analystos seed
 scripts/dev_up.sh                 # ServiceNow mock :8090, Temporal worker, API :8000
 (cd web && npm install && npm run dev)   # UI :5173 — admin@analystos.local / ChangeMe123!
@@ -74,7 +74,7 @@ Tests: `.venv/bin/pytest -m "not integration"` (no services) · `.venv/bin/pytes
 
 ## Stack
 
-Python 3.11 · FastAPI · SQLAlchemy/Alembic · PostgreSQL 16 + pgvector · Redis · Neo4j 5 ·
+Python 3.11 · FastAPI · SQLAlchemy/Alembic · PostgreSQL 16 + pgvector · Redis · Neo4j 5 (optional) ·
 Temporal · sqlglot · DuckDB/Polars · SciPy/statsmodels/scikit-learn · Apache Superset 4.1 ·
 OpenRouter (chat + Decisions API) · React 18 + Vite + ECharts.
 

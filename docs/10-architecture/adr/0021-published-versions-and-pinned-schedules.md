@@ -37,6 +37,10 @@ re-analysis replays the hypothesis registry without a model call by default (P4-
    set of its baseline run. A fire re-executes that frozen set on new data (the existing replay
    path). It does not send the objective back to a planner. Novelty (new hypotheses) stays opt-in
    and is reported as *new*, never merged silently into the pinned set.
+   The fire computes deltas against the previous fire in code: new, persisting, changed and
+   resolved findings (already produced by `services/changes.py`). It says "nothing changed"
+   explicitly when that's true. A narrative written for an earlier fire is marked *stale* until it
+   is regenerated from the new bound facts.
 4. **Upgrades are explicit.** When a newer version of anything a schedule pins is published or
    approved, the schedule shows *upgrade available* with a diff (definition diff, metric
    definition diff). The owner accepts, which creates a new schedule revision and a new baseline;
