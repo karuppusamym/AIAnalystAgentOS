@@ -8,7 +8,7 @@ determinism: seeded
 side_effect: read_source
 cost_class: compute
 permissions: [scope:read]
-requires: [engine:sql]
+requires: [engine:sql, extra:ml]  # logistic regression (statsmodels) + random forest (scikit-learn)
 certification:
   status: certified
   evidence: tests/unit/test_skills_analysis.py

@@ -63,8 +63,11 @@ def test_list_counts_match_detail_and_do_not_grow_with_workspaces(api):
         assert listed[ws] == api.get(f"/api/workspaces/{ws}", headers=h).json()["counts"]
         assert listed[ws]["chart"] == n and listed[ws]["runs"] == n and listed[ws]["dataset"] == 1 and listed[ws]["sources"] == 0
 
-    few = _statements(lambda: api.get("/api/workspaces", headers=h))
+    # Background threads (outbox relay, local-run sweep, scheduler) can add a workspace statement during a
+    # sample; they only ever add, so the minimum of a few samples is the list's own count. A count query
+    # per workspace would still add at least 12 statements for the 12 extra workspaces.
+    few = min(_statements(lambda: api.get("/api/workspaces", headers=h)) for _ in range(3))
     ids += [api.post("/api/workspaces", headers=h, json={"name": f"more {i}", "objective": "counting things"}).json()["id"]
             for i in range(12)]
-    many = _statements(lambda: api.get("/api/workspaces", headers=h))
+    many = min(_statements(lambda: api.get("/api/workspaces", headers=h)) for _ in range(3))
     assert many == few, (few, many)

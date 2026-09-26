@@ -65,12 +65,26 @@ class DialectProfile:
         return BASE_DENYLIST + (STRICT_COMMON_DENYLIST if self.strict else ()) + self.denylist
 
 
+# Pure built-ins that sqlglot leaves unmodelled (``Anonymous``) in postgres / tsql. The first group of
+# each is what ``skills/sqlbuild`` emits (time grains, day-of-week, durations, row hashes); the rest
+# are side-effect-free scalar/aggregate built-ins an analyst or a proposing model commonly writes.
+# Anything else unmodelled -- a UDF, a mail/HTTP extension, a wrapper around a procedure -- is refused
+# (P7-15). ``tests/unit/test_gateway_corpus.py`` pins the platform's own functions to this list.
+POSTGRES_ALLOWED = frozenset({
+    "date_trunc",
+    "age", "cardinality", "every", "gcd", "lcm", "isfinite", "make_date", "num_nonnulls", "num_nulls",
+    "octet_length", "scale", "trim_scale", "timezone",
+})
+TSQL_ALLOWED = frozenset({
+    "dateadd", "datediff", "datediff_big", "datepart", "hashbytes", "concat",
+    "choose", "datalength", "isnumeric", "isdate", "patindex", "stdevp", "var", "varp", "str",
+    "sysutcdatetime", "getutcdate", "date_bucket", "nchar", "checksum", "binary_checksum", "switchoffset",
+    "todatetimeoffset", "isjson", "try_parse",
+})
+
 PROFILES: dict[str, DialectProfile] = {
-    "postgres": DialectProfile("postgres", allowed_anonymous=frozenset({"date_trunc"})),
-    "tsql": DialectProfile(
-        "tsql", fold="insensitive",
-        allowed_anonymous=frozenset({"dateadd", "datediff", "datediff_big", "datepart", "hashbytes", "concat"}),
-    ),
+    "postgres": DialectProfile("postgres", allowed_anonymous=POSTGRES_ALLOWED),
+    "tsql": DialectProfile("tsql", fold="insensitive", allowed_anonymous=TSQL_ALLOWED),
     "duckdb": DialectProfile(
         "duckdb",
         denylist=(

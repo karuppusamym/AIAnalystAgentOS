@@ -1,7 +1,12 @@
 # ADR-0021 — Published workflow versions; triggers run pinned versions, never the draft
 
-**Status:** proposed (2026-09-26, spec v4 §8; tracker P7-03). Extends ADR-0011 (capabilities and
-playbooks) and ADR-0009 (scheduling). Source: the
+**Status:** accepted (2026-09-26, spec v4 §8; tracker P7-03). Extends ADR-0011 (capabilities and
+playbooks) and ADR-0009 (scheduling). Implemented by `contracts/definition.py`,
+`services/definitions.py` (lifecycle, `resolve_runnable`), `capabilities/binding.py` (definition ref,
+semantic, metric and method versions), `services/pins.py` (capture, status, accept) and
+`services/schedules.py` (pinned fires, blocked fires, nothing-changed verdict, stale narratives).
+Not yet done: promotion across environments (§5) and definitions for recipes/ML specs beyond
+their placeholder validators. Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §12–13.
 
 **Context.** Playbooks are versioned data (`capabilities/playbook.py`), the registry swaps immutable

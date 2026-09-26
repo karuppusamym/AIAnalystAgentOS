@@ -44,6 +44,10 @@ def draft_from_finding(session: Session, insight: Any, *, user_id: str | None) -
     def run() -> Any:
         if insight.status != "verified" or getattr(insight, "stale_since", None) is not None:
             return None  # a stale finding (P4-03: its snapshot changed) is re-verified before promotion
+        from analystos.evidence.verification import insight_states, is_void
+
+        if is_void(insight_states(session, [insight.id])[insight.id]):
+            return None  # P7-01: a VOID verdict (any dependency changed) is never promoted
         exp = None
         if insight.hypothesis_id:
             exp = session.scalar(select(Experiment).where(Experiment.hypothesis_id == insight.hypothesis_id,
@@ -94,6 +98,18 @@ def _slug(text: str) -> str:
     from analystos.knowledge.entries import slugify
 
     return slugify(text)
+
+
+def draft_from_flag(session: Session, insight: Any, *, reason: str, user_id: str) -> Any:
+    """A finding flagged *wrong* (P7-01; the reason is required) -> a Negative Knowledge draft quoting it."""
+    def run() -> Any:
+        prov = {"source": "insight_flag", "insight_id": insight.id, "run_id": insight.run_id, "by": f"user:{user_id}"}
+        body = f"The finding \"{insight.title}\" ({insight.finding}) was flagged wrong by a user: {reason}"
+        return propose(session, insight.workspace_id, kind="negative", subject=f"insight:{insight.id}",
+                       title=f"Flagged wrong: {insight.title}"[:300], fields={"body": field(body, 0.9, **prov)},
+                       origin="learning.feedback", proposed_by=PROCESS, batch=insight.run_id)
+
+    return _safely(session, "flag", run)
 
 
 # ------------------------------------------------------------------------------------ feedback

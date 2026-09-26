@@ -86,7 +86,7 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> str:
 
 def push(session: Session, pack: KnowledgePack, user: User, approval_id: str) -> dict[str, Any]:
     """Push the head revision to the pack's remote branch, under a verified, single-use approval."""
-    from analystos.governance.approvals import verify_for_execution
+    from analystos.governance.approvals import consume, verify_for_execution
 
     body = payload(session, pack)
     files = bundle.export_files(session, pack)
@@ -94,7 +94,7 @@ def push(session: Session, pack: KnowledgePack, user: User, approval_id: str) ->
     if apr is None or apr.workspace_id != pack.workspace_id or apr.action != APPROVAL_ACTION:
         raise ApprovalRequired("the approval does not cover a knowledge push of this pack")
     verify_for_execution(session, approval_id, payload=body, plan_hash=None)
-    apr.status = "executed"  # consumed before the side effect, never replayable
+    consume(session, apr)  # compare-and-set: consumed before the side effect, never replayable
     session.flush()
     with tempfile.TemporaryDirectory(prefix="aos-knowledge-") as tmp:
         work = Path(tmp) / "repo"

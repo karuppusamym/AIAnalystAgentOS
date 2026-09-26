@@ -31,7 +31,9 @@ ACCEPTED_VERSIONS = ("0.1.0", "0.1.1")  # what dbt 1.12 accepts (dbt/constants.p
 SCHEMA_PATH = Path(__file__).parent / "schema" / "ossie-0.1.1.json"
 EXTENSION_VENDOR = "COMMON"
 EXTENSION_KEY = "analystos"
-_EXT_FIELDS = ("display_name", "format", "grain", "filters", "dimensions", "source_columns", "dataset", "datatype")
+_EXT_FIELDS = ("display_name", "format", "grain", "filters", "dimensions", "source_columns", "dataset", "datatype",
+               "pre_aggregations")
+_REL_EXT_FIELDS = ("cardinality", "validated_at", "validated_by")  # P7-09: measured, reviewed join cardinality
 # Upstream validate.py maps these to sqlglot; the rest (MDX, TABLEAU, MAQL) are not SQL and are not parsed.
 _SQLGLOT = {"ANSI_SQL": "", "SNOWFLAKE": "snowflake", "DATABRICKS": "databricks"}
 AGGREGATES = (exp.AggFunc, exp.PercentileCont, exp.PercentileDisc)
@@ -314,7 +316,11 @@ def from_ossie(doc: dict[str, Any]) -> list[SemanticModelDoc]:
                                   description=f.get("description"), ai_context=f.get("ai_context"),
                                   custom_extensions=f.get("custom_extensions") or []) for f in d.get("fields") or []])
             for d in m["datasets"]]
-        relationships = [SemanticRelationship.model_validate(r) for r in m.get("relationships") or []]
+        relationships = []
+        for r in m.get("relationships") or []:
+            ours, others = _read_extension(r.get("custom_extensions") or [])
+            relationships.append(SemanticRelationship.model_validate(
+                {**r, "custom_extensions": others, **{k: v for k, v in ours.items() if k in _REL_EXT_FIELDS}}))
         metrics = []
         for mt in m.get("metrics") or []:
             ours, others = _read_extension(mt.get("custom_extensions") or [])
@@ -354,7 +360,9 @@ def model_to_ossie(model: SemanticModelDoc) -> dict[str, Any]:
             "custom_extensions": d.custom_extensions}) for d in model.datasets],
         "relationships": [_clean({"name": r.name, "from": r.from_dataset, "to": r.to, "from_columns": r.from_columns,
                                   "to_columns": r.to_columns, "ai_context": r.ai_context,
-                                  "custom_extensions": r.custom_extensions}) for r in model.relationships],
+                                  "custom_extensions": _with_extension(r.custom_extensions,
+                                                                       {k: getattr(r, k) for k in _REL_EXT_FIELDS})})
+                          for r in model.relationships],
         "metrics": [metric_to_ossie(m) for m in model.metrics],
         "custom_extensions": model.custom_extensions,
     })

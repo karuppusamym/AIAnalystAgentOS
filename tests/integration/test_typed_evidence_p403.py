@@ -147,6 +147,13 @@ def test_evidence_manifest_staleness_and_confirmation(control_db, pg_orders, mon
     with session_scope() as s:
         stale_events = list(s.scalars(select(RunEvent).where(RunEvent.workspace_id == ws_id, RunEvent.type == "insight.stale")))
     assert len(stale_events) == len(after)
+    # P7-01: `stale` is the data case of VOID; every run-1 verdict's record says so, with the cause
+    from analystos.evidence.verification import latest
+
+    with session_scope() as s:
+        records = latest(s, "insight", [i["id"] for i in after])
+    assert len(records) == len(after)
+    assert all((r.state, r.void_kind) == ("VOID", "data") and "orders" in r.void_reason for r in records.values())
 
     # ---- run 2 re-tests run 1's verified claims (pre-registered) on the new snapshot
     run2 = create_run(admin, ws_id, objective=None, origin={"type": "user", "publish": "skip", "previous_run_id": run1.id})
@@ -165,6 +172,9 @@ def test_evidence_manifest_staleness_and_confirmation(control_db, pg_orders, mon
         assert conf["rule"] == "fresh_snapshot_replication" and conf["passed"] and i["bundle"]["validation"]["label"] == "confirmation"
     assert all(i["validation"] != "confirmed" for i in fresh)
     assert all(i["stale_since"] is None for i in second)
+    with session_scope() as s:  # run 2's verdicts are bound to the new snapshot: live
+        records = latest(s, "insight", [i["id"] for i in second if i["status"] == "verified"])
+    assert records and all(r.state == "ACTIVE" for r in records.values())
     count = lambda rows: {s: sum(1 for i in rows if i["validation"] == s) for s in sorted({i["validation"] for i in rows})}  # noqa: E731
     print(f"\nP4-03 run1: {len(found)} findings, {len(verified)} verified, states {count(found)}; "
           f"{len(after)} marked stale after the origin changed ({entry['rows']} -> {manifest2['entries'][0]['rows']} rows); "

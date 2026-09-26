@@ -13,11 +13,14 @@ from analystos.api.routers import admin, analysis, artifacts, auth, capabilities
 from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
 from analystos.api.routers import decisions as decisions_router
+from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
 from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
+from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
+from analystos.api.routers import work_orders as work_orders_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -34,13 +37,35 @@ async def lifespan(_: FastAPI):
     # pauses the event loop for 100-150 ms, which every open SSE stream feels (P4-C04 load test).
     gc.collect()
     gc.freeze()
-    yield
+    # Lite profile (ADR-0025): the API process is also the orchestrator and the scheduler. Resume
+    # re-drives every non-terminal run left by a previous process; the scheduler loop claims before it
+    # fires, so it is safe next to a separate `analystos scheduler`.
+    from analystos.workflows.orchestrator import start_local_runtime
+
+    settings = get_settings()
+    runtime = start_local_runtime()
+    scheduler_stop = None
+    if settings.run_inprocess_scheduler:
+        from analystos.services.schedules import start_inprocess_scheduler
+
+        scheduler_stop = start_inprocess_scheduler()
+    try:
+        yield
+    finally:
+        if scheduler_stop is not None:
+            scheduler_stop.set()
+        if runtime is not None:
+            runtime.shutdown()
+            from analystos.workflows.orchestrator import reset_local_runtime
+
+            reset_local_runtime()
 
 
 app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
               description="Autonomous, governed data & analytics agent operating system (Phase 1 MVP).")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
-                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=["ETag", "Idempotent-Replayed", "Location"])  # P4-06: revisions and replays
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router,
           capabilities.router, registries_router.router, semantic_router.router):
     app.include_router(r)
@@ -50,6 +75,9 @@ app.include_router(builds_router.router)
 app.include_router(ask_router.router)
 app.include_router(knowledge_router.router)
 app.include_router(evidence_router.router)
+app.include_router(definitions_router.router)
+app.include_router(work_orders_router.router)
+app.include_router(recipes_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
@@ -60,8 +88,11 @@ async def domain_error(_: Request, exc: AnalystOSError):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(_: Request, exc: RequestValidationError):
+    import json
+
+    errors = json.loads(json.dumps(exc.errors(), default=str))  # a validator's ValueError in `ctx` is not JSON
     return JSONResponse(status_code=422, content={"error": {"code": "invalid_input", "message": "request validation failed",
-                                                            "details": {"errors": exc.errors()}, "retryable": False}})
+                                                            "details": {"errors": errors}, "retryable": False}})
 
 
 @app.get("/api/health")
@@ -88,9 +119,12 @@ def health():
             c.execute(text("select 1"))
 
     def redis_():
+        if not settings.redis_url:  # lite: counters and caches live in Postgres and in process
+            return {"enabled": False, "status": "not configured (lite profile)", "spend_counters": settings.spend_store}
         import redis
 
         redis.Redis.from_url(settings.redis_url, socket_timeout=1).ping()
+        return {"spend_counters": settings.spend_store}
 
     def neo():
         if not settings.graph_enabled:  # optional projection; lineage and neighbourhood come from Postgres
@@ -101,12 +135,16 @@ def health():
         return {"enabled": True}
 
     def temporal():
+        if settings.orchestrator != "temporal":
+            return {"enabled": False, "status": "local orchestrator (in the API process)"}
         import socket
 
         host, port = settings.temporal_address.split(":")
         socket.create_connection((host, int(port)), timeout=1).close()
 
     def superset():
+        if not settings.superset_url:
+            return {"enabled": False, "status": "not configured: publishing uses the preview destination (add the bi profile)"}
         import httpx
 
         httpx.get(f"{settings.superset_url}/health", timeout=2).raise_for_status()
@@ -131,4 +169,7 @@ def health():
                              "detail": st.detail}
     except Exception as exc:  # noqa: BLE001 - health never raises
         checks["sandbox"] = {"ok": False, "available": False, "error": str(exc)[:200]}
-    return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "checks": checks}
+    from analystos.core.profiles import summary
+
+    return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "installation": summary(settings),
+            "checks": checks}

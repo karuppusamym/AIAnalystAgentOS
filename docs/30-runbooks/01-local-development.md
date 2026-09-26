@@ -16,15 +16,17 @@ export SERVICENOW_PASSWORD=admin           # the mock's password, referenced as 
 .venv/bin/uvicorn analystos.api.app:app --port 8000 &
 (cd web && npm install && npm run dev)     # http://localhost:5173
 ```
-Full containerised stack: `docker compose up -d --build` (API :8000, UI :5173, Superset :8088 admin/admin).
+Containerised: `docker compose up -d --build` runs the **lite** profile (Postgres, API :8000, UI :5173; ADR-0025).
+The standard profile, Superset (:8088 admin/admin), the demo source and the rest are opt-in profiles:
+[runbook 04](04-lite-and-profiles.md).
 
 **Worker pools.** Temporal work is split into task queues per workload — `analysis` (I/O-bound agent
 steps and the run workflow), `compute` (profiling, data quality and hypothesis tests, in a bounded
 process pool), `publish` (BI side effects), `crawl` (metadata crawls) and `elt` (placeholder). The
 step → queue map is `src/analystos/workflows/queues.py`; slots, executor and timeouts per queue are
 `config/task_queues.yaml`. `analystos worker --queues analysis,compute` (or `ANALYSTOS_WORKER_QUEUES`)
-serves a subset; compose runs one `worker-<pool>` service per pool, so
-`docker compose up -d --scale worker-compute=4` scales statistics alone. Helm sizing:
+serves a subset; compose's `standard` profile runs one worker on every queue and its `scale` profile one
+`worker-<pool>` service per pool, so `--scale worker-compute=4` scales statistics alone. Helm sizing:
 `deploy/helm/analystos` (Helm chart, one Deployment per pool).
 
 **Neo4j is optional and off by default** (`ANALYSTOS_GRAPH_ENABLED=false`): lineage and the table

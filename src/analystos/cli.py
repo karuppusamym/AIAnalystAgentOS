@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge | check-semantics"""
 from __future__ import annotations
 
 import argparse
@@ -105,7 +105,19 @@ def list_packs() -> None:
 
 def export_contracts() -> None:
     from analystos.capabilities.agents import AgentBody
-    from analystos.contracts import analysis, bi, capability, evidence, platform, policy, registry, semantic
+    from analystos.contracts import (
+        analysis,
+        bi,
+        capability,
+        definition,
+        evidence,
+        platform,
+        policy,
+        recipe,
+        registry,
+        semantic,
+        work,
+    )
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)
@@ -116,7 +128,9 @@ def export_contracts() -> None:
               "platform_settings": platform.PlatformSettings, "capability": capability.CapabilityManifest,
               "semantic_model": semantic.SemanticModelDoc, "semantic_metric": semantic.SemanticMetricDef,
               "semantic_query": semantic.SemanticQuery,
-              "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact}
+              "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact,
+              "definition_ref": definition.DefinitionRef, "pin_status": definition.PinStatus, "work_order": work.WorkOrderSpec,
+              "recipe": recipe.Recipe}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
@@ -201,11 +215,17 @@ def main(argv: list[str] | None = None) -> int:
         return knowledge_main(argv[1:])
     if argv[:1] == ["schedules"]:
         return schedules_main(argv[1:])
+    if argv[:1] == ["check-semantics"]:  # offline semantic model validation (ADR-0019 §6)
+        from analystos.semantic.check import main as check_semantics
+
+        rest = [a for a in argv[1:] if a != "--json"]
+        return check_semantics(rest, as_json="--json" in argv[1:])
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
                                             "export-contracts", "replay-run", "packs", "calibrate", "knowledge", "schedules",
-                                            "bi-sync", "sandbox-status"],
+                                            "bi-sync", "sandbox-status", "check-semantics"],
                         help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...); "
+                             "check-semantics: `analystos check-semantics PATH... [--json]` (offline model validation); "
                              "schedules: `analystos schedules disable-demo [--all] [--workspace W] [--dry-run]`")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")

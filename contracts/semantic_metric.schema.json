@@ -157,6 +157,13 @@
       ],
       "default": null,
       "title": "Datatype"
+    },
+    "pre_aggregations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pre Aggregations",
+      "type": "array"
     }
   },
   "required": [

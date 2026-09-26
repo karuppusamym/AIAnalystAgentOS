@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
@@ -647,7 +648,67 @@ class Insight(Base):
     validation: Mapped[str] = mapped_column(String(30), default="exploratory", server_default="legacy")
     data_version: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ADR-0019 (P7-02): `governed` only when computed from a compiled SemanticQuery (then `semantic` holds
+    # the model and compiler versions); run findings are `ad_hoc`.
+    governance: Mapped[str] = mapped_column(String(10), default="ad_hoc", server_default="ad_hoc")
+    semantic: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+
+class VerificationRecord(Base):
+    """One verdict bound to its dependency fingerprint (P7-01, ADR-0020). The state is the only thing that
+    changes after creation: PENDING -> ACTIVE -> VOID (a dependency changed) | SUPERSEDED (a newer verdict
+    on the same subject). LEGACY marks findings verified before fingerprints whose dependencies could not be
+    rebuilt. Re-verification writes a new record; a voided one stays readable."""
+
+    __tablename__ = "verification_record"
+    __table_args__ = (Index("ix_verification_record_subject", "subject_type", "subject_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    subject_type: Mapped[str] = mapped_column(String(30))  # insight | chart | kpi_tile | report_section
+    subject_id: Mapped[str] = mapped_column(String(80))
+    question_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # the AnalysisSpec identity
+    verdict: Mapped[str] = mapped_column(String(30))  # verified | failed_verification
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    verifier: Mapped[str] = mapped_column(String(80))  # rev.v<version> | user:<id>
+    evidence_bundle_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    dependencies: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(20), index=True)  # PENDING | ACTIVE | VOID | SUPERSEDED | LEGACY
+    void_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)  # the dependency kind that changed
+    void_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    void_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    flags: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # "wrong" flags, each with its reason
+    created_at: Mapped[datetime] = _ts()
+
+
+class VerificationDependency(Base):
+    """The lookup side of a record's fingerprint: events find dependents by (kind, ref)."""
+
+    __tablename__ = "verification_dependency"
+    __table_args__ = (Index("ix_verification_dependency_kind_ref", "kind", "ref"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    record_id: Mapped[str] = mapped_column(ForeignKey("verification_record.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # query | data | semantic | method | context | model_call | policy
+    ref: Mapped[str] = mapped_column(String(300))
+    version_hash: Mapped[str] = mapped_column(String(128))
+
+
+class VerificationSweep(Base):
+    """One nightly sweep: how many ACTIVE records it re-checked and how many voids the events had missed
+    (`late_voids` is a defect metric: each is a change path without its event hook)."""
+
+    __tablename__ = "verification_sweep"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(80))
+    checked: Mapped[int] = mapped_column(Integer, default=0)
+    late_voids: Mapped[int] = mapped_column(Integer, default=0)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = _ts()
 
 
 class Artifact(Base):
@@ -753,6 +814,42 @@ class SemanticModel(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
+    # P4-05: an agent-proposed structure version waits for a hash-bound approval (separation of duties).
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SemanticRelationshipCandidate(Base):
+    """P7-09 review queue: a join between two assets, measured through the gateway (containment, each
+    side's uniqueness, the cardinality they imply) with Atlas's assessment, waiting for a person.
+    `cardinality` is only ever the measured one. Accepting it (a hash-bound approval by someone other
+    than the proposer) writes the relationship into the semantic model with validated_at/validated_by."""
+
+    __tablename__ = "semantic_relationship_candidate"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    from_asset: Mapped[str] = mapped_column(String(400))
+    from_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    to_asset: Mapped[str] = mapped_column(String(400))
+    to_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    cardinality: Mapped[str] = mapped_column(String(20))  # measured: one_to_one|many_to_one|one_to_many|many_to_many
+    containment: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # counts and the measuring SQL
+    assessment: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # skills.relationships.assess_relationship
+    origin: Mapped[str] = mapped_column(String(80))  # discovered | user | agent:<id>
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | accepted | rejected | superseded
+    proposed_by: Mapped[str] = mapped_column(String(40))
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relationship_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _ts()
 
 
 class SemanticMetric(Base):
@@ -846,6 +943,13 @@ class Schedule(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("app_user.id"))
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Optimistic concurrency (P4-06): every edit and every accepted upgrade bumps it; PATCH takes If-Match.
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # The frozen set a fire replays (ADR-0021, P7-03): definition, capability manifests, semantic model,
+    # metric and method versions and the baseline's AnalysisSpecs. Empty until a baseline exists.
+    pins: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    # Last computed comparison of the pins with what is current (contracts.definition.PinStatus).
+    pin_status: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
 
 
@@ -946,6 +1050,19 @@ class CrawlRun(Base):
     started_by: Mapped[str] = mapped_column(String(80))
     started_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SpendCounter(Base):
+    """Hard spend cap counters without Redis (ADR-0025, lite): the same keys as the Redis counters
+    (platform day, workspace month, alert marks). A reservation locks every cap's row, checks every cap,
+    then adds to every row in one transaction: atomic, and a database error refuses the call (fail
+    closed). A row past `expires_at` is dead and is re-seeded from model_call like a missing Redis key."""
+
+    __tablename__ = "spend_counter"
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    value: Mapped[float] = mapped_column(Float, default=0.0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ModelPayload(Base):
@@ -1259,3 +1376,146 @@ class AskTurn(Base):
     promotions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
+
+
+# ------------------------------------------------------------ definitions, work orders, outbox (P7-03, P4-06)
+class Definition(Base):
+    """One version of an executable definition (ADR-0021): `kind` + JSON `spec`. A draft is editable
+    (its `revision` guards concurrent edits); publishing freezes it; retiring stops it running. One
+    draft per (workspace, kind, key) at a time; published versions are immutable."""
+
+    __tablename__ = "definition"
+    __table_args__ = (UniqueConstraint("workspace_id", "kind", "key", "version", name="uq_definition_version"),
+                      Index("uq_definition_one_draft", "workspace_id", "kind", "key", unique=True,
+                            postgresql_where=text("status = 'draft'"), sqlite_where=text("status = 'draft'")))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    key: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | deprecated | retired
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[str] = mapped_column(String(80))
+    published_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class IdempotencyRecord(Base):
+    """`Idempotency-Key` of a mutating request (workbench API §1): scoped by principal, workspace and
+    operation; the canonical request hash decides replay (same) or 409 (different)."""
+
+    __tablename__ = "idempotency_record"
+    __table_args__ = (UniqueConstraint("principal", "workspace_id", "operation", "key", name="uq_idempotency_scope"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    principal: Mapped[str] = mapped_column(String(80))
+    workspace_id: Mapped[str] = mapped_column(String(40))
+    operation: Mapped[str] = mapped_column(String(60))
+    key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")  # in_progress | completed
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response: Mapped[Any] = mapped_column(JSON, nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = _ts()
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DispatchOutbox(Base):
+    """Run creation and its dispatch in one transaction (workbench API §4): the row commits with the
+    run; a relay starts the workflow (stable id, so a duplicate delivery converges) and retries."""
+
+    __tablename__ = "dispatch_outbox"
+    __table_args__ = (UniqueConstraint("kind", "run_id", name="uq_dispatch_outbox_run"),
+                      Index("ix_dispatch_outbox_pending", "status", "available_at"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    kind: Mapped[str] = mapped_column(String(30), default="run.start")
+    run_id: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | dispatched | cancelled
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = _ts()
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkOrder(Base):
+    """A typed work order (`contracts.work.WorkOrderSpec`), editable under revision checks."""
+
+    __tablename__ = "work_order"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    spec_type: Mapped[str] = mapped_column(String(30))
+    objective: Mapped[str] = mapped_column(Text)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | started
+    run_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ------------------------------------------------------------------------------ transformation recipes (P6-04..07)
+class RecipeVersion(Base):
+    """One version of a transformation recipe (ADR-0023): the validated IR with every node's schema
+    stamped, and its hash. Drafts until published (ADR-0021); a new save of changed content is a new version."""
+
+    __tablename__ = "recipe"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | superseded
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class RecipeRun(Base):
+    """One execution of a recipe version: where it ran and why (pushdown or snapshot fallback), the join
+    pre-flight, the input snapshots, gate results, schema-policy changes, what was materialized or
+    quarantined, the column lineage from the IR and its OpenLineage events. Provenance: recipe ->
+    recipe_run -> table (output, quarantine); source table -> transformed_into -> output table."""
+
+    __tablename__ = "recipe_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    recipe_id: Mapped[str] = mapped_column(ForeignKey("recipe.id", ondelete="CASCADE"), index=True)
+    recipe_name: Mapped[str] = mapped_column(String(60))
+    recipe_version: Mapped[int] = mapped_column(Integer)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(20), default="materialize")  # preview | materialize
+    engine: Mapped[str | None] = mapped_column(String(20), nullable=True)  # sql | duckdb
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|blocked|refused|failed
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    preflight: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    snapshots: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    gates: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> gate summary
+    schema_changes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> policy verdict
+    outputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> table, rows, fingerprint...
+    lineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    openlineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

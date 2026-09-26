@@ -42,7 +42,14 @@ class QueryCache:
     def key(fingerprint: str, scope_hash: str, source_version: str, max_rows: int) -> str:
         return cache_key(fingerprint, scope_hash, source_version, max_rows)
 
+    @property
+    def enabled(self) -> bool:
+        """No Redis URL (lite) = no shared query cache: every lookup is a quiet miss."""
+        return self._client is not None or bool(self._url)
+
     def get(self, key: str) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
         try:
             raw = self._redis().get(key)
         except Exception as exc:  # noqa: BLE001 - any cache failure is a miss
@@ -58,7 +65,7 @@ class QueryCache:
         return value if isinstance(value, dict) else None
 
     def set(self, key: str, value: dict[str, Any]) -> bool:
-        if self.ttl_seconds <= 0:
+        if self.ttl_seconds <= 0 or not self.enabled:
             return False
         try:
             payload = json.dumps(value, separators=(",", ":"), default=str)
@@ -69,6 +76,8 @@ class QueryCache:
         return True
 
     def delete(self, key: str) -> None:
+        if not self.enabled:
+            return
         try:
             self._redis().delete(key)
         except Exception as exc:  # noqa: BLE001

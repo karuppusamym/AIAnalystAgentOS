@@ -33,21 +33,69 @@ jobs:
           psql -h localhost -U analystos -d analystos -f deploy/postgres/01-init.sql
           POSTGRES_USER=analystos PGHOST=localhost sh deploy/postgres/02-extensions.sh
       - run: .venv/bin/ruff check src tests evaluation
+      - name: Semantic model files validate offline (ADR-0019; names, expressions, references, cycles, fan-out)
+        run: .venv/bin/analystos check-semantics tests/fixtures/semantic
       - name: OpenAPI schema is current (the web client is generated from web/openapi.json)
         run: |
           PYTHONPATH=src .venv/bin/python scripts/export_openapi.py
           git diff --exit-code web/openapi.json
       - run: .venv/bin/pytest -q -m "not integration"
-      - name: Cost gate (replayed runs; fails when model calls or tokens per run rise > 10% over the baseline)
-        run: PYTHONPATH=src .venv/bin/python scripts/cost_gate.py
-      - name: Analytical benchmark, deterministic tier (P4-V01; precision, recall, FDR vs alpha on ITSM/sales/finance, ~3 min)
-        run: PYTHONPATH=src .venv/bin/python scripts/benchmark_analytical.py --tier component --check
+      - name: Evaluation gates, deterministic tiers (P7-07; thresholds in config/eval_gates.yaml)
+        # grounding (numbers bound to facts, fabricated = 0, void on change), the analytical benchmark's
+        # component tier (P4-V01, ~3 min) and the cost gate (replayed runs vs the baseline).
+        run: PYTHONPATH=src .venv/bin/python scripts/eval_gates.py --out eval-gates/deterministic.json
       - run: .venv/bin/analystos migrate
-      - name: Ask benchmark, fake + off tiers (P4-V02; 162 questions each through Ask and the gateway, ~1 min)
+      - name: Ask benchmark, fake + off tiers (P4-V02 and the ask_fake/ask_off gates; 162 questions each, ~1 min)
         timeout-minutes: 8
+        env: {ANALYSTOS_EVAL_RESULTS_DIR: eval-gates}
         run: .venv/bin/pytest -q -m integration tests/integration/test_ask_benchmark.py
       - name: Integration tests (Neo4j/Temporal/Superset-dependent tests skip when absent)
         run: .venv/bin/pytest -q -m integration --ignore=tests/integration/test_ask_benchmark.py
+      - name: Attach the evaluation gate result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gates
+          path: eval-gates
+          if-no-files-found: ignore
+
+  lite:
+    # ADR-0025 (P7-16): the lite profile with Postgres only, no Redis and no Temporal, on the lite
+    # dependency set (core + reports; no ml, temporal or graph extra). The backend job is `standard`.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: analystos
+          POSTGRES_PASSWORD: analystos
+          POSTGRES_DB: analystos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U analystos" --health-interval 5s --health-retries 20
+    env:
+      ANALYSTOS_PROFILE: lite
+      ANALYSTOS_REDIS_URL: ""
+      # Tests drive runs themselves: no background sweep or schedule loop racing them.
+      ANALYSTOS_LOCAL_SWEEP_SECONDS: "0"
+      ANALYSTOS_INPROCESS_SCHEDULER: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv -p 3.11 .venv && uv pip install -e ".[reports]" pytest pytest-asyncio respx
+      - name: Initialise databases and roles (same scripts as compose)
+        env: {PGPASSWORD: analystos}
+        run: |
+          psql -h localhost -U analystos -d analystos -f deploy/postgres/01-init.sql
+          POSTGRES_USER=analystos PGHOST=localhost sh deploy/postgres/02-extensions.sh
+      - name: The lite API starts without the ml, temporal and graph extras
+        run: >-
+          .venv/bin/python -c "import analystos.api.app; from analystos.core.profiles import summary; s = summary();
+          print(s); assert s['profile'] == 'lite' and not any(s['extras'][e] for e in ('ml', 'temporal', 'graph'))"
+      - run: .venv/bin/analystos migrate
+      - name: Lite smoke (restart mid-run, a two-hour approval wait, Postgres spend caps, the MVP scenario with preview publishing)
+        timeout-minutes: 20
+        run: .venv/bin/pytest -q -m integration tests/integration/test_lite_profile_db.py tests/integration/test_e2e_local_run.py
 
   web:
     runs-on: ubuntu-latest

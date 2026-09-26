@@ -8,7 +8,8 @@ their load metadata (load id / staged time / rows), which changes on every re-st
 has no fixed version: the entry records when the run observed it and the finding is best-effort replay.
 
 When a snapshot's version changes, findings bound to the old version are marked **stale** (they keep
-their evidence; they need re-verification before promotion). A changed snapshot is not a failed method.
+their evidence; they need re-verification before promotion) and their verification records turn
+``VOID(data)`` (P7-01, `evidence.verification`). A changed snapshot is not a failed method.
 """
 from __future__ import annotations
 
@@ -163,4 +164,11 @@ def mark_stale(session: Session, workspace_id: str, source_id: str, asset: str) 
         marked.append(ins.id)
         emit(workspace_id, "insight.stale", {"code": ins.code, "insight_id": ins.id, "asset": asset, "reason": state.reason},
              run_id=ins.run_id, session=session)
+    # P7-01: `stale` is the data case of VOID. Every verdict that read an older version of this snapshot
+    # (in any workspace sharing the source) is voided in this transaction.
+    from analystos.evidence.verification import dependency_changed
+
+    dependency_changed(session, "data", f"{source_id}/{asset}",
+                       f"data snapshot {asset} changed (now version {(now_entry.version or 'unversioned')[:12]})",
+                       event="snapshot.version_changed")
     return marked

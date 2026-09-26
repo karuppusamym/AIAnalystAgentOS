@@ -28,13 +28,21 @@ class ReportInsight(BaseModel):
     # set, reports label the finding discovery/confirmed and call the confidence an uncalibrated review score.
     validation: str | None = None
     stale: bool = False
+    # P7-01 (ADR-0020): the verdict's record is VOID (a dependency changed). The finding is shown with this
+    # cause and is never presented as verified.
+    void_reason: str | None = None
 
     def evidence_label(self) -> str | None:
         if self.validation is None:
-            return None
+            return f"VOID: {self.void_reason}; needs re-verification" if self.void_reason else None
         label = {"confirmed": "confirmed", "exploratory": "discovery (exploratory)", "replicated": "discovery (replicated)",
                  "legacy": "legacy verification"}.get(self.validation, self.validation.replace("_", " "))
+        if self.void_reason:
+            return label + f"; VOID: {self.void_reason}; needs re-verification"
         return label + ("; stale: data changed, needs re-verification" if self.stale else "")
+
+    def status_label(self) -> str:
+        return "void" if self.void_reason else "verified" if self.verified else "unverified"
 
 
 class ReportMetric(BaseModel):

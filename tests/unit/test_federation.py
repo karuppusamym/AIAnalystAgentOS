@@ -154,7 +154,10 @@ def test_join_proposals_are_decided_by_containment_and_cardinality(fed) -> None:
     many = validate_join_keys(runner, [JoinProposal(from_asset="crm.customers", from_column="customer_id",
                                                     to_asset="ops.tickets", to_column="customer_id")],
                               fed.assets, fed.asset_sources)
-    assert not many[0].accepted and "many_to_many" in many[0].reason
+    # customers.customer_id is unique and tickets.customer_id is not: measured as one_to_many (P7-09, the
+    # reversed direction), and refused because the join would duplicate the from-rows.
+    assert not many[0].accepted and "one_to_many" in many[0].reason
+    assert many[0].measured.cardinality == "one_to_many"
 
 
 def test_cross_source_needs_the_federated_runner(fed) -> None:

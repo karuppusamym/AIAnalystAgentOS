@@ -7,8 +7,12 @@ materiality (escalate-only), and — when the workspace policy allows — starts
 """
 from __future__ import annotations
 
+import calendar
 import math
 import statistics
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -53,6 +57,10 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
+    if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
+        from analystos.services.definitions import resolve_runnable
+
+        resolve_runnable(session, workspace_id, config["investigate_definition"], trigger="monitor")
     key = condition_key(workspace_id, kind, config)
     for existing in session.scalars(select(Monitor).where(Monitor.workspace_id == workspace_id, Monitor.kind == kind,
                                                           Monitor.enabled.is_(True))):
@@ -181,6 +189,126 @@ def _robust_z(values: list[float], x: float) -> float | None:
     return (x - med) / mad
 
 
+# ------------------------------------------------------------------------------------ seasonal volume baselines
+# Ported from Atlas AIDataAnalyst@8b48fd9:src/aida/data_quality.py (DQ-6 and its month-end follow-up; ADR-0018
+# §4 verdict "port the baselines only"), with its 17 pure tests (tests/unit/test_monitor_seasonal_baselines.py).
+# A table that always drops on Saturdays, or spikes for a month-end close that lands on a different weekday
+# every month, is judged against its own same-weekday / same-month-end-position history instead of the
+# previous reading, so its normal cycle stops raising volume alerts while a real collapse still does.
+@dataclass(frozen=True, slots=True)
+class SeasonalBaseline:
+    """Same-weekday baseline (`weekday` as `datetime.weekday()`, Monday=0). `stdev` is the population
+    standard deviation, 0.0 for a single point (no observed spread yet)."""
+
+    weekday: int
+    mean: float
+    stdev: float
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class DayOfMonthBaseline:
+    """Same position before month end (`0` = last day, `1` = second-to-last ...), so the last day of a
+    28-day February lines up with the last day of a 31-day March."""
+
+    days_before_month_end: int
+    mean: float
+    stdev: float
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class VolumeCheck:
+    anomaly: bool
+    severity: str | None  # warning | critical
+    evidence: dict[str, Any]
+
+    @property
+    def status(self) -> str:
+        return self.severity if self.anomaly and self.severity else "healthy"
+
+
+def _volume_severity(value: float, threshold: float) -> str:
+    return "critical" if value >= threshold * 2 else "warning"
+
+
+def day_of_week_baseline(history: Sequence[tuple[datetime, int | float]], observed_at: datetime, *,
+                         min_samples: int = 3) -> SeasonalBaseline | None:
+    """Mean/stdev of the history points on `observed_at`'s weekday; None below `min_samples`."""
+    weekday = observed_at.weekday()
+    values = [float(v) for t, v in history if t.weekday() == weekday]
+    if len(values) < min_samples:
+        return None
+    return SeasonalBaseline(weekday=weekday, mean=statistics.fmean(values),
+                            stdev=statistics.pstdev(values) if len(values) > 1 else 0.0, sample_count=len(values))
+
+
+def days_before_month_end(observed_at: datetime) -> int:
+    return calendar.monthrange(observed_at.year, observed_at.month)[1] - observed_at.day
+
+
+def day_of_month_baseline(history: Sequence[tuple[datetime, int | float]], observed_at: datetime, *,
+                          min_samples: int = 3) -> DayOfMonthBaseline | None:
+    """Mean/stdev of the history points at `observed_at`'s position before month end; None below `min_samples`."""
+    anchor = days_before_month_end(observed_at)
+    values = [float(v) for t, v in history if days_before_month_end(t) == anchor]
+    if len(values) < min_samples:
+        return None
+    return DayOfMonthBaseline(days_before_month_end=anchor, mean=statistics.fmean(values),
+                              stdev=statistics.pstdev(values) if len(values) > 1 else 0.0, sample_count=len(values))
+
+
+def seasonal_verdict(current: float, mean: float, stdev: float, *, volume_threshold: float,
+                     zscore_threshold: float) -> tuple[bool, str, dict[str, Any]]:
+    """z-score against the baseline's spread; percent change against its mean when it has no spread."""
+    if stdev > 0:
+        z = abs(current - mean) / stdev
+        return z > zscore_threshold, _volume_severity(z, zscore_threshold), {"seasonal_zscore": round(z, 4)}
+    change = 0.0 if mean == 0 else abs(current - mean) / mean * 100
+    return change > volume_threshold, _volume_severity(change, volume_threshold), {
+        "seasonal_change_percent": round(change, 4)}
+
+
+def volume_check(current: int | None, previous: int | None, *,
+                 history: Sequence[tuple[datetime, int | float]] | None = None, observed_at: datetime | None = None,
+                 weekday_seasonality: bool = False, month_end_seasonality: bool = False, min_samples: int = 3,
+                 zscore_threshold: float = 3.0, volume_change_percent: float = 30.0,
+                 month_end_window_days: int = 3) -> VolumeCheck:
+    """Is `current` (a row count) an anomaly? Against the previous reading by default; against the
+    month-end baseline inside the month-end window, else the weekday baseline, when enabled and the
+    history has enough matching points. The percent change to the previous reading is always recorded."""
+    evidence: dict[str, Any] = {"current_row_count": current}
+    if current is None or previous is None:
+        evidence["threshold_strategy"] = "NO_BASELINE"
+        return VolumeCheck(False, None, evidence)
+    change = (0.0 if current == 0 else 100.0) if previous == 0 else abs(current - previous) / previous * 100
+    evidence.update(baseline_row_count=previous, volume_change_percent=round(change, 4))
+    month_end = None
+    if month_end_seasonality and observed_at is not None and history and \
+            days_before_month_end(observed_at) < month_end_window_days:
+        month_end = day_of_month_baseline(history, observed_at, min_samples=min_samples)
+    weekday = None
+    if weekday_seasonality and observed_at is not None and history:
+        weekday = day_of_week_baseline(history, observed_at, min_samples=min_samples)
+    if month_end is not None:
+        evidence.update(threshold_strategy="SEASONAL_MONTH_END", seasonal_days_before_month_end=month_end.days_before_month_end,
+                        seasonal_sample_count=month_end.sample_count, seasonal_mean_row_count=round(month_end.mean, 4),
+                        seasonal_stdev_row_count=round(month_end.stdev, 4))
+        anomaly, severity, extra = seasonal_verdict(current, month_end.mean, month_end.stdev,
+                                                    volume_threshold=volume_change_percent, zscore_threshold=zscore_threshold)
+    elif weekday is not None:
+        evidence.update(threshold_strategy="SEASONAL_DAY_OF_WEEK", seasonal_weekday=weekday.weekday,
+                        seasonal_sample_count=weekday.sample_count, seasonal_mean_row_count=round(weekday.mean, 4),
+                        seasonal_stdev_row_count=round(weekday.stdev, 4))
+        anomaly, severity, extra = seasonal_verdict(current, weekday.mean, weekday.stdev,
+                                                    volume_threshold=volume_change_percent, zscore_threshold=zscore_threshold)
+    else:
+        evidence["threshold_strategy"] = "ROLLING_PREVIOUS"
+        anomaly, severity, extra = change > volume_change_percent, _volume_severity(change, volume_change_percent), {}
+    evidence.update(extra)
+    return VolumeCheck(anomaly, severity if anomaly else None, evidence)
+
+
 def _evaluate_metric(monitor: Monitor, series: dict) -> dict[str, Any]:
     cfg = monitor.config
     pts = series["points"]
@@ -249,6 +377,12 @@ def _evaluate_quality(session: Session, owner: User, monitor: Monitor) -> dict[s
     scope = resolve_scope(session, owner, monitor.workspace_id, minimum_role="analyst")
     assets = monitor.config.get("assets") or scope.assets
     current: dict[str, dict] = {}
+    # Opt-in volume check (config.volume = {weekday, month_end, change_pct, zscore, min_samples}): each asset's
+    # row count against its previous reading or its own seasonal baseline; the history rides on last_result.
+    volume_cfg = monitor.config.get("volume") if isinstance(monitor.config.get("volume"), dict) else None
+    history: dict[str, list] = dict((monitor.last_result or {}).get("row_history") or {})
+    volume: dict[str, dict] = {}
+    now = utcnow()
     for asset in assets:
         if asset not in scope.assets:
             continue
@@ -266,16 +400,35 @@ def _evaluate_quality(session: Session, owner: User, monitor: Monitor) -> dict[s
             key = f"{issue.asset}|{issue.column}|{issue.code}"
             current[key] = {"severity": issue.severity, "message": issue.message,
                             "rate": float((issue.metric or {}).get("rate") or (issue.metric or {}).get("share") or 0)}
+        if volume_cfg is not None:
+            past = [(_as_datetime(t), v) for t, v in history.get(asset) or []]
+            check = volume_check(profile.row_count, past[-1][1] if past else None, history=past, observed_at=now,
+                                 weekday_seasonality=bool(volume_cfg.get("weekday")),
+                                 month_end_seasonality=bool(volume_cfg.get("month_end")),
+                                 min_samples=int(volume_cfg.get("min_samples", 3)),
+                                 zscore_threshold=float(volume_cfg.get("zscore", 3.0)),
+                                 volume_change_percent=float(volume_cfg.get("change_pct", 30.0)))
+            volume[asset] = {"anomaly": check.anomaly, "severity": check.severity, **check.evidence}
+            history[asset] = [*(history.get(asset) or []), [now.isoformat(), profile.row_count]][-400:]
+    extra = {"row_history": history, "volume": volume} if volume_cfg is not None else {}
     baseline = (monitor.last_result or {}).get("issues")
     if baseline is None:
-        return {"alert": False, "baseline_set": True, "issues": current, "message": f"Baseline recorded: {len(current)} issues."}
-    new = {k: v for k, v in current.items() if k not in baseline and v["severity"] in ("warning", "critical")}
+        return {"alert": False, "baseline_set": True, "issues": current, **extra,
+                "message": f"Baseline recorded: {len(current)} issues."}
+    anomalies = {a: v for a, v in volume.items() if v["anomaly"]}
+    if anomalies:
+        for asset, v in anomalies.items():
+            current[f"{asset}||volume_change"] = {"severity": v["severity"], "rate": 0.0,
+                                                  "message": f"{asset} has {v['current_row_count']} rows "
+                                                             f"({v['threshold_strategy'].lower()} baseline)"}
+    new = {k: v for k, v in current.items() if (k not in baseline or k.endswith("||volume_change"))
+           and v["severity"] in ("warning", "critical")}
     worse = {k: v for k, v in current.items() if k in baseline and v["rate"] > 1.5 * max(baseline[k].get("rate") or 0, 1e-9)
              and v["severity"] in ("warning", "critical")}
     alert = bool(new or worse)
     severity = "critical" if any(v["severity"] == "critical" for v in {**new, **worse}.values()) else "warning"
     msg = "; ".join([f"new: {v['message']}" for v in list(new.values())[:3]] + [f"worse: {v['message']}" for v in list(worse.values())[:3]])
-    return {"alert": alert, "severity": severity, "issues": current, "new": list(new), "worse": list(worse),
+    return {"alert": alert, "severity": severity, "issues": current, "new": list(new), "worse": list(worse), **extra,
             "message": msg or "No data-quality regression."}
 
 
@@ -409,8 +562,11 @@ def start_investigation(alert_id: str, user: User, *, automatic: bool = False) -
         objective = (f"Investigate this monitored change and identify its drivers: {alert.message} "
                      f"Business objective: {ws.objective}")[:2000]
         ws_id = ws.id
-    run = create_run(user, ws_id, objective=objective, origin={"type": "alert", "alert_id": alert_id, "publish": "skip",
-                                                               "automatic": automatic})
+        monitor = s.get(Monitor, alert.monitor_id) if getattr(alert, "monitor_id", None) else None
+        # A monitor may name the playbook version it investigates with; like every trigger it runs a published one.
+        definition = (monitor.config or {}).get("investigate_definition") if monitor is not None else None
+    run = create_run(user, ws_id, objective=objective, definition=definition,
+                     origin={"type": "alert", "alert_id": alert_id, "publish": "skip", "automatic": automatic})
     with session_scope() as s:
         a = s.get(Alert, alert_id)
         a.investigation_run_id = run.id

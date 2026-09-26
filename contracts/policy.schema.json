@@ -146,6 +146,45 @@
       ],
       "title": "ContextProviderConfig",
       "type": "object"
+    },
+    "RowFilter": {
+      "description": "Row-level security (P7-02, ADR-0019): rows of the matching assets a caller may see. `predicate` is a\nboolean SQL expression over the asset's own columns and may reference the caller's attributes as\n`{{user.<attribute>}}` (also `{{user.id}}`, `{{user.email}}`, `{{user.role}}`). Values become literals,\nnever SQL text; a list value expands inside `IN (...)`. A missing attribute fails closed: the asset\nis withheld from that caller. Applied by the semantic compiler and again by the gateway validator, so\nno query path reads the asset unfiltered. `exempt_roles` see every row (for example owner).",
+      "properties": {
+        "id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "assets": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Assets",
+          "type": "array"
+        },
+        "predicate": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Predicate",
+          "type": "string"
+        },
+        "exempt_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exempt Roles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "assets",
+        "predicate"
+      ],
+      "title": "RowFilter",
+      "type": "object"
     }
   },
   "description": "Versioned per-workspace policy. Values here may only tighten the platform ceilings.",
@@ -267,6 +306,13 @@
         "$ref": "#/$defs/AttributeRule"
       },
       "title": "Attribute Rules",
+      "type": "array"
+    },
+    "row_filters": {
+      "items": {
+        "$ref": "#/$defs/RowFilter"
+      },
+      "title": "Row Filters",
       "type": "array"
     },
     "publish_destinations": {

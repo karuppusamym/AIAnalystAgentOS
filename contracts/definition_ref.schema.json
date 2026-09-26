@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "description": "What a trigger names and a run records. `version` None means the newest published version.",
+  "properties": {
+    "kind": {
+      "default": "playbook",
+      "title": "Kind",
+      "type": "string"
+    },
+    "key": {
+      "default": "",
+      "title": "Key",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "content_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Hash"
+    },
+    "source": {
+      "default": "workspace",
+      "enum": [
+        "workspace",
+        "builtin"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "enum": [
+            "draft",
+            "published",
+            "deprecated",
+            "retired"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status"
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Id"
+    }
+  },
+  "title": "DefinitionRef",
+  "type": "object"
+}

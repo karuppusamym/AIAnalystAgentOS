@@ -127,6 +127,11 @@ def save_policy(session: Session, workspace: Workspace, doc: WorkspacePolicyDoc,
                               .order_by(WorkspacePolicy.version.desc()).limit(1)) or 0) + 1
     session.add(WorkspacePolicy(workspace_id=workspace.id, version=version, document=doc.model_dump(), created_by=user_id))
     workspace.policy_version = version
+    session.flush()
+    from analystos.evidence.verification import dependency_changed
+
+    # P7-01: a verdict whose scope, masking or alpha came from the old policy is void if those changed.
+    dependency_changed(session, "policy", workspace.id, f"workspace policy v{version} saved", event="policy.changed")
     return version
 
 
@@ -240,7 +245,48 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
                     scope.denied_columns.append(col_fq)
     if policy.attribute_rules:
         apply_attribute_rules(scope, user.attributes, policy.attribute_rules, tags_by_column)
+    if policy.row_filters:
+        apply_row_filters(scope, user, policy.row_filters)
     return scope
+
+
+def row_filter_user(user: User, role: str) -> dict:
+    """What `{{user.<attr>}}` can name: the caller's attributes plus id, email and workspace role."""
+    return {**(user.attributes or {}), "id": user.id, "email": user.email, "role": role}
+
+
+def apply_row_filters(scope: DataScope, user: User, filters: list) -> None:
+    """Render every row filter that applies to an asset in scope for this caller (P7-02). Fail closed: an
+    attribute the caller lacks, or a predicate over a column the asset does not have, withholds the
+    asset from the scope instead of reading it unfiltered."""
+    from analystos.governance import row_filters as rls
+
+    who = row_filter_user(user, scope.role)
+    for fq in list(scope.assets):
+        dialect = scope.source_dialects.get(scope.asset_sources.get(fq, ""), "postgres")
+        rendered, reason = [], None
+        for f in filters:
+            if not rls.applies(f.assets, fq) or scope.role in f.exempt_roles:
+                continue
+            try:
+                sql, cols = rls.render(f.predicate, who, dialect, filter_id=f.id)
+            except (rls.MissingAttribute, ValueError) as exc:
+                reason = str(exc)
+                break
+            known = {c.lower() for c in scope.columns.get(fq, [])}
+            unknown = [c for c in cols if c.lower() not in known]
+            if unknown:
+                reason = f"row filter {f.id} reads {', '.join(unknown)}, which {fq} does not have"
+                break
+            rendered.append(sql)
+        if reason is not None:
+            scope.assets.remove(fq)
+            scope.asset_sources.pop(fq, None)
+            scope.columns.pop(fq, None)
+            scope.withheld_assets[fq] = reason
+        elif rendered:
+            scope.row_filters[fq] = rendered
+    scope.denied_columns = [c for c in scope.denied_columns if c.rsplit(".", 1)[0] in scope.columns]
 
 
 def evaluate(session: Session, user: User, identity: ExecutionIdentity, action: str, *,

@@ -32,6 +32,9 @@ def graph_enabled() -> bool:
 
 @lru_cache
 def _driver():
+    from analystos.core.profiles import require_extra
+
+    require_extra("graph", "the Neo4j graph projection (ANALYSTOS_GRAPH_ENABLED)")
     from neo4j import GraphDatabase
 
     s = get_settings()
