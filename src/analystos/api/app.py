@@ -55,6 +55,9 @@ async def lifespan(_: FastAPI):
     finally:
         if scheduler_stop is not None:
             scheduler_stop.set()
+        from analystos.workers.dispatch import reset_default_transport
+
+        reset_default_transport()  # local isolated worker processes (P7-06), if any were started
         if runtime is not None:
             runtime.shutdown()
             from analystos.workflows.orchestrator import reset_local_runtime
@@ -171,6 +174,13 @@ def health():
                              "detail": st.detail}
     except Exception as exc:  # noqa: BLE001 - health never raises
         checks["sandbox"] = {"ok": False, "available": False, "error": str(exc)[:200]}
+    # P7-06: isolated compute pools this installation dispatches to (opt-in) and how it reaches them.
+    pools = sorted(settings.isolated_pool_set)
+    transport = settings.isolated_transport
+    if transport == "auto":
+        transport = "temporal" if settings.orchestrator == "temporal" else "subprocess"
+    checks["isolated_pools"] = {"ok": True, "enabled": bool(pools), "pools": pools,
+                                "transport": transport if pools else None}
     from analystos.core.profiles import summary
 
     return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "installation": summary(settings),

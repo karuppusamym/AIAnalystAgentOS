@@ -130,6 +130,8 @@ def test_the_api_serves_worker_routes_to_task_tokens_only(served_app, workspace)
     session = issue_token("u_x", "admin@analystos.local")
     assert httpx.get(url, headers={"Authorization": f"Bearer {session}"}).status_code == 401
     assert httpx.get(url).status_code == 401
+    pools = httpx.get(f"{served_app}/api/health").json()["checks"]["isolated_pools"]
+    assert pools["ok"] and pools["pools"] == sorted(get_settings().isolated_pool_set)
 
 
 def test_a_recipe_snapshot_job_runs_on_compute_py_when_configured(served_app, local_pool, workspace, tmp_path,
