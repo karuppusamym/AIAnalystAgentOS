@@ -98,6 +98,26 @@ test.describe("Ask (P4-U02)", () => {
     expect(api.unmatched).toEqual([]);
   });
 
+  test("a distribution is answered by the rules without a model, and a follow-up grouping is one click", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("distribution of incident");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const answer = page.getByRole("article").first();
+    await expect(answer.getByText("Built from the catalog · no model")).toBeVisible();
+    await answer.getByRole("region", { name: "Follow-up questions" }).getByRole("button", { name: "distribution of incident by contact channel" }).click();
+    await expect(page.getByRole("article")).toHaveCount(2);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("no provider key: the refusal says which key to set and to restart the containers", async ({ page }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("Which configuration items had incidents in two consecutive weeks?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const turn = page.getByRole("article", { name: "Question 1" });
+    await expect(turn.getByText("No model provider key is set for the API")).toBeVisible();
+    await expect(turn.getByText(/Set OPENROUTER_API_KEY for the api and worker containers/)).toBeVisible();
+  });
+
   test("a vague question gets the clarify refusal with its remedy", async ({ page }) => {
     await signIn(page, `/w/${WS}/ask`);
     await page.getByLabel("Question").fill("what about it?");

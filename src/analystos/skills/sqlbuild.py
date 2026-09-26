@@ -541,6 +541,47 @@ def median(e: exp.Expression) -> exp.Expression:
     return percentile_cont(e, 0.5, "postgres")
 
 
+AGGREGATES = ("count", "sum", "avg", "median")
+
+
+def aggregate_query(asset: str, dialect: str, *, dimensions: list[tuple[str, Derivation]],
+                    measure: tuple[str, str, Derivation | None], order: str = "dimensions",
+                    limit: int | None = None) -> str:
+    """One grouped aggregate over one table, for Ask's rules rung: ``SELECT <dims>, <AGG>(<measure>)
+    FROM <asset> GROUP BY <dims>``, ordered by the dimensions (a series reads in time order) or by
+    the measure descending then the dimensions (`order="measure_desc"`, a ranking; ties are broken
+    by the dimensions so `limit` is deterministic). `measure` is (alias, aggregate, derivation);
+    COUNT(*) takes no derivation. Identifiers are quoted and every expression is a sqlglot node."""
+    dialect = _check_dialect(dialect)
+    alias, agg, d = measure
+    if agg not in AGGREGATES:
+        raise InvalidInput(f"unsupported aggregate {agg!r}; expected one of {AGGREGATES}")
+    if agg == "count":
+        m: exp.Expression = count_star()
+    else:
+        if d is None:
+            raise InvalidInput(f"{agg} needs a column")
+        value = derive(d, dialect)
+        if agg == "median":
+            if dialect == "tsql":
+                raise InvalidInput("median is a window function on tsql; not supported in a grouped aggregate")
+            m = percentile_cont(value, 0.5, dialect)
+        else:
+            m = (exp.Sum if agg == "sum" else exp.Avg)(this=value)
+    cols = [(a, derive(dd, dialect)) for a, dd in dimensions]
+    q = exp.select(*[e.as_(ident(a)) for a, e in cols], m.as_(ident(alias))).from_(table(asset))
+    if cols:
+        q = q.group_by(*[e.copy() for _, e in cols])
+    dims_order = [exp.Ordered(this=col(a), nulls_first=dialect == "tsql") for a, _ in cols]
+    if order == "measure_desc":
+        q = q.order_by(exp.Ordered(this=col(alias), desc=True), *dims_order)
+    elif dims_order:
+        q = q.order_by(*dims_order)
+    if limit is not None:
+        q = q.limit(int(limit))
+    return q.sql(dialect=dialect)
+
+
 def segment_cols(spec: AnalysisSpec, dialect: str) -> tuple[list[tuple[str, exp.Expression]], bool]:
     if spec.segment is None:
         raise InvalidInput(f"{spec.method} requires a `segment`")

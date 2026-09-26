@@ -37,6 +37,8 @@ export function provenancePills(turn: AskTurn): Pill[] {
   if (turn.answered_by === "registry") {
     const name = p.verified_query?.name ?? (turn.verified_query?.name as string | undefined);
     out.push({ tone: "success", label: `Verified query${name ? `: ${name}` : ""}`, title: "Answered from the verified-query registry, no model call" });
+  } else if (turn.answered_by === "rules") {
+    out.push({ tone: "success", label: "Built from the catalog · no model", title: "A schema-bound rule built the SQL from the catalog; no model call" });
   } else if (turn.answered_by === "model") {
     out.push({ tone: "info", label: `Generated SQL${turn.model ? ` · ${turn.model}` : ""}`,
       title: "A model wrote the SQL; the platform validated and ran it" });
@@ -73,10 +75,30 @@ export const REFUSAL_VIEWS: Record<string, RefusalView> = {
   no_scope: { state: "empty", action: "sources", actionLabel: "Go to Sources" },
   policy_denied: { state: "not-entitled", action: "access", actionLabel: "See the workspace policy" },
   budget_exceeded: { state: "refused", action: "retry", actionLabel: "Try again" },
+  spend_cap: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
   timeout: { state: "failed", action: "rephrase", actionLabel: "Narrow the question" },
   unavailable: { state: "failed", action: "retry", actionLabel: "Try again" },
   failed: { state: "failed", action: "retry", actionLabel: "Try again" },
+  // Why no model could write the SQL: each cause has its own remedy (the server's text says what to fix).
+  mode_off: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
+  no_api_key: { state: "failed", action: "retry", actionLabel: "Try again after the restart" },
+  provider_cooldown: { state: "failed", action: "retry", actionLabel: "Try again" },
+  policy_blocked: { state: "not-entitled", action: "access", actionLabel: "See the workspace policy" },
+  residency_blocked: { state: "not-entitled", action: "access", actionLabel: "See the workspace policy" },
+  approval_required: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
+  model_budget: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
+  cap_reached: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
+  context_over_budget: { state: "refused", action: "rephrase", actionLabel: "Narrow the question" },
+  invalid_output: { state: "failed", action: "retry", actionLabel: "Ask again" },
 };
+
+/** Follow-up questions offered with a turn: other groupings of a rules answer, or the rephrasings a
+ * rules clarify proposes. Each is a complete question the rules answer without a model. */
+export function turnSuggestions(turn: AskTurn): string[] {
+  const fromAnswer = turn.provenance?.suggestions ?? [];
+  const fromRefusal = (turn.refusal?.details?.suggestions as string[] | undefined) ?? [];
+  return (turn.status === "answered" ? fromAnswer : fromRefusal).filter((q) => typeof q === "string" && q.trim());
+}
 
 export function refusalView(r: AskRefusal | null | undefined): RefusalView {
   return REFUSAL_VIEWS[r?.kind ?? "failed"] ?? REFUSAL_VIEWS.failed;

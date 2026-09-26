@@ -36,12 +36,18 @@ def test_off_tier_is_the_no_model_floor(control_db):
     o = r.summary["overall"]
     assert not r.problems, r.problems
     assert o["model"]["calls"] == 0 and o["restricted_leaks"] == 0
-    assert set(o["answered_by"]) <= {"registry"}
-    # A question the registry does not match is refused as no_model, never guessed.
+    assert set(o["answered_by"]) <= {"registry", "rules"} and o["answered_by"].get("rules", 0) > 0
+    # A question the registry does not match is answered by the catalog rules (correctly), asked back
+    # when a phrase names several columns, or refused naming the cause (no API key), never guessed.
     unmatched = [x for x in r.outcomes if x.expect == "answer" and not x.verified_query]
-    assert unmatched and all(x.actual == "decline" and x.refusal_kind == "no_model" for x in unmatched)
+    assert unmatched and all((x.actual == "answer" and x.answered_by == "rules" and x.match)
+                             or (x.actual == "clarify" and x.answered_by is None)
+                             or (x.actual == "decline" and x.refusal_kind == "no_api_key") for x in unmatched), \
+        [(x.id, x.actual, x.refusal_kind, x.match_note) for x in unmatched]
     # Without a model, asking for a missing input only happens on a registry match.
     assert all(x.verified_query for x in r.outcomes if x.actual == "needs_input")
+    # The rules never answer a question the labels say must not be answered.
+    assert not [x.id for x in r.outcomes if x.answered_by == "rules" and x.expect != "answer"]
     # A near miss (another aggregate, an extra group or filter, another value than the one hard-coded)
     # is not served from the registry: no confident wrong answer, and the registry's own phrasings still answer.
     assert o["confident_wrong"] == 0, [x.id for x in r.outcomes if x.confident_wrong]

@@ -24,6 +24,7 @@ from analystos.db.models import (
 from analystos.events.bus import list_events
 from analystos.governance.policy import get_workspace, load_policy, require_role
 from analystos.services import sources as source_svc
+from analystos.services import workspace_inventory
 from analystos.services import workspaces as ws_svc
 
 router = APIRouter(prefix="/api", tags=["workspaces"])
@@ -45,6 +46,7 @@ class WorkspacePatch(BaseModel):
     objective: str | None = None
     autonomy_level: int | None = None
     settings: dict | None = None
+    status: str | None = None  # active | disabled; owner only
 
 
 class MemberIn(BaseModel):
@@ -106,7 +108,11 @@ def create(body: WorkspaceIn, user: User = Depends(current_user), session: Sessi
 
 @router.get("/workspaces")
 def list_(user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    return _summaries(session, ws_svc.list_workspaces(session, user))
+    summaries = _summaries(session, ws_svc.list_workspaces(session, user))
+    roles = {} if user.is_admin or not summaries else dict(session.execute(
+        select(WorkspaceMember.workspace_id, WorkspaceMember.role).where(
+            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))).all())
+    return [{**w, "role": "owner" if user.is_admin else roles.get(w["id"])} for w in summaries]
 
 
 @router.get("/workspaces/{workspace_id}")
@@ -126,8 +132,16 @@ def patch(workspace_id: str, body: WorkspacePatch, user: User = Depends(current_
 
 @router.delete("/workspaces/{workspace_id}")
 def delete(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Archive and disable. This route does not erase stored or published data."""
     ws_svc.delete_workspace(session, user, workspace_id)
-    return {"deleted": True}
+    return {"deleted": True, "archived": True, "purged": False}
+
+
+@router.get("/workspaces/{workspace_id}/inventory")
+def get_inventory(workspace_id: str, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function")):
+    """Read-only inventory of retained records and registered resource identifiers; owner only."""
+    return workspace_inventory.inventory(session, user, workspace_id)
 
 
 @router.put("/workspaces/{workspace_id}/policy")
@@ -163,12 +177,12 @@ def list_sources(workspace_id: str, user: User = Depends(current_user), session:
 
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/discover")
 def discover(workspace_id: str, source_id: str, user: User = Depends(current_user)):
-    return source_svc.discover_source(user, source_id)
+    return source_svc.discover_source(user, source_id, workspace_id)
 
 
 @router.put("/workspaces/{workspace_id}/sources/{source_id}/selection")
 def select_assets(workspace_id: str, source_id: str, body: Selection, user: User = Depends(current_user)):
-    return source_svc.select_assets(user, source_id, body.assets)
+    return source_svc.select_assets(user, source_id, body.assets, workspace_id)
 
 
 @router.post("/workspaces/{workspace_id}/uploads")

@@ -104,7 +104,7 @@ def list_packs() -> None:
 
 
 def export_contracts() -> None:
-    from analystos.contracts import analysis, bi, capability, platform, policy, registry, semantic
+    from analystos.contracts import analysis, bi, capability, evidence, platform, policy, registry, semantic
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)
@@ -113,7 +113,8 @@ def export_contracts() -> None:
               "stat_result": analysis.StatResult, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
               "dataset": bi.DatasetDef, "publish_bundle": bi.PublishBundle,
               "platform_settings": platform.PlatformSettings, "capability": capability.CapabilityManifest,
-              "semantic_model": semantic.SemanticModelDoc, "semantic_metric": semantic.SemanticMetricDef}
+              "semantic_model": semantic.SemanticModelDoc, "semantic_metric": semantic.SemanticMetricDef,
+              "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
@@ -156,16 +157,39 @@ def calibrate(*, dry_run: bool) -> int:
     return 0
 
 
+def schedules_main(argv: list[str]) -> int:
+    """`analystos schedules disable-demo`: stop demo/evidence schedules and monitors from running (and
+    spending model credit) on a dev stack. Marked items only, unless --all."""
+    parser = argparse.ArgumentParser(prog="analystos schedules")
+    parser.add_argument("command", choices=["disable-demo"])
+    parser.add_argument("--all", action="store_true", help="every enabled schedule and monitor, not only [demo] ones")
+    parser.add_argument("--workspace", help="only this workspace id")
+    parser.add_argument("--dry-run", action="store_true", help="list what would be disabled")
+    args = parser.parse_args(argv)
+    from analystos.db.base import session_scope
+    from analystos.services.schedules import disable_demo
+
+    with session_scope() as s:
+        result = disable_demo(s, include_all=args.all, workspace_id=args.workspace, dry_run=args.dry_run)
+    print(json.dumps(result, indent=2))
+    verb = "would disable" if args.dry_run else "disabled"
+    print(f"{verb} {len(result['schedules'])} schedules and {len(result['monitors'])} monitors", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["knowledge"]:
         from analystos.knowledge.cli import main as knowledge_main
 
         return knowledge_main(argv[1:])
+    if argv[:1] == ["schedules"]:
+        return schedules_main(argv[1:])
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
-                                            "export-contracts", "replay-run", "packs", "calibrate", "knowledge"],
-                        help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...)")
+                                            "export-contracts", "replay-run", "packs", "calibrate", "knowledge", "schedules"],
+                        help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...); "
+                             "schedules: `analystos schedules disable-demo [--all] [--workspace W] [--dry-run]`")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
     parser.add_argument("--out", help="replay-run: write the JSON report to this file")

@@ -282,6 +282,49 @@
           "title": "Profile Models",
           "type": "object"
         },
+        "profile_escalation_models": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Profile Escalation Models",
+          "type": "object"
+        },
+        "escalation": {
+          "additionalProperties": {
+            "enum": [
+              "never",
+              "on_validation_failure",
+              "always_large"
+            ],
+            "type": "string"
+          },
+          "title": "Escalation",
+          "type": "object"
+        },
+        "daily_spend_cap_usd": {
+          "anyOf": [
+            {
+              "maximum": 100000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 2.0,
+          "title": "Daily Spend Cap Usd"
+        },
+        "spend_alert_fraction": {
+          "default": 0.8,
+          "maximum": 1.0,
+          "minimum": 0.05,
+          "title": "Spend Alert Fraction",
+          "type": "number"
+        },
         "disabled_models": {
           "items": {
             "type": "string"

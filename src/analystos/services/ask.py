@@ -33,9 +33,11 @@ from analystos.core.errors import (
     Forbidden,
     InvalidInput,
     ModelRouteUnavailable,
+    ModelUnavailable,
     NotFound,
     PolicyDenied,
     QueryTimeout,
+    SpendCapReached,
     SQLRejected,
     UpstreamUnavailable,
 )
@@ -54,8 +56,16 @@ from analystos.db.models import (
     User,
 )
 from analystos.events.bus import emit
+from analystos.events.stream import REAUTH_SECONDS, StreamGuard, terminal_frame
 from analystos.governance.audit import audit
-from analystos.governance.policy import get_workspace, load_policy, require_role, resolve_scope
+from analystos.governance.policy import (
+    get_workspace,
+    load_in_workspace,
+    load_policy,
+    require_role,
+    resolve_scope,
+    scoped_loader,
+)
 
 AGING_AFTER = timedelta(hours=24)
 STALE_AFTER = timedelta(days=7)
@@ -75,8 +85,49 @@ REFUSALS: dict[str, dict[str, str]] = {
                       "remedy": "Ask a workspace owner for access to this data or to the SQL tool."},
     "budget_exceeded": {"title": "The Ask budget is used up",
                         "remedy": "Wait for the hourly budget to reset, or ask a workspace owner to raise it."},
+    "spend_cap": {"title": "The model spend cap is reached",
+                  "remedy": "No model was called. Model use resumes when the cap period resets (00:00 UTC for the daily "
+                            "platform cap, the 1st of the month for the workspace cap), or a platform administrator raises "
+                            "it (Admin > Settings: llm.daily_spend_cap_usd; workspace policy: workspace_monthly_cost_budget_usd). "
+                            "Meanwhile write the SQL yourself or use a verified query."},
     "no_model": {"title": "No verified answer, and no model may write SQL here",
                  "remedy": "Write the SQL yourself (Explain checks it first), or save a verified query for this question."},
+    # Why generation got no SQL: one kind per cause (the router's reason, not a generic "no model route").
+    "mode_off": {"title": "SQL writing by a model is turned off",
+                 "remedy": "An administrator set the sql_generation purpose to off (Admin > Models). Ask for it to be set to "
+                           "auto, write the SQL yourself (Explain checks it first), or save a verified query."},
+    "no_api_key": {"title": "No model provider key is set for the API",
+                   "remedy": "Set {env} for the api and worker containers (docker compose reads it from your shell or the "
+                             ".env file at `docker compose up`), then restart them: `docker compose up -d api worker`. A key "
+                             "exported after the containers started is not seen by them."},
+    "provider_cooldown": {"title": "The model provider refused for credits",
+                          "remedy": "The provider answered HTTP 402: the account's credits were exhausted. After topping up, "
+                                    "Ask retries the provider automatically in {retry_in_s} s (the cooldown after a 402); "
+                                    "ask again then. Nothing was answered from a guess."},
+    "policy_blocked": {"title": "The workspace policy does not allow this model provider",
+                       "remedy": "The workspace allowed_providers (or the air-gapped install) excludes the provider of the "
+                                 "sql_generation profile. A workspace owner can allow it, or an administrator can route the "
+                                 "purpose to an allowed provider in Admin > Models."},
+    "residency_blocked": {"title": "No model meets the workspace data residency",
+                          "remedy": "No model of the sql_generation profile has a known region matching the workspace "
+                                    "data_residency ({data_residency}); unknown regions fail closed. Add a model with that "
+                                    "region to the profile, or change the residency rule."},
+    "approval_required": {"title": "This model call needs an approval first",
+                          "remedy": "The estimated cost is above the workspace approval threshold, or the model has no "
+                                    "price yet (unpriced models fail closed). Price the model in Admin > Models, choose a "
+                                    "cheaper one, or raise expensive_model_approval_usd."},
+    "model_budget": {"title": "The model budget is used up",
+                     "remedy": "The workspace monthly (or run) model budget is spent. A workspace owner can raise it; "
+                               "verified queries and rule answers still work without a model."},
+    "cap_reached": {"title": "The per-purpose model cap is reached",
+                    "remedy": "SQL generation used its per-run cap ({cap}: {used} of {limit}). An administrator can raise "
+                              "the cap in Admin > Models."},
+    "context_over_budget": {"title": "The question's context is too large for the model budget",
+                            "remedy": "Select fewer tables for this workspace, or narrow the question to one table; an "
+                                      "administrator can raise the prompt limit in Admin > Models."},
+    "invalid_output": {"title": "The model did not return usable SQL",
+                       "remedy": "Ask again, rephrase the question around one table, or write the SQL yourself "
+                                 "(Explain checks it first)."},
     "no_scope": {"title": "Nothing in scope to answer from",
                  "remedy": "Add a source, discover it and select its tables in Sources."},
     "timeout": {"title": "The query took too long",
@@ -88,15 +139,37 @@ REFUSALS: dict[str, dict[str, str]] = {
 }
 
 
+# ModelOutcome codes (agents/common.py) -> refusal kind.
+MODEL_REFUSALS = {"mode_off": "mode_off", "no_api_key": "no_api_key", "provider_cooldown": "provider_cooldown",
+                  "policy_blocked": "policy_blocked", "residency_blocked": "residency_blocked",
+                  "approval_required": "approval_required", "budget_exceeded": "model_budget", "cap_reached": "cap_reached",
+                  "context_over_budget": "context_over_budget", "invalid_output": "invalid_output",
+                  "upstream_unavailable": "unavailable"}
+_REMEDY_DEFAULTS = {"env": "OPENROUTER_API_KEY", "retry_in_s": "about 60", "data_residency": "the workspace rule",
+                    "cap": "calls", "used": "all", "limit": "the cap"}
+
+
+class _RemedyValues(dict):
+    def __missing__(self, key: str) -> str:
+        return _REMEDY_DEFAULTS.get(key, "")
+
+
 def refusal(kind: str, message: str, **details: Any) -> dict[str, Any]:
     spec = REFUSALS[kind]
-    return {"kind": kind, "title": spec["title"], "message": message, "remedy": spec["remedy"], "details": details}
+    values = _RemedyValues({k: v for k, v in details.items() if v is not None})
+    return {"kind": kind, "title": spec["title"], "message": message, "remedy": spec["remedy"].format_map(values),
+            "details": details}
 
 
 def refusal_for(exc: AnalystOSError) -> dict[str, Any]:
     """The refusal kind of a failed Ask, from the error class (not its wording where a class exists)."""
+    if isinstance(exc, ModelUnavailable):
+        reason = str(exc.details.get("reason") or "")
+        return refusal(MODEL_REFUSALS.get(reason, "no_model"), exc.message, **{**exc.details, "code": exc.code})
     if isinstance(exc, SQLRejected):
         kind = "sql_rejected"
+    elif isinstance(exc, SpendCapReached):
+        kind = "spend_cap"
     elif isinstance(exc, BudgetExceeded):
         kind = "budget_exceeded"
     elif isinstance(exc, (PolicyDenied, Forbidden)):
@@ -109,7 +182,7 @@ def refusal_for(exc: AnalystOSError) -> dict[str, Any]:
         kind = "no_model"
     else:
         kind = "failed"
-    return refusal(kind, exc.message, code=exc.code, **({k: v for k, v in exc.details.items() if k in ("scope", "used", "limit")}))
+    return refusal(kind, exc.message, code=exc.code, **({k: v for k, v in exc.details.items() if k in ("scope", "used", "limit", "cap", "spent_usd", "limit_usd", "resets_at")}))
 
 
 # ------------------------------------------------------------------------------ ad hoc context
@@ -127,6 +200,7 @@ class AdhocContext:
     run: Any = None
     task: Any = None
     turn_id: str | None = None
+    thread_id: str | None = None  # compiled contexts are reused within a thread (CTX-005)
     on_stage: Callable[[str, str, dict[str, Any]], None] | None = None
 
     @property
@@ -164,20 +238,22 @@ def adhoc_context(session: Session, user: User, workspace_id: str) -> AdhocConte
 
 
 # ------------------------------------------------------------------------------ threads
-def _thread_for(session: Session, user: User, thread_id: str) -> AskThread:
+@scoped_loader
+def _thread_for(session: Session, user: User, thread_id: str, workspace_id: str | None = None) -> AskThread:
     """Threads are private to their author (a question can reveal intent); the workspace role still applies."""
-    thread = session.get(AskThread, thread_id)
-    if thread is None or (thread.user_id != user.id and not user.is_admin):
+    thread = load_in_workspace(session, AskThread, thread_id, workspace_id, user=user, label="thread")
+    if thread.user_id != user.id and not user.is_admin:
         raise NotFound("thread not found")
-    require_role(session, user, thread.workspace_id, "viewer")
     return thread
 
 
+@scoped_loader
 def _turn_for(session: Session, user: User, turn_id: str) -> AskTurn:
-    turn = session.get(AskTurn, turn_id)
-    if turn is None:
-        raise NotFound("question not found")
-    _thread_for(session, user, turn.thread_id)
+    turn = load_in_workspace(session, AskTurn, turn_id, user=user, label="question")
+    try:
+        _thread_for(session, user, turn.thread_id, turn.workspace_id)
+    except NotFound:
+        raise NotFound("question not found") from None
     return turn
 
 
@@ -207,12 +283,14 @@ def list_threads(session: Session, user: User, workspace_id: str, q: str | None 
     return [{**row(t), "turn_count": counts.get(t.id, 0)} for t in threads]
 
 
+@scoped_loader
 def thread_detail(session: Session, user: User, thread_id: str) -> dict[str, Any]:
     thread = _thread_for(session, user, thread_id)
     turns = list(session.scalars(select(AskTurn).where(AskTurn.thread_id == thread.id).order_by(AskTurn.seq)))
     return {**row(thread), "turns": [turn_out(session, t) for t in turns]}
 
 
+@scoped_loader
 def update_thread(session: Session, user: User, thread_id: str, *, title: str | None = None,
                   archived: bool | None = None) -> dict[str, Any]:
     thread = _thread_for(session, user, thread_id)
@@ -248,7 +326,8 @@ def provenance(session: Session, workspace_id: str, out: dict[str, Any]) -> dict
                        "row_count": asset.row_count if asset else None})
     return {"assets": assets, "answered_by": out.get("answered_by"), "verified_query": out.get("verified_query"),
             "model": out.get("model"), "query_id": result.get("query_id"), "cache_hit": bool(result.get("cache_hit")),
-            "result_hash": result.get("result_hash"), "repairs": len(out.get("attempts") or [])}
+            "result_hash": result.get("result_hash"), "repairs": len(out.get("attempts") or []),
+            "suggestions": list(out.get("suggestions") or []), **({"rules": out["rules"]} if out.get("rules") else {})}
 
 
 def staleness(session: Session, turn: AskTurn, now: datetime | None = None) -> dict[str, Any]:
@@ -288,10 +367,12 @@ def _finish(out: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         return "needs_input", refusal("needs_input", out.get("explanation") or "", missing=out.get("missing") or [],
                                       verified_query=out.get("verified_query"), parameters=out.get("parameters") or {})
     if status == "clarify":
-        return "clarify", refusal("clarify", out.get("explanation") or "", missing=out.get("missing") or [])
+        return "clarify", refusal("clarify", out.get("explanation") or "", missing=out.get("missing") or [],
+                                  suggestions=list(out.get("suggestions") or []))
     return "refused", out.get("refusal") or refusal("failed", "The question could not be answered.")
 
 
+@scoped_loader
 def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
                   on_stage: Callable[[dict[str, Any]], None] | None = None,
                   ask_fn: Callable[..., dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -325,7 +406,7 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
     try:
         with session_scope() as s:
             ctx = adhoc_context(s, user, workspace_id)
-        ctx.turn_id, ctx.on_stage = turn_id, stage
+        ctx.turn_id, ctx.thread_id, ctx.on_stage = turn_id, thread_id, stage
         if not ctx.scope.assets:
             out = {"status": "refused", "refusal": refusal("no_scope", "No selected, ready tables are in your scope.")}
         else:
@@ -361,9 +442,11 @@ def _sse(event: str, data: Any) -> str:
 
 
 async def stream_turn(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
-                      ask: Callable[..., dict[str, Any]] = ask_in_thread) -> AsyncIterator[str]:
+                      ask: Callable[..., dict[str, Any]] = ask_in_thread, guard: StreamGuard | None = None) -> AsyncIterator[str]:
     """SSE frames for one Ask turn: `stage` per plain-language step as it happens, then `turn` (the
-    persisted turn) or `error`, then `end`. The Ask itself runs in a worker thread."""
+    persisted turn) or `error`, then `end`. The Ask itself runs in a worker thread. With a guard the
+    caller is re-authorized before every frame and while waiting: an expired token or lost access
+    ends the stream with `expired` / `revoked` and no stage or answer after it (P4-01)."""
     import anyio
 
     loop = asyncio.get_running_loop()
@@ -372,24 +455,46 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
     def on_stage(entry: dict[str, Any]) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, entry)
 
+    async def denied(payload: bool = True) -> str | None:
+        verdict = await guard.verdict(payload=payload) if guard is not None else None
+        return terminal_frame(*verdict) if verdict is not None else None
+
     task = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: ask(user, thread_id, question, parameters, on_stage=on_stage)))
+    getter: asyncio.Future | None = None
     try:
         while True:
-            getter = asyncio.ensure_future(queue.get())
-            done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
+            getter = getter if getter is not None and not getter.done() else asyncio.ensure_future(queue.get())
+            timeout = guard.wait_limit(REAUTH_SECONDS) if guard is not None else None
+            done, _ = await asyncio.wait({getter, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                if frame := await denied(payload=False):
+                    yield frame
+                    return
+                continue
             if getter in done:
+                if frame := await denied():
+                    yield frame
+                    return
                 yield _sse("stage", getter.result())
                 continue
             getter.cancel()
             while not queue.empty():
+                if frame := await denied():
+                    yield frame
+                    return
                 yield _sse("stage", queue.get_nowait())
             break
+        if frame := await denied():
+            yield frame
+            return
         try:
             yield _sse("turn", task.result())
         except AnalystOSError as exc:
             yield _sse("error", {"error": exc.to_dict()})
         yield _sse("end", {"status": "done"})
     finally:
+        if getter is not None and not getter.done():
+            getter.cancel()
         if not task.done():
             task.cancel()
             with contextlib.suppress(BaseException):
@@ -397,6 +502,7 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
 
 
 # ------------------------------------------------------------------------------ inspector
+@scoped_loader
 def inspector(session: Session, user: User, turn_id: str) -> dict[str, Any]:
     """The four inspector tabs' data: Result and SQL (the turn and its gateway audit row), Evidence
     (provenance, context receipts), Decision (decision rows and model-call receipts of the turn)."""
@@ -497,6 +603,7 @@ def _measure(session: Session, user: User, turn: AskTurn, body: dict[str, Any]) 
     return expression, dataset, {"value": value, "query_id": result.query_id}
 
 
+@scoped_loader
 def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn an answered question into a platform object; returns the promotion record."""
     from analystos.artifacts.registry import link, save_artifact

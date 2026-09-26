@@ -5,6 +5,11 @@ Rows in `run_event` stay the source of truth. Each stream catches up from the da
 (`events/bus.py` publishes one after the emitting transaction commits) or a fallback poll interval
 passes. Every database read runs in a worker thread under a small capacity limiter, so a slow
 database or many clients cannot stall the loop or exhaust the connection pool.
+
+Authorization is not a one-time check at connect (P4-01): a `StreamGuard` re-checks the caller
+before every batch of events and at least every `REAUTH_SECONDS` while idle (token expiry, user
+deactivated, membership removed or lowered, workspace deleted, the resource gone), and the stream
+then ends with one terminal `expired` or `revoked` event and nothing after it.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ BATCH = 200
 POLL_SECONDS = 0.5  # no Redis subscription: poll (off the loop) as often as before
 FALLBACK_POLL_SECONDS = 5.0  # subscribed: poll only as a safety net for a lost nudge
 KEEPALIVE_SECONDS = 15.0
+REAUTH_SECONDS = 5.0  # an idle stream re-checks its caller at least this often; a payload is checked every time
 TERMINAL_GRACE_SECONDS = 1.0  # events emitted just after the terminal status still reach the client
 _db_limiter: anyio.CapacityLimiter | None = None
 
@@ -60,6 +66,47 @@ def fetch_batch(run_id: str, after_id: int, limit: int = BATCH) -> Batch:
         events = [{"id": i, "type": t, "payload": p, "actor": a, "created_at": c.isoformat() if c else None}
                   for i, t, p, a, c in rows]
     return Batch(events=events, status=status)
+
+
+class StreamGuard:
+    """Re-authorizes an open stream. `check` is blocking (it opens its own short session, in a worker
+    thread) and returns None while the caller may still see the stream, else the reason it may not.
+    Token expiry needs no database: it is compared on every call."""
+
+    def __init__(self, check: Callable[[], str | None], expires_at: float | None = None, *,
+                 interval: float | None = None, clock: Callable[[], float] = time.time):
+        self._check, self.expires_at, self._clock = check, expires_at, clock
+        self._interval = REAUTH_SECONDS if interval is None else interval
+        self._checked_at = time.monotonic()  # the route authorized the caller just before the stream opened
+
+    def expired(self) -> bool:
+        return self.expires_at is not None and self._clock() >= self.expires_at
+
+    async def verdict(self, *, payload: bool) -> tuple[str, str] | None:
+        """(`expired` | `revoked`, reason) when the stream must end now. Before a payload the database
+        is always consulted; otherwise only once the interval has passed."""
+        if self.expired():
+            return "expired", "token_expired"
+        if payload or time.monotonic() - self._checked_at >= self._interval:
+            reason = await run_blocking(self._check)
+            self._checked_at = time.monotonic()
+            if self.expired():
+                return "expired", "token_expired"
+            if reason:
+                return "revoked", reason
+        return None
+
+    def wait_limit(self, timeout: float) -> float:
+        """Cap a wait so the next periodic check (or the token's expiry) is not overslept."""
+        limit = max(0.0, self._interval - (time.monotonic() - self._checked_at))
+        if self.expires_at is not None:
+            limit = min(limit, max(0.0, self.expires_at - self._clock()))
+        return max(0.01, min(timeout, limit))
+
+
+def terminal_frame(event: str, reason: str) -> str:
+    """The last frame of a stream whose caller lost access: no payload, only why."""
+    return f"event: {event}\ndata: {json.dumps({'reason': reason})}\n\n"
 
 
 class RunEventHub:
@@ -176,8 +223,11 @@ def _sse(event: dict[str, Any]) -> str:
 
 async def run_event_stream(run_id: str, after_id: int, *, is_disconnected: Callable[[], Awaitable[bool]],
                            hub: RunEventHub | None = None,
-                           fetch: Callable[[str, int], Batch] = fetch_batch) -> AsyncIterator[str]:
-    """SSE frames for one run: DB catch-up by id, then wake on nudge or fallback poll."""
+                           fetch: Callable[[str, int], Batch] = fetch_batch,
+                           guard: StreamGuard | None = None) -> AsyncIterator[str]:
+    """SSE frames for one run: DB catch-up by id, then wake on nudge or fallback poll. With a guard,
+    each batch is sent only after the caller is re-authorized (after the fetch, so a revocation that
+    committed before the batch was read stops it)."""
     hub = hub or default_hub()
     wake = hub.subscribe(run_id)
     last = after_id
@@ -187,6 +237,11 @@ async def run_event_stream(run_id: str, after_id: int, *, is_disconnected: Calla
         while not await is_disconnected():
             wake.clear()  # a nudge that lands during the fetch below re-arms the wait
             batch = await hub.fetch(run_id, last, fetch)
+            if guard is not None:
+                verdict = await guard.verdict(payload=bool(batch.events))
+                if verdict is not None:
+                    yield terminal_frame(*verdict)
+                    return
             for event in batch.events:
                 last = event["id"]
                 yield _sse(event)
@@ -204,6 +259,8 @@ async def run_event_stream(run_id: str, after_id: int, *, is_disconnected: Calla
                 last_sent = now
                 yield ": keep-alive\n\n"
             timeout = TERMINAL_GRACE_SECONDS if terminal_since else hub.poll_seconds
+            if guard is not None:
+                timeout = guard.wait_limit(timeout)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(wake.wait(), timeout)
     finally:

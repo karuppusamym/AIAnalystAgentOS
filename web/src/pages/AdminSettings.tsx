@@ -374,17 +374,21 @@ export function TokenSavingsView() {
             {SAVINGS_DAYS.map((d) => <option key={d} value={d}>last {d} days</option>)}
           </select>
         </label>
-        <span className="muted small">Tokens avoided by the response cache, deterministic paths (off/auto modes) and refused oversize prompts.</span>
+        <span className="muted small">Avoided tokens are estimates for skipped calls. Spend uses provider cost or the versioned model price table.</span>
       </div>
       <ErrorBox error={s.error} onRetry={s.reload} />
       {!s.data && !s.error && <Loading />}
       {t && (
         <>
+          {s.data?.cost_complete === false && <Notice tone="warning">
+            Spend is incomplete: {s.data.missing_price?.reduce((n, row) => n + row.calls, 0) ?? 0} model call(s) had no provider cost or price-table entry.
+            Update the model price table before using this total as a budget report.
+          </Notice>}
           <div className="stats-row">
-            <Stat label="Tokens saved" value={<Value value={t.tokens_saved} format="int" />} hint={`${fmtPct(t.saved_share)} of all tokens`} />
+            <Stat label="Estimated tokens avoided" value={<Value value={t.tokens_saved} format="int" />} hint={`${fmtPct(t.saved_share)} of actual plus estimated tokens`} />
             <Stat label="Tokens used" value={<Value value={t.tokens_used} format="int" />} />
             <Stat label="Model calls" value={<Value value={t.calls} format="int" />} />
-            <Stat label="Cost" value={<Value value={t.cost_usd} format="usd" />} />
+            <Stat label="Recorded model cost" value={<Value value={t.cost_usd} format="usd" />} hint={s.data?.prices_version ? `Price table ${s.data.prices_version} when provider cost is unavailable` : undefined} />
             <Stat label="Cache hits" value={<Value value={t.cache_hits} format="int" />} />
             <Stat label="Deterministic skips" value={<Value value={t.deterministic_skips} format="int" />} />
             <Stat label="Refused (oversize)" value={<Value value={t.refused} format="int" />} />
@@ -419,6 +423,26 @@ export function TokenSavingsView() {
           </Card>
           <SpendBreakdown title="By rung" by={s.data?.by_rung} keyLabel="Rung"
             missing="The server does not report the execution-ladder rung (L0 cache … L5 strong model) per call yet." />
+          <Card title="Escalations (small answer failed a check, large tier answered)">
+            {Object.keys(s.data?.escalations ?? {}).length === 0 ? <EmptyState title="No escalations in this period" /> : (
+              <div className="table-wrap">
+                <table className="table table-compact">
+                  <thead><tr><th>Purpose</th><th className="num">Calls</th><th className="num">Cost</th><th>Reasons</th><th>Models</th></tr></thead>
+                  <tbody>
+                    {Object.entries(s.data?.escalations ?? {}).map(([p, e]) => (
+                      <tr key={p}>
+                        <td><code>{p}</code></td>
+                        <td className="num">{fmtNumber(e.calls, 0)}</td>
+                        <td className="num"><Value value={e.cost_usd} format="usd" /></td>
+                        <td className="small">{Object.entries(e.by_reason).map(([k, n]) => `${k} ${n}`).join(", ")}</td>
+                        <td className="small">{Object.entries(e.by_model).map(([k, n]) => `${k} ${n}`).join(", ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
           <SpendBreakdown title="By model" by={s.data?.by_model} keyLabel="Model"
             missing="Not in this report; the Usage tab lists calls and spend per provider and model." />
         </>

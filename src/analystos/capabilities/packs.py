@@ -91,6 +91,9 @@ class Hints:
     lifecycle_pairs: tuple[tuple[str, str], ...] = ()
     domain_keywords: dict[str, frozenset[str]] = field(default_factory=dict)
     person_nouns: frozenset[str] = frozenset()
+    # Ask count distributions a pack declares for its entities: {entity, nouns, dimensions:
+    # [{label, column, words}], ambiguous: [words that must be clarified]}. Core names no table.
+    ask_distributions: tuple[dict[str, Any], ...] = ()
 
 
 # ------------------------------------------------------------------------------------ loading
@@ -187,6 +190,7 @@ def merge_hints(packs: Iterable[DomainPack]) -> Hints:
     pairs: list[tuple[str, str]] = []
     domains: dict[str, set[str]] = {}
     nouns: set[str] = set()
+    distributions: list[dict[str, Any]] = []
     for p in packs:
         h = p.hints
         acr.update({str(k).lower(): str(v) for k, v in (h.get("acronyms") or {}).items()})
@@ -197,9 +201,10 @@ def merge_hints(packs: Iterable[DomainPack]) -> Hints:
         for dom, kws in (h.get("domain_keywords") or {}).items():
             domains.setdefault(dom, set()).update(str(k).lower() for k in kws)
         nouns.update(str(n).lower() for n in h.get("person_nouns") or [])
+        distributions += [d for d in h.get("ask_distributions") or [] if d not in distributions]
     return Hints(acronyms=acr, key_columns=tuple(keys), display_columns=tuple(display), event_start=tuple(starts),
                  lifecycle_pairs=tuple(pairs), domain_keywords={d: frozenset(k) for d, k in domains.items()},
-                 person_nouns=frozenset(nouns))
+                 person_nouns=frozenset(nouns), ask_distributions=tuple(distributions))
 
 
 def hints() -> Hints:

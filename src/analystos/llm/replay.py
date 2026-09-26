@@ -151,8 +151,11 @@ def _replay_settings():
     from analystos.contracts.platform import LLMSettings, PlatformSettings
     from analystos.llm.config import load_models_config
 
-    # Every purpose model first, no cache, no size refusal, no budget downgrade: the recording decides.
-    return PlatformSettings(llm=LLMSettings(purpose_modes={p: "always" for p in load_models_config().routing},
+    # Every purpose model first, no cache, no size refusal, no budget downgrade, no escalation (each
+    # recorded call - an escalated one included - is replayed as its own request): the recording decides.
+    routing = load_models_config().routing
+    return PlatformSettings(llm=LLMSettings(purpose_modes={p: "always" for p in routing},
+                                            escalation={p: "never" for p in routing},
                                             cache_enabled=False, max_prompt_tokens=400_000,
                                             downgrade_below_budget_fraction=0.0))
 

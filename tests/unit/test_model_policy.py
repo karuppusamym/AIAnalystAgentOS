@@ -104,6 +104,20 @@ def test_approval_threshold_prefers_a_fallback_model_within_the_limit():
     assert seen == ["google/gemini-3.5-flash-lite"]
 
 
+def test_unpriced_model_requires_approval_under_workspace_cost_limit():
+    config = load_models_config().model_copy(deep=True)
+    config.models.pop("openai/gpt-5.4-mini")  # the planning profile's small tier (cheap first)
+    config.models.pop("google/gemini-3.5-flash")
+    sink = Sink()
+    transport = FakeTransport(chat=lambda p: chat_json({"ok": 1}))
+    r = make(transport, sink, config)
+    with pytest.raises(ApprovalRequired, match="no price estimate") as exc:
+        r.complete_json("planning", "s", "u", ctx=ctx_for(expensive_model_approval_usd=0.01))
+    assert exc.value.details["estimated_usd"] is None
+    assert transport.chat_calls == []
+    assert sink.records[-1]["status"] == "approval_required"
+
+
 # --------------------------------------------------------------------- data_residency
 def test_residency_with_unknown_region_fails_closed_and_known_region_routes():
     transport = FakeTransport(chat=lambda p: chat_json({"ok": 1}, model=p["model"]))
@@ -111,9 +125,9 @@ def test_residency_with_unknown_region_fails_closed_and_known_region_routes():
         make(transport).complete_json("planning", "s", "u", ctx=ctx_for(data_residency="eu"))
     assert transport.chat_calls == []
     config = load_models_config().model_copy(deep=True)
-    config.models["openai/gpt-5.4"] = ModelMeta(region="EU", input_usd_per_mtok=2.5, output_usd_per_mtok=15.0)
+    config.models["openai/gpt-5.4-mini"] = ModelMeta(region="EU", input_usd_per_mtok=0.75, output_usd_per_mtok=4.5)
     resp = make(transport, config=config).complete_json("planning", "s", "u", ctx=ctx_for(data_residency="eu"))
-    assert resp.model == "openai/gpt-5.4" and [c["model"] for c in transport.chat_calls] == ["openai/gpt-5.4"]
+    assert resp.model == "openai/gpt-5.4-mini" and [c["model"] for c in transport.chat_calls] == ["openai/gpt-5.4-mini"]
 
 
 def test_no_workspace_policy_means_no_workspace_restriction():

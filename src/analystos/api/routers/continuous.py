@@ -12,7 +12,7 @@ from analystos.api.serialize import row, rows
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.db.models import Alert, AnalysisRun, Artifact, Monitor, Schedule, ScheduleRun, User
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.services import monitors as mon_svc
 from analystos.services import notifications as note_svc
 from analystos.services import reports as report_svc
@@ -81,15 +81,13 @@ def list_schedules(workspace_id: str, user: User = Depends(current_user), sessio
 
 @router.patch("/schedules/{schedule_id}")
 def patch_schedule(schedule_id: str, body: SchedulePatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    load_in_workspace(session, Schedule, schedule_id, user=user, label="schedule")
     return row(sch_svc.update_schedule(session, session.merge(user), schedule_id, body.model_dump()))
 
 
 @router.delete("/schedules/{schedule_id}")
 def delete_schedule(schedule_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    sch = session.get(Schedule, schedule_id)
-    if sch is None:
-        raise NotFound("schedule not found")
-    require_role(session, user, sch.workspace_id, "editor")
+    sch = load_in_workspace(session, Schedule, schedule_id, user=user, minimum="editor", label="schedule")
     audit(f"user:{user.id}", "schedule.deleted", workspace_id=sch.workspace_id, target=sch.id, session=session)
     session.delete(sch)
     return {"deleted": True}
@@ -97,9 +95,11 @@ def delete_schedule(schedule_id: str, user: User = Depends(current_user), sessio
 
 @router.post("/schedules/{schedule_id}/run")
 def run_schedule_now(schedule_id: str, user: User = Depends(current_user)):
-    srun = sch_svc.run_now(user, schedule_id)
     from analystos.db.base import session_scope
 
+    with session_scope() as s:
+        load_in_workspace(s, Schedule, schedule_id, user=user, label="schedule")
+    srun = sch_svc.run_now(user, schedule_id)
     with session_scope() as s:
         return row(s.get(ScheduleRun, srun))
 
@@ -120,10 +120,7 @@ def list_monitors(workspace_id: str, user: User = Depends(current_user), session
 
 @router.patch("/monitors/{monitor_id}")
 def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    m = session.get(Monitor, monitor_id)
-    if m is None:
-        raise NotFound("monitor not found")
-    require_role(session, user, m.workspace_id, "editor")
+    m = load_in_workspace(session, Monitor, monitor_id, user=user, minimum="editor", label="monitor")
     for k, v in body.model_dump().items():
         if v is not None:
             setattr(m, k, v)
@@ -133,20 +130,16 @@ def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(curr
 
 @router.post("/monitors/{monitor_id}/evaluate")
 def evaluate_monitor(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    m = session.get(Monitor, monitor_id)
-    if m is None:
-        raise NotFound("monitor not found")
-    require_role(session, user, m.workspace_id, "analyst")
+    load_in_workspace(session, Monitor, monitor_id, user=user, minimum="analyst", label="monitor")
     session.commit()
     return mon_svc.evaluate_monitor(monitor_id, trigger=f"user:{user.id}")
 
 
 @router.get("/monitors/{monitor_id}/series")
 def monitor_series(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    m = session.get(Monitor, monitor_id)
-    if m is None or m.kind == "data_quality":
+    m = load_in_workspace(session, Monitor, monitor_id, user=user, label="metric monitor")
+    if m.kind == "data_quality":
         raise NotFound("metric monitor not found")
-    require_role(session, user, m.workspace_id, "viewer")
     owner = session.get(User, m.created_by)
     return mon_svc.metric_series(session, owner, m)
 
@@ -163,17 +156,13 @@ def list_alerts(workspace_id: str, status: str | None = None, user: User = Depen
 
 @router.post("/alerts/{alert_id}/{action}")
 def alert_action(alert_id: str, action: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    a = session.get(Alert, alert_id)
-    if a is None:
-        raise NotFound("alert not found")
+    a = load_in_workspace(session, Alert, alert_id, user=user, minimum="analyst", label="alert")
     from analystos.decisions.calibration import record_signal
 
     if action == "investigate":
-        require_role(session, user, a.workspace_id, "analyst")
         record_signal(session, "alert.investigate", f"alert:{a.dedupe_key}", user_id=user.id, workspace_id=a.workspace_id)
         session.commit()
         return {"run_id": mon_svc.start_investigation(alert_id, user)}
-    require_role(session, user, a.workspace_id, "analyst")
     if action == "acknowledge":
         a.status, a.acknowledged_by = "acknowledged", user.id
         record_signal(session, "alert.acknowledge", f"alert:{a.dedupe_key}", user_id=user.id, workspace_id=a.workspace_id)
@@ -219,10 +208,9 @@ def create_report(workspace_id: str, body: ReportIn, user: User = Depends(curren
 @router.get("/artifacts/{artifact_id}/download")
 def download(artifact_id: str, format: str = "pdf", user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Download to the requesting user (audited). Sending outside the platform would need an approval."""
-    art = session.get(Artifact, artifact_id)
-    if art is None or art.type != "report":
+    art = load_in_workspace(session, Artifact, artifact_id, user=user, label="report")
+    if art.type != "report":
         raise NotFound("report not found")
-    require_role(session, user, art.workspace_id, "viewer")
     content, mime, ext = report_svc.report_file(art, format)
     audit(f"user:{user.id}", "report.downloaded", workspace_id=art.workspace_id, target=art.id, details={"format": format}, session=session)
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in art.name)[:60]

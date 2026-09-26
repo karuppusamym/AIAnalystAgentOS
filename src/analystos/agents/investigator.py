@@ -224,6 +224,18 @@ def _accept(ctx: RunContext, proposals: list[dict[str, Any]], types, *, origin: 
     return accepted, rejected
 
 
+def usable_hypotheses(ctx: RunContext, types) -> Any:
+    """Escalation check for hypothesis generation (cheap first, escalate): an answer is usable when at
+    least one proposal passes spec validation. Duplicates of rule proposals still count as usable."""
+    def check(data: Any) -> str | None:
+        props = [p for p in data.get("hypotheses") or [] if isinstance(p, dict)] if isinstance(data, dict) else []
+        if not props:
+            return "empty hypothesis list"
+        accepted, rejected = _accept(ctx, props, types, origin="agent", seen=set())
+        return None if accepted else f"no usable hypotheses: all {len(rejected)} proposals failed spec validation"
+    return check
+
+
 def identity_keys(spec: AnalysisSpec) -> set[str]:
     """What makes two hypotheses the same test: the full spec, plus any identity the method adds
     (e.g. a second driver model on the same outcome and population re-answers the same question)."""
@@ -311,7 +323,8 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types, packs)], types,
                                origin="heuristic", seen=set(seen))
     enough = len(carried) + len(rules) >= platform().analysis.heuristic_hypotheses_sufficient
-    data, model = (llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000)
+    data, model = (llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", payload, max_tokens=6000,
+                            validate=usable_hypotheses(ctx, types))
                    if model_gate(ctx, "hypothesis_generation", payload, deterministic_ok=enough) else (None, "deterministic"))
     llm_props = [{**p, "origin": "agent"} for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
     accepted, rejected_llm = _accept(ctx, llm_props, types, origin="agent", seen=seen)
@@ -479,7 +492,8 @@ def follow_ups(ctx: RunContext) -> dict:
     drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
     payload = compile_for(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results,
                                                         "constraints": ctx.run.constraints})
-    data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload)
+    data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload,
+                            validate=usable_hypotheses(ctx, types))
                    if model_gate(ctx, "follow_up_generation", payload, deterministic_ok=bool(drill)) else (None, "deterministic"))
     props = [p for p in (data or {}).get("hypotheses", []) if isinstance(p, dict)] if isinstance(data, dict) else []
     accepted, rejected = _accept(ctx, props, types, origin="agent", seen=seen)

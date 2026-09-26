@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows
-from analystos.core.errors import InvalidInput, NotFound
+from analystos.core.errors import InvalidInput
 from analystos.db.models import RegisteredHypothesis, User, VerifiedQuery
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.registries import verified_queries as vq_svc
 
 router = APIRouter(prefix="/api", tags=["registries"])
@@ -58,6 +58,7 @@ def promote_verified_query(workspace_id: str, body: PromoteIn, user: User = Depe
 
 @router.patch("/verified-queries/{entry_id}")
 def patch_verified_query(entry_id: str, body: VerifiedQueryPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    load_in_workspace(session, VerifiedQuery, entry_id, user=user, label="verified query")
     return row(vq_svc.update(session, session.merge(user), entry_id, body.model_dump(exclude_none=True)))
 
 
@@ -75,10 +76,8 @@ def list_registered_hypotheses(workspace_id: str, status: str | None = None, use
 def patch_registered_hypothesis(entry_id: str, body: RegisteredHypothesisPatch, user: User = Depends(current_user),
                                 session: Session = Depends(db, scope="function")):
     """Retire a question so scheduled re-analysis stops replaying it (or reactivate it)."""
-    entry = session.get(RegisteredHypothesis, entry_id)
-    if entry is None:
-        raise NotFound("registered hypothesis not found")
-    require_role(session, user, entry.workspace_id, "analyst")
+    entry = load_in_workspace(session, RegisteredHypothesis, entry_id, user=user, minimum="analyst",
+                              label="registered hypothesis")
     if body.status not in ("active", "retired"):
         raise InvalidInput("status must be active or retired")
     entry.status = body.status

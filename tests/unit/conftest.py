@@ -56,3 +56,13 @@ def budget_counters(monkeypatch):
     counters = bc.BudgetCounters(None, "unit:", client=FakeRedis())
     monkeypatch.setattr(bc, "default_budget_counters", lambda: counters)
     return counters
+
+
+@pytest.fixture(autouse=True)
+def compiled_contexts():
+    """Compiled-context reuse (CTX-005) is process-wide: every unit test starts with an empty cache."""
+    from analystos.agents import common
+
+    common._COMPILED.clear()
+    yield common._COMPILED
+    common._COMPILED.clear()

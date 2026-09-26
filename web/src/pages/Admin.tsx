@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, type AgentSpec, type ToolSpec } from "../api";
+import { useSearchParams } from "react-router-dom";
+import { api, type AgentSpec, type ModelHealth, type ToolSpec } from "../api";
 import { useAuth } from "../auth";
 import { Card, EmptyState, EnabledToggle, ErrorBox, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { fmtDate, fmtMs, fmtUsd } from "../lib/format";
@@ -37,7 +38,14 @@ const SECTIONS: Record<AdminSection, { title: string; subtitle: string; tabs: { 
 export function AdminPage({ section = "registry" }: { section?: AdminSection }) {
   const { user } = useAuth();
   const spec = SECTIONS[section];
-  const [tab, setTab] = useState<Tab>(spec.tabs[0].id);
+  const [params, setParams] = useSearchParams();
+  const requestedTab = params.get("tab");
+  const tab = spec.tabs.find((item) => item.id === requestedTab)?.id ?? spec.tabs[0].id;
+  const setTab = (next: Tab) => setParams((current) => {
+    const updated = new URLSearchParams(current);
+    updated.set("tab", next);
+    return updated;
+  });
   const tabbed = spec.tabs.length > 1;
   return (
     <div className="page">
@@ -54,7 +62,7 @@ export function AdminPage({ section = "registry" }: { section?: AdminSection }) 
             {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
             {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
             {tab === "skills" && <Skills />}
-            {tab === "models" && <Models />}
+            {tab === "models" && <Models isAdmin={!!user?.is_admin} />}
             {tab === "settings" && <SettingsEditor />}
             {tab === "savings" && <TokenSavingsView />}
             {tab === "prompts" && <PromptsView />}
@@ -143,13 +151,13 @@ function Skills() {
     <Card>
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Skill</th><th>Category</th><th>Tools</th><th>Deterministic</th><th>Status</th></tr></thead>
+          <thead><tr><th>Skill</th><th>Category</th><th>Implementation</th><th>Deterministic</th><th>Status</th></tr></thead>
           <tbody>
             {list.data.map((s) => (
               <tr key={s.id}>
                 <td><code>{s.id}</code><div className="muted small">{s.description}</div></td>
                 <td>{s.category}</td>
-                <td className="small">{s.tools.join(", ") || "—"}</td>
+                <td className="small"><code>{s.function ?? ((s.tools ?? []).join(", ") || "—")}</code>{s.runtime && <div className="muted">{s.runtime}</div>}</td>
                 <td>{s.deterministic ? "yes" : "no"}</td>
                 <td><StatusBadge status={s.enabled ? "ok" : "skipped"} label={s.enabled ? "enabled" : "disabled"} /></td>
               </tr>
@@ -161,7 +169,57 @@ function Skills() {
   );
 }
 
-function Models() {
+/** Provider health: is a key set in the server process, last success, credit cooldown, today's spend vs the daily cap. */
+export function ModelHealthPanel() {
+  const h = useAsync(() => api.modelHealth(), []);
+  const probe = useAction();
+  const [probed, setProbed] = useState<ModelHealth | null>(null);
+  const d = probed ?? h.data;
+  if (h.error) return <ErrorBox error={h.error} onRetry={h.reload} />;
+  if (!d) return <Loading />;
+  const s = d.spend_today;
+  const over = s.fraction != null && s.fraction >= s.alert_fraction;
+  return (
+    <Card title="Model health" actions={
+      <button className="btn btn-sm" disabled={probe.busy} title="Sends one tiny billable request per provider"
+        onClick={async () => { const r = await probe.run(() => api.modelHealth(true)); if (r) setProbed(r); }}>
+        {probe.busy ? "Probing…" : "Probe credits"}
+      </button>}>
+      <ErrorBox error={probe.error} />
+      {d.providers.filter((p) => p.message).map((p) => <Notice key={p.provider} tone="danger">{p.message}</Notice>)}
+      {!d.counters_available && <Notice tone="warning">Spend counters (Redis) are unavailable: billable model calls are paused (fail closed) until Redis is back.</Notice>}
+      <p className={`small ${over ? "" : "muted"}`}>
+        Spend today (UTC): <strong>{fmtUsd(s.usd)}</strong>{s.cap_usd != null ? <> of the {fmtUsd(s.cap_usd)} daily cap
+          ({Math.round((s.fraction ?? 0) * 100)}%)</> : " (no daily cap)"}; resets {fmtDate(s.resets_at)}.
+        {over && <> <Tag tone="warning">above the {Math.round(s.alert_fraction * 100)}% alert</Tag></>}
+      </p>
+      <div className="table-wrap">
+        <table className="table table-compact">
+          <thead><tr><th>Provider</th><th>API key</th><th>Last success</th><th>Cooldown</th><th className="num">Calls today</th><th className="num">Spend today</th>{probed && <th>Probe</th>}</tr></thead>
+          <tbody>
+            {d.providers.map((p) => (
+              <tr key={p.provider}>
+                <td><strong>{p.provider}</strong> <span className="muted small">{p.kind}</span></td>
+                <td>{!p.key_required ? <span className="muted small">not needed</span>
+                  : <StatusBadge status={p.key_present ? "ok" : "failed"} label={p.key_present ? `${p.api_key_env} set` : `${p.api_key_env} missing`} />}</td>
+                <td className="small">{p.last_success_at ? fmtDate(p.last_success_at) : "never (30 days)"}
+                  {p.last_error && <div className="muted small" title={p.last_error.error}>last error {fmtDate(p.last_error.at)}: {p.last_error.error.slice(0, 80)}</div>}</td>
+                <td className="small">{p.cooldown ? <span title={p.cooldown.reason}><Tag tone="warning">{p.cooldown.remaining_seconds}s left</Tag> {p.cooldown.reason.slice(0, 60)}</span> : "—"}</td>
+                <td className="num">{p.calls_today}</td>
+                <td className="num">{fmtUsd(p.spend_today_usd)}</td>
+                {probed && <td className="small">{!p.probe ? "—" : p.probe.ok ? <StatusBadge status="ok" label={`ok (${p.probe.model})`} />
+                  : p.probe.probed ? <span title={p.probe.error}><StatusBadge status="failed" label={p.probe.code ?? "failed"} /> {p.probe.remedy ?? p.probe.error?.slice(0, 80)}</span>
+                    : <span className="muted">{p.probe.detail}</span>}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function Models({ isAdmin }: { isAdmin: boolean }) {
   const m = useAsync(() => api.models(), []);
   if (m.error) return <ErrorBox error={m.error} onRetry={m.reload} />;
   if (!m.data) return <Loading />;
@@ -169,12 +227,14 @@ function Models() {
   const decisionProfiles = new Set(Object.entries(d.profiles).filter(([, p]) => d.providers[p.provider]?.kind === "decision").map(([k]) => k));
   return (
     <div className="stack">
+      {isAdmin && <ModelHealthPanel />}
       <Card title="Routing: purpose → profile → models">
         <p className="muted small">Agents request a purpose; the router picks the first allowed, available model of its profile (fail closed).
+          Cheap first: the large tier answers only when the small answer fails a deterministic check (escalation, recorded per call).
           <span className="tag tag-jev">JEV decision</span> purposes use the TypeSafe Jev decision model: typed choices with probabilities.</p>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Purpose</th><th>Profile</th><th>Models (fallback order)</th><th>Mode</th><th>Available</th></tr></thead>
+            <thead><tr><th>Purpose</th><th>Profile</th><th>Models (fallback order)</th><th>Escalation</th><th>Mode</th><th>Available</th></tr></thead>
             <tbody>
               {Object.entries(d.routing).map(([purpose, profile]) => {
                 const p = d.profiles[profile];
@@ -184,6 +244,9 @@ function Models() {
                     <td><code>{purpose}</code>{jev && <span className="tag tag-jev">JEV decision</span>}</td>
                     <td><code className="small">{profile}</code>{p?.exclude_families?.length ? <div className="muted small">excludes: {p.exclude_families.join(", ")}</div> : null}</td>
                     <td className="small">{(d.effective?.[purpose]?.models ?? p?.models)?.join(" → ") ?? "—"}</td>
+                    <td className="small">{d.effective?.[purpose]?.escalation_models?.length
+                      ? <>{d.effective[purpose].escalation_models!.join(" → ")}<div className="muted small">{d.effective[purpose].escalation}</div></>
+                      : <span className="muted">{d.effective?.[purpose]?.escalation === "always_large" ? "large first" : "—"}</span>}</td>
                     <td className="small">{d.effective?.[purpose]?.mode ?? "always"}{d.effective?.[purpose]?.deterministic_path && <div className="muted small">rule path</div>}</td>
                     <td><StatusBadge status={d.available[purpose] ? "ok" : "failed"} label={d.available[purpose] ? "available" : "unavailable"} /></td>
                   </tr>

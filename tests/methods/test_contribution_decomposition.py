@@ -18,6 +18,7 @@ from analystos.agents.insight import _guard, facts_for, template_text
 from analystos.agents.investigator import validate_spec
 from analystos.contracts.analysis import AnalysisSpec, Derivation
 from analystos.contracts.policy import DataScope
+from analystos.evidence.facts import bind_finding
 from analystos.gateway.validator import validate_sql
 from analystos.services.changes import claim_key
 from analystos.skills import sqlbuild as sb
@@ -144,6 +145,8 @@ def test_derived_artefacts(duck, name):
     title, text = template_text(stat, sp)
     assert "web" in title and "within channel groups" in text
     assert _guard(title + " " + text, facts_for(stat, sp)), text
+    bound = bind_finding(sp, stat, methods.get("contribution_decomposition").facts(sp, stat), title, text)  # P4-03
+    assert bound.ok, bound.problems
     key = claim_key(sp, stat["highlights"])
     assert key[0] == "contribution_decomposition" and key[2] == "channel" and key[-1] == "web"
     intent = methods.get("contribution_decomposition").chart_intent(PLANTED[name])

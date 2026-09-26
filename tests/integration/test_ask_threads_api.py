@@ -150,7 +150,7 @@ def test_ask_thread_streams_stages_records_decisions_and_promotes(api, world, tr
     transport.sql = f"SELECT priority, COUNT(*) AS n FROM {table} GROUP BY 1 ORDER BY 2 DESC"
 
     thread = api.post(f"/api/workspaces/{ws}/ask/threads", headers=admin, json={}).json()
-    question = "How many incidents per priority?"
+    question = "How many incidents per priority, busiest first?"  # not a rules shape: the model writes it
     with api.stream("POST", f"/api/ask/threads/{thread['id']}/turns", headers={**admin, "Accept": "text/event-stream"},
                     json={"question": question}) as r:
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
@@ -220,6 +220,53 @@ def test_ask_thread_streams_stages_records_decisions_and_promotes(api, world, tr
     promotions = api.get(f"/api/ask/threads/{thread['id']}", headers=admin).json()["turns"][0]["promotions"]
     assert [p["target"] for p in promotions] == ["verified_query", "metric", "monitor", "dashboard", "dashboard"]
     assert api.post(f"/api/ask/turns/{vague['id']}/promote", headers=admin, json={"target": "monitor"}).status_code == 422
+
+
+def test_simple_shapes_are_answered_by_the_rules_without_a_model(api, world, transport):
+    """The owner's report: "distribution of incident" was refused as "no model route". It is a
+    distribution of the incident table: the rules group it by the dimension the ITSM pack declares,
+    build the SQL from the catalog and run it through the gateway; no model call is made."""
+    admin = _login(api, "admin@analystos.local")
+    chats = len(transport.chat_calls)
+    thread = api.post(f"/api/workspaces/{world['ws']}/ask/threads", headers=admin, json={}).json()
+    turn = api.post(f"/api/ask/threads/{thread['id']}/turns", headers=admin, json={"question": "distribution of incident"}).json()
+    assert turn["status"] == "answered", turn["refusal"]
+    assert turn["answered_by"] == "rules" and turn["route"] == "tool" and turn["model"] is None
+    assert '"category"' in turn["sql"] and "COUNT(*)" in turn["sql"] and turn["result"]["row_count"] > 1
+    assert turn["provenance"]["suggestions"] and all(q.startswith("distribution of incident by ") for q in
+                                                      turn["provenance"]["suggestions"])
+    assert "category" in turn["explanation"].lower() and len(transport.chat_calls) == chats
+    inspected = api.get(f"/api/ask/turns/{turn['id']}/inspector", headers=admin).json()
+    assert inspected["query"]["status"] == "ok" and inspected["decisions"][0]["answer"] == "tool"
+    skipped = [c for c in inspected["model_calls"] if c["status"] == "skipped" and c["purpose"] == "sql_generation"]
+    assert skipped and skipped[0]["answered_by"] == "rules" and skipped[0]["purpose"] == "sql_generation"
+    # Each follow-up resolves to its own grouping, still without a model.
+    follow = api.post(f"/api/ask/threads/{thread['id']}/turns", headers=admin,
+                      json={"question": turn["provenance"]["suggestions"][0]}).json()
+    assert follow["answered_by"] == "rules" and follow["sql"] != turn["sql"] and len(transport.chat_calls) == chats
+    monthly = api.post(f"/api/ask/threads/{thread['id']}/turns", headers=admin,
+                       json={"question": "How many incidents were opened each month?"}).json()
+    assert monthly["answered_by"] == "rules" and "opened_at" in monthly["sql"] and monthly["chart"]["type"] == "line"
+
+
+def test_a_question_the_rules_cannot_answer_says_why_no_model_could(api, world, transport):
+    """No provider key in the API process: the refusal names the key, where compose reads it, and
+    that the api and worker containers must be restarted — not "no model route"."""
+    from analystos.runtime import context as runtime_context
+
+    admin = _login(api, "admin@analystos.local")
+    router = runtime_context.default_services().router
+    saved = router.api_key_lookup
+    router.api_key_lookup = lambda env: None
+    try:
+        thread = api.post(f"/api/workspaces/{world['ws']}/ask/threads", headers=admin, json={}).json()
+        turn = api.post(f"/api/ask/threads/{thread['id']}/turns", headers=admin,
+                        json={"question": "Which configuration items had incidents in two consecutive weeks?"}).json()
+    finally:
+        router.api_key_lookup = saved
+    r = turn["refusal"]
+    assert turn["status"] == "refused" and r["kind"] == "no_api_key" and r["details"]["env"] == "OPENROUTER_API_KEY"
+    assert "OPENROUTER_API_KEY" in r["remedy"] and "api and worker" in r["remedy"] and "restart" in r["remedy"]
 
 
 def test_investigate_why_starts_a_run_from_the_answer(api, world, transport):

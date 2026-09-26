@@ -9,7 +9,7 @@ EVENT_TYPES = {
     "dashboard.published", "report.generated", "schedule.executed", "agent.started", "agent.completed",
     "agent.failed", "agent.message", "task.updated", "run.created", "run.status", "run.replanned",
     "approval.requested", "approval.completed", "approval.invalidated", "policy.denied", "feedback.received",
-    "model.called", "budget.warning", "monitor.evaluated", "alert.raised", "notification.created",
+    "model.called", "budget.warning", "budget.cap_reached", "monitor.evaluated", "alert.raised", "notification.created",
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
     "mcp.server.refreshed", "mcp.tool_called", "agent.action", "verified_query.promoted", "verified_query.updated",
     "hypothesis_registry.updated",
@@ -23,6 +23,8 @@ EVENT_TYPES = {
     "knowledge.suggestion_proposed", "knowledge.suggestions_reviewed",
     # Crawler sources and facet-level failure (P4-K06)
     "crawl.facet_failed", "knowledge.ingested",
+    # Typed evidence (P4-03): a newer snapshot of an analysed asset made a finding stale
+    "insight.stale",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

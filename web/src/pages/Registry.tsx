@@ -190,6 +190,29 @@ function ManifestBody({ manifest: m, summary, ws }: { manifest: CapabilityManife
         ["Certification evidence", m.certification?.evidence ? <code key="c">{m.certification.evidence}</code> : "none recorded"],
         ["Result view", m.ui?.renderer ? <code key="r">{m.ui.renderer}</code> : "inferred from the result"],
       ]} />
+      {summary.kind === "Agent" && summary.bindings && (
+        <section aria-label="Agent bindings">
+          <h3>Agent map</h3>
+          <p className="muted small">Configured in the agent manifest. A workspace can disable a bound capability; certification and policy apply at run time.</p>
+          <KeyValue items={[
+            ["Playbooks", summary.bindings.playbooks.join(", ") || "none"],
+            ["Model purposes", summary.bindings.model_purposes.join(", ") || "deterministic only"],
+            ["Direct tool IDs", summary.bindings.tools.join(", ") || "none"],
+            ["Default actions", summary.bindings.default_actions.join(", ") || "none"],
+          ]} />
+          <div className="table-wrap">
+            <table className="table table-compact">
+              <thead><tr><th>Bound capability</th><th>Kind</th><th>Execution</th><th>Certified</th><th>Workspace</th></tr></thead>
+              <tbody>{summary.bindings.capabilities.map((c) => (
+                <tr key={c.id}>
+                  <td><code>{c.id}</code></td><td>{c.kind}</td><td>{c.determinism}</td><td>{c.certification}</td>
+                  <td>{c.enabled === null ? "choose workspace" : c.enabled ? "enabled" : "disabled"}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {m.tags?.length ? <div className="chip-row">{m.tags.map((t) => <Tag key={t}>{t}</Tag>)}</div> : null}
       {runnable && form !== "none" && (
         <section aria-label="Run this capability" className="registry-run">

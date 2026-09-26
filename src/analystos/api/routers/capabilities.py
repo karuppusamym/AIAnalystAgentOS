@@ -2,6 +2,8 @@
 hot reload without a restart."""
 from __future__ import annotations
 
+import fnmatch
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -36,11 +38,34 @@ def _snapshot(session: Session, workspace_id: str | None) -> registry.Snapshot:
     return workspace_snapshot(session, workspace_id)
 
 
-def _out(m: CapabilityManifest, enabled: bool | None) -> dict:
-    return {"id": m.id, "kind": m.kind, "version": m.version, "ref": m.ref, "summary": m.summary, "source": m.source,
+def _agent_bindings(m: CapabilityManifest, snap: registry.Snapshot, enabled: dict[str, bool]) -> dict:
+    """Resolve the manifest's patterns and legacy tool ids against this exact registry snapshot."""
+    from analystos.capabilities.agents import body
+
+    spec = body(m)
+    tools = {cap.spec.get("tool_id"): cap for cap in snap.list("Tool") if cap.spec.get("tool_id")}
+    refs = {cap.id for pattern in spec.capabilities for cap in snap.list()
+            if fnmatch.fnmatchcase(cap.id, pattern)}
+    refs.update(tools[t].id for t in spec.tools if t in tools)
+    bound = [{"id": cid, "kind": snap.get(cid).kind, "enabled": enabled.get(cid),
+              "determinism": snap.get(cid).determinism, "certification": snap.get(cid).certification.status}
+             for cid in sorted(refs)]
+    playbooks = [pb.id for pb in snap.list("Playbook") if any(
+        step.get("use") == m.id or any(e.get("use") == m.id for e in step.get("expands") or [])
+        for step in pb.spec.get("steps") or [])]
+    return {"capabilities": bound, "tools": sorted(spec.tools), "model_purposes": spec.purposes,
+            "playbooks": playbooks, "default_actions": [a.capability for a in spec.default_actions]}
+
+
+def _out(m: CapabilityManifest, enabled: bool | None, *, snap: registry.Snapshot | None = None,
+         enabled_map: dict[str, bool] | None = None) -> dict:
+    result = {"id": m.id, "kind": m.kind, "version": m.version, "ref": m.ref, "summary": m.summary, "source": m.source,
             "entry": m.entry, "determinism": m.determinism, "side_effect": m.side_effect, "cost_class": m.cost_class,
             "certification": m.certification.model_dump(), "autonomous_ok": m.autonomous_ok, "needs_approval": m.needs_approval,
             "tags": m.tags, "ui": m.ui.model_dump(), "input_schema": m.input_schema, "enabled": enabled}
+    if m.kind == "Agent" and snap is not None:
+        result["bindings"] = _agent_bindings(m, snap, enabled_map or {})
+    return result
 
 
 @router.get("/capabilities")
@@ -53,7 +78,9 @@ def list_capabilities(kind: str | None = Query(None), workspace_id: str | None =
     snap = _snapshot(session, workspace_id)
     if workspace_id is not None:
         enabled = enablement.enabled_map(session, workspace_id, snap)
-    return {"digest": snap.digest, "capabilities": [_out(m, enabled.get(m.id) if workspace_id else None) for m in snap.list(kind)]}
+    return {"digest": snap.digest, "capabilities": [
+        _out(m, enabled.get(m.id) if workspace_id else None, snap=snap, enabled_map=enabled)
+        for m in snap.list(kind)]}
 
 
 @router.get("/capabilities/{capability_id}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -166,7 +167,7 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     Returns a CompiledContext for `llm_json`. When the mandatory part alone is over budget the
     context comes back `refused` (never cut): `llm_json` then records the refusal and the caller
     takes its deterministic path."""
-    from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
+    from analystos.context.compiler import CompiledContext
     from analystos.contracts.platform import PurposeProfile
     from analystos.services.platform_settings import get as platform
 
@@ -180,7 +181,27 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
                    if "catalog" in profile.sections else None)
     if not settings.context.compiler_enabled:  # admin kill switch: the increment-3 payload, fit_payload only
         return CompiledContext(purpose=purpose, header={}, body={**required, **({"catalog": catalog} if catalog else {})})
+    header = context_header(ctx)
+    limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
+    key = _context_key(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
+                       reference_text=reference_text, header=header, limit=limit)
+    reused = _COMPILED.get(key, purpose) if key else None
+    if reused is not None:
+        return reused
+    compiled, complete = _compile(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
+                                  reference_text=reference_text, header=header, limit=limit)
+    if key and complete:  # a context compiled without its knowledge (load failed) is not kept
+        _COMPILED.put(key, purpose, compiled)
+    return compiled
+
+
+def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any], catalog: Any,
+             reference_text: str | None, header: dict[str, Any], limit: int) -> tuple[Any, bool]:
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
+
+    run = getattr(ctx, "run", None)
     knowledge: list = []
+    complete = True
     sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
     workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
     if sections and workspace_id:
@@ -190,20 +211,114 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
                                            query=" ".join(x for x in (objective, reference_text) if x) or None)
         except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
             log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
-    limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
+            complete = False
     generic = {w for a in (getattr(getattr(ctx, "scope", None), "assets", None) or []) for w in terms(a.split(".")[-1])}
     try:
         return compile_context(purpose, profile, objective=objective, required=required, catalog=catalog,
-                               knowledge=knowledge, header=context_header(ctx), reference_text=reference_text,
+                               knowledge=knowledge, header=header, reference_text=reference_text,
                                limit_chars=max(2_000, limit), min_relevance=settings.context.min_relevance,
-                               generic_terms=generic)
+                               generic_terms=generic), complete
     except ContextOverBudget as exc:
         return CompiledContext(purpose=purpose, header={}, body=dict(required), refused=exc.message,
                                budget_chars=int(exc.details.get("budget_chars") or 0),
-                               mandatory_chars=int(exc.details.get("mandatory_chars") or 0))
+                               mandatory_chars=int(exc.details.get("mandatory_chars") or 0)), complete
 
 
 _SYSTEM_RESERVE_CHARS = 8_000  # room for the static system text inside max_prompt_tokens (fit_payload re-checks exactly)
+
+
+# ------------------------------------------------------------------------------ compiled-context reuse (CTX-005)
+COMPILED_CONTEXT_TTL_SECONDS = 900
+COMPILED_CONTEXT_MAX_ENTRIES = 256
+
+
+class CompiledContextCache:
+    """Compiled contexts reused within one run or Ask thread (CTX-005).
+
+    Key: (purpose, workspace knowledge version, scope hash, inputs hash), and the run or thread it
+    was compiled for. The knowledge version covers the context entries, the knowledge packs the
+    workspace sees, the enabled domain packs and the platform settings (so an edit to any of them
+    compiles afresh); the scope hash covers what the caller may see; the inputs hash covers the
+    mandatory inputs, the objective and reference text, the catalog as sent, the purpose profile and
+    the budget. Knowledge that changes without a version (verified findings of *other* runs, which a
+    prompt may cite) is bounded by the run/thread and a TTL. A context without a run or thread, or
+    whose knowledge version cannot be computed, is never cached. Hits return a copy."""
+
+    def __init__(self, ttl: float = COMPILED_CONTEXT_TTL_SECONDS, max_entries: int = COMPILED_CONTEXT_MAX_ENTRIES) -> None:
+        import threading
+        from collections import OrderedDict
+
+        self.ttl, self.max_entries = ttl, max_entries
+        self._items: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self._lock = threading.Lock()
+        self.stats: dict[str, dict[str, int]] = {}
+
+    def _count(self, purpose: str, what: str, chars: int = 0) -> None:
+        row = self.stats.setdefault(purpose, {"compiled": 0, "reused": 0, "chars_reused": 0})
+        row[what] += 1
+        row["chars_reused"] += chars
+
+    def get(self, key: str, purpose: str) -> Any | None:
+        import copy
+        import time
+
+        with self._lock:
+            item = self._items.get(key)
+            if item is None or time.monotonic() - item[0] > self.ttl:
+                self._items.pop(key, None)
+                return None
+            self._items.move_to_end(key)
+            self._count(purpose, "reused", item[1].chars)
+            return copy.deepcopy(item[1])
+
+    def put(self, key: str, purpose: str, compiled: Any) -> None:
+        import copy
+        import time
+
+        with self._lock:
+            self._count(purpose, "compiled")
+            self._items[key] = (time.monotonic(), copy.deepcopy(compiled))
+            self._items.move_to_end(key)
+            while len(self._items) > self.max_entries:
+                self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+            self.stats = {}
+
+
+_COMPILED = CompiledContextCache()
+
+
+def compiled_context_stats() -> dict[str, dict[str, int]]:
+    """Per purpose: contexts compiled (misses, stored) and reused (hits), with the characters reused."""
+    return {p: dict(v) for p, v in _COMPILED.stats.items()}
+
+
+def _context_key(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any],
+                 catalog: Any, reference_text: str | None, header: dict[str, Any], limit: int) -> str | None:
+    from analystos.context.version import workspace_knowledge_version
+    from analystos.core.ids import stable_hash
+
+    run = getattr(ctx, "run", None)
+    session = f"run:{run.id}" if getattr(run, "id", None) else (
+        f"thread:{ctx.thread_id}" if getattr(ctx, "thread_id", None) else None)
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    if session is None or workspace_id is None:
+        return None
+    knowledge = workspace_knowledge_version(workspace_id, policy=getattr(ctx, "policy", None))
+    if knowledge is None:
+        return None
+    scope = getattr(ctx, "scope", None)
+    try:
+        scope_hash = scope.scope_hash() if hasattr(scope, "scope_hash") else stable_hash(compact_json(scope))
+        inputs = stable_hash({"required": required, "objective": objective, "reference_text": reference_text,
+                              "catalog": catalog, "header": header, "profile": profile.model_dump(mode="json"),
+                              "limit": limit, "min_relevance": settings.context.min_relevance})
+    except (TypeError, ValueError):  # an input that cannot be hashed canonically is simply not cached
+        return None
+    return stable_hash({"purpose": purpose, "knowledge": knowledge, "scope": scope_hash, "inputs": inputs, "session": session})
 
 
 def _size(value: Any) -> int:
@@ -317,10 +432,57 @@ def _record_context_refusal(ctx: Any, purpose: str, call: Any, reason: str, esti
                     error=reason[:500], tokens_saved=estimated)
 
 
+class ModelOutcome(str):
+    """Why `llm_json` returned no data: a reason code (the string itself, so callers that log or
+    compare the old second element keep working) plus the message and details of the one cause.
+
+    Codes: mode_off, no_api_key, provider_cooldown (details.retry_in_s), policy_blocked,
+    residency_blocked, approval_required, budget_exceeded, cap_reached, context_over_budget,
+    invalid_output, purpose_not_declared, agent_budget_exhausted, upstream_unavailable, no_route."""
+
+    message: str
+    details: dict[str, Any]
+
+    def __new__(cls, code: str, message: str = "", **details: Any) -> ModelOutcome:
+        out = super().__new__(cls, code)
+        out.message = message or code
+        out.details = details
+        return out
+
+    @property
+    def code(self) -> str:
+        return str.__str__(self)
+
+
+_OUTCOME_BY_ERROR = {"llm_disabled": "mode_off", "provider_quota_exhausted": "provider_cooldown",
+                     "spend_cap_reached": "cap_reached", "spend_counters_unavailable": "cap_reached",
+                     "model_route_unavailable": "no_route", "egress_blocked": "policy_blocked"}
+
+
+def model_outcome(exc: AnalystOSError) -> ModelOutcome:
+    """The reason code of a router error (see `ModelOutcome`), keeping its message and details."""
+    code = _OUTCOME_BY_ERROR.get(exc.code, exc.code)
+    if code == "mode_off" and exc.details.get("oversize"):
+        code = "context_over_budget"
+    elif code == "budget_exceeded" and exc.details.get("cap"):
+        code = "cap_reached"
+    elif exc.code == "upstream_unavailable":
+        code = "upstream_unavailable"
+    return ModelOutcome(code, exc.message, **exc.details)
+
+
 def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
-             prompt_vars: dict[str, str] | None = None) -> tuple[Any | None, str | None]:
-    """Call a chat model for JSON. Returns (data, model) or (None, reason) — callers degrade visibly.
+             prompt_vars: dict[str, str] | None = None, validate: Callable[[Any], str | None] | None = None,
+             escalate: str | None = None, escalated_from: str | None = None) -> tuple[Any | None, str | None]:
+    """Call a chat model for JSON. Returns (data, model) or (None, ModelOutcome) — callers degrade
+    visibly, and can say which of the causes in `ModelOutcome` stopped the call.
+
+    Cheap first, escalate: `validate(data)` is the caller's deterministic check (None = usable, else
+    why not). A small-tier answer that fails it - or is not JSON - is re-asked once of the large tier
+    when the purpose's escalation policy allows (router.complete). `escalate` (with the failing model
+    as `escalated_from`) asks the large tier directly after a check further downstream failed; an
+    answer that still fails validation is returned all the same and the caller's own checks decide.
 
     `payload` is a CompiledContext (`compile_for`, P4-T03) or, for purposes without run context
     (narrative, verification, summary), a plain dict. The prompt is laid out for provider prompt
@@ -342,13 +504,13 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     body: dict[str, Any] = compiled.body if compiled is not None else payload
     if ctx.router.mode(purpose) == "off":
         model_gate(ctx, purpose, payload, deterministic_ok=True)  # records the avoided call
-        return None, "llm_off"
+        return None, ModelOutcome("mode_off", f"model use for '{purpose}' is turned off by the administrator", purpose=purpose)
     refused = _agent_refusal(ctx, purpose)
     if refused:
         ctx.say(refused[1], kind="decision")
         ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(_prompt_text(payload)) + 500,
                                reason=refused[1][:200])
-        return None, refused[0]
+        return None, ModelOutcome(refused[0], refused[1], purpose=purpose)
     system = prompt(prompt_name, **(prompt_vars or {}))
     call = dataclasses.replace(ctx.call_ctx(exclude_families=exclude_families), prompt_version=prompt_version_id(prompt_name, system))
     call.with_policy(getattr(ctx, "policy", None))
@@ -358,9 +520,11 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
         ctx.say(message, kind="decision", data={"purpose": purpose, "mandatory_chars": compiled.mandatory_chars,
                                                 "budget_chars": compiled.budget_chars})
         _record_context_refusal(ctx, purpose, call, message, estimate_tokens(compact_json(body)) + len(system) // 4)
-        return None, "context_over_budget"
+        return None, ModelOutcome("context_over_budget", message, purpose=purpose, mandatory_chars=compiled.mandatory_chars,
+                                  budget_chars=compiled.budget_chars)
     if not ctx.router.available(purpose, call):
-        return None, "llm_unavailable"
+        why = getattr(ctx.router, "unavailable", lambda *_: None)(purpose, call)
+        return None, (model_outcome(why) if why is not None else ModelOutcome("no_route", f"no model route for {purpose}"))
     llm = platform().llm
     if call.knowledge_version is None and call.workspace_id and llm.cache_enabled and purpose in llm.cacheable_purposes:
         from analystos.context.version import workspace_knowledge_version
@@ -383,12 +547,25 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     spend = getattr(ctx, "spend", None)
     if spend is not None:
         spend("llm_calls")
+    check = (lambda r: validate(r.data)) if validate is not None else None
     try:
-        response = ctx.router.complete(purpose, messages, ctx=call, json_output=True, max_tokens=max_tokens)
+        response = ctx.router.complete(purpose, messages, ctx=call, json_output=True, max_tokens=max_tokens,
+                                       validate=check, escalate=escalate, escalated_from=escalated_from)
         if spend is not None:
             spend("usd", response.cost_usd)
+        if response.escalated_from:
+            ctx.say(f"{purpose}: the answer of {response.escalated_from} failed validation ({response.escalation_reason}); "
+                    f"escalated to {response.model}.", kind="decision",
+                    data={"purpose": purpose, "escalated_from": response.escalated_from, "model": response.model,
+                          "reason": response.escalation_reason})
         return response.data, response.model
     except AnalystOSError as exc:
         log.warning("llm %s failed: %s", purpose, exc)
-        ctx.say(f"Model call for {purpose} unavailable ({exc.code}); using deterministic fallback.", kind="decision")
-        return None, exc.code
+        if exc.code == "escalation_unavailable":  # the caller's own checks already decided; nothing else was lost
+            ctx.say(f"{purpose}: no larger model to escalate to ({exc.message}).", kind="decision")
+            return None, model_outcome(exc)
+        remedy = exc.details.get("remedy") if isinstance(exc.details, dict) else None
+        ctx.say(f"Model call for {purpose} unavailable ({exc.code}); using deterministic fallback."
+                + (f" {remedy}" if remedy else ""), kind="decision",
+                data={"purpose": purpose, "code": exc.code, **({"remedy": remedy} if remedy else {})})
+        return None, model_outcome(exc)

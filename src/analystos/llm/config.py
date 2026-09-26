@@ -83,13 +83,24 @@ class ModelMeta(BaseModel):
     prompt_cache: bool = False
 
 
+EscalationPolicy = Literal["never", "on_validation_failure", "always_large"]
+
+
 class ProfileConfig(BaseModel):
     models: list[str]
+    # The large tier (cheap first, escalate): called only when an answer of `models` fails deterministic
+    # validation, or first under `always_large`. Empty = the profile never escalates.
+    escalation_models: list[str] = Field(default_factory=list)
     provider: str = "openrouter"
     temperature: float = 0.2
     max_tokens: int = 2000
     timeout_seconds: float = 60
     exclude_families: list[str] = Field(default_factory=list)
+
+
+class EscalationConfig(BaseModel):
+    default: EscalationPolicy = "on_validation_failure"
+    purposes: dict[str, EscalationPolicy] = Field(default_factory=dict)
 
 
 class ModelsConfig(BaseModel):
@@ -101,6 +112,7 @@ class ModelsConfig(BaseModel):
     prices_version: str = "unversioned"
     ladders: dict[str, list[str]] = Field(default_factory=dict)  # purpose -> default rungs (spec v3 §4.1)
     decisions: dict[str, Any] = Field(default_factory=dict)  # DecisionService purposes (analystos.decisions.config)
+    escalation: EscalationConfig = Field(default_factory=EscalationConfig)
 
     def egress_hosts(self, *, internal_only: bool = False) -> set[str]:
         """Hosts the model transport may reach: every configured provider's, or only the internal ones."""
@@ -123,6 +135,21 @@ class ModelsConfig(BaseModel):
         if meta is None or meta.input_usd_per_mtok is None or meta.output_usd_per_mtok is None:
             return None
         return (input_tokens * meta.input_usd_per_mtok + output_tokens * meta.output_usd_per_mtok) / 1_000_000
+
+    def reservation_estimate(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        """What a hard spend cap reserves before a call: the price-table estimate, or for a model
+        with no price the estimate at the most expensive priced rates (never $0: unknown is not free)."""
+        priced = self.estimate_cost(model, input_tokens, output_tokens)
+        if priced is not None:
+            return priced
+        rates = [(m.input_usd_per_mtok, m.output_usd_per_mtok) for m in self.models.values()
+                 if m.input_usd_per_mtok is not None and m.output_usd_per_mtok is not None]
+        worst_in = max((r[0] for r in rates), default=15.0)
+        worst_out = max((r[1] for r in rates), default=75.0)
+        return (input_tokens * worst_in + output_tokens * worst_out) / 1_000_000
+
+    def escalation_for(self, purpose: str) -> str:
+        return self.escalation.purposes.get(purpose, self.escalation.default)
 
     def model_rung(self, profile_name: str) -> str:
         """The ladder rung a profile answers from: low_cost = L4 small, decision model = L3, else L5."""
@@ -154,6 +181,7 @@ class ModelsConfig(BaseModel):
             "models": {k: v.model_dump() for k, v in self.models.items()},
             "prices_version": self.prices_version,
             "ladders": self.ladders,
+            "escalation": self.escalation.model_dump(),
         }
 
 

@@ -198,14 +198,23 @@ class ToolRuntime:
 def gate_agent_write(session: Session, *, workspace_id: str, run_id: str, agent_id: str, tool_id: str = "artifact.write",
                      inputs: dict[str, Any] | None = None) -> None:
     """Tool gate for artifact persistence by an agent inside a run (``save_artifact``). Runs its own
-    short transaction so a denial is recorded even when the caller's transaction rolls back."""
+    short transaction so a denial is recorded even when the caller's transaction rolls back.
+
+    The run is read in that transaction first, not in the caller's: a caller whose transaction has
+    not started yet then holds no connection while this one waits for its own, which is what keeps
+    a bounded transaction pooler from deadlocking (P4-S05). A run only the caller's uncommitted
+    transaction can see is still found through ``session``."""
     from analystos.db.models import AnalysisRun
 
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        return
     with session_scope() as s:
-        user = s.get(User, run.requested_by)
+        requested_by = s.scalar(select(AnalysisRun.requested_by).where(AnalysisRun.id == run_id))
+    if requested_by is None:
+        run = session.get(AnalysisRun, run_id)
+        if run is None:
+            return
+        requested_by = run.requested_by
+    with session_scope() as s:
+        user = s.get(User, requested_by)
         row = s.get(AgentDefinition, agent_id)
         spec = AgentSpec.model_validate(row.spec) if row else AgentSpec.model_validate(
             {"id": agent_id, "name": agent_id, "description": "", "tools": []})

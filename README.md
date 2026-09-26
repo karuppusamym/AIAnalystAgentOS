@@ -17,6 +17,7 @@ tile back to the query and table it came from.
 | Workbench UI / API design | [UX](docs/10-architecture/02-workbench-ux.md) · [API](docs/20-contracts/02-workbench-api.md) |
 | Platform spec (v3, proposed) | [`docs/00-intent/03-spec-v3-platform.md`](docs/00-intent/03-spec-v3-platform.md): capabilities, deterministic-first ladder, open knowledge formats, ELT on your engines |
 | Latest architecture review | [`docs/70-reviews/2026-09-25-architecture-review.md`](docs/70-reviews/2026-09-25-architecture-review.md) |
+| Agent mapping and workspace lifecycle | [`docs/30-operations/workspace-lifecycle.md`](docs/30-operations/workspace-lifecycle.md) |
 | Architecture + ADRs | [`docs/10-architecture/`](docs/10-architecture/01-architecture.md) |
 | Status (tracker) · evidence · readiness | [`docs/60-delivery/`](docs/60-delivery/01-tracker.md) |
 | Working agreement for AI sessions | [`CLAUDE.md`](CLAUDE.md) |

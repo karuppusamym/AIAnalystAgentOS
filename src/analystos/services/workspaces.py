@@ -37,8 +37,17 @@ def list_workspaces(session: Session, user: User) -> list[Workspace]:
 
 
 def update_workspace(session: Session, user: User, workspace_id: str, patch: dict) -> Workspace:
-    require_role(session, user, workspace_id, "editor")
-    ws = get_workspace(session, workspace_id)
+    changing_status = patch.get("status") is not None
+    require_role(session, user, workspace_id, "owner" if changing_status else "editor",
+                 allow_disabled=changing_status)
+    ws = get_workspace(session, workspace_id, allow_disabled=changing_status)
+    if changing_status:
+        if patch["status"] not in ("active", "disabled"):
+            raise InvalidInput("status must be active or disabled")
+        if ws.status == "disabled" and any(patch.get(k) is not None for k in
+                                           ("name", "description", "objective", "autonomy_level", "settings")):
+            raise InvalidInput("reactivate the workspace before editing it")
+        ws.status = patch["status"]
     for key in ("name", "description", "objective"):
         if key in patch and patch[key] is not None:
             setattr(ws, key, patch[key])
@@ -57,6 +66,7 @@ def update_workspace(session: Session, user: User, workspace_id: str, patch: dic
 def delete_workspace(session: Session, user: User, workspace_id: str) -> None:
     require_role(session, user, workspace_id, "owner")
     ws = get_workspace(session, workspace_id)
+    ws.status = "disabled"
     ws.deleted_at = utcnow()
     audit(f"user:{user.id}", "workspace.deleted", workspace_id=ws.id, session=session)
 

@@ -70,6 +70,7 @@ export interface Workspace {
   created_at: string;
   updated_at: string;
   counts?: WorkspaceCounts;
+  role?: string;
 }
 
 export interface Member {
@@ -584,8 +585,11 @@ export interface AskStage {
 }
 
 /** The refusal kinds of services/ask.py REFUSALS: one state each, with a remedy. */
-export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "no_model"
-  | "no_scope" | "timeout" | "unavailable" | "failed";
+export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "spend_cap" | "no_model"
+  | "no_scope" | "timeout" | "unavailable" | "failed"
+  // why no model could write the SQL: one kind per cause (services/ask.py MODEL_REFUSALS)
+  | "mode_off" | "no_api_key" | "provider_cooldown" | "policy_blocked" | "residency_blocked" | "approval_required"
+  | "model_budget" | "cap_reached" | "context_over_budget" | "invalid_output";
 
 export interface AskRefusal {
   kind: AskRefusalKind | string;
@@ -616,6 +620,9 @@ export interface AskProvenance {
   cache_hit?: boolean;
   result_hash?: string | null;
   repairs?: number;
+  /** Follow-up questions the Ask rules offer (e.g. the other groupings of a distribution). */
+  suggestions?: string[];
+  rules?: Dict;
 }
 
 export interface AskStaleness {
@@ -997,7 +1004,10 @@ export interface SkillSpec {
   id: string;
   category: string;
   description: string;
-  tools: string[];
+  function?: string;
+  runtime?: string;
+  /** Legacy seeded skill records may omit this; the API fills it with []. */
+  tools?: string[];
   deterministic: boolean;
   enabled: boolean;
   [k: string]: unknown;
@@ -1010,7 +1020,11 @@ export interface ModelProfile {
   max_tokens: number;
   timeout_seconds: number;
   exclude_families: string[];
+  /** Cheap first, escalate: the large tier, called only after a failed deterministic check (or first under always_large). */
+  escalation_models?: string[];
 }
+
+export type EscalationPolicy = "never" | "on_validation_failure" | "always_large";
 
 export interface EffectiveRoute {
   profile: string;
@@ -1020,6 +1034,35 @@ export interface EffectiveRoute {
   /** A rule-based path exists: "off"/"auto" still produce a result without a model. */
   deterministic_path: boolean;
   decision_model: boolean;
+  escalation?: EscalationPolicy;
+  escalation_models?: string[];
+}
+
+/** GET /api/admin/models/health: never carries a key, only whether one is set in the server process. */
+export interface ProviderHealth {
+  provider: string;
+  type: string;
+  kind: string;
+  base_url: string;
+  api_key_env: string | null;
+  key_required: boolean;
+  key_present: boolean;
+  last_success_at: string | null;
+  last_error: { at: string; model: string; error: string } | null;
+  cooldown: { remaining_seconds: number; reason: string } | null;
+  spend_today_usd: number;
+  calls_today: number;
+  message: string | null;
+  probe?: { probed: boolean; ok?: boolean; model?: string; latency_ms?: number; cost_usd?: number; code?: string; error?: string;
+    detail?: string; remedy?: string };
+}
+
+export interface ModelHealth {
+  checked_at: string;
+  counters_available: boolean;
+  spend_today: { usd: number; cap_usd: number | null; source: "counter" | "database"; fraction: number | null;
+    alert_fraction: number; resets_at: string };
+  providers: ProviderHealth[];
 }
 
 export interface ModelsView {
@@ -1541,6 +1584,11 @@ export interface TokenSavings {
   /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
   by_rung?: Record<string, RungSpend> | null;
   by_model?: Record<string, RungSpend> | null;
+  missing_price?: { model: string; calls: number; tokens: number }[];
+  prices_version?: string;
+  cost_complete?: boolean;
+  /** Large-tier calls made because a small-tier answer failed validation, by purpose. */
+  escalations?: Record<string, { calls: number; cost_usd: number; by_model: Record<string, number>; by_reason: Record<string, number> }>;
 }
 
 // ----------------------------------------------------------------------------------- capabilities
@@ -1567,6 +1615,26 @@ export interface CapabilitySummary {
   tags: string[];
   /** Enablement in the requested workspace; null without `workspace_id`. */
   enabled: boolean | null;
+  bindings?: {
+    capabilities: { id: string; kind: string; enabled: boolean | null; determinism: string; certification: string }[];
+    tools: string[];
+    model_purposes: string[];
+    playbooks: string[];
+    default_actions: string[];
+  };
+}
+
+export interface WorkspaceInventory {
+  workspace_id: string;
+  status: string;
+  archived: boolean;
+  control_rows: Record<string, number>;
+  control_tables_checked: number;
+  staged_schemas: string[];
+  build_targets: { engine: string; schema: string; role: string; status: string }[];
+  local_paths: { path: string; exists: boolean }[];
+  publications: { id: string; destination: string; status: string; external_ids: Dict }[];
+  verification: string;
 }
 
 export interface CapabilityList {
@@ -2055,8 +2123,12 @@ export const api = {
   createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
   getWorkspace: (ws: string) =>
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  workspaceInventory: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
     patch("/api/workspaces/{workspace_id}", { path: W(ws), body }) as Promise<Workspace>,
+  setWorkspaceStatus: (ws: string, status: "active" | "disabled") =>
+    patch("/api/workspaces/{workspace_id}", { path: W(ws), body: { status } }) as Promise<Workspace>,
   putPolicy: (ws: string, policy: Dict) =>
     put("/api/workspaces/{workspace_id}/policy", { path: W(ws), body: policy }) as Promise<{ policy_version: number }>,
   addMember: (ws: string, email: string, role: string) =>
@@ -2190,6 +2262,8 @@ export const api = {
     patch("/api/tools/{tool_id}", { path: { tool_id: id }, body: { enabled } }) as Promise<ToolSpec>,
   skills: () => get("/api/skills", {}) as Promise<SkillSpec[]>,
   models: () => get("/api/admin/models", {}) as Promise<ModelsView>,
+  modelHealth: (probe = false) =>
+    get("/api/admin/models/health", { query: probe ? { probe: true } : {} }) as Promise<ModelHealth>,
   usage: () => get("/api/admin/usage", {}) as Promise<Usage>,
   audit: (limit = 300) => get("/api/admin/audit", { query: { limit } }) as Promise<AuditEvent[]>,
 
@@ -2329,8 +2403,16 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
   let last = afterId;
   let ended = false;
   let attempt = 0;
+  let closedReason: string | undefined;
 
   const handle = (m: SSEMessage) => {
+    if (m.event === "expired" || m.event === "revoked") {
+      // The server re-authorizes open streams: an expired token signs out, lost access closes for good.
+      ended = true;
+      if (m.event === "expired") unauthorizedHandler?.();
+      closedReason = m.event === "expired" ? "Your session expired" : "Access to this run was revoked";
+      return;
+    }
     if (m.event === "end") {
       ended = true;
       let status: string | null = null;
@@ -2391,7 +2473,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
       const delay = Math.min(15000, 500 * 2 ** Math.min(attempt, 5));
       await new Promise((r) => setTimeout(r, delay));
     }
-    cb.onStatus?.("closed");
+    cb.onStatus?.("closed", closedReason);
   };
   void loop();
   return { close: () => controller.abort() };
@@ -2420,6 +2502,10 @@ export async function streamAskTurn(threadId: string, question: string, paramete
         }
         if (m.event === "stage") cb.onStage(data as AskStage);
         else if (m.event === "turn") turn = data as AskTurn;
+        else if (m.event === "expired") {
+          unauthorizedHandler?.();
+          failure = new ApiError(401, "token_expired", "Your session expired; sign in again");
+        } else if (m.event === "revoked") failure = new ApiError(403, "access_revoked", "Access to this workspace was revoked");
         else if (m.event === "error") {
           const e = (data as { error?: { code?: string; message?: string; details?: Dict } }).error ?? {};
           failure = new ApiError(422, e.code ?? "error", e.message ?? "The question could not be asked", e.details ?? {});

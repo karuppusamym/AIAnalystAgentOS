@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row
-from analystos.core.errors import InvalidInput, NotFound
+from analystos.core.errors import InvalidInput
 from analystos.db.models import CrawlRun, Source, SourceAsset, SourceColumn, User
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.services import crawler
 
 router = APIRouter(prefix="/api", tags=["catalog"])
@@ -51,9 +51,7 @@ class CrawlIn(BaseModel):
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/crawl")
 def start_crawl(workspace_id: str, source_id: str, body: CrawlIn, background: BackgroundTasks,
                 user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    src = session.get(Source, source_id)
-    if src is None or src.workspace_id != workspace_id:
-        raise NotFound("source not found")
+    load_in_workspace(session, Source, source_id, workspace_id, user=user, label="source")
     run = crawler.start_crawl(session, user, source_id, **body.model_dump())
     view = crawler.crawl_view(run)
     session.commit()  # the background task reads the crawl_run row in its own session: it must be visible first
@@ -131,10 +129,7 @@ def list_crawls(workspace_id: str, source_id: str | None = None, limit: int = 50
 
 @router.get("/crawls/{crawl_id}")
 def get_crawl(crawl_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    r = session.get(CrawlRun, crawl_id)
-    if r is None:
-        raise NotFound("crawl not found")
-    require_role(session, user, r.workspace_id, "viewer")
+    r = load_in_workspace(session, CrawlRun, crawl_id, user=user, label="crawl")
     return crawler.crawl_view(r)
 
 
@@ -181,10 +176,7 @@ class AssetMetadataIn(BaseModel):
 @router.patch("/assets/{asset_id}/metadata")
 def curate_asset(asset_id: str, body: AssetMetadataIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """A person's curation wins over every crawler/model description from now on."""
-    a = session.get(SourceAsset, asset_id)
-    if a is None:
-        raise NotFound("asset not found")
-    require_role(session, user, a.workspace_id, "editor")
+    a = load_in_workspace(session, SourceAsset, asset_id, user=user, minimum="editor", label="asset")
     patch = body.model_dump(exclude_none=True)
     if not patch:
         raise InvalidInput("nothing to change")

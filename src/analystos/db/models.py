@@ -439,6 +439,8 @@ class AnalysisRun(Base):
     # "manifests": {id: manifest}, "skipped": {step: reason}}. Bound when the plan materializes; the run
     # keeps these versions after a registry reload, and the refs are part of the plan hash.
     capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    # Data-version manifest (P4-03): the version of every analysed asset the run read (evidence.manifest).
+    data_manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -524,6 +526,10 @@ class ModelCall(Base):
     cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Context compiler receipts (P4-T03): the context items the prompt carried ("context used").
     context_receipts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Cheap first, escalate: set on a call of the large tier made because a small-tier answer failed
+    # deterministic validation (the small model, and why: invalid_json, schema, sql_rejected, ...).
+    escalated_from: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    escalation_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
     __table_args__ = (Index("ix_model_call_created_purpose_rung", "created_at", "purpose", "answered_by"),)
@@ -628,6 +634,13 @@ class Insight(Base):
     verification: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # REV record
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft|verified|failed_verification|rejected
     narrative_source: Mapped[str] = mapped_column(String(160), default="template")  # llm | template
+    # Typed evidence (P4-03): the versioned EvidenceBundle (facts, data, method, validation, limits), its
+    # validation state (exploratory | replicated | confirmed | inconclusive | invalid | insufficient_evidence
+    # | legacy), the data-manifest version it was computed on, and when a newer snapshot made it stale.
+    evidence_bundle: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    validation: Mapped[str] = mapped_column(String(30), default="exploratory", server_default="legacy")
+    data_version: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 

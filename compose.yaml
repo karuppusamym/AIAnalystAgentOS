@@ -1,15 +1,21 @@
 # Full AnalystOS stack (ADR-0003). `docker compose up -d` boots infrastructure + app.
 # Infra only:  docker compose up -d postgres redis temporal superset servicenow-mock
 # Optional Neo4j graph projection: `docker compose --profile graph up -d neo4j` + ANALYSTOS_GRAPH_ENABLED=true.
+# Optional PgBouncer (transaction pooling) in front of Postgres for the control/analytics planes:
+#   ANALYSTOS_PG_POOLER=pgbouncer:5432 ANALYSTOS_DB_TRANSACTION_POOLER=true docker compose --profile pooled up -d
+# (docs/30-runbooks/02-operations.md "Connection pooling"). The builder URL always stays direct.
 # Worker pools (one per Temporal task queue) scale independently, e.g.
 #   docker compose up -d --scale worker-compute=4 --scale worker-analysis=2
 name: analystos
 
 x-app-env: &app-env
-  ANALYSTOS_DATABASE_URL: postgresql+psycopg://analystos:analystos@postgres:5432/analystos
-  ANALYSTOS_ANALYTICS_LOADER_URL: postgresql+psycopg://analystos_loader:loader@postgres:5432/analytics
-  ANALYSTOS_ANALYTICS_READER_URL: postgresql+psycopg://analystos_reader:reader@postgres:5432/analytics
+  ANALYSTOS_DATABASE_URL: postgresql+psycopg://analystos:analystos@${ANALYSTOS_PG_POOLER:-postgres:5432}/analystos
+  ANALYSTOS_ANALYTICS_LOADER_URL: postgresql+psycopg://analystos_loader:loader@${ANALYSTOS_PG_POOLER:-postgres:5432}/analytics
+  ANALYSTOS_ANALYTICS_READER_URL: postgresql+psycopg://analystos_reader:reader@${ANALYSTOS_PG_POOLER:-postgres:5432}/analytics
+  # dbt keeps its role for the whole session: never through a transaction-mode pooler.
   ANALYSTOS_ANALYTICS_BUILDER_URL: postgresql+psycopg://analystos_builder:builder@postgres:5432/analytics
+  # true when the URLs above go through PgBouncer in transaction mode (no server-side prepared statements).
+  ANALYSTOS_DB_TRANSACTION_POOLER: ${ANALYSTOS_DB_TRANSACTION_POOLER:-false}
   ANALYSTOS_REDIS_URL: redis://redis:6379/0
   ANALYSTOS_NEO4J_URI: bolt://neo4j:7687
   # Neo4j is an optional projection (off by default); start it with `--profile graph` and set this to true.
@@ -38,6 +44,40 @@ services:
       - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U analystos -d analystos"]
+      interval: 5s
+      retries: 20
+
+  # Transaction-mode pooler (spec v3 §8), off by default: `--profile pooled`. Clients may open up to
+  # MAX_CLIENT_CONN; Postgres sees at most DEFAULT_POOL_SIZE per (database, user) and
+  # MAX_DB_CONNECTIONS per database. Logins are checked against pg_shadow through auth_query, so the
+  # per-workspace and per-plane roles need no userlist entries.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p3
+    profiles: ["pooled"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      DB_HOST: postgres
+      DB_USER: analystos
+      DB_PASSWORD: analystos
+      AUTH_TYPE: scram-sha-256
+      AUTH_USER: analystos
+      AUTH_DBNAME: postgres
+      AUTH_QUERY: SELECT usename, passwd FROM pg_shadow WHERE usename=$$1
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-2000}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-30}
+      MAX_DB_CONNECTIONS: ${PGBOUNCER_MAX_DB_CONNECTIONS:-40}
+      MAX_PREPARED_STATEMENTS: "0"
+      # A client waiting longer than this for a server connection gets an error (and the activity a
+      # retry) instead of waiting forever; see the nested-transaction note in the runbook.
+      QUERY_WAIT_TIMEOUT: ${PGBOUNCER_QUERY_WAIT_TIMEOUT:-60}
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,options
+      ADMIN_USERS: analystos
+      STATS_USERS: analystos
+    ports: ["6432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U analystos -d postgres || exit 1"]
       interval: 5s
       retries: 20
 
@@ -103,6 +143,12 @@ services:
       redis: {condition: service_healthy}
     command: ["sh", "-c", "analystos migrate && analystos seed && uvicorn analystos.api.app:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://localhost:8000/api/health', timeout=3))['ok']"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
 
   # One service per worker pool (spec v3 §8): each serves only its task queue(s) and scales on its own.
   # Sizing per pool (slots, executor, timeouts) is config/task_queues.yaml.
@@ -145,7 +191,8 @@ services:
 
   web:
     build: {context: ./web, dockerfile: Dockerfile}
-    depends_on: [api]
+    depends_on:
+      api: {condition: service_healthy}
     ports: ["5173:80"]
 
 volumes:

@@ -1,0 +1,150 @@
+{
+ "description": "Hand-made (not recorded from a live run): cheap first, escalate. Four model points with a deterministic check (validate). Two small-tier answers pass and are used as they are; one SQL answer is not JSON and one follow-up answer is an empty hypothesis list, and only those two are re-asked of the large tier (escalation_response). Expected: 6 calls, 2 of them on the large tier.",
+ "name": "escalation",
+ "points": [
+  {
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "hypothesis_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Propose testable hypotheses as JSON.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"objective\":\"Why did refunds rise in March?\",\"catalog\":[{\"asset\":\"sales.orders\"}]}",
+      "role": "user"
+     }
+    ],
+    "purpose": "hypothesis_generation",
+    "temperature": 0.2
+   },
+   "response": {
+    "model": "google/gemini-3.5-flash",
+    "text": "{\"hypotheses\": [{\"statement\": \"Refund rate differs by channel\", \"spec\": {\"asset\": \"sales.orders\", \"method\": \"rate_by_segment\", \"outcome\": {\"column\": \"refunded\"}, \"segment\": {\"column\": \"channel\"}}}]}",
+    "usage": {
+     "completion_tokens": 300,
+     "prompt_tokens": 2400
+    }
+   },
+   "tokens_hint": 0,
+   "validate": "hypotheses"
+  },
+  {
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "sql_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Write one read-only SQL statement as JSON {sql, explanation}.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"question\":\"Refunds per channel in March\",\"dialect\":\"postgres\"}",
+      "role": "user"
+     }
+    ],
+    "purpose": "sql_generation",
+    "temperature": 0.0
+   },
+   "response": {
+    "model": "openai/gpt-5.4-mini",
+    "text": "{\"sql\": \"SELECT channel, count(*) FROM sales.orders WHERE refunded GROUP BY channel\"}",
+    "usage": {
+     "completion_tokens": 120,
+     "prompt_tokens": 1800
+    }
+   },
+   "tokens_hint": 0,
+   "validate": "sql"
+  },
+  {
+   "escalation_response": {
+    "model": "anthropic/claude-sonnet-5",
+    "text": "{\"sql\": \"SELECT region, percentile_cont(0.5) WITHIN GROUP (ORDER BY refund_delay) FROM sales.orders GROUP BY region\"}",
+    "usage": {
+     "completion_tokens": 150,
+     "prompt_tokens": 1800
+    }
+   },
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "sql_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Write one read-only SQL statement as JSON {sql, explanation}.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"question\":\"Median refund delay by region last quarter\",\"dialect\":\"postgres\"}",
+      "role": "user"
+     }
+    ],
+    "purpose": "sql_generation",
+    "temperature": 0.0
+   },
+   "response": {
+    "model": "openai/gpt-5.4-mini",
+    "text": "Sure! Here is the query: SELECT",
+    "usage": {
+     "completion_tokens": 40,
+     "prompt_tokens": 1800
+    }
+   },
+   "tokens_hint": 0,
+   "validate": "sql"
+  },
+  {
+   "escalation_response": {
+    "model": "anthropic/claude-sonnet-5",
+    "text": "{\"hypotheses\": [{\"statement\": \"Web refunds concentrate in one region\", \"spec\": {\"asset\": \"sales.orders\", \"method\": \"rate_by_segment\", \"outcome\": {\"column\": \"refunded\"}, \"segment\": {\"column\": \"channel\"}}}]}",
+    "usage": {
+     "completion_tokens": 280,
+     "prompt_tokens": 2600
+    }
+   },
+   "gate": "model",
+   "kind": "chat",
+   "purpose": "follow_up_generation",
+   "request": {
+    "json_output": true,
+    "kind": "chat",
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "Propose follow-up hypotheses as JSON.\n\nRespond with a single valid JSON value only.",
+      "role": "system"
+     },
+     {
+      "content": "{\"objective\":\"Why did refunds rise in March?\",\"results\":[{\"code\":\"H1\",\"status\":\"supported\"}]}",
+      "role": "user"
+     }
+    ],
+    "purpose": "follow_up_generation",
+    "temperature": 0.2
+   },
+   "response": {
+    "model": "google/gemini-3.5-flash",
+    "text": "{\"hypotheses\": []}",
+    "usage": {
+     "completion_tokens": 20,
+     "prompt_tokens": 2600
+    }
+   },
+   "tokens_hint": 0,
+   "validate": "hypotheses"
+  }
+ ]
+}

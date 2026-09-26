@@ -41,6 +41,35 @@ class Api:
             raise SystemExit(f"POST {path} -> {r.status_code}: {r.text[:500]}")
         return r.json()
 
+    def patch(self, path, body=None):
+        r = self.c.patch(path, json=body or {})
+        r.raise_for_status()
+        return r.json()
+
+
+# Every schedule and monitor this script creates is marked as a demo ("[demo] " name, config.demo) and
+# disabled when the script ends, however it ends: left enabled, an hourly monitor schedule keeps
+# evaluating (and calling models) for as long as the stack runs. `analystos schedules disable-demo`
+# disables marked items a crashed run left behind.
+DEMO = "[demo] "
+_created: list[tuple[Api, str]] = []
+
+
+def demo_item(api: Api, path: str, body: dict) -> dict:
+    body = {**body, "name": DEMO + body["name"], "config": {**(body.get("config") or {}), "demo": True}}
+    item = api.post(path, body)
+    _created.append((api, f"/api/{'schedules' if path.endswith('/schedules') else 'monitors'}/{item['id']}"))
+    return item
+
+
+def disable_demo_items() -> None:
+    for api, path in _created:
+        try:
+            api.patch(path, {"enabled": False})
+            print(f"disabled demo item {path}")
+        except Exception as exc:  # keep going: disable as many as possible
+            print(f"could not disable {path}: {exc}; run `analystos schedules disable-demo`", file=sys.stderr)
+
 
 def wait_run(api: Api, ws: str, run: str, timeout=1800) -> dict:
     started = time.time()
@@ -78,7 +107,7 @@ def main() -> int:
     print("workspace", ws, "baseline run", baseline["id"])
 
     # 1. Scheduled re-analysis with diff + report (run-now uses the same path as a cron firing)
-    sch = analyst.post(f"/api/workspaces/{ws}/schedules", {
+    sch = demo_item(analyst, f"/api/workspaces/{ws}/schedules", {
         "name": "Weekly incident review", "kind": "reanalysis", "cron": "58 6 * * 1", "timezone": "Europe/London",
         "config": {"baseline_run_id": baseline["id"], "refresh_first": True, "publish": "skip",
                    "report": {"kind": "weekly_summary", "formats": ["html", "pdf", "xlsx"]}}})
@@ -110,15 +139,15 @@ def main() -> int:
     metric_names = {a["name"] for a in analyst.get(f"/api/workspaces/{ws}/artifacts", params={"type": "metric"})}
     rate = next((n for n in sorted(metric_names) if "breach" in n or n.endswith("_rate")), "record_count")
     mons = [
-        analyst.post(f"/api/workspaces/{ws}/monitors", {"name": "Weekly volume drift", "kind": "metric_drift",
+        demo_item(analyst, f"/api/workspaces/{ws}/monitors", {"name": "Weekly volume drift", "kind": "metric_drift",
                                                         "config": {"metric": "record_count", "grain": "week", "lookback": 8, "z_threshold": 3}}),
-        analyst.post(f"/api/workspaces/{ws}/monitors", {"name": "Volume regime change", "kind": "change_point",
+        demo_item(analyst, f"/api/workspaces/{ws}/monitors", {"name": "Volume regime change", "kind": "change_point",
                                                         "config": {"metric": "record_count", "grain": "week", "recent_periods": 60}}),
-        analyst.post(f"/api/workspaces/{ws}/monitors", {"name": f"{rate} above target", "kind": "metric_threshold", "auto_investigate": True,
+        demo_item(analyst, f"/api/workspaces/{ws}/monitors", {"name": f"{rate} above target", "kind": "metric_threshold", "auto_investigate": True,
                                                         "config": {"metric": rate, "grain": "month", "op": ">", "value": 0.0}}),
-        analyst.post(f"/api/workspaces/{ws}/monitors", {"name": "Incident data quality", "kind": "data_quality", "config": {}}),
+        demo_item(analyst, f"/api/workspaces/{ws}/monitors", {"name": "Incident data quality", "kind": "data_quality", "config": {}}),
     ]
-    msch = analyst.post(f"/api/workspaces/{ws}/schedules", {"name": "Hourly monitors", "kind": "monitor", "cron": "5 * * * *",
+    msch = demo_item(analyst, f"/api/workspaces/{ws}/schedules", {"name": "Hourly monitors", "kind": "monitor", "cron": "5 * * * *",
                                                            "config": {"monitor_ids": [m["id"] for m in mons]}})
     mrun = analyst.post(f"/api/schedules/{msch['id']}/run")
     results = mrun["result"].get("monitors", {})
@@ -182,4 +211,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        code = main()
+    finally:
+        disable_demo_items()
+    sys.exit(code)

@@ -22,3 +22,12 @@ domain_keywords:
                   resolution, urgency, impact, assigned, request, task]
 # PII: a "<noun>_name" / "<noun>_id_name" column names a person (caller_id_name, opened_by_name, ...).
 person_nouns: [caller, opened, resolved, assigned]
+# Ask: complete, unfiltered count distributions answered by a schema-bound rule (no model call).
+# `ambiguous` words (e.g. "type") are never mapped silently: the user picks a dimension.
+ask_distributions:
+  - entity: incident
+    nouns: [incident, incidents]
+    dimensions:
+      - {label: Category, column: category, words: [category]}
+      - {label: Contact channel, column: contact_type, words: [contact type, channel]}
+    ambiguous: [type]

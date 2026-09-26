@@ -20,7 +20,7 @@ from analystos.core.errors import AnalystOSError, RunCancelled
 from analystos.core.ids import new_id, utcnow
 from analystos.core.logging import get_logger, run_id_var
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Approval, Hypothesis, Insight, RunTask
+from analystos.db.models import AnalysisRun, Approval, Hypothesis, Insight, RunTask, Workspace
 from analystos.events.bus import emit
 from analystos.governance.approvals import invalidate_run_approvals
 from analystos.runtime.context import RunContext, Services, default_services
@@ -81,6 +81,13 @@ def materialize_plan(session, run: AnalysisRun) -> None:
     run.plan_hash = run_hash(run)
 
 
+def _workspace_disabled(s, workspace_id: str) -> bool:
+    """A disabled or deleted workspace stops its runs. A missing row (never in Postgres, where the
+    foreign key holds; possible in unit fixtures) is not treated as disabled."""
+    ws = s.get(Workspace, workspace_id)
+    return ws is not None and (ws.status != "active" or ws.deleted_at is not None)
+
+
 def plan_run(run_id: str, services: Services | None = None) -> dict:
     """Activity 1: bind the playbook and its capabilities, the supervisor frames the plan (idempotent).
     A binding failure (a required step's capability disabled, deprecated or not certified for an
@@ -92,6 +99,10 @@ def plan_run(run_id: str, services: Services | None = None) -> dict:
         run = s.get(AnalysisRun, run_id)
         if run.plan_version > 0 or run.status in RUN_TERMINAL:
             return {"plan_version": run.plan_version}
+        if _workspace_disabled(s, run.workspace_id):
+            run.control = "cancel"
+            set_run_status(s, run, "CANCELLED", error="workspace disabled")
+            return {"plan_version": 0, "cancelled": "workspace disabled"}
         set_run_status(s, run, "PLANNING", started_at=utcnow())
         try:
             binding, failure = bind_run(s, run), None
@@ -170,6 +181,8 @@ def _decide(s, run: AnalysisRun, *, locked: bool) -> dict:
     run_id = run.id
     if run.status in RUN_TERMINAL:
         return {"terminal": True, "status": run.status}
+    if _workspace_disabled(s, run.workspace_id):
+        return {"control": "cancel"}
     if run.control == "cancel":
         return {"control": "cancel"}
     if run.control == "pause":
@@ -239,11 +252,15 @@ def _claim(s, run_id: str, key: str) -> dict:
     the other reports `in_progress`. A RUNNING claim younger than CLAIM_TTL_SECONDS belongs to a live
     worker; an older one (or one released by `release_timed_out_claim`) is retaken."""
     row = s.execute(select(RunTask.id, RunTask.status, RunTask.started_at, RunTask.attempts, RunTask.plan_version,
-                           RunTask.claim_version, RunTask.agent_id, AnalysisRun.workspace_id)
+                           RunTask.claim_version, RunTask.agent_id, AnalysisRun.workspace_id, Workspace.status.label("workspace_status"),
+                           Workspace.deleted_at.label("workspace_deleted_at"))
                     .join(AnalysisRun, AnalysisRun.id == RunTask.run_id)
+                    .outerjoin(Workspace, Workspace.id == AnalysisRun.workspace_id)
                     .where(RunTask.run_id == run_id, RunTask.key == key)).one_or_none()
     if row is None:
         return {"status": "missing"}
+    if row.workspace_status is not None and (row.workspace_status != "active" or row.workspace_deleted_at is not None):
+        return {"status": "CANCELLED", "error": "workspace disabled"}
     if row.status in ("COMPLETED", "SKIPPED"):
         return {"status": row.status, "cached": True}
     if row.status == "RUNNING" and row.started_at and _age_seconds(row.started_at) < CLAIM_TTL_SECONDS:
@@ -299,6 +316,9 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             if task.claim_version != claim:
                 # a later attempt retook the claim (this one timed out or was released); its result stands
                 return {"status": "superseded"}
+            if _workspace_disabled(s, run.workspace_id):
+                task.status, task.output, task.error, task.finished_at = "CANCELLED", {}, "workspace disabled", utcnow()
+                return {"status": "CANCELLED", "error": "workspace disabled"}
             if run.plan_version != version or task.plan_version != version:
                 # replanned while running: discard. Dynamic tasks of the old plan are removed; base
                 # tasks run again under the new plan version.

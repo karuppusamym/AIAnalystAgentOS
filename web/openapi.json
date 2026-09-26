@@ -2024,6 +2024,17 @@
               }
             ],
             "title": "Settings"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           }
         },
         "title": "WorkspacePatch",
@@ -2998,6 +3009,80 @@
           }
         },
         "summary": "Models",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/models/health": {
+      "get": {
+        "description": "Per provider: key present in this process (never the key), last success, cooldown, today's spend vs\nthe daily cap. `?probe=1` sends one tiny billable request per provider to verify credits.",
+        "operationId": "models_health_api_admin_models_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "probe",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Probe",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Models Health",
         "tags": [
           "admin"
         ]
@@ -4566,7 +4651,7 @@
     },
     "/api/ask/threads/{thread_id}/turns": {
       "post": {
-        "description": "Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`\nevents, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.",
+        "description": "Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`\nevents, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.\nA streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.",
         "operationId": "ask_turn_api_ask_threads__thread_id__turns_post",
         "parameters": [
           {
@@ -7936,6 +8021,7 @@
     },
     "/api/workspaces/{workspace_id}": {
       "delete": {
+        "description": "Archive and disable. This route does not erase stored or published data.",
         "operationId": "delete_api_workspaces__workspace_id__delete",
         "parameters": [
           {
@@ -8734,7 +8820,7 @@
     },
     "/api/workspaces/{workspace_id}/analysis/{run_id}/events": {
       "get": {
-        "description": "Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).\nDatabase reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback).",
+        "description": "Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).\nDatabase reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback).\nThe caller is re-authorized while the stream is open: when the token expires or access is lost the\nstream ends with an `expired` or `revoked` event and sends nothing after it.",
         "operationId": "events_api_workspaces__workspace_id__analysis__run_id__events_get",
         "parameters": [
           {
@@ -11024,6 +11110,79 @@
         "summary": "Insights",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/inventory": {
+      "get": {
+        "description": "Read-only inventory of retained records and registered resource identifiers; owner only.",
+        "operationId": "get_inventory_api_workspaces__workspace_id__inventory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inventory",
+        "tags": [
+          "workspaces"
         ]
       }
     },

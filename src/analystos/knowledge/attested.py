@@ -364,6 +364,8 @@ def attested_from_insight(session: Session, insight: Any, *, approved_by: list[t
         raise NotFound(f"insight {insight} not found")
     if ins.status != "verified" or not ins.verified:
         raise InvalidInput(f"insight {ins.id} is {ins.status}: only a verified finding can be attested")
+    if getattr(ins, "stale_since", None) is not None:
+        raise InvalidInput(f"insight {ins.id} is stale (its data snapshot changed): re-verify before attesting")
     h = session.get(Hypothesis, ins.hypothesis_id) if ins.hypothesis_id else None
     if h is None:
         raise InvalidInput(f"insight {ins.id} has no hypothesis: nothing to attest")

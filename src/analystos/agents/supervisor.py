@@ -36,7 +36,7 @@ def build_plan(run_id: str, services: Services, playbook: Playbook | None = None
         payload = compile_for(ctx, "planning", {"objective": objective,
                                                 "user_instructions": [i.get("text") for i in instructions]})
         # Framing is optional: the lifecycle skeleton is valid without it, so `auto` skips the model.
-        data, model = llm_json(ctx, "planning", "planning.v1", payload) \
+        data, model = llm_json(ctx, "planning", "planning.v1", payload, validate=_valid_framing) \
             if model_gate(ctx, "planning", payload, deterministic_ok=True) else (None, "deterministic")
         if isinstance(data, dict):
             framing = data
@@ -48,6 +48,15 @@ def build_plan(run_id: str, services: Services, playbook: Playbook | None = None
     audience = [a for a in (framing.get("audience") or ["executive", "operational"]) if a in ("executive", "operational")]
     return base_plan(objective, autonomy_level=level, questions=questions, audience=audience or ["executive", "operational"],
                      focus=[str(f) for f in (framing.get("focus") or [])][:6], playbook=playbook)
+
+
+def _valid_framing(data: object) -> str | None:
+    """Escalation check (schema): framing is an object whose questions are a list."""
+    if not isinstance(data, dict):
+        return "answer is not an object"
+    if not isinstance(data.get("questions"), list) or not data["questions"]:
+        return "no analytical questions in the framing"
+    return None
 
 
 def _supervisor_ctx(run_id: str, services: Services) -> RunContext:
