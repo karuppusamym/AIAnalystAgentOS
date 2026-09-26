@@ -29,9 +29,9 @@ ALWAYS_APPROVAL_ACTIONS = {"publish", "schedule", "notify_external", "export", "
 NEVER_ALLOWED_ACTIONS = {"source_mutation"}
 
 
-def get_workspace(session: Session, workspace_id: str) -> Workspace:
+def get_workspace(session: Session, workspace_id: str, *, allow_disabled: bool = False) -> Workspace:
     ws = session.get(Workspace, workspace_id)
-    if ws is None or ws.deleted_at is not None:
+    if ws is None or ws.deleted_at is not None or (ws.status != "active" and not allow_disabled):
         raise NotFound(f"workspace {workspace_id} not found")
     return ws
 
@@ -43,8 +43,8 @@ def member_role(session: Session, user: User, workspace_id: str) -> str | None:
         WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id))
 
 
-def require_role(session: Session, user: User, workspace_id: str, minimum: str) -> str:
-    get_workspace(session, workspace_id)
+def require_role(session: Session, user: User, workspace_id: str, minimum: str, *, allow_disabled: bool = False) -> str:
+    get_workspace(session, workspace_id, allow_disabled=allow_disabled)
     role = member_role(session, user, workspace_id)
     if role is None:
         # Do not reveal existence of workspaces the caller cannot see.

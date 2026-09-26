@@ -20,7 +20,7 @@ from analystos.core.errors import AnalystOSError, RunCancelled
 from analystos.core.ids import new_id, utcnow
 from analystos.core.logging import get_logger, run_id_var
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Approval, Hypothesis, Insight, RunTask
+from analystos.db.models import AnalysisRun, Approval, Hypothesis, Insight, RunTask, Workspace
 from analystos.events.bus import emit
 from analystos.governance.approvals import invalidate_run_approvals
 from analystos.runtime.context import RunContext, Services, default_services
@@ -92,6 +92,10 @@ def plan_run(run_id: str, services: Services | None = None) -> dict:
         run = s.get(AnalysisRun, run_id)
         if run.plan_version > 0 or run.status in RUN_TERMINAL:
             return {"plan_version": run.plan_version}
+        if s.get(Workspace, run.workspace_id).status != "active":
+            run.control = "cancel"
+            set_run_status(s, run, "CANCELLED", error="workspace disabled")
+            return {"plan_version": 0, "cancelled": "workspace disabled"}
         set_run_status(s, run, "PLANNING", started_at=utcnow())
         try:
             binding, failure = bind_run(s, run), None
@@ -170,6 +174,8 @@ def _decide(s, run: AnalysisRun, *, locked: bool) -> dict:
     run_id = run.id
     if run.status in RUN_TERMINAL:
         return {"terminal": True, "status": run.status}
+    if s.get(Workspace, run.workspace_id).status != "active":
+        return {"control": "cancel"}
     if run.control == "cancel":
         return {"control": "cancel"}
     if run.control == "pause":
@@ -239,11 +245,14 @@ def _claim(s, run_id: str, key: str) -> dict:
     the other reports `in_progress`. A RUNNING claim younger than CLAIM_TTL_SECONDS belongs to a live
     worker; an older one (or one released by `release_timed_out_claim`) is retaken."""
     row = s.execute(select(RunTask.id, RunTask.status, RunTask.started_at, RunTask.attempts, RunTask.plan_version,
-                           RunTask.claim_version, RunTask.agent_id, AnalysisRun.workspace_id)
+                           RunTask.claim_version, RunTask.agent_id, AnalysisRun.workspace_id, Workspace.status.label("workspace_status"))
                     .join(AnalysisRun, AnalysisRun.id == RunTask.run_id)
+                    .join(Workspace, Workspace.id == AnalysisRun.workspace_id)
                     .where(RunTask.run_id == run_id, RunTask.key == key)).one_or_none()
     if row is None:
         return {"status": "missing"}
+    if row.workspace_status != "active":
+        return {"status": "CANCELLED", "error": "workspace disabled"}
     if row.status in ("COMPLETED", "SKIPPED"):
         return {"status": row.status, "cached": True}
     if row.status == "RUNNING" and row.started_at and _age_seconds(row.started_at) < CLAIM_TTL_SECONDS:
@@ -299,6 +308,9 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             if task.claim_version != claim:
                 # a later attempt retook the claim (this one timed out or was released); its result stands
                 return {"status": "superseded"}
+            if s.get(Workspace, run.workspace_id).status != "active":
+                task.status, task.output, task.error, task.finished_at = "CANCELLED", {}, "workspace disabled", utcnow()
+                return {"status": "CANCELLED", "error": "workspace disabled"}
             if run.plan_version != version or task.plan_version != version:
                 # replanned while running: discard. Dynamic tasks of the old plan are removed; base
                 # tasks run again under the new plan version.

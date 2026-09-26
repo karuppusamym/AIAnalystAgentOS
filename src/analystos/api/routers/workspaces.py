@@ -45,6 +45,7 @@ class WorkspacePatch(BaseModel):
     objective: str | None = None
     autonomy_level: int | None = None
     settings: dict | None = None
+    status: str | None = None  # active | disabled; owner only
 
 
 class MemberIn(BaseModel):
@@ -106,7 +107,11 @@ def create(body: WorkspaceIn, user: User = Depends(current_user), session: Sessi
 
 @router.get("/workspaces")
 def list_(user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    return _summaries(session, ws_svc.list_workspaces(session, user))
+    summaries = _summaries(session, ws_svc.list_workspaces(session, user))
+    roles = {} if user.is_admin or not summaries else dict(session.execute(
+        select(WorkspaceMember.workspace_id, WorkspaceMember.role).where(
+            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))))
+    return [{**w, "role": "owner" if user.is_admin else roles.get(w["id"])} for w in summaries]
 
 
 @router.get("/workspaces/{workspace_id}")

@@ -11,6 +11,12 @@ import { fmtDate } from "../lib/format";
 export function WorkspacesPage() {
   const list = useAsync(() => api.listWorkspaces(), []);
   const [showCreate, setShowCreate] = useState(false);
+  const statusAction = useAction();
+  const changeStatus = async (id: string, name: string, status: "active" | "disabled") => {
+    if (status === "disabled" && !window.confirm(`Disable ${name}? New work, scheduled runs and workspace access will stop. Data is retained.`)) return;
+    const result = await statusAction.run(() => api.setWorkspaceStatus(id, status));
+    if (result) await list.reload();
+  };
   return (
     <div className="page">
       <PageHeader title="Workspaces" subtitle="Each workspace holds sources, a policy, members, analysis runs and their evidence."
@@ -18,14 +24,16 @@ export function WorkspacesPage() {
           {showCreate ? "Close" : "New workspace"}</button>} />
       {showCreate && <CreateWorkspace />}
       <ErrorBox error={list.error} onRetry={list.reload} />
+      <ErrorBox error={statusAction.error} />
       {list.loading && !list.data ? <Loading /> : list.data && list.data.length === 0 ? (
         <EmptyState title="No workspaces yet">Create one to connect a source and start an analysis.</EmptyState>
       ) : (
         <div className="grid-cards">
           {list.data?.map((w) => (
-            <Link key={w.id} to={to.workspace(w.id)} className="card card-link">
+            <div key={w.id} className="card">
               <div className="card-body">
-                <h2 className="card-title">{w.name}</h2>
+                <h2 className="card-title">{w.status === "active" ? <Link to={to.workspace(w.id)}>{w.name}</Link> : w.name}</h2>
+                {w.status !== "active" && <span className="tag tag-warning">disabled</span>}
                 {w.description && <p className="muted clamp-2">{w.description}</p>}
                 {w.objective && <p className="small clamp-2"><strong>Objective:</strong> {w.objective}</p>}
                 <div className="chip-row small">
@@ -36,8 +44,12 @@ export function WorkspacesPage() {
                   <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix="dashboards" unknownLabel="dashboards unknown" /></span>
                 </div>
                 <p className="muted small">Created {fmtDate(w.created_at)}</p>
+                {w.role === "owner" && <button type="button" className="btn btn-sm" disabled={statusAction.busy}
+                  onClick={() => void changeStatus(w.id, w.name, w.status === "active" ? "disabled" : "active")}>
+                  {w.status === "active" ? "Disable workspace" : "Reactivate workspace"}
+                </button>}
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}

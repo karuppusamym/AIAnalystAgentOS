@@ -3533,6 +3533,8 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             } | null;
+            /** Status */
+            status?: string | null;
         };
         /** Decision */
         analystos__api__routers__artifacts__Decision: {

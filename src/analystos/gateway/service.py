@@ -277,6 +277,9 @@ class QueryGateway:
     def _load_source(self, scope: DataScope, validated: ValidatedSQL) -> dict[str, Any]:
         session = self.session_factory()
         try:
+            from analystos.governance.policy import get_workspace
+
+            get_workspace(session, scope.workspace_id)
             row = session.get(Source, validated.source_id)
             if row is None or row.workspace_id != scope.workspace_id:
                 raise NotFound(f"source {validated.source_id} not found in workspace {scope.workspace_id}")

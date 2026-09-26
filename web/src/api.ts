@@ -70,6 +70,7 @@ export interface Workspace {
   created_at: string;
   updated_at: string;
   counts?: WorkspaceCounts;
+  role?: string;
 }
 
 export interface Member {
@@ -1573,6 +1574,13 @@ export interface CapabilitySummary {
   tags: string[];
   /** Enablement in the requested workspace; null without `workspace_id`. */
   enabled: boolean | null;
+  bindings?: {
+    capabilities: { id: string; kind: string; enabled: boolean | null; determinism: string; certification: string }[];
+    tools: string[];
+    model_purposes: string[];
+    playbooks: string[];
+    default_actions: string[];
+  };
 }
 
 export interface CapabilityList {
@@ -2063,6 +2071,8 @@ export const api = {
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
     patch("/api/workspaces/{workspace_id}", { path: W(ws), body }) as Promise<Workspace>,
+  setWorkspaceStatus: (ws: string, status: "active" | "disabled") =>
+    patch("/api/workspaces/{workspace_id}", { path: W(ws), body: { status } }) as Promise<Workspace>,
   putPolicy: (ws: string, policy: Dict) =>
     put("/api/workspaces/{workspace_id}/policy", { path: W(ws), body: policy }) as Promise<{ policy_version: number }>,
   addMember: (ws: string, email: string, role: string) =>

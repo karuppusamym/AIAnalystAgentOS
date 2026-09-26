@@ -17,7 +17,7 @@ from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.db.models import AnalysisRun, Approval, User, Workspace
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
-from analystos.governance.policy import load_policy, member_role
+from analystos.governance.policy import get_workspace, load_policy, member_role
 from analystos.security.auth import APPROVER_ROLES, role_at_least
 
 # Actions whose approver must differ from the requester whatever the workspace policy says (P4-K03).
@@ -33,8 +33,8 @@ def request_approval(session: Session, *, workspace_id: str, run_id: str | None,
         Approval.plan_hash == plan_hash, Approval.status.in_(["pending", "approved"])))
     if existing:
         return existing
-    ws = session.get(Workspace, workspace_id)
-    ttl = load_policy(session, ws).approval_ttl_hours if ws else 72
+    ws = get_workspace(session, workspace_id)
+    ttl = load_policy(session, ws).approval_ttl_hours
     approval = Approval(id=new_id("apr"), workspace_id=workspace_id, run_id=run_id, action=action, risk_tier=risk_tier,
                         destination=destination, affected_assets=affected_assets, payload=payload, payload_hash=payload_hash,
                         plan_hash=plan_hash, policy_version=policy_version, requested_by=requested_by, status="pending",
@@ -62,7 +62,7 @@ def decide(session: Session, approval_id: str, user: User, *, approve: bool, rea
     if approval.expires_at < utcnow():
         approval.status = "expired"
         raise Conflict("approval expired")
-    ws = session.get(Workspace, approval.workspace_id)
+    ws = get_workspace(session, approval.workspace_id)
     policy = load_policy(session, ws)
     if (policy.separation_of_duties or approval.action in ALWAYS_SEPARATE_DUTIES) and approval.requested_by == user.id:
         audit(f"user:{user.id}", "approval.self_approval_blocked", workspace_id=approval.workspace_id,
@@ -102,7 +102,7 @@ def verify_for_execution(session: Session, approval_id: str, *, payload: dict[st
         approval.reason = "plan changed after approval"
         raise ApprovalRequired("plan changed after approval; a new approval is required")
     ws = session.get(Workspace, approval.workspace_id)
-    if ws is None or ws.policy_version != approval.policy_version:
+    if ws is None or ws.status != "active" or ws.deleted_at is not None or ws.policy_version != approval.policy_version:
         approval.status = "invalidated"
         approval.reason = "policy changed after approval"
         raise ApprovalRequired("policy changed after approval; a new approval is required")
