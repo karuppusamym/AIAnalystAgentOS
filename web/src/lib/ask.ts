@@ -2,7 +2,7 @@
  * Ask screen helpers (P4-U02): thread grouping, provenance and staleness pills, one refusal state per
  * kind, and the promote actions. Pure functions, so the rules are unit-tested without rendering.
  */
-import type { AskPromotion, AskRefusal, AskStaleness, AskThread, AskTurn, DecisionRow } from "../api";
+import type { AskPromotion, AskRefusal, AskStaleness, AskThread, AskTurn, ContextReceipt, DecisionRow } from "../api";
 import type { StateKind } from "../components/ui";
 import type { Tone } from "./status";
 
@@ -119,4 +119,16 @@ export function decisionLine(d: DecisionRow): string {
 /** The model probabilities of a decision, highest first (JEV / classifier backends). */
 export function topProbabilities(d: { probabilities?: Record<string, number> | null }, n = 3): [string, number][] {
   return Object.entries(d.probabilities ?? {}).sort(([, a], [, b]) => b - a).slice(0, n);
+}
+
+/** A context receipt (P4-K05/U04): title, where in a pack it is, and whether a person reviewed it. */
+export function receiptView(r: ContextReceipt) {
+  return {
+    title: String(r.title ?? r.name ?? r.id ?? r.kind ?? "context item"),
+    where: r.path ? `${r.path}${r.anchor ? `#${r.anchor}` : ""}` : null,
+    reviewed: typeof r.source === "string" && r.source.startsWith("review:"),
+    untrusted: r.trusted === false,
+    section: r.section ?? r.kind ?? null,
+    documentId: typeof r.document_id === "string" ? r.document_id : null,
+  };
 }

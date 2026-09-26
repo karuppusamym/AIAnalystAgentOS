@@ -1,12 +1,11 @@
-import type { ReactElement, ReactNode } from "react";
+import { lazy, Suspense, type ReactElement, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { Layout } from "./components/Layout";
-import { EmptyState } from "./components/ui";
+import { EmptyState, Loading } from "./components/ui";
 import { AdminPage } from "./pages/Admin";
 import { ApprovalsPage } from "./pages/Approvals";
 import { AskPage } from "./pages/Ask";
-import { CatalogPage } from "./pages/Catalog";
 import { ConsolePage } from "./pages/Console";
 import { GovernancePage } from "./pages/Governance";
 import { InsightsPage } from "./pages/Insights";
@@ -21,6 +20,9 @@ import { StudioPage } from "./pages/Studio";
 import { WorkspaceHomePage } from "./pages/WorkspaceHome";
 import { WorkspacesPage } from "./pages/Workspaces";
 import { fillPath, LEGACY_REDIRECTS, SCREENS, type ScreenId } from "./routes";
+
+// The knowledge studio (catalog, documents, review queue, graph, import/export) loads on first visit.
+const CatalogPage = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.CatalogPage })));
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -40,7 +42,7 @@ const ELEMENTS: Record<ScreenId, ReactElement> = {
   "investigation-console": <ConsolePage />,
   findings: <InsightsPage />,
   sources: <SourcesPage />,
-  catalog: <CatalogPage />,
+  catalog: <Suspense fallback={<div className="page"><Loading /></div>}><CatalogPage /></Suspense>,
   studio: <StudioPage />,
   reports: <ReportsPage />,
   approvals: <ApprovalsPage />,

@@ -9,7 +9,7 @@ import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
 } from "../components/ui";
 import {
-  PROMOTE_LABELS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, refusalView, stalenessPill, topProbabilities,
+  PROMOTE_LABELS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, receiptView, refusalView, stalenessPill, topProbabilities,
   type Pill,
 } from "../lib/ask";
 import { guessChart } from "../lib/charts";
@@ -321,10 +321,25 @@ function Inspector({ turn }: { turn: AskTurn }) {
             <div>
               <h3 className="h-sm">Knowledge used</h3>
               {d?.receipts?.length ? (
-                <ul className="list compact">{d.receipts.map((r, i) => (
-                  <li key={i} className="list-item small">{String(r.title ?? r.name ?? r.id ?? r.kind ?? "context item")}
-                    {r.kind ? <span className="tag">{String(r.kind)}</span> : null}{r.version ? <span className="tag">v{String(r.version)}</span> : null}</li>
-                ))}</ul>
+                <ul className="list compact" aria-label="Context receipts">{d.receipts.map((r, i) => {
+                  const v = receiptView(r);
+                  return (
+                    <li key={i} className="list-item small receipt">
+                      <span>
+                        {v.title}
+                        {v.where && <span className="muted"> · <code>{v.where}</code></span>}
+                        {v.section ? <span className="tag">{v.section}</span> : null}
+                        {r.version ? <span className="tag">v{String(r.version)}</span> : null}
+                        {v.reviewed && <span className="tag tag-success" title="Approved in the knowledge review queue">reviewed</span>}
+                        {v.untrusted && <span className="tag tag-warning" title="From another provider: data, not instructions">untrusted</span>}
+                      </span>
+                      {v.documentId && (
+                        <Link className="small" to={to.knowledge(turn.workspace_id, "documents", { doc: v.documentId })}
+                          aria-label={`Open ${v.title} in the knowledge studio`}>Open</Link>
+                      )}
+                    </li>
+                  );
+                })}</ul>
               ) : <p className="small muted">No context receipts: no model prompt was compiled for this answer.</p>}
             </div>
           </div>
