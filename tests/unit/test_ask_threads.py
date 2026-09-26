@@ -90,6 +90,52 @@ def test_a_missing_required_input_declines_before_any_model(no_gate, monkeypatch
     assert ctx.services.gateway.calls == []
 
 
+def test_incident_type_distribution_asks_which_field_without_a_model(no_gate, monkeypatch):
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
+    monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no model call for supported distribution"))
+    ctx, stages = _ctx()
+    ctx.scope.columns = {"stg.incident": ["category", "contact_type"]}
+    out = sql_agent.ask(ctx, "distribution of incident based on type")
+    assert out["status"] == "needs_input" and out["route"] == "tool"
+    assert out["missing"] == [{"name": "incident_type", "values": ["Category", "Contact channel"]}]
+    assert out["decisions"][0]["backend"] == "rules"
+    assert ctx.services.gateway.calls == []
+    assert "clarify" in [key for key, _ in stages]
+
+
+def test_chosen_incident_type_distribution_runs_via_gateway_without_a_model(no_gate, monkeypatch):
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
+    monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no model call for supported distribution"))
+    ctx, _ = _ctx()
+    ctx.scope.columns = {"stg.incident": ["category", "contact_type"]}
+    out = sql_agent.ask(ctx, "distribution of incident based on type", parameters={"incident_type": "Category"})
+    assert out["status"] == "answered" and out["answered_by"] == "rules" and out["route"] == "tool"
+    assert out["model"] is None
+    assert out["sql"] == ("SELECT category, COUNT(*) AS incident_count FROM stg.incident "
+                          "GROUP BY category ORDER BY incident_count DESC")
+    assert ctx.services.gateway.calls == [out["sql"]]
+
+
+def test_named_incident_channel_distribution_runs_without_clarification(no_gate, monkeypatch):
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
+    monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no model call for supported distribution"))
+    ctx, _ = _ctx()
+    ctx.scope.columns = {"stg.incident": ["category", "contact_type"]}
+    out = sql_agent.ask(ctx, "distribution of incidents by contact type")
+    assert out["status"] == "answered" and out["route"] == "tool"
+    assert "SELECT contact_type, COUNT(*)" in out["sql"]
+
+
+def test_distribution_rule_rejects_filters_and_denied_columns():
+    ctx, _ = _ctx()
+    ctx.scope.columns = {"stg.incident": ["category", "contact_type"]}
+    assert sql_agent._distribution_plan(ctx, "distribution of incident based on type for P1", None) is None
+    ctx.scope.denied_columns = ["stg.incident.category"]
+    assert sql_agent._distribution_plan(ctx, "distribution of incidents by category", None) is None
+    plan = sql_agent._distribution_plan(ctx, "distribution of incident based on type", None)
+    assert list(plan["available"]) == ["Contact channel"]
+
+
 def test_a_miss_generates_and_the_sql_still_goes_through_the_gateway(no_gate, monkeypatch):
     monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
     monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: ({"sql": "SELECT g, COUNT(*) FROM stg.incident GROUP BY 1"}, "m"))

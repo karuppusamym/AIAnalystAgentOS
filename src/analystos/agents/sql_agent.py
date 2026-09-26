@@ -126,7 +126,7 @@ def build_dataset(ctx: RunContext) -> dict:
 # ------------------------------------------------------------------------------------------- ad hoc
 # ask_route options (spec v3 §4.2): the ladder, tool-first. A rule decides; a model may only break a tie.
 ASK_ROUTES = {"verified_query": "Answer from a verified query in the registry (no model call)",
-              "tool": "Answer with a registered parameterised tool",
+              "tool": "Answer a supported count distribution with a schema-bound rule",
               "generate": "Write new SQL with the model, then validate and run it through the gateway",
               "decline": "Do not answer yet: a required input is missing, ask the user for it"}
 
@@ -245,7 +245,69 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
     return None if hit is None else _registry_answer(ctx, question, hit)
 
 
-def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+_DISTRIBUTION_QUESTION = re.compile(
+    r"(?:show(?: me)? |give me (?:the )?|what is (?:the )?)?"
+    r"(?:distribution|breakdown) (?:of )?incidents? (?:based on|by|per|across) "
+    r"(?:incident )?(type|category|contact type|channel)"
+)
+_INCIDENT_DIMENSIONS = {"Category": "category", "Contact channel": "contact_type"}
+
+
+def _distribution_plan(ctx: Any, question: str, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Only the complete, unfiltered incident distribution question is covered by this rule.
+
+    Identifiers come from the caller's scope; a vague "type" is never silently mapped to a field.
+    Other questions keep the verified-query/model route and its refusal behavior.
+    """
+    plain = re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
+    match = _DISTRIBUTION_QUESTION.fullmatch(plain)
+    if match is None:
+        return None
+    assets = [fq for fq in ctx.scope.assets if fq.rpartition(".")[2].lower() == "incident"]
+    if len(assets) != 1:
+        return None
+    asset = assets[0]
+    columns = set(getattr(ctx.scope, "columns", {}).get(asset, []))
+    denied = set(getattr(ctx.scope, "denied_columns", []))
+    available = {label: column for label, column in _INCIDENT_DIMENSIONS.items()
+                 if column in columns and f"{asset}.{column}" not in denied}
+    if not available:
+        return None
+    requested = match.group(1)
+    label = ("Category" if requested == "category" else "Contact channel" if requested in ("contact type", "channel")
+             else str((parameters or {}).get("incident_type") or ""))
+    if requested != "type" and label not in available:
+        return None
+    return {"asset": asset, "available": available, "label": label if label in available else None}
+
+
+def _distribution_answer(ctx: Any, question: str, plan: dict[str, Any], parameters: dict[str, Any] | None) -> dict[str, Any]:
+    label = plan["label"]
+    if label is None:
+        choices = list(plan["available"])
+        _stage(ctx, "clarify", "Checking which incident type you mean")
+        return {"status": "needs_input", "answered_by": "rules", "model": None, "sql": None, "attempts": [],
+                "result": None, "parameters": parameters or {},
+                "missing": [{"name": "incident_type", "values": choices}],
+                "explanation": f"‘Type’ could mean {' or '.join(choices)}. Choose the field to group by; nothing was guessed."}
+    column = plan["available"][label]
+    sql = (f"SELECT {column}, COUNT(*) AS incident_count FROM {plan['asset']} "
+           f"GROUP BY {column} ORDER BY incident_count DESC")
+    _stage(ctx, "execute", f"Counting incidents by {label.lower()} through the read-only query gateway")
+    result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
+                                          run_id=None, task_id=None)
+    if getattr(ctx, "router", None) is not None:
+        from analystos.llm.cache import estimate_tokens
+
+        ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=estimate_tokens(question) + 500,
+                               reason=f"L2 rule: incident distribution by {column}", rung="rules")
+    return {"status": "answered", "answered_by": "rules", "model": None, "sql": sql, "attempts": [],
+            "result": _result(result), "chart": {"type": "bar", "x": column, "y": "incident_count"},
+            "explanation": f"Count of incidents grouped by {label.lower()} (schema-bound rule; no model call)."}
+
+
+def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | None = None,
+          *, tool_match: float = 0.0) -> dict[str, Any]:
     """`ask_route` (authority `route`): verified query > tool > generate, decline when a required input
     is missing. The facts are deterministic; the rule answers every case but a close tie. A verified
     query whose words matched but whose SQL does not answer the question (`rejected`) scores 0: it is
@@ -253,7 +315,7 @@ def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | No
     from analystos.decisions.types import Question
 
     facts = {"verified_match": verified_match_score(hit.score) if hit is not None else 0.0,
-             "tool_match": 0.0,  # no parameterised Ask tools are registered yet: the rung is never matched
+             "tool_match": tool_match,
              "missing_inputs": [p["name"] for p in hit.missing] if hit is not None else []}
     if rejected:
         facts["verified_rejected"] = [{k: r[k] for k in ("name", "score", "reasons")} for r in rejected]
@@ -290,16 +352,21 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
         if rejected and hit is None:
             _stage(ctx, "registry", f"A verified query is close but does not answer this: {rejected[0]['reasons'][0]}",
                    rejected=[r["name"] for r in rejected])
-    chosen = route(ctx, question, hit, rejected)
+    plan = _distribution_plan(ctx, question, parameters)
+    chosen = route(ctx, question, hit, rejected, tool_match=1.0 if plan is not None and hit is None else 0.0)
     decisions = [chosen]
     path = chosen["value"]
-    if path == "tool" or (path in ("verified_query", "decline") and hit is None):
+    if (path == "tool" and plan is None) or (path in ("verified_query", "decline") and hit is None):
         path = "verified_query" if hit is not None else "generate"  # nothing to run on that rung: the next one
     _stage(ctx, "route", {"verified_query": "Answering from the verified query registry",
                           "decline": "A required input is missing",
+                          "tool": "Answering with a schema-bound count rule",
                           "generate": "No verified answer fits: writing new SQL"}[path], route=chosen["value"])
     if path in ("verified_query", "decline"):
         out = _registry_answer(ctx, question, hit)
+        return {**out, "route": chosen["value"], "decisions": decisions}
+    if path == "tool":
+        out = _distribution_answer(ctx, question, plan, parameters)
         return {**out, "route": chosen["value"], "decisions": decisions}
     asked = clarify(ctx, question)
     decisions.append(asked)
