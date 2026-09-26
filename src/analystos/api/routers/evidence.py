@@ -25,7 +25,7 @@ def _run(session: Session, workspace_id: str, run_id: str) -> AnalysisRun:
 
 
 @router.get("/insights/{insight_id}/attested")
-def attested(insight_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def attested(insight_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The verified finding as an OKF v0.2 Attested Computation (document text and frontmatter)."""
     from analystos.knowledge.attested import attested_from_insight
 
@@ -38,7 +38,7 @@ def attested(insight_id: str, user: User = Depends(current_user), session: Sessi
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/findings/attest")
-def attest_run_findings(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def attest_run_findings(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Write the run's verified findings into the workspace pack as draft Attested Computations."""
     from analystos.governance.audit import audit
     from analystos.knowledge.attested import write_findings
@@ -52,7 +52,7 @@ def attest_run_findings(workspace_id: str, run_id: str, user: User = Depends(cur
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/openlineage")
-def run_openlineage(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def run_openlineage(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """OpenLineage RunEvents (START and COMPLETE/FAIL) for every governed query of the run."""
     from analystos.evidence.openlineage import events_for_run
 
@@ -62,7 +62,7 @@ def run_openlineage(workspace_id: str, run_id: str, user: User = Depends(current
 
 
 @router.get("/workspaces/{workspace_id}/contracts")
-def data_contracts(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def data_contracts(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The ODCS v3.2 contracts of the workspace's published datasets (from its knowledge pack)."""
     from analystos.knowledge import store
 

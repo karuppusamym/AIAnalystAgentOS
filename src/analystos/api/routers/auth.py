@@ -36,7 +36,7 @@ class NewUser(BaseModel):
 
 
 @router.post("/auth/login")
-def login(body: Login, session: Session = Depends(db)):
+def login(body: Login, session: Session = Depends(db, scope="function")):
     if not get_settings().password_login:
         raise Forbidden("password sign-in is turned off; use single sign-on")
     user = session.scalar(select(User).where(User.email == body.email.lower()))
@@ -54,12 +54,12 @@ def me(user: User = Depends(current_user)):
 
 
 @router.get("/users")
-def list_users(_: User = Depends(current_user), session: Session = Depends(db)):
+def list_users(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return [{"id": u.id, "email": u.email, "name": u.name, "is_admin": u.is_admin} for u in session.scalars(select(User))]
 
 
 @router.post("/users")
-def create_user(body: NewUser, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def create_user(body: NewUser, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     if session.scalar(select(User).where(User.email == body.email.lower())):
         raise Conflict("user exists")
     user = User(id=new_id("usr"), email=body.email.lower(), name=body.name, password_hash=hash_password(body.password),
@@ -96,7 +96,7 @@ def oidc_login(return_to: str | None = None):
 
 @router.get("/auth/oidc/callback")
 def oidc_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None,
-                  aos_oidc_tx: str | None = Cookie(default=None), session: Session = Depends(db)):
+                  aos_oidc_tx: str | None = Cookie(default=None), session: Session = Depends(db, scope="function")):
     """Validate the transaction, exchange the code with the verifier, validate the ID token and
     provision the user. The browser returns to the web app with the AnalystOS token in the URL
     fragment (never sent to a server); `Accept: application/json` gets the login response instead."""

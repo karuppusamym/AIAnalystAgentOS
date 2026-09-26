@@ -37,14 +37,14 @@ class ContextPreviewIn(BaseModel):
 
 @router.get("/workspaces/{workspace_id}/knowledge/suggestions")
 def list_suggestions(workspace_id: str, status: str | None = "pending", kind: str | None = None, origin: str | None = None,
-                     limit: int = 100, user: User = Depends(current_user), session: Session = Depends(db)):
+                     limit: int = 100, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The review queue: drafts with per-field value, confidence and provenance."""
     require_role(session, user, workspace_id, "viewer")
     return suggestions.queue(session, workspace_id, status=status or None, kind=kind, origin=origin, limit=limit)
 
 
 @router.post("/workspaces/{workspace_id}/knowledge/suggestions/review")
-def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Approve, edit-then-approve or reject drafts in one batch: one workspace-pack revision."""
     require_role(session, user, workspace_id, "editor")
     return suggestions.review(session, workspace_id, user, [d.model_dump() for d in body.decisions])
@@ -52,7 +52,7 @@ def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(c
 
 @router.post("/workspaces/{workspace_id}/knowledge/context")
 def preview_context(workspace_id: str, body: ContextPreviewIn, user: User = Depends(current_user),
-                    session: Session = Depends(db)):
+                    session: Session = Depends(db, scope="function")):
     """What the context compiler would send for `purpose` about `question` from this workspace's
     knowledge (the catalog section is left out: it depends on a run's scope). No model is called."""
     from analystos.context.compiler import KNOWLEDGE_SECTIONS, compile_context, load_knowledge
@@ -71,7 +71,7 @@ def preview_context(workspace_id: str, body: ContextPreviewIn, user: User = Depe
 
 
 @router.get("/runs/{run_id}/context-receipts")
-def run_context_receipts(run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def run_context_receipts(run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Per model call of a run: the purpose and the receipts of the context it carried."""
     from analystos.services.runs import get_run_for
 
