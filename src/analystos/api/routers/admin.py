@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from analystos.api.deps import admin_user, current_user, db
 from analystos.api.serialize import rows
 from analystos.context import service as ctx_svc
-from analystos.contracts.registry import AgentSpec, ToolSpec
+from analystos.contracts.registry import AgentSpec, SkillSpec, ToolSpec
 from analystos.core.errors import NotFound
 from analystos.db.models import (
     AgentDefinition,
@@ -143,7 +143,8 @@ def patch_agent(agent_id: str, body: EnabledPatch, admin: User = Depends(admin_u
 
 @router.get("/skills")
 def skills(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    return [{**s.spec, "enabled": s.enabled} for s in session.scalars(select(SkillDefinition).order_by(SkillDefinition.id))]
+    return [{**s.spec, **SkillSpec.model_validate(s.spec).model_dump(), "enabled": s.enabled}
+            for s in session.scalars(select(SkillDefinition).order_by(SkillDefinition.id))]
 
 
 @router.get("/admin/models")

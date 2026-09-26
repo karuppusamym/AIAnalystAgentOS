@@ -372,6 +372,7 @@ function Inspector({ turn }: { turn: AskTurn }) {
 // ------------------------------------------------------------------------------------ page
 export function AskPage() {
   const { wsId = "" } = useParams();
+  const assets = useAsync(() => api.listAssets(wsId), [wsId]);
   const [params, setParams] = useSearchParams();
   const threadId = params.get("thread");
   const [search, setSearch] = useState("");
@@ -393,6 +394,13 @@ export function AskPage() {
   const [running, setRunning] = useState(false);
   const [explain, setExplain] = useState<SqlExplanation | null>(null);
   const [explaining, setExplaining] = useState(false);
+  const incident = assets.data?.find((a) => a.selected && a.name.toLowerCase() === "incident");
+  const incidentColumns = new Set(incident?.columns.map((c) => c.name) ?? []);
+  const sqlExamples = incident ? [
+    { label: "Count incidents", sql: `SELECT COUNT(*) AS incident_count FROM ${incident.fq}` },
+    ...(incidentColumns.has("priority") ? [{ label: "Incidents by priority", sql: `SELECT priority, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY priority ORDER BY incident_count DESC` }] : []),
+    ...(incidentColumns.has("made_sla") ? [{ label: "SLA outcome", sql: `SELECT made_sla, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY made_sla ORDER BY incident_count DESC` }] : []),
+  ] : [];
 
   useEffect(() => {
     let stale = false;
@@ -542,6 +550,11 @@ export function AskPage() {
           </Card>
 
           <Card title="SQL console">
+            {assets.error && <ErrorBox error={assets.error} onRetry={assets.reload} />}
+            {sqlExamples.length > 0 && <div className="chip-row" aria-label="Example queries">
+              {sqlExamples.map((example) => <button key={example.label} type="button" className="btn btn-sm"
+                onClick={() => { setSql(example.sql); setExplain(null); setQres(null); setQErr(null); }}>{example.label}</button>)}
+            </div>}
             <form className="form" onSubmit={submitSql}>
               <Field label="SQL (read-only)" htmlFor="sql" hint="Paste SQL and Explain it first: the validator and the source's plan, nothing executed. Run uses the same gateway, scope and audit as the agents.">
                 <textarea id="sql" ref={consoleRef} className="mono" rows={6} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} required
