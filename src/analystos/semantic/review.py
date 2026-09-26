@@ -194,7 +194,9 @@ def decide_model(session: Session, workspace_id: str, version: int, user: User, 
         raise Forbidden("separation of duties: the person accountable for a model proposal cannot decide it")
     ws = session.get(Workspace, workspace_id)
     approval = session.get(Approval, row.approval_id) if row.approval_id else None
-    if approval is None or approval.status != "pending" or approval.policy_version != ws.policy_version:
+    if approval is None or approval.status != "pending" or approval.expires_at < utcnow() \
+            or approval.policy_version != ws.policy_version:
+        _lapse(approval)
         approval = request_approval(session, workspace_id=workspace_id, run_id=None, action=MODEL_APPROVAL_ACTION,
                                     payload=_model_payload(row), plan_hash=None, policy_version=ws.policy_version,
                                     requested_by=requester, risk_tier="medium", destination=None,
@@ -468,9 +470,17 @@ def decide_candidate(session: Session, workspace_id: str, candidate_id: str, use
     ws = session.get(Workspace, workspace_id)
     if approval is None or approval.status != "pending" or approval.expires_at < utcnow() \
             or approval.policy_version != ws.policy_version:
+        _lapse(approval)
         approval = _request(session, row)
     decide(session, approval.id, user, approve=approve, reason=reason)
     return apply_candidate_decision(session, approval)
+
+
+def _lapse(approval: Approval | None) -> None:
+    """A lapsed (expired, policy-changed) pending request is closed, so re-requesting the same payload
+    opens a new one instead of returning it (request_approval reuses a pending request by hash)."""
+    if approval is not None and approval.status == "pending":
+        approval.status, approval.reason = "invalidated", "re-requested (expired or policy changed)"
 
 
 def _check_acceptable(row: SemanticRelationshipCandidate) -> None:
