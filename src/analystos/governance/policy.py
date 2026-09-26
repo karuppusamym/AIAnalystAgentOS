@@ -2,6 +2,9 @@
 Prompts, retrieved context and model output never widen what this returns."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any, ParamSpec, TypeVar
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +15,10 @@ from analystos.core.errors import AnalystOSError, Forbidden, NotFound
 from analystos.db.models import Source, SourceAsset, SourceColumn, User, Workspace, WorkspaceMember, WorkspacePolicy
 from analystos.governance.audit import audit
 from analystos.security.auth import APPROVER_ROLES, role_at_least
+
+P = ParamSpec("P")
+R = TypeVar("R")
+T = TypeVar("T")
 
 
 def source_dialect(kind: str, execution_mode: str | None) -> str:
@@ -52,6 +59,53 @@ def require_role(session: Session, user: User, workspace_id: str, minimum: str, 
     if not role_at_least(role, minimum) and not (minimum == "approver" and role in APPROVER_ROLES):
         raise Forbidden(f"role '{role}' cannot perform this action (needs {minimum})")
     return role
+
+
+SCOPED_LOADERS: set[str] = set()
+
+
+def scoped_loader(fn: Callable[P, R]) -> Callable[P, R]:
+    """Mark a helper that loads a workspace child through `load_in_workspace` (tests/unit/
+    test_route_workspace_binding.py accepts a route that calls one; it checks the helper does)."""
+    SCOPED_LOADERS.add(f"{fn.__module__}.{fn.__qualname__}")
+    return fn
+
+
+def load_in_workspace(session: Session, model: type[T], obj_id: str | None, workspace_id: str | None = None, *,
+                      user: User, minimum: str = "viewer", label: str | None = None,
+                      workspace_of: Callable[[Session, Any], str | None] | None = None,
+                      shared: bool = False, for_update: bool = False) -> T:
+    """The one way an API path reaches a workspace child (run, insight, artifact, approval, thread...).
+
+    The child's own workspace decides, never the URL: with `workspace_id` (the path's) a child of any
+    other workspace is a 404, even for a caller who is a member of both; without it the caller's role
+    is checked in the child's workspace. Every "absent" case — unknown id, other workspace, not a
+    member, deleted workspace — is the same 404 with the same message, so a response never tells a
+    caller that something exists elsewhere. Only a member below `minimum` sees 403 (with a path
+    workspace, before the child is looked up, as a plain role check would). `shared` admits a
+    platform-wide child (workspace NULL, e.g. the platform knowledge pack), checked against the path's
+    workspace."""
+    what = label or getattr(model, "__tablename__", model.__name__).replace("_", " ")
+    missing = NotFound(f"{what} not found")
+    if workspace_id is not None:  # the path's workspace first: a member below `minimum` learns nothing about the child
+        try:
+            require_role(session, user, workspace_id, minimum)
+        except NotFound:
+            raise missing from None
+    obj = session.get(model, obj_id, with_for_update=for_update) if obj_id else None
+    if obj is None:
+        raise missing
+    owner = workspace_of(session, obj) if workspace_of is not None else getattr(obj, "workspace_id", None)
+    if owner is None and shared and workspace_id is not None:
+        owner = workspace_id
+    if owner is None or (workspace_id is not None and owner != workspace_id):
+        raise missing
+    if workspace_id is None:
+        try:
+            require_role(session, user, owner, minimum)
+        except NotFound:
+            raise missing from None
+    return obj
 
 
 def load_policy(session: Session, workspace: Workspace) -> WorkspacePolicyDoc:

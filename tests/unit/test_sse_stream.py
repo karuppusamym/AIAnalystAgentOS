@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from analystos.api.deps import StreamAuth
 from analystos.events import stream as stream_mod
 from analystos.events.stream import Batch, RunEventHub, run_event_stream
 
@@ -97,7 +98,8 @@ def test_endpoint_authorizes_off_the_loop(monkeypatch):
         yield SimpleNamespace()
 
     monkeypatch.setattr(analysis, "session_scope", guarded_scope)
-    monkeypatch.setattr(analysis.run_svc, "get_run_for", lambda s, user, run_id: SimpleNamespace(workspace_id="ws_1"))
+    monkeypatch.setattr(analysis.run_svc, "get_run_for", lambda s, user, run_id, workspace_id=None: SimpleNamespace(workspace_id="ws_1"))
+    monkeypatch.setattr(analysis, "stream_guard", lambda auth, load: None)  # re-authorization: tests/unit/test_stream_revocation.py
     db = GuardedDb(statuses=["FAILED"], events=[[7]])
     monkeypatch.setattr(stream_mod, "session_scope", db)
     monkeypatch.setattr(stream_mod, "TERMINAL_GRACE_SECONDS", 0.0)
@@ -105,7 +107,7 @@ def test_endpoint_authorizes_off_the_loop(monkeypatch):
 
     async def main():
         request = SimpleNamespace(headers={"last-event-id": "6"}, is_disconnected=_never_disconnected)
-        response = await analysis.events("ws_1", "run_1", request, after_id=0, user=SimpleNamespace(id="usr_1"))
+        response = await analysis.events("ws_1", "run_1", request, after_id=0, auth=StreamAuth(SimpleNamespace(id="usr_1"), None))
         return threading.get_ident(), await _collect(response.body_iterator)
 
     loop_thread, frames = asyncio.run(main())
@@ -127,29 +129,37 @@ def test_stream_authentication_is_off_the_loop_and_short_lived(monkeypatch):
 
     monkeypatch.setattr(deps, "session_scope", scope)
     monkeypatch.setattr(deps, "_authenticate", lambda session, auth, cid: SimpleNamespace(id="usr_1", session=session))
+    monkeypatch.setattr(deps, "decode_token", lambda token: {"sub": "usr_1", "exp": 1234})
 
     async def main():
-        user = await deps.streaming_user("Bearer t", None)
-        return threading.get_ident(), user
+        auth = await deps.streaming_auth("Bearer t", None)
+        return threading.get_ident(), auth
 
-    loop_thread, user = asyncio.run(main())
-    assert user.id == "usr_1" and [closed for _, closed in seen] == [False, True]
+    loop_thread, auth = asyncio.run(main())
+    assert auth.user.id == "usr_1" and auth.expires_at == 1234.0  # the stream ends when the token does
+    assert [closed for _, closed in seen] == [False, True]
     assert loop_thread not in {t for t, _ in seen}
 
 
-def test_endpoint_rejects_run_from_another_workspace(monkeypatch):
+def test_endpoint_rejects_run_from_another_workspace(sqlite_db):
+    """Even for a member of both workspaces: the run's own workspace must be the path's."""
     from analystos.api.routers import analysis
     from analystos.core.errors import NotFound
+    from analystos.db.models import AnalysisRun, User, Workspace, WorkspaceMember
 
-    @contextlib.contextmanager
-    def scope():
-        yield SimpleNamespace()
-
-    monkeypatch.setattr(analysis, "session_scope", scope)
-    monkeypatch.setattr(analysis.run_svc, "get_run_for", lambda s, user, run_id: SimpleNamespace(workspace_id="ws_other"))
+    with sqlite_db() as s:
+        s.add(User(id="usr_1", email="u@x", name="u", password_hash="x", active=True))
+        for ws in ("ws_1", "ws_other"):
+            s.add(Workspace(id=ws, name=ws, created_by="usr_1"))
+            s.add(WorkspaceMember(workspace_id=ws, user_id="usr_1", role="owner"))
+        s.add(AnalysisRun(id="run_1", workspace_id="ws_other", objective="o", status="RUNNING", plan={}, plan_version=1, scope={},
+                          instructions=[], constraints={}, requested_by="usr_1", summary={}, origin={"type": "user"}))
+        s.commit()
+        user = s.get(User, "usr_1")
+        s.expunge(user)
     request = SimpleNamespace(headers={}, is_disconnected=_never_disconnected)
-    with pytest.raises(NotFound):
-        asyncio.run(analysis.events("ws_1", "run_1", request, after_id=0, user=SimpleNamespace(id="usr_1")))
+    with pytest.raises(NotFound, match="run not found"):
+        asyncio.run(analysis.events("ws_1", "run_1", request, after_id=0, auth=StreamAuth(user, None)))
 
 
 def test_nudge_wakes_the_stream_well_before_the_fallback_poll():

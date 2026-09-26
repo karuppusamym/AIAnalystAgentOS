@@ -13,7 +13,7 @@ from analystos.db.base import session_scope
 from analystos.db.models import Source, SourceAsset, SourceColumn, User
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role, scoped_loader
 
 _CREDENTIAL_KEY = re.compile(r"pass(word|wd|phrase)?|pwd|secret|token|api_?key|private_?key|credential|auth", re.I)
 _URL_USERINFO = re.compile(r"://[^/@\s]+:[^/@\s]+@")
@@ -64,15 +64,13 @@ def register_source(session: Session, user: User, workspace_id: str, *, kind: st
     return src
 
 
-def _source(session: Session, user: User, source_id: str, minimum: str = "editor") -> Source:
-    src = session.get(Source, source_id)
-    if src is None:
-        raise NotFound(f"source {source_id} not found")
-    require_role(session, user, src.workspace_id, minimum)
-    return src
+@scoped_loader
+def _source(session: Session, user: User, source_id: str, minimum: str = "editor", workspace_id: str | None = None) -> Source:
+    return load_in_workspace(session, Source, source_id, workspace_id, user=user, minimum=minimum, label="source")
 
 
-def discover_source(user: User, source_id: str) -> dict:
+@scoped_loader
+def discover_source(user: User, source_id: str, workspace_id: str | None = None) -> dict:
     """Full metadata crawl without profiling (one code path with scheduled crawls).
 
     The crawler keeps owner tags and reviewed descriptions; the previous implementation replaced
@@ -80,7 +78,7 @@ def discover_source(user: User, source_id: str) -> dict:
     from analystos.services.crawler import crawl_source
 
     with session_scope() as s:
-        _source(s, user, source_id)
+        _source(s, user, source_id, workspace_id=workspace_id)
     result = crawl_source(user, source_id, mode="full", profile=False)
     with session_scope() as s:
         row = s.get(Source, source_id)
@@ -101,7 +99,8 @@ def discover_source(user: User, source_id: str) -> dict:
             "test": {"ok": True, "message": "ok", "latency_ms": result["stats"].get("latency_ms", 0)}}
 
 
-def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
+@scoped_loader
+def select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None = None) -> dict:
     """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load)."""
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
@@ -110,7 +109,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
     from analystos.staging.snapshots import stage_asset
 
     with session_scope() as s:
-        src = _source(s, user, source_id)
+        src = _source(s, user, source_id, workspace_id=workspace_id)
         assets = list(s.scalars(select(SourceAsset).where(SourceAsset.source_id == source_id)))
         wanted = set(asset_names)
         unknown = wanted - {a.name for a in assets} - {a.source_name for a in assets}
@@ -154,11 +153,9 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
     return {"selected": asset_names, "loaded": loaded}
 
 
+@scoped_loader
 def tag_column(session: Session, user: User, asset_id: str, column: str, tags: list[str]) -> SourceColumn:
-    asset = session.get(SourceAsset, asset_id)
-    if asset is None:
-        raise NotFound("asset not found")
-    require_role(session, user, asset.workspace_id, "owner")
+    asset = load_in_workspace(session, SourceAsset, asset_id, user=user, minimum="owner", label="asset")
     col = session.scalar(select(SourceColumn).where(SourceColumn.asset_id == asset_id, SourceColumn.name == column))
     if col is None:
         raise NotFound("column not found")

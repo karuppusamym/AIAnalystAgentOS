@@ -56,8 +56,16 @@ from analystos.db.models import (
     User,
 )
 from analystos.events.bus import emit
+from analystos.events.stream import REAUTH_SECONDS, StreamGuard, terminal_frame
 from analystos.governance.audit import audit
-from analystos.governance.policy import get_workspace, load_policy, require_role, resolve_scope
+from analystos.governance.policy import (
+    get_workspace,
+    load_in_workspace,
+    load_policy,
+    require_role,
+    resolve_scope,
+    scoped_loader,
+)
 
 AGING_AFTER = timedelta(hours=24)
 STALE_AFTER = timedelta(days=7)
@@ -230,20 +238,22 @@ def adhoc_context(session: Session, user: User, workspace_id: str) -> AdhocConte
 
 
 # ------------------------------------------------------------------------------ threads
-def _thread_for(session: Session, user: User, thread_id: str) -> AskThread:
+@scoped_loader
+def _thread_for(session: Session, user: User, thread_id: str, workspace_id: str | None = None) -> AskThread:
     """Threads are private to their author (a question can reveal intent); the workspace role still applies."""
-    thread = session.get(AskThread, thread_id)
-    if thread is None or (thread.user_id != user.id and not user.is_admin):
+    thread = load_in_workspace(session, AskThread, thread_id, workspace_id, user=user, label="thread")
+    if thread.user_id != user.id and not user.is_admin:
         raise NotFound("thread not found")
-    require_role(session, user, thread.workspace_id, "viewer")
     return thread
 
 
+@scoped_loader
 def _turn_for(session: Session, user: User, turn_id: str) -> AskTurn:
-    turn = session.get(AskTurn, turn_id)
-    if turn is None:
-        raise NotFound("question not found")
-    _thread_for(session, user, turn.thread_id)
+    turn = load_in_workspace(session, AskTurn, turn_id, user=user, label="question")
+    try:
+        _thread_for(session, user, turn.thread_id, turn.workspace_id)
+    except NotFound:
+        raise NotFound("question not found") from None
     return turn
 
 
@@ -273,12 +283,14 @@ def list_threads(session: Session, user: User, workspace_id: str, q: str | None 
     return [{**row(t), "turn_count": counts.get(t.id, 0)} for t in threads]
 
 
+@scoped_loader
 def thread_detail(session: Session, user: User, thread_id: str) -> dict[str, Any]:
     thread = _thread_for(session, user, thread_id)
     turns = list(session.scalars(select(AskTurn).where(AskTurn.thread_id == thread.id).order_by(AskTurn.seq)))
     return {**row(thread), "turns": [turn_out(session, t) for t in turns]}
 
 
+@scoped_loader
 def update_thread(session: Session, user: User, thread_id: str, *, title: str | None = None,
                   archived: bool | None = None) -> dict[str, Any]:
     thread = _thread_for(session, user, thread_id)
@@ -360,6 +372,7 @@ def _finish(out: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     return "refused", out.get("refusal") or refusal("failed", "The question could not be answered.")
 
 
+@scoped_loader
 def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
                   on_stage: Callable[[dict[str, Any]], None] | None = None,
                   ask_fn: Callable[..., dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -429,9 +442,11 @@ def _sse(event: str, data: Any) -> str:
 
 
 async def stream_turn(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
-                      ask: Callable[..., dict[str, Any]] = ask_in_thread) -> AsyncIterator[str]:
+                      ask: Callable[..., dict[str, Any]] = ask_in_thread, guard: StreamGuard | None = None) -> AsyncIterator[str]:
     """SSE frames for one Ask turn: `stage` per plain-language step as it happens, then `turn` (the
-    persisted turn) or `error`, then `end`. The Ask itself runs in a worker thread."""
+    persisted turn) or `error`, then `end`. The Ask itself runs in a worker thread. With a guard the
+    caller is re-authorized before every frame and while waiting: an expired token or lost access
+    ends the stream with `expired` / `revoked` and no stage or answer after it (P4-01)."""
     import anyio
 
     loop = asyncio.get_running_loop()
@@ -440,24 +455,46 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
     def on_stage(entry: dict[str, Any]) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, entry)
 
+    async def denied(payload: bool = True) -> str | None:
+        verdict = await guard.verdict(payload=payload) if guard is not None else None
+        return terminal_frame(*verdict) if verdict is not None else None
+
     task = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: ask(user, thread_id, question, parameters, on_stage=on_stage)))
+    getter: asyncio.Future | None = None
     try:
         while True:
-            getter = asyncio.ensure_future(queue.get())
-            done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
+            getter = getter if getter is not None and not getter.done() else asyncio.ensure_future(queue.get())
+            timeout = guard.wait_limit(REAUTH_SECONDS) if guard is not None else None
+            done, _ = await asyncio.wait({getter, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                if frame := await denied(payload=False):
+                    yield frame
+                    return
+                continue
             if getter in done:
+                if frame := await denied():
+                    yield frame
+                    return
                 yield _sse("stage", getter.result())
                 continue
             getter.cancel()
             while not queue.empty():
+                if frame := await denied():
+                    yield frame
+                    return
                 yield _sse("stage", queue.get_nowait())
             break
+        if frame := await denied():
+            yield frame
+            return
         try:
             yield _sse("turn", task.result())
         except AnalystOSError as exc:
             yield _sse("error", {"error": exc.to_dict()})
         yield _sse("end", {"status": "done"})
     finally:
+        if getter is not None and not getter.done():
+            getter.cancel()
         if not task.done():
             task.cancel()
             with contextlib.suppress(BaseException):
@@ -465,6 +502,7 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
 
 
 # ------------------------------------------------------------------------------ inspector
+@scoped_loader
 def inspector(session: Session, user: User, turn_id: str) -> dict[str, Any]:
     """The four inspector tabs' data: Result and SQL (the turn and its gateway audit row), Evidence
     (provenance, context receipts), Decision (decision rows and model-call receipts of the turn)."""
@@ -565,6 +603,7 @@ def _measure(session: Session, user: User, turn: AskTurn, body: dict[str, Any]) 
     return expression, dataset, {"value": value, "query_id": result.query_id}
 
 
+@scoped_loader
 def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn an answered question into a platform object; returns the promotion record."""
     from analystos.artifacts.registry import link, save_artifact

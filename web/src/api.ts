@@ -2388,8 +2388,16 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
   let last = afterId;
   let ended = false;
   let attempt = 0;
+  let closedReason: string | undefined;
 
   const handle = (m: SSEMessage) => {
+    if (m.event === "expired" || m.event === "revoked") {
+      // The server re-authorizes open streams: an expired token signs out, lost access closes for good.
+      ended = true;
+      if (m.event === "expired") unauthorizedHandler?.();
+      closedReason = m.event === "expired" ? "Your session expired" : "Access to this run was revoked";
+      return;
+    }
     if (m.event === "end") {
       ended = true;
       let status: string | null = null;
@@ -2450,7 +2458,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
       const delay = Math.min(15000, 500 * 2 ** Math.min(attempt, 5));
       await new Promise((r) => setTimeout(r, delay));
     }
-    cb.onStatus?.("closed");
+    cb.onStatus?.("closed", closedReason);
   };
   void loop();
   return { close: () => controller.abort() };
@@ -2479,6 +2487,10 @@ export async function streamAskTurn(threadId: string, question: string, paramete
         }
         if (m.event === "stage") cb.onStage(data as AskStage);
         else if (m.event === "turn") turn = data as AskTurn;
+        else if (m.event === "expired") {
+          unauthorizedHandler?.();
+          failure = new ApiError(401, "token_expired", "Your session expired; sign in again");
+        } else if (m.event === "revoked") failure = new ApiError(403, "access_revoked", "Access to this workspace was revoked");
         else if (m.event === "error") {
           const e = (data as { error?: { code?: string; message?: string; details?: Dict } }).error ?? {};
           failure = new ApiError(422, e.code ?? "error", e.message ?? "The question could not be asked", e.details ?? {});

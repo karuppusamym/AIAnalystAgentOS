@@ -536,6 +536,7 @@ export interface paths {
          * Ask Turn
          * @description Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
          *     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
+         *     A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.
          */
         post: operations["ask_turn_api_ask_threads__thread_id__turns_post"];
         delete?: never;
@@ -1455,6 +1456,8 @@ export interface paths {
          * Events
          * @description Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).
          *     Database reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback).
+         *     The caller is re-authorized while the stream is open: when the token expires or access is lost the
+         *     stream ends with an `expired` or `revoked` event and sends nothing after it.
          */
         get: operations["events_api_workspaces__workspace_id__analysis__run_id__events_get"];
         put?: never;
