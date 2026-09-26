@@ -31,6 +31,17 @@ class AskTurnIn(BaseModel):
     parameters: dict | None = None  # values for a verified query's parameters (answers a "needs_input" refusal)
 
 
+class AskRerunIn(BaseModel):
+    sql: str | None = Field(default=None, max_length=100_000)
+
+
+class AskScheduleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    cron: str = "0 9 * * *"
+    timezone: str = "UTC"
+    approval_id: str | None = None
+
+
 class AskPromoteIn(BaseModel):
     target: Literal["verified_query", "metric", "monitor", "dashboard", "investigate"]
     name: str | None = None
@@ -100,6 +111,18 @@ async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: Stre
 @router.get("/ask/turns/{turn_id}/inspector")
 def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.inspector(session, user, turn_id)
+
+
+@router.post("/ask/turns/{turn_id}/rerun")
+def rerun(turn_id: str, body: AskRerunIn, user: User = Depends(current_user)):
+    return ask_svc.rerun_turn(user, turn_id, body.sql)
+
+
+@router.post("/ask/turns/{turn_id}/schedule")
+def schedule(turn_id: str, body: AskScheduleIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    from analystos.services.saved_analysis import request_schedule
+
+    return request_schedule(session, user, turn_id, **body.model_dump())
 
 
 @router.post("/ask/turns/{turn_id}/promote")

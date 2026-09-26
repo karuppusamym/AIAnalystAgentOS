@@ -202,6 +202,7 @@ class AdhocContext:
     turn_id: str | None = None
     thread_id: str | None = None  # compiled contexts are reused within a thread (CTX-005)
     on_stage: Callable[[str, str, dict[str, Any]], None] | None = None
+    semantic_catalog: dict[str, Any] | None = None
 
     @property
     def router(self):
@@ -228,11 +229,12 @@ class AdhocContext:
 def adhoc_context(session: Session, user: User, workspace_id: str) -> AdhocContext:
     from analystos.runtime.context import default_services
     from analystos.tools.registry import get_agent_spec
+    from analystos.semantic.compiler import load_catalog
 
     scope = resolve_scope(session, session.merge(user), workspace_id)
     ws = get_workspace(session, workspace_id)
     ctx = AdhocContext(user=user, workspace=ws, scope=scope, policy=load_policy(session, ws), agent=get_agent_spec(session, "sql"),
-                       services=default_services())
+                       services=default_services(), semantic_catalog=load_catalog(session, workspace_id))
     session.expunge_all()
     return ctx
 
@@ -325,6 +327,8 @@ def provenance(session: Session, workspace_id: str, out: dict[str, Any]) -> dict
                        "freshness_at": _iso(asset.freshness_at) if asset else None,
                        "row_count": asset.row_count if asset else None})
     return {"assets": assets, "answered_by": out.get("answered_by"), "verified_query": out.get("verified_query"),
+            "governance": out.get("governance", "ad_hoc"), "semantic": out.get("semantic"),
+            "parent_turn_id": out.get("parent_turn_id"),
             "model": out.get("model"), "query_id": result.get("query_id"), "cache_hit": bool(result.get("cache_hit")),
             "result_hash": result.get("result_hash"), "repairs": len(out.get("attempts") or []),
             "suggestions": list(out.get("suggestions") or []), **({"rules": out["rules"]} if out.get("rules") else {})}
@@ -355,7 +359,10 @@ def staleness(session: Session, turn: AskTurn, now: datetime | None = None) -> d
 
 
 def turn_out(session: Session, turn: AskTurn) -> dict[str, Any]:
-    return {**row(turn), "staleness": staleness(session, turn)}
+    from analystos.semantic.evidence import evidence_status
+
+    fresh = staleness(session, turn)
+    return {**row(turn), "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
 
 
 # ------------------------------------------------------------------------------ asking
@@ -524,6 +531,53 @@ def inspector(session: Session, user: User, turn_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------ explain pasted SQL
+def rerun_turn(user: User, turn_id: str, sql: str | None = None) -> dict[str, Any]:
+    """A fresh immutable turn, with a link to the old result and current access checks."""
+    from analystos.agents.sql_agent import _authorize_ask, _check_budget, _result
+    from analystos.artifacts.registry import link
+    from analystos.core.ids import stable_hash
+    from analystos.governance.budgets import ASK_PURPOSE, ask_actor
+
+    with session_scope() as session:
+        old = _turn_for(session, session.merge(user), turn_id)
+        if old.status != "answered" or not old.sql:
+            raise InvalidInput("Only an answered query can be rerun.")
+        thread_id, question, saved_sql = old.thread_id, old.question, old.sql
+        semantic = (old.provenance or {}).get("semantic")
+    edited = sql is not None and sql != saved_sql
+    statement = sql if sql is not None else saved_sql
+    if not statement.strip():
+        raise InvalidInput("SQL cannot be empty.")
+
+    def execute(ctx, _question, parameters=None):
+        _authorize_ask(ctx)
+        _check_budget(ctx)
+        pinned = None
+        if semantic and not edited:
+            catalog = ctx.semantic_catalog
+            if not catalog or catalog["id"] != semantic["model_id"] or catalog["hash"] != semantic["model_hash"]:
+                raise InvalidInput("The saved semantic model changed. Ask the question again to use the current definition.")
+            for metric in semantic["metrics"]:
+                current = catalog["metrics"].get(metric["name"])
+                if not current or current["id"] != metric["id"] or current["hash"] != metric["hash"]:
+                    raise InvalidInput("A pinned metric changed. Ask again to explicitly use its current definition.")
+            if stable_hash(statement) != semantic["sql_hash"]:
+                raise InvalidInput("The saved SQL does not match its compiled definition.")
+            pinned = {**semantic, "policy_hash": stable_hash(ctx.policy.model_dump(mode="json")),
+                      "policy_version": ctx.scope.policy_version, "scope_hash": ctx.scope.scope_hash()}
+        result = ctx.services.gateway.execute(ctx.scope, statement, actor=ask_actor(user.id), purpose=ASK_PURPOSE,
+                                              run_id=None, task_id=ctx.turn_id, use_cache=False)
+        return {"status": "answered", "answered_by": "semantic" if pinned else "sql", "sql": statement,
+                "governance": "governed" if pinned else "ad_hoc", "semantic": pinned, "parent_turn_id": turn_id,
+                "explanation": "Fresh result from the saved calculation." if not edited else "Fresh result from your edited SQL.",
+                "result": _result(result), "model": None, "attempts": [], "decisions": [], "route": "rerun"}
+
+    result = ask_in_thread(user, thread_id, question, ask_fn=execute)
+    with session_scope() as session:
+        link(session, result["workspace_id"], ("ask_turn", result["id"]), "derived_from", ("ask_turn", turn_id))
+    return result
+
+
 def explain_sql(session: Session, user: User, workspace_id: str, sql: str, max_rows: int | None = None) -> dict[str, Any]:
     """Paste-SQL explain: the deterministic explanation, the validator's verdict for this caller and,
     when accepted, the source's plan through the gateway (EXPLAIN, nothing executed)."""
@@ -619,6 +673,8 @@ def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None =
         turn = _turn_for(s, me, turn_id)
         if turn.status != "answered" or not turn.result:
             raise InvalidInput("only an answered question can be promoted")
+        if turn_out(s, turn)["evidence_status"]["state"] == "changed":
+            raise InvalidInput("The answer's evidence changed. Refresh or ask again before promoting it.")
         ws_id, question, query_id = turn.workspace_id, turn.question, turn.result.get("query_id")
     record: dict[str, Any]
     if target == "investigate":

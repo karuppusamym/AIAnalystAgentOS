@@ -29,6 +29,7 @@ from analystos.services.notifications import notify
 
 log = get_logger(__name__)
 KINDS = {"reanalysis": "analyst", "dataset_refresh": "editor", "report": "analyst", "monitor": "analyst", "crawl": "editor"}
+KINDS["saved_analysis"] = "editor"
 MIN_INTERVAL_SECONDS = 15 * 60
 
 
@@ -66,6 +67,10 @@ def create_schedule(session: Session, user: User, workspace_id: str, *, name: st
     require_role(session, user, workspace_id, "editor")
     config = config or {}
     validate(kind, cron, timezone, config)
+    if kind == "saved_analysis":
+        from analystos.services.saved_analysis import verify
+
+        verify(session, user, workspace_id, name, cron, timezone, config)
     sch = Schedule(id=new_id("sch"), workspace_id=workspace_id, name=name, kind=kind, cron=cron, timezone=timezone, config=config,
                    owner_id=user.id, enabled=True, next_run_at=next_fire(cron, timezone))
     session.add(sch)
@@ -83,6 +88,10 @@ def update_schedule(session: Session, user: User, schedule_id: str, patch: dict)
         if patch.get(key) is not None:
             setattr(sch, key, patch[key])
     validate(sch.kind, sch.cron, sch.timezone, sch.config)
+    if sch.kind == "saved_analysis" and (patch.get("enabled") is not False or set(patch) != {"enabled"}):
+        from analystos.services.saved_analysis import verify
+
+        verify(session, session.get(User, sch.owner_id), sch.workspace_id, sch.name, sch.cron, sch.timezone, sch.config)
     sch.next_run_at = next_fire(sch.cron, sch.timezone) if sch.enabled else None
     audit(f"user:{user.id}", "schedule.updated", workspace_id=sch.workspace_id, target=sch.id, details=patch, session=session)
     return sch
@@ -161,8 +170,10 @@ def execute(srun_id: str) -> None:
         s.flush()
         s.expunge_all()
     try:
+        from analystos.services.saved_analysis import execute as saved_analysis
+
         result = {"dataset_refresh": _refresh, "reanalysis": _reanalysis, "report": _report, "monitor": _monitors,
-                  "crawl": _crawl}[kind](
+                  "crawl": _crawl, "saved_analysis": saved_analysis}[kind](
             owner, workspace_id, schedule_id, srun_id, config)
     except AnalystOSError as exc:
         _finish(srun_id, "failed", error=f"{exc.code}: {exc.message}")

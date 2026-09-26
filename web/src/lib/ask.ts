@@ -34,6 +34,12 @@ export interface Pill {
 export function provenancePills(turn: AskTurn): Pill[] {
   const p = turn.provenance ?? {};
   const out: Pill[] = [];
+  if (turn.status === "answered") {
+    out.push(p.governance === "governed"
+      ? { tone: turn.evidence_status?.state === "changed" ? "warning" : "success", label: "Approved metric calculation",
+        title: "Compiled from a pinned approved definition; see the evidence for its current state" }
+      : { tone: "neutral", label: "Ad hoc analysis", title: "This answer does not use a compiled approved metric definition" });
+  }
   if (turn.answered_by === "registry") {
     const name = p.verified_query?.name ?? (turn.verified_query?.name as string | undefined);
     out.push({ tone: "success", label: `Verified query${name ? `: ${name}` : ""}`, title: "Answered from the verified-query registry, no model call" });
@@ -128,7 +134,7 @@ export function promotionText(p: AskPromotion): string {
 
 /** Only an answer that returned rows can be promoted; the server checks this again. */
 export function canPromote(turn: AskTurn): boolean {
-  return turn.status === "answered" && !!turn.result;
+  return turn.status === "answered" && !!turn.result && turn.evidence_status?.state !== "changed";
 }
 
 /** One line per decision for the Decision tab: who decided what, and whether a fallback happened. */

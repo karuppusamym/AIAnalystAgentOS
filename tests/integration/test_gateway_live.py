@@ -90,7 +90,8 @@ def test_statement_timeout_maps_to_query_timeout(gateway, servicenow_scope, dp_s
     with pytest.raises(QueryTimeout):
         gateway.execute(
             servicenow_scope,
-            "SELECT COUNT(*) FROM incident a CROSS JOIN incident b CROSS JOIN change_request c WHERE a.number <> b.number",
+            "SELECT COUNT(*) FROM incident a JOIN incident b ON a.number <> b.number "
+            "JOIN change_request c ON b.number <> c.number",
             actor="user:test", run_id="run_timeout", timeout_seconds=1, use_cache=False,
         )
     with dp_session_factory() as s:
