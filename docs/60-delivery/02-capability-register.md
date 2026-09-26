@@ -420,3 +420,14 @@ their docstrings:
 | `AienginnerAgentOs` (DataPilot) | `15235dc` | `tool_runtime.py` SSRF-safe call → `tools/http.py` (with `is_global` fix); quality rule types → `recipes/gates.py` (rewritten through the gateway) |
 
 No non-permissive dependency was added (new: `jsonschema`, MIT).
+
+## 2026-09-26 — Integrated product and tracker audit at e9b0f05
+
+Independent rerun: 257 focused backend cases passed (verification, semantic compilation/joins,
+definition pins, evaluation gates, gateway corpus, governed benchmark); frontend 191 passed / 1
+skipped; TypeScript and production build passed after correcting local Playwright dependency drift.
+Deterministic grounding, analytical-component, and cost gates passed. These are fixture results,
+not live-model/warehouse certification. Restored N-12 from `63a3d37` to the tracker as Not started;
+it had disappeared from the integrated tracker. No capability was promoted to Done by this audit.
+Commands, scope, limitations, product assessment and follow-ups are recorded in
+[the integrated validation review](../70-reviews/2026-09-26-integrated-product-validation.md).
