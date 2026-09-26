@@ -6,9 +6,9 @@ import { session, streamAskTurn, type AskThread } from "../api";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth";
 import {
-  REFUSAL_VIEWS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, refusalView, stalenessPill,
+  REFUSAL_VIEWS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, refusalView, stalenessPill, turnSuggestions,
 } from "../lib/ask";
-import { askTurn, mockBackend, RUN, THREAD_NEW, THREAD_OLD, USER, WS } from "./mockBackend";
+import { askTurn, mockBackend, rulesTurn, RUN, THREAD_NEW, THREAD_OLD, USER, WS } from "./mockBackend";
 
 vi.setConfig({ testTimeout: 20000 });
 
@@ -65,11 +65,24 @@ describe("Ask helpers", () => {
   });
 
   it("has one refusal state per kind, each with a remedy action; unknown kinds read as failures", () => {
-    for (const kind of ["needs_input", "clarify", "sql_rejected", "policy_denied", "budget_exceeded", "no_model", "no_scope", "timeout", "unavailable", "failed"]) {
+    for (const kind of ["needs_input", "clarify", "sql_rejected", "policy_denied", "budget_exceeded", "no_model", "no_scope", "timeout", "unavailable", "failed",
+      "mode_off", "no_api_key", "provider_cooldown", "policy_blocked", "residency_blocked", "approval_required", "model_budget", "cap_reached",
+      "context_over_budget", "invalid_output"]) {
       expect(REFUSAL_VIEWS[kind]?.actionLabel).toBeTruthy();
     }
+    expect(refusalView({ kind: "residency_blocked", title: "", message: "", remedy: "", details: {} }).action).toBe("access");
     expect(refusalView({ kind: "policy_denied", title: "", message: "", remedy: "", details: {} }).state).toBe("not-entitled");
     expect(refusalView({ kind: "teleport", title: "", message: "", remedy: "", details: {} })).toBe(REFUSAL_VIEWS.failed);
+  });
+
+  it("marks a rules answer as built from the catalog and offers its follow-ups", () => {
+    const turn = rulesTurn("distribution of incident");
+    expect(provenancePills(turn)[0]).toMatchObject({ tone: "success", label: "Built from the catalog · no model" });
+    expect(turnSuggestions(turn)).toEqual(["distribution of incident by contact channel", "distribution of incident by priority"]);
+    const clarify = askTurn("c", "count of incidents by group", { status: "clarify", result: null, provenance: {},
+      refusal: { kind: "clarify", title: "", message: "", remedy: "", details: { suggestions: ["count of incident by assignment group"] } } });
+    expect(turnSuggestions(clarify)).toEqual(["count of incident by assignment group"]);
+    expect(turnSuggestions(askTurn("t", "q"))).toEqual([]);
   });
 
   it("describes promotions and decisions in words", () => {
@@ -127,6 +140,33 @@ describe("Ask page (P4-U02)", () => {
     fireEvent.click(within(turn).getByRole("button", { name: "Rephrase the question" }));
     expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe("what about it?");
     expect(within(turn).queryByRole("region", { name: "Promote this answer" })).toBeNull();
+  });
+
+  it("answers a distribution by the rules and asks a follow-up grouping with one click", async () => {
+    const fetchMock = mockFetch();
+    renderAt(`/w/${WS}/ask`);
+    await ask("distribution of incident");
+    const answer = await screen.findByRole("article", { name: "Question 1" });
+    expect(within(answer).getByText("Built from the catalog · no model")).toBeTruthy();
+    expect(within(answer).getByText(/SQL · built from the catalog/)).toBeTruthy();
+    const follow = within(answer).getByRole("region", { name: "Follow-up questions" });
+    fireEvent.click(within(follow).getByRole("button", { name: "distribution of incident by contact channel" }));
+    await waitFor(() => expect(screen.getAllByRole("article", { name: /^Question / })).toHaveLength(2));
+    const second = screen.getAllByRole("article", { name: /^Question / })[1];
+    expect(within(second).getAllByText(/by contact channel/).length).toBeGreaterThan(0);
+    const posts = calls(fetchMock, "POST", /\/ask\/threads\/ask_new\/turns$/);
+    expect(JSON.parse(String(posts[1][1].body)).question).toBe("distribution of incident by contact channel");
+  });
+
+  it("says which key to set and to restart when the API has no provider key", async () => {
+    mockFetch();
+    renderAt(`/w/${WS}/ask`);
+    await ask("Which configuration items had incidents in two consecutive weeks?");
+    const turn = await screen.findByRole("article", { name: "Question 1" });
+    expect(turn.querySelector("[data-refusal=no_api_key]")).toBeTruthy();
+    expect(within(turn).getByText("No model provider key is set for the API")).toBeTruthy();
+    expect(within(turn).getByText(/Set OPENROUTER_API_KEY for the api and worker containers/)).toBeTruthy();
+    expect(within(turn).getByRole("button", { name: "Try again after the restart" })).toBeTruthy();
   });
 
   it("promotes to a monitor through the form, then investigates why", async () => {

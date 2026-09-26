@@ -10,6 +10,7 @@ import {
 } from "../components/ui";
 import {
   PROMOTE_LABELS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, receiptView, refusalView, stalenessPill, topProbabilities,
+  turnSuggestions,
   type Pill,
 } from "../lib/ask";
 import { guessChart } from "../lib/charts";
@@ -139,6 +140,20 @@ function ParameterForm({ turn, onSubmit, busy }: { turn: AskTurn; onSubmit: (p: 
   );
 }
 
+/** Follow-up questions (other groupings, or the rephrasings a clarify proposes), asked with one click. */
+function Suggestions({ turn, busy, onAsk }: { turn: AskTurn; busy: boolean; onAsk: (q: string) => void }) {
+  const items = turnSuggestions(turn);
+  if (!items.length) return null;
+  return (
+    <section className="stack" aria-label={turn.status === "answered" ? "Follow-up questions" : "Did you mean"}>
+      <p className="small muted">{turn.status === "answered" ? "Also try:" : "Did you mean:"}</p>
+      <div className="btn-row">
+        {items.map((q) => <button key={q} type="button" className="btn btn-xs" disabled={busy} onClick={() => onAsk(q)}>{q}</button>)}
+      </div>
+    </section>
+  );
+}
+
 function RefusalState({ turn, ws, busy, onParameters, onRephrase, onExplain, onRetry }: {
   turn: AskTurn; ws: string; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void; onExplain: (sql: string) => void; onRetry: () => void;
 }) {
@@ -243,9 +258,9 @@ function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPr
 }
 
 // ------------------------------------------------------------------------------------ turn
-function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded }: {
+function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk }: {
   turn: AskTurn; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
-  onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void;
+  onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void; onAsk: (q: string) => void;
 }) {
   const { wsId = "" } = useParams();
   return (
@@ -259,11 +274,15 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
           <Pills label="Provenance" pills={[...provenancePills(turn), stalenessPill(turn.staleness)]} />
           {turn.explanation && <p>{turn.explanation}</p>}
           <ResultView res={turn.result} hint={turn.chart} caption={turn.question} />
-          {turn.sql && <CodeBlock code={turn.sql} label={`SQL${turn.model ? ` · ${turn.model}` : turn.answered_by === "registry" ? " · verified query" : ""}`} />}
+          {turn.sql && <CodeBlock code={turn.sql} label={`SQL${turn.model ? ` · ${turn.model}` : turn.answered_by === "registry" ? " · verified query" : turn.answered_by === "rules" ? " · built from the catalog" : ""}`} />}
+          <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
           {canPromote(turn) && <PromoteBar turn={turn} onRecorded={onRecorded} />}
         </div>
       ) : (
-        <RefusalState turn={turn} ws={wsId} busy={busy} onParameters={onParameters} onRephrase={onRephrase} onExplain={onExplain} onRetry={onRetry} />
+        <>
+          <RefusalState turn={turn} ws={wsId} busy={busy} onParameters={onParameters} onRephrase={onRephrase} onExplain={onExplain} onRetry={onRetry} />
+          <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
+        </>
       )}
     </article>
   );
@@ -290,7 +309,8 @@ function Inspector({ turn }: { turn: AskTurn }) {
             ["Columns", turn.result.columns.join(", ")],
             ["Query", <code key="q">{turn.result.query_id}</code>],
             ["Answered in", fmtMs(turn.latency_ms)],
-            ["Answered by", turn.answered_by === "registry" ? "verified query (no model)" : turn.answered_by === "model" ? "generated SQL" : "—"],
+            ["Answered by", turn.answered_by === "registry" ? "verified query (no model)" : turn.answered_by === "rules" ? "rule built from the catalog (no model)"
+              : turn.answered_by === "model" ? "generated SQL" : "—"],
           ]} />
           : <EmptyState title="No result">This question was not answered; the refusal says why.</EmptyState>)}
         {tab === "sql" && (
@@ -529,7 +549,7 @@ export function AskPage() {
               {thread?.turns.map((t) => (
                 <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
                   onParameters={(p) => void ask(t.question, p)} onRephrase={() => { setQuestion(t.question); questionRef.current?.focus(); }}
-                  onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} />
+                  onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)} />
               ))}
               {pending && (
                 <article className="ask-turn" aria-label="Question in progress" aria-busy="true">

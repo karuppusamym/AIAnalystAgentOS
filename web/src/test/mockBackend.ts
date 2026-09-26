@@ -200,6 +200,38 @@ function clarifyTurn(question: string): AskTurn {
   });
 }
 
+/** A distribution answered by the Ask rules from the catalog: no model, follow-up groupings offered. */
+let rulesTurns = 0;
+export function rulesTurn(question: string): AskTurn {
+  rulesTurns += 1;
+  const dim = /by contact channel/i.test(question) ? "contact_type" : "category";
+  const sql = `SELECT "${dim}" AS "${dim}", COUNT(*) AS "incident_count" FROM "stg_sn"."incident" GROUP BY "${dim}" ORDER BY "incident_count" DESC NULLS LAST, "${dim}"`;
+  return askTurn(`askt_rules_${rulesTurns}`, question, {
+    route: "tool", answered_by: "rules", model: null, sql, chart: { type: "bar", x: dim, y: "incident_count" },
+    explanation: `Number of incident records by ${dim === "category" ? "category" : "contact channel"} in stg_sn.incident (grouped by category because the domain pack declares it for incident). Built from the catalog by the Ask rules; no model call.`,
+    result: { query_id: "qry_r1", columns: [dim, "incident_count"], rows: [["software", 1210], ["network", 980], ["hardware", 640]], row_count: 3,
+      truncated: false, referenced_assets: ["stg_sn.incident"] },
+    decisions: [{ id: "dec_r1", purpose: "ask_route", backend: "rules", value: "tool" }],
+    provenance: { assets: [{ asset: "stg_sn.incident", asset_id: "ast_inc", business_name: "Incidents", source_id: SOURCE.id, source_name: "ServiceNow",
+      source_kind: "servicenow", execution_mode: "staged", freshness_at: "2026-09-25T06:00:00Z", row_count: 4210 }],
+    answered_by: "rules", model: null, query_id: "qry_r1", cache_hit: false, result_hash: "r1", repairs: 0,
+    suggestions: dim === "category" ? ["distribution of incident by contact channel", "distribution of incident by priority"] : [] },
+  });
+}
+
+/** No provider key in the API process: the refusal names the key and the restart, not "no model route". */
+function noKeyTurn(question: string): AskTurn {
+  return askTurn("askt_nokey", question, {
+    status: "refused", route: "generate", answered_by: null, sql: null, explanation: null, chart: null, result: null, provenance: {}, model: null,
+    refusal: { kind: "no_api_key", title: "No model provider key is set for the API",
+      message: "SQL generation unavailable: no API key for provider 'openrouter' (set OPENROUTER_API_KEY)",
+      remedy: "Set OPENROUTER_API_KEY for the api and worker containers (docker compose reads it from your shell or the .env file at `docker compose up`), then restart them: `docker compose up -d api worker`. A key exported after the containers started is not seen by them.",
+      details: { reason: "no_api_key", env: "OPENROUTER_API_KEY", provider: "openrouter" } },
+    staleness: { state: "unknown", label: "Data freshness unknown", data_as_of: null },
+    stages: [STAGES[0], STAGES[1], STAGES[2], STAGES[3], STAGES[4], { key: "done", text: "No model provider key is set for the API", at_ms: 30 }],
+  });
+}
+
 const INSPECTOR = (turn: AskTurn): AskInspector => ({
   turn,
   decisions: [
@@ -235,7 +267,8 @@ function askRoute(m: string, p: string, requestBody?: string | null): MockRespon
   if (m === "POST" && p === `/ask/threads/${THREAD_NEW}/turns`) {
     const q = String((requestBody ? JSON.parse(requestBody) as { question?: string } : {}).question ?? "");
     recordQuestion(q);
-    const turn = /about it/i.test(q) ? clarifyTurn(q) : askTurn("askt_1", q);
+    const turn = /about it/i.test(q) ? clarifyTurn(q) : /^distribution of/i.test(q) ? rulesTurn(q)
+      : /consecutive weeks/i.test(q) ? noKeyTurn(q) : askTurn("askt_1", q);
     return sse([...turn.stages.map((s) => ["stage", { turn_id: turn.id, ...s }] as [string, unknown]), ["turn", turn], ["end", { status: "done" }]]);
   }
   const inspect = /^\/ask\/turns\/([^/]+)\/inspector$/.exec(p);
