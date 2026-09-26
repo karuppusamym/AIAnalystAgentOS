@@ -8,6 +8,7 @@ import type {
   CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight, InsightDetail, MetricValidation, Monitor, ModelsView,
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
+import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -216,7 +217,7 @@ const INSPECTOR = (turn: AskTurn): AskInspector => ({
   query: { id: "qry_1", workspace_id: WS, source_id: SOURCE.id, run_id: null, task_id: null, actor: `user:${USER.id}`, purpose: "ask", sql: ASK.sql,
     executed_sql: `${ASK.sql} LIMIT 5001`, fingerprint: "fp_ask_1", status: "ok", rejected_reason: null, referenced_assets: ["stg_sn.incident"], row_count: 2,
     truncated: false, columns: ASK.result.columns, result_hash: "9f86d081884c7d65", cache_hit: false, duration_ms: 40, created_at: T },
-  receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }],
+  receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }, ...knowledgeReceipts()],
 });
 
 const sse = (frames: [string, unknown][]): MockResponse => ({
@@ -233,6 +234,7 @@ function askRoute(m: string, p: string, requestBody?: string | null): MockRespon
   if (m === "GET" && p === `/ask/threads/${THREAD_OLD}`) return json({ ...THREAD, turns: [OLD_TURN] });
   if (m === "POST" && p === `/ask/threads/${THREAD_NEW}/turns`) {
     const q = String((requestBody ? JSON.parse(requestBody) as { question?: string } : {}).question ?? "");
+    recordQuestion(q);
     const turn = /about it/i.test(q) ? clarifyTurn(q) : askTurn("askt_1", q);
     return sse([...turn.stages.map((s) => ["stage", { turn_id: turn.id, ...s }] as [string, unknown]), ["turn", turn], ["end", { status: "done" }]]);
   }
@@ -271,6 +273,7 @@ export function resetMockState(): void {
   state.buildApproval = "pending";
   state.proposed = [];
   state.decided = {};
+  resetKnowledgeState();
 }
 
 const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
@@ -645,6 +648,10 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   const asked = askRoute(m, p, requestBody);
   if (asked) return asked;
+  const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows);
+  if (known) {
+    return known.contentType ? { status: known.status, body: String(known.body), contentType: known.contentType } : json(known.body, known.status);
+  }
   const built = buildRoute(m, p, requestBody);
   if (built) return built;
   if (m === "GET" && p === `${W}/artifacts`) {

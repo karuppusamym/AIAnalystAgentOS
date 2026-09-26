@@ -1941,6 +1941,210 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/knowledge/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Semantic Graph
+         * @description Tables, datasets, metrics, documents and pending suggestions; each edge governed or inferred.
+         */
+        get: operations["semantic_graph_api_workspaces__workspace_id__knowledge_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Pack
+         * @description An OKF or Atlas bundle (zip) into a read-only `imported` pack; hostile archives are refused.
+         */
+        post: operations["import_pack_api_workspaces__workspace_id__knowledge_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/locate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate Document
+         * @description A context receipt's `document_id` -> pack and path, so a receipt opens its document.
+         */
+        get: operations["locate_document_api_workspaces__workspace_id__knowledge_locate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Packs
+         * @description The packs this workspace sees; `writable` is true only for its own pack and an editor.
+         */
+        get: operations["list_packs_api_workspaces__workspace_id__knowledge_packs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Document
+         * @description One file: text, parsed frontmatter and body, trust fields (tier, verified, status, staleness).
+         */
+        get: operations["read_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_get"];
+        /**
+         * Save Document
+         * @description A human edit (editor role, workspace pack only): one new revision, based on `base_sha256`.
+         */
+        put: operations["save_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_put"];
+        post?: never;
+        /** Delete Document */
+        delete: operations["delete_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Documents */
+        get: operations["list_documents_api_workspaces__workspace_id__knowledge_packs__pack_id__documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Pack
+         * @description The pack as a deterministic OKF zip, returned to the caller (the publish policy must pass).
+         *     A download to the requesting user's browser is not a write outside the platform; pushing to a
+         *     git remote is, and goes through `push/request` -> approval -> `push`.
+         */
+        get: operations["export_pack_api_workspaces__workspace_id__knowledge_packs__pack_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Pack
+         * @description Push the head revision under an approved, single-use approval (verified immediately before).
+         */
+        post: operations["push_pack_api_workspaces__workspace_id__knowledge_packs__pack_id__push_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Push
+         * @description Ask for the hash-bound approval a push to the pack's git remote needs (K01).
+         */
+        post: operations["request_push_api_workspaces__workspace_id__knowledge_packs__pack_id__push_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Revisions
+         * @description Revision history, newest first, with the paths each revision added, changed and removed.
+         */
+        get: operations["list_revisions_api_workspaces__workspace_id__knowledge_packs__pack_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/knowledge/suggestions": {
         parameters: {
             query?: never;
@@ -2731,6 +2935,13 @@ export interface components {
             /** Document */
             document: string;
         };
+        /** Body_import_pack_api_workspaces__workspace_id__knowledge_import_post */
+        Body_import_pack_api_workspaces__workspace_id__knowledge_import_post: {
+            /** File */
+            file: string;
+            /** Slug */
+            slug: string;
+        };
         /** Body_upload_api_workspaces__workspace_id__uploads_post */
         Body_upload_api_workspaces__workspace_id__uploads_post: {
             /** File */
@@ -2841,6 +3052,33 @@ export interface components {
             mode?: string | null;
             /** Profile */
             profile?: boolean | null;
+        };
+        /** DocumentSaveIn */
+        DocumentSaveIn: {
+            /**
+             * Base Sha256
+             * @description sha256 of the document as opened; omit to create a new path
+             */
+            base_sha256?: string | null;
+            /**
+             * Body
+             * @default
+             */
+            body?: string;
+            /** Frontmatter */
+            frontmatter: {
+                [key: string]: unknown;
+            };
+            /**
+             * Mark Reviewed
+             * @description add your own `verified: human:<you>` entry (the only entry you can add)
+             * @default false
+             */
+            mark_reviewed?: boolean;
+            /** Path */
+            path: string;
+            /** Reason */
+            reason?: string | null;
         };
         /** EnableIn */
         EnableIn: {
@@ -3036,6 +3274,11 @@ export interface components {
             query_id?: string | null;
             /** Question */
             question?: string | null;
+        };
+        /** PushIn */
+        PushIn: {
+            /** Approval Id */
+            approval_id: string;
         };
         /** QueryHistoryIn */
         QueryHistoryIn: {
@@ -7595,6 +7838,450 @@ export interface operations {
                 "multipart/form-data": components["schemas"]["Body_upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    semantic_graph_api_workspaces__workspace_id__knowledge_graph_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_pack_api_workspaces__workspace_id__knowledge_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_pack_api_workspaces__workspace_id__knowledge_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    locate_document_api_workspaces__workspace_id__knowledge_locate_get: {
+        parameters: {
+            query: {
+                document_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_packs_api_workspaces__workspace_id__knowledge_packs_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_get: {
+        parameters: {
+            query: {
+                path: string;
+                revision?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentSaveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_api_workspaces__workspace_id__knowledge_packs__pack_id__document_delete: {
+        parameters: {
+            query: {
+                path: string;
+                base_sha256: string;
+                reason?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_documents_api_workspaces__workspace_id__knowledge_packs__pack_id__documents_get: {
+        parameters: {
+            query?: {
+                revision?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_pack_api_workspaces__workspace_id__knowledge_packs__pack_id__export_get: {
+        parameters: {
+            query?: {
+                revision?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_pack_api_workspaces__workspace_id__knowledge_packs__pack_id__push_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_push_api_workspaces__workspace_id__knowledge_packs__pack_id__push_request_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_revisions_api_workspaces__workspace_id__knowledge_packs__pack_id__revisions_get: {
+        parameters: {
+            query?: {
+                path?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

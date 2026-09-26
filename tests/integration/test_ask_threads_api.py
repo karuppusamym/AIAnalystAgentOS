@@ -328,6 +328,42 @@ def test_capability_invoke_runs_read_only_and_holds_writes_for_approval(api, wor
     assert again.status_code == 409  # consumed
 
 
+def test_an_approved_ai_suggestion_is_a_receipt_in_the_ask_inspector(api, world, transport):
+    """P4-U04 journey: review an AI suggestion -> approve (publish into the workspace pack) -> ask a
+    question -> the approved document is a context receipt on the answer's Evidence tab."""
+    from analystos.db.base import session_scope
+    from analystos.knowledge import suggestions
+
+    admin = _login(api, "admin@analystos.local")
+    ws, table = world["ws"], world["table"]
+    with session_scope() as s:
+        draft = suggestions.propose(s, ws, kind="term", subject="term:reopen rate", title="Reopen rate",
+                                    fields={"body": suggestions.field("The reopen rate is the share of resolved incidents "
+                                                                      "that were reopened within seven days.", 0.55,
+                                                                      source="model", model="m1"),
+                                            "synonyms": suggestions.field(["reopen ratio"], 0.8, source="rule")},
+                                    origin="crawler.enrichment", proposed_by="model:m1")
+        sid, path = draft.id, draft.path
+    queue = api.get(f"/api/workspaces/{ws}/knowledge/suggestions", headers=admin).json()
+    shown = next(q for q in queue if q["id"] == sid)
+    assert shown["fields"]["body"]["confidence"] == 0.55 and shown["fields"]["body"]["provenance"]["model"] == "m1"
+    r = api.post(f"/api/workspaces/{ws}/knowledge/suggestions/review", headers=admin,
+                 json={"decisions": [{"id": sid, "action": "approve"}]})
+    assert r.status_code == 200 and r.json()["approved"] == [{"id": sid, "path": path}], r.text
+
+    transport.sql = f"SELECT priority, COUNT(*) AS n FROM {table} GROUP BY 1"
+    thread = api.post(f"/api/workspaces/{ws}/ask/threads", headers=admin, json={}).json()
+    turn = api.post(f"/api/ask/threads/{thread['id']}/turns", headers=admin,
+                    json={"question": "What is the reopen rate by priority?"}).json()
+    assert turn["status"] == "answered" and turn["answered_by"] == "model", turn
+    receipts = api.get(f"/api/ask/turns/{turn['id']}/inspector", headers=admin).json()["receipts"]
+    mine = [x for x in receipts if x.get("path") == path]
+    assert mine and mine[0]["section"] == "glossary" and mine[0]["source"] == "review:crawler.enrichment"
+    located = api.get(f"/api/workspaces/{ws}/knowledge/locate", headers=admin,
+                      params={"document_id": mine[0]["document_id"]}).json()
+    assert located["path"] == path  # the receipt opens its document in the studio
+
+
 def test_spend_by_model_is_reported(api, world):
     admin = _login(api, "admin@analystos.local")
     body = api.get("/api/admin/token-savings", headers=admin).json()

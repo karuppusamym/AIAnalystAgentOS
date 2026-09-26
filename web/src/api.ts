@@ -713,7 +713,215 @@ export interface AskInspector {
   decisions: DecisionRow[];
   model_calls: ModelCall[];
   query: QueryExecution | null;
-  receipts: Dict[];
+  receipts: ContextReceipt[];
+}
+
+/**
+ * One item the context compiler put in a prompt (P4-T03/K05). Pack sections carry their document,
+ * path, anchor and hashes; `source` is `review:<origin>` for a document approved in the review queue.
+ */
+export interface ContextReceipt {
+  id?: string;
+  section?: string;
+  kind?: string;
+  name?: string;
+  title?: string;
+  source?: string;
+  score?: number;
+  trusted?: boolean;
+  sha256?: string;
+  document_id?: string;
+  path?: string;
+  anchor?: string;
+  section_sha256?: string;
+  rank?: number;
+  via?: string;
+  version?: number;
+  [k: string]: unknown;
+}
+
+// ----------------------------------------------------------------------------------- knowledge studio (P4-U04)
+export type KnowledgePackKind = "platform" | "workspace" | "imported";
+
+export interface KnowledgePackInfo {
+  id: string;
+  kind: KnowledgePackKind;
+  slug: string;
+  title: string;
+  read_only: boolean;
+  /** True only for the workspace's own pack and an editor or owner. */
+  writable: boolean;
+  head_revision: number | null;
+  okf_root: string;
+  okf_version: string;
+  git_remote: string | null;
+  git_branch: string;
+  origin: Dict;
+  files: number;
+  content_digest: string | null;
+  updated_at: string;
+}
+
+export interface KnowledgeDocSummary {
+  path: string;
+  document_id: string;
+  sha256: string;
+  size: number;
+  markdown: boolean;
+  reserved: boolean;
+  type: string | null;
+  title: string;
+  status?: string;
+  trust_tier?: "unverified" | "machine-confirmed" | "human-reviewed" | string;
+  stale?: boolean;
+  kind?: string | null;
+  /** `review_queue`: written by the review queue, which may replace it; `owner`: a person's content. */
+  authorship?: "review_queue" | "owner";
+  tags?: string[];
+  problem?: string;
+}
+
+export interface KnowledgeDocList {
+  pack_id: string;
+  revision: number | null;
+  documents: KnowledgeDocSummary[];
+}
+
+export interface VerifiedEntry {
+  by: string;
+  at?: string;
+  [k: string]: unknown;
+}
+
+export interface KnowledgeTrust {
+  tier: string;
+  verified: VerifiedEntry[];
+  status: string;
+  stale_after: string | null;
+  stale: boolean;
+  trusted: boolean | null;
+}
+
+export interface KnowledgeDocument extends KnowledgeDocSummary {
+  pack_id: string;
+  revision: number | null;
+  text: string;
+  frontmatter: Dict | null;
+  body: string | null;
+  trust: KnowledgeTrust | null;
+  sections: { anchor: string; heading: string }[];
+  links: { raw: string; kind: string; target: string | null; exists: boolean }[];
+}
+
+export type KnowledgeSaveBody = Schemas["DocumentSaveIn"];
+
+export interface KnowledgeSaveResult {
+  changed: boolean;
+  revision: number | null;
+  document: KnowledgeDocument;
+}
+
+export interface KnowledgeRevisionInfo {
+  number: number;
+  parent: number | null;
+  author: string;
+  reason: string;
+  origin: string;
+  files: number;
+  content_digest: string;
+  created_at: string;
+  added: string[];
+  changed: string[];
+  removed: string[];
+  sha256: string | null;
+  conformance_problems: number;
+}
+
+export interface SuggestionField {
+  value: unknown;
+  confidence: number;
+  provenance: Dict;
+  before?: unknown;
+}
+
+export interface KnowledgeSuggestion {
+  id: string;
+  kind: string;
+  subject: string;
+  title: string;
+  path: string;
+  fields: Record<string, SuggestionField>;
+  confidence: number;
+  origin: string;
+  proposed_by: string;
+  batch: string | null;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  revision: number | null;
+  created_at: string;
+}
+
+export type ReviewDecisionBody = Schemas["ReviewDecision"];
+
+export interface ReviewResult {
+  revision: number | null;
+  approved: { id: string; path: string | null; catalog?: string }[];
+  rejected: { id: string; path: string | null; catalog?: string }[];
+  errors: { id: string; error: string; [k: string]: unknown }[];
+}
+
+export interface KnowledgeImportReport {
+  pack_id: string;
+  slug: string;
+  format: "atlas" | "okf" | string;
+  okf_root: string;
+  revision: number | null;
+  changed: boolean;
+  files: number;
+  documents: number;
+  ignored: string[];
+  conformance: { code: string; path: string; detail?: string }[];
+  dangling_links: number;
+  verified_claims: number;
+  attested_computations: number;
+  manifest: Dict;
+  warnings: string[];
+}
+
+export type GraphNodeKind = "table" | "dataset" | "metric" | "document" | "suggestion";
+
+export interface KnowledgeGraphNode {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+  status?: string;
+  path?: string;
+  pack_id?: string;
+  pack_kind?: KnowledgePackKind;
+  trust_tier?: string;
+  confidence?: number;
+  suggestion_id?: string;
+  [k: string]: unknown;
+}
+
+export interface KnowledgeGraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+  /** Governed edges are drawn solid, inferred ones dashed. */
+  governed: boolean;
+  why: string;
+  label: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  truncated: boolean;
+  governed: number;
+  inferred: number;
 }
 
 export type AskPromoteBody = Schemas["AskPromoteIn"];
@@ -2042,6 +2250,43 @@ export const api = {
   decideMetric: (ws: string, name: string, approve: boolean, version?: number, reason?: string) =>
     post(approve ? "/api/workspaces/{workspace_id}/semantic/metrics/{name}/approve" : "/api/workspaces/{workspace_id}/semantic/metrics/{name}/reject",
       { path: { workspace_id: ws, name }, body: { version: version ?? null, reason: reason || null } }) as Promise<SemanticMetric>,
+
+  // knowledge studio (P4-U04): packs, documents, revisions, review queue, import/export, graph
+  knowledgePacks: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/packs", { path: W(ws) }) as Promise<KnowledgePackInfo[]>,
+  knowledgeDocuments: (ws: string, pack: string, revision?: number) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/documents", { path: { workspace_id: ws, pack_id: pack }, query: { revision } }) as
+      Promise<KnowledgeDocList>,
+  knowledgeDocument: (ws: string, pack: string, path: string, revision?: number) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document", { path: { workspace_id: ws, pack_id: pack }, query: { path, revision } }) as
+      Promise<KnowledgeDocument>,
+  saveKnowledgeDocument: (ws: string, pack: string, body: KnowledgeSaveBody) =>
+    put("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document", { path: { workspace_id: ws, pack_id: pack }, body }) as
+      Promise<KnowledgeSaveResult>,
+  knowledgeRevisions: (ws: string, pack: string, path?: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/revisions", { path: { workspace_id: ws, pack_id: pack }, query: { path } }) as
+      Promise<KnowledgeRevisionInfo[]>,
+  locateKnowledge: (ws: string, documentId: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/locate", { path: W(ws), query: { document_id: documentId } }) as
+      Promise<{ document_id: string; pack_id: string; path: string; title: string; revision: number }>,
+  knowledgeSuggestions: (ws: string, status: string = "pending") =>
+    get("/api/workspaces/{workspace_id}/knowledge/suggestions", { path: W(ws), query: { status } }) as Promise<KnowledgeSuggestion[]>,
+  reviewSuggestions: (ws: string, decisions: ReviewDecisionBody[]) =>
+    post("/api/workspaces/{workspace_id}/knowledge/suggestions/review", { path: W(ws), body: { decisions } }) as Promise<ReviewResult>,
+  importKnowledge: (ws: string, file: File, slug: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("slug", slug);
+    return post("/api/workspaces/{workspace_id}/knowledge/import", { path: W(ws), body: fd }) as Promise<KnowledgeImportReport>;
+  },
+  exportKnowledge: (ws: string, pack: string, slug: string, revision?: number) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/export", { path: { workspace_id: ws, pack_id: pack },
+      query: { revision } }), `${slug}.okf.zip`),
+  requestKnowledgePush: (ws: string, pack: string) =>
+    post("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push/request", { path: { workspace_id: ws, pack_id: pack } }) as Promise<Approval>,
+  pushKnowledge: (ws: string, pack: string, approvalId: string) =>
+    post("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push", { path: { workspace_id: ws, pack_id: pack }, body: { approval_id: approvalId } }) as
+      Promise<{ revision: number; commit: string; remote: string; branch: string }>,
+  knowledgeGraph: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/graph", { path: W(ws) }) as Promise<KnowledgeGraph>,
 
   // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
   publishDashboard: (artifactId: string) =>

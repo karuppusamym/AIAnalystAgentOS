@@ -109,7 +109,7 @@ describe("route manifest (spec v3 §9)", () => {
     for (const label of ["Home", "Ask", "Investigate", "Knowledge", "Build", "Operate"]) {
       expect(within(nav).getByRole("group", { name: label })).toBeTruthy();
     }
-    expect(within(within(nav).getByRole("group", { name: "Knowledge" })).getByRole("link", { name: "Catalog" }).getAttribute("href"))
+    expect(within(within(nav).getByRole("group", { name: "Knowledge" })).getByRole("link", { name: "Knowledge studio" }).getAttribute("href"))
       .toBe(`/w/${WS}/knowledge/catalog`);
     await screen.findByRole("heading", { name: "IT Service Management", level: 1 });
   });
@@ -177,11 +177,11 @@ describe("unknown is never shown as 0", () => {
 describe("Ctrl/Cmd-K command palette", () => {
   it("lists every navigable screen for the current workspace and filters by terms", () => {
     const items = screenItems(WS, "ITSM");
-    expect(items.map((i) => i.label)).toContain("Catalog");
+    expect(items.map((i) => i.label)).toContain("Knowledge studio");
     expect(items.find((i) => i.label === "Platform settings")?.href).toBe("/operate/settings");
     expect(screenItems(undefined).some((i) => i.href.includes(":wsId"))).toBe(false);
     expect(filterItems(items, "token").map((i) => i.label)).toEqual(["Usage & cost"]);
-    expect(filterItems(items, "know cat").map((i) => i.label)).toEqual(["Catalog"]);
+    expect(filterItems(items, "know cat").map((i) => i.label)).toEqual(["Knowledge studio"]);
   });
 
   it("opens with Ctrl-K as a modal dialog, navigates with the keyboard and closes with Esc", async () => {

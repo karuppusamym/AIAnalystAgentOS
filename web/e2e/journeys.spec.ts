@@ -29,10 +29,11 @@ test.describe("five-journey IA", () => {
     await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
 
-    // Knowledge: the increment-3 catalog now lives here.
-    await nav.getByRole("group", { name: "Knowledge" }).getByRole("link", { name: "Catalog" }).click();
+    // Knowledge: the increment-3 catalog is the first tab of the knowledge studio.
+    await nav.getByRole("group", { name: "Knowledge" }).getByRole("link", { name: "Knowledge studio" }).click();
     await expect(page).toHaveURL(`/w/${WS}/knowledge/catalog`);
-    await expect(page.getByRole("heading", { name: "Catalog", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Knowledge studio", level: 1 })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Catalog", selected: true })).toBeVisible();
     await expect(page.getByText("Incidents").first()).toBeVisible();
 
     // Operate: platform settings (admin), reached through the command palette.
@@ -204,6 +205,67 @@ test.describe("build (P4-U05)", () => {
   });
 });
 
+test.describe("knowledge studio (P4-U04)", () => {
+  test("review an AI suggestion → approve into the pack → ask → it is a receipt on the Evidence tab", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/knowledge/catalog?tab=review`);
+    await expect(page.getByRole("tab", { name: "Review queue", selected: true })).toBeVisible();
+
+    // Review: the model's draft with each field's confidence and provenance.
+    const draft = page.getByRole("article", { name: "Draft: Reopen rate" });
+    await expect(draft.getByRole("meter", { name: "Confidence" }).first()).toHaveAttribute("aria-valuenow", "55");
+    await expect(draft.getByText("crawl-enrich-v2")).toBeVisible();
+    await expect(draft.getByText("openrouter/auto").first()).toBeVisible();
+
+    // Publish: approve it; the batch is one workspace-pack revision.
+    await page.getByLabel("Select Reopen rate").check();
+    await page.getByRole("button", { name: "Approve selected (1)" }).click();
+    await expect(page.getByText(/Workspace pack revision 2: 1 approved, 0 rejected/)).toBeVisible();
+    await expect(draft).toHaveCount(0);
+    await page.getByRole("button", { name: "Open glossary/reopen-rate.md" }).click();
+    await expect(page.getByRole("heading", { name: "Reopen rate", level: 2 })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Verified by" })).toContainText("human:usr_admin");
+
+    // Ask: the approved document is in the context of the answer, as a receipt.
+    const nav = page.getByRole("navigation", { name: "Main" });
+    await nav.getByRole("group", { name: "Ask" }).getByRole("link", { name: "Ask" }).click();
+    await page.getByLabel("Question").fill("What is the reopen rate for P1 incidents?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(page.getByRole("article", { name: "Question 1" })).toBeVisible();
+    const inspector = page.getByRole("complementary", { name: "Answer inspector" });
+    await inspector.getByRole("tab", { name: "Evidence" }).click();
+    const receipt = inspector.getByRole("list", { name: "Context receipts" }).getByRole("listitem").filter({ hasText: "Reopen rate" });
+    await expect(receipt).toContainText("glossary/reopen-rate.md#definition");
+    await expect(receipt.getByText("reviewed", { exact: true })).toBeVisible();
+
+    // …and the receipt opens its document in the studio.
+    await receipt.getByRole("link", { name: "Open Reopen rate in the knowledge studio" }).click();
+    await expect(page).toHaveURL(/tab=documents/);
+    await expect(page.getByRole("heading", { name: "Reopen rate", level: 2 })).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("edit a document's trust fields as a new revision; platform packs stay read-only", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`);
+    const card = page.locator("section.card", { has: page.getByRole("heading", { name: "P1", level: 2 }) });
+    await expect(card.getByText("human-reviewed")).toBeVisible();
+    await card.getByRole("button", { name: "Edit" }).click();
+    const form = page.getByRole("form", { name: "Edit glossary/p1.md" });
+    await form.getByLabel("Status").selectOption("deprecated");
+    await form.getByLabel(/Mark as reviewed by me/).check();
+    await form.getByLabel("Reason for this revision").fill("P1 renamed to critical");
+    await form.getByRole("button", { name: "Save revision" }).click();
+    const history = page.getByRole("list", { name: "Revisions of this document" });
+    await expect(history.getByText(/P1 renamed to critical/)).toBeVisible();
+    await expect(card.getByText("deprecated")).toBeVisible();
+
+    await page.getByLabel("Pack").selectOption({ label: "Platform knowledge · platform (read-only)" });
+    await page.getByRole("button", { name: /SLA breach/ }).click();
+    await expect(page.getByText(/platform pack is read-only/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
 test.describe("operate (P4-U06, P4-U07)", () => {
   test("registry lists a newly installed plugin and runs it from its generated form", async ({ page, api }) => {
     await signIn(page, "/operate/registry");
@@ -256,6 +318,11 @@ const SCREENS: [string, string, RegExp][] = [
   ["Ask · thread", `/w/${WS}/ask?thread=ask_old`, /How many P1 incidents per week/],
   ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
   ["Knowledge", `/w/${WS}/knowledge/catalog`, /One row per incident/],
+  ["Knowledge · documents", `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
+  ["Knowledge · review queue", `/w/${WS}/knowledge/catalog?tab=review`, /crawl-enrich-v2/],
+  ["Knowledge · semantic graph", `/w/${WS}/knowledge/catalog?tab=graph`, /Governed \(/],
+  ["Knowledge · metrics", `/w/${WS}/knowledge/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
+  ["Knowledge · import & export", `/w/${WS}/knowledge/catalog?tab=transfer`, /Push to a git remote/],
   ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
   ["Build · dbt build", `/w/${WS}/build/studio?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Build · KPIs", `/w/${WS}/build/studio?tab=kpis&kpi=mttr_hours`, /Approve v2/],

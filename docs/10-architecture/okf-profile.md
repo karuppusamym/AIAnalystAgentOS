@@ -111,9 +111,11 @@ K01 `ts_rank_cd` leg stays selectable (`lexical="ts_rank_cd"`) for the benchmark
 (`okf.check_publish_policy`): conformance, safe paths (`[A-Za-z0-9][A-Za-z0-9._-]*` segments), no
 dangling internal links, no links outside the bundle, document ≤ 256 KiB, bundle ≤ 64 MiB,
 ≤ 20,000 files. The archive is deterministic (sorted, fixed timestamps and attributes). External
-links and code fences are allowed (Atlas's stricter rules are Atlas's). A download route in the
-API is not added here: an export that leaves the platform through the UI must be an approval
-(CLAUDE.md rule 5) — for the P4-U rows.
+links and code fences are allowed (Atlas's stricter rules are Atlas's). P4-U04 added the download
+route (`GET .../knowledge/packs/{id}/export`, audited as `knowledge.exported`): the zip goes back to
+the requesting user's browser, which is not a write outside the platform. Anything that *does*
+write outside — a push to a git remote — stays the K01 hash-bound approval (`push/request` → inbox
+→ `push`), see "Knowledge studio" below.
 
 ## Context providers (K09)
 
@@ -332,3 +334,39 @@ is a facet — `profile`, `relationships`, `glossary`, `enrich`, `knowledge`, `q
 sources). A failing facet is recorded in `crawl_run.stats.facets` (`status`, `code`, `error`) and
 `stats.failed_facets`, logged on the crawl, emitted as `crawl.facet_failed`, and the crawl still
 succeeds. Catalog-writing facets run in a savepoint so a half-done facet leaves nothing behind.
+
+## Knowledge studio (P4-U04)
+
+`knowledge/studio.py`, routes in `api/routers/knowledge.py`, UI on the Knowledge journey screen
+(tabs Catalog / Documents / Review queue / Semantic graph / Metrics / Import & export; still 19 of 20
+screens). Tests: `tests/integration/test_knowledge_studio.py`, `tests/unit/test_knowledge_studio_rules.py`,
+`test_ask_threads_api.py::test_an_approved_ai_suggestion_is_a_receipt_in_the_ask_inspector`,
+`web/src/test/knowledge.test.tsx`, Playwright `knowledge studio (P4-U04)`.
+
+| Route (under `/api/workspaces/{id}/knowledge`) | Role | What |
+|---|---|---|
+| `GET packs` | viewer | visible packs; `writable` only for the workspace pack and an editor |
+| `GET packs/{pack}/documents[?revision=]` | viewer | files with type, trust tier, status, staleness, `authorship` (`review_queue` / `owner`) |
+| `GET packs/{pack}/document?path=[&revision=]` | viewer | text, frontmatter, body, trust fields, sections, links (dangling flagged) |
+| `PUT packs/{pack}/document` | editor | a human edit → one revision (`origin: studio`) |
+| `DELETE packs/{pack}/document?path=&base_sha256=` | editor | a deletion → one revision |
+| `GET packs/{pack}/revisions[?path=]` | viewer | history with added / changed / removed paths |
+| `GET locate?document_id=` | viewer | a receipt's document → pack and path |
+| `POST import` (multipart `file`, `slug`) | editor | `bundle.import_bundle` into a read-only imported pack |
+| `GET packs/{pack}/export` | viewer | deterministic zip to the caller (publish policy enforced) |
+| `POST packs/{pack}/push/request`, `POST packs/{pack}/push` | editor | the K01 approval flow over HTTP |
+| `GET graph` | viewer | nodes and edges, each `governed` or inferred, with the reason |
+
+Save rules, enforced by the server: only the workspace pack is writable (platform and imported packs
+refuse, owners included); the request names the `base_sha256` it edited (a stale or missing base is
+409, so two editors cannot overwrite each other); `type` is required, `stale_after` must parse;
+`verified` may keep or drop entries but gains only the saving user's own `human:<id>` entry,
+server-stamped (`mark_reviewed`); `analystos.review` is moved to `analystos.reviewed_draft`, so a
+document a person edited becomes owner content that no later draft replaces (`suggestions.protected`),
+and `analystos.origin` becomes `user` (the machine origin kept as `origin_before_edit`), so the
+crawlers and ingesters keep it byte for byte (`drafts.is_curated`); reserved `index.md`/`log.md` are
+not edited here. Agents have no route to these writes.
+
+Graph edges are governed when an approved semantic model or metric, a validated or user-declared
+join, or a human-reviewed document stands behind them; proposed metrics, discovered joins, links and
+mappings of unreviewed documents and pending AI suggestions are inferred (dashed in the UI).
