@@ -103,6 +103,12 @@ services:
       redis: {condition: service_healthy}
     command: ["sh", "-c", "analystos migrate && analystos seed && uvicorn analystos.api.app:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://localhost:8000/api/health', timeout=3))['ok']"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
 
   # One service per worker pool (spec v3 §8): each serves only its task queue(s) and scales on its own.
   # Sizing per pool (slots, executor, timeouts) is config/task_queues.yaml.
@@ -145,7 +151,8 @@ services:
 
   web:
     build: {context: ./web, dockerfile: Dockerfile}
-    depends_on: [api]
+    depends_on:
+      api: {condition: service_healthy}
     ports: ["5173:80"]
 
 volumes:
