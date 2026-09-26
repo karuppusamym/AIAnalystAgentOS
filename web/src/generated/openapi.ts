@@ -1306,7 +1306,10 @@ export interface paths {
         get: operations["get_api_workspaces__workspace_id__get"];
         put?: never;
         post?: never;
-        /** Delete */
+        /**
+         * Delete
+         * @description Archive and disable. This route does not erase stored or published data.
+         */
         delete: operations["delete_api_workspaces__workspace_id__delete"];
         options?: never;
         head?: never;

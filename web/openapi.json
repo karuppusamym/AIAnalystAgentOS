@@ -7947,6 +7947,7 @@
     },
     "/api/workspaces/{workspace_id}": {
       "delete": {
+        "description": "Archive and disable. This route does not erase stored or published data.",
         "operationId": "delete_api_workspaces__workspace_id__delete",
         "parameters": [
           {
