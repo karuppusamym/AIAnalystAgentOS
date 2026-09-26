@@ -24,6 +24,7 @@ from analystos.db.models import (
 from analystos.events.bus import list_events
 from analystos.governance.policy import get_workspace, load_policy, require_role
 from analystos.services import sources as source_svc
+from analystos.services import workspace_inventory
 from analystos.services import workspaces as ws_svc
 
 router = APIRouter(prefix="/api", tags=["workspaces"])
@@ -134,6 +135,13 @@ def delete(workspace_id: str, user: User = Depends(current_user), session: Sessi
     """Archive and disable. This route does not erase stored or published data."""
     ws_svc.delete_workspace(session, user, workspace_id)
     return {"deleted": True, "archived": True, "purged": False}
+
+
+@router.get("/workspaces/{workspace_id}/inventory")
+def get_inventory(workspace_id: str, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function")):
+    """Read-only inventory of retained records and registered resource identifiers; owner only."""
+    return workspace_inventory.inventory(session, user, workspace_id)
 
 
 @router.put("/workspaces/{workspace_id}/policy")

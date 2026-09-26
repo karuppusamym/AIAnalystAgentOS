@@ -11,6 +11,8 @@ import { fmtDate } from "../lib/format";
 export function WorkspacesPage() {
   const list = useAsync(() => api.listWorkspaces(), []);
   const [showCreate, setShowCreate] = useState(false);
+  const [inspectId, setInspectId] = useState<string | null>(null);
+  const inventory = useAsync(() => inspectId ? api.workspaceInventory(inspectId) : Promise.resolve(null), [inspectId]);
   const statusAction = useAction();
   const changeStatus = async (id: string, name: string, status: "active" | "disabled") => {
     if (status === "disabled" && !window.confirm(`Disable ${name}? New work, scheduled runs and workspace access will stop. Data is retained.`)) return;
@@ -44,10 +46,34 @@ export function WorkspacesPage() {
                   <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix="dashboards" unknownLabel="dashboards unknown" /></span>
                 </div>
                 <p className="muted small">Created {fmtDate(w.created_at)}</p>
-                {w.role === "owner" && <button type="button" className="btn btn-sm" disabled={statusAction.busy}
-                  onClick={() => void changeStatus(w.id, w.name, w.status === "active" ? "disabled" : "active")}>
-                  {w.status === "active" ? "Disable workspace" : "Reactivate workspace"}
-                </button>}
+                {w.role === "owner" && <div className="chip-row">
+                  <button type="button" className="btn btn-sm" disabled={statusAction.busy}
+                    onClick={() => void changeStatus(w.id, w.name, w.status === "active" ? "disabled" : "active")}>
+                    {w.status === "active" ? "Disable workspace" : "Reactivate workspace"}
+                  </button>
+                  <button type="button" className="btn btn-sm" aria-expanded={inspectId === w.id}
+                    onClick={() => setInspectId(inspectId === w.id ? null : w.id)}>Data inventory</button>
+                </div>}
+                {inspectId === w.id && <div className="stack" aria-label={`Data inventory for ${w.name}`}>
+                  <ErrorBox error={inventory.error} onRetry={inventory.reload} />
+                  {inventory.data?.workspace_id !== w.id && !inventory.error && <Loading />}
+                  {inventory.data?.workspace_id === w.id && <>
+                    <p className="muted small">{inventory.data.verification}</p>
+                    <p className="small">{Object.values(inventory.data.control_rows).reduce((a, b) => a + b, 0)} control records
+                      across {Object.keys(inventory.data.control_rows).length} tables</p>
+                    <details><summary>Control records by table</summary>
+                      <ul className="list compact">{Object.entries(inventory.data.control_rows).map(([table, count]) =>
+                        <li key={table}><code>{table}</code>: {count}</li>)}</ul>
+                    </details>
+                    <p className="small">Staged schemas: {inventory.data.staged_schemas.join(", ") || "none registered"}</p>
+                    <p className="small">Build targets: {inventory.data.build_targets.map((t) => `${t.engine}/${t.schema}`).join(", ") || "none registered"}</p>
+                    <p className="small">Published attempts: {inventory.data.publications.length}</p>
+                    <details><summary>Local paths</summary>
+                      <ul className="list compact">{inventory.data.local_paths.map((p) =>
+                        <li key={p.path}><code>{p.path}</code> — {p.exists ? "exists" : "absent"}</li>)}</ul>
+                    </details>
+                  </>}
+                </div>}
               </div>
             </div>
           ))}
