@@ -37,3 +37,14 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  output_contract:
+    - type: experiment  # the independent second-method verification experiment
+      schema:
+        type: object
+        required: [method, params, result, query_ids, role]
+        properties:
+          method: {type: string}
+          params: {type: object}
+          result: {type: object}
+          query_ids: {type: array, items: {type: string}}
+          role: {enum: [primary, verification]}

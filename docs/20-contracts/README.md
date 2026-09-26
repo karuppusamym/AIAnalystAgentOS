@@ -9,7 +9,8 @@ generated schema or evidence of live endpoints; implementation is tracked in P4�
 
 | Contract | Model | Spec |
 |---|---|---|
-| Agent definition | `registry.AgentSpec` (YAML in `config/agents/`) | v1 §12.1 |
+| Agent manifest body (`kind: Agent`, YAML in `config/agents/`) | `capabilities.agents.AgentBody` → `agent_manifest.schema.json`; field enforcement in [03-agent-contract.md](03-agent-contract.md) | v1 §12.1, v3 §3.4 |
+| Agent definition (view derived from the manifest) | `registry.AgentSpec` | v1 §12.1, FND-006 |
 | Skill definition | `registry.SkillSpec` | v1 §14 |
 | Tool definition | `registry.ToolSpec` | v1 §15 |
 | Workspace policy | `policy.WorkspacePolicyDoc` (versioned) | v1 §45–§46 |

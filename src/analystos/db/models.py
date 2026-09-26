@@ -41,6 +41,12 @@ def _ts() -> Mapped[datetime]:
     return mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+def by_code(column) -> tuple:
+    """ORDER BY a run-scoped sequential code (`H-2` before `H-10`). `created_at` is the transaction
+    time, so rows written together tie on it and would come back in whatever order the plan reads them."""
+    return func.length(column), column
+
+
 class User(Base):
     __tablename__ = "app_user"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

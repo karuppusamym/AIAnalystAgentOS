@@ -1,5 +1,127 @@
 {
   "$defs": {
+    "AgentBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "llm_calls": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Llm Calls"
+        },
+        "usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usd"
+        },
+        "queries": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Queries"
+        },
+        "max_steps": {
+          "default": 4,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        }
+      },
+      "title": "AgentBudget",
+      "type": "object"
+    },
+    "AgentKnowledge": {
+      "additionalProperties": false,
+      "description": "Which knowledge sections an agent's prompts may carry, and how much (spec v3 \u00a73.4 `knowledge`).\nThe context compiler intersects each purpose profile with `sections` and caps its budget at\n`budget_chars`; an agent without a `knowledge` block receives no knowledge sections at all.",
+      "properties": {
+        "sections": {
+          "items": {
+            "enum": [
+              "glossary",
+              "business_rules",
+              "metrics",
+              "prior_findings",
+              "negative_knowledge",
+              "episodes",
+              "external"
+            ],
+            "type": "string"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "budget_chars": {
+          "anyOf": [
+            {
+              "maximum": 1500000,
+              "minimum": 1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Chars"
+        }
+      },
+      "title": "AgentKnowledge",
+      "type": "object"
+    },
+    "AgentOutputDecl": {
+      "additionalProperties": false,
+      "description": "One output an agent may persist (spec v3 \u00a73.4 `output_contract`): an artifact type\n(`artifacts/registry.ARTIFACT_TYPES`) or a run record type (`OUTPUT_RECORD_TYPES`), and the schema its\ncontent must satisfy before it is written: `contract:<module>.<Model>` (a Pydantic contract under\n`analystos.contracts`), an inline JSON Schema, or none (any JSON object).",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AgentOutputDecl",
+      "type": "object"
+    },
     "AgentPolicies": {
       "properties": {
         "max_rows_extract": {
@@ -32,10 +154,23 @@
       "type": "object"
     }
   },
+  "description": "The agent contract as the runtime, the tool gate and the admin API see it.\n\nA view derived from the `kind: Agent` capability manifest (`capabilities.agents.to_agent_spec`),\nnever authored on its own: `agent_definition` rows cache it and carry only the platform-wide\n`enabled` switch. `name`/`description`/`capabilities`/`skills`/`model_profile` are the v1 names of\nthe manifest's `role`/`goal`/`tags`/`skill.*` capabilities/first model purpose.",
   "properties": {
     "id": {
       "title": "Id",
       "type": "string"
+    },
+    "capability_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capability Id"
     },
     "version": {
       "default": "1.0",
@@ -72,9 +207,16 @@
       "type": "array"
     },
     "model_profile": {
-      "default": "analytical_reasoning",
+      "default": "none",
       "title": "Model Profile",
       "type": "string"
+    },
+    "model_purposes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Model Purposes",
+      "type": "array"
     },
     "prompt_version": {
       "default": "v1",
@@ -84,10 +226,55 @@
     "policies": {
       "$ref": "#/$defs/AgentPolicies"
     },
-    "verification_required": {
-      "default": false,
-      "title": "Verification Required",
-      "type": "boolean"
+    "budget": {
+      "$ref": "#/$defs/AgentBudget"
+    },
+    "knowledge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentKnowledge"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "output_contract": {
+      "items": {
+        "$ref": "#/$defs/AgentOutputDecl"
+      },
+      "title": "Output Contract",
+      "type": "array"
+    },
+    "entry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Entry"
+    },
+    "behaviours": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Behaviours",
+      "type": "object"
+    },
+    "certification": {
+      "default": "draft",
+      "title": "Certification",
+      "type": "string"
+    },
+    "source": {
+      "default": "builtin",
+      "title": "Source",
+      "type": "string"
     },
     "phase": {
       "default": "mvp",

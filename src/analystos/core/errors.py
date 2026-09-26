@@ -42,6 +42,13 @@ class PolicyDenied(Forbidden):
     code = "policy_denied"
 
 
+class OutputContractViolation(PolicyDenied):
+    """An agent tried to persist an output its manifest's `output_contract` does not declare, or whose
+    content fails the declared schema (FND-006). Nothing is written; the step's error names the output."""
+
+    code = "output_contract_violation"
+
+
 class ApprovalRequired(AnalystOSError):
     code, http_status = "approval_required", 409
 

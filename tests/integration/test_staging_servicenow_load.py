@@ -50,6 +50,8 @@ def test_reload_swaps_atomically(dp_settings) -> None:
     try:
         schema_tbl = pa.table({"id": pa.array([1, 2, 3], pa.int64()), "Label Name": pa.array(["a", "b", None])})
         r1 = loader.load(sid, "My Table!", iter(schema_tbl.to_batches()), workspace_id=WS)
+        fingerprint = r1.pop("content_fingerprint")  # order-independent content hash of the load (P4-03 data versions)
+        assert isinstance(fingerprint, str) and len(fingerprint) == 64
         assert r1 == {"row_count": 3, "schema": "src_dp_reload_test", "table": "my_table",
                       "columns": [{"name": "id", "type": "bigint"}, {"name": "label_name", "type": "text"}]}
         r2 = loader.load(sid, "My Table!", iter(pa.table({"id": [9], "Label Name": ["z"]}).to_batches()), workspace_id=WS)

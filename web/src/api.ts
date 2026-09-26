@@ -980,7 +980,8 @@ export interface AgentSpec {
   tools: string[];
   model_profile: string;
   phase: string;
-  verification_required: boolean;
+  knowledge?: { sections: string[]; budget_chars: number | null } | null;
+  output_contract?: { type: string; schema: string | Record<string, unknown> | null }[];
   enabled: boolean;
   [k: string]: unknown;
 }

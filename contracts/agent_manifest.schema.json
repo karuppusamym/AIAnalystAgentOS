@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "ActionTemplate": {
+      "additionalProperties": false,
+      "description": "One deterministic action. String values `$scope.assets` / `$objective` are filled at run time.",
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "title": "ActionTemplate",
+      "type": "object"
+    },
+    "AgentBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "llm_calls": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Llm Calls"
+        },
+        "usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usd"
+        },
+        "queries": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Queries"
+        },
+        "max_steps": {
+          "default": 4,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        }
+      },
+      "title": "AgentBudget",
+      "type": "object"
+    },
+    "AgentKnowledge": {
+      "additionalProperties": false,
+      "description": "Which knowledge sections an agent's prompts may carry, and how much (spec v3 \u00a73.4 `knowledge`).\nThe context compiler intersects each purpose profile with `sections` and caps its budget at\n`budget_chars`; an agent without a `knowledge` block receives no knowledge sections at all.",
+      "properties": {
+        "sections": {
+          "items": {
+            "enum": [
+              "glossary",
+              "business_rules",
+              "metrics",
+              "prior_findings",
+              "negative_knowledge",
+              "episodes",
+              "external"
+            ],
+            "type": "string"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "budget_chars": {
+          "anyOf": [
+            {
+              "maximum": 1500000,
+              "minimum": 1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Chars"
+        }
+      },
+      "title": "AgentKnowledge",
+      "type": "object"
+    },
+    "AgentOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "default": "agent_output",
+          "title": "Artifact Type",
+          "type": "string"
+        },
+        "artifact_name": {
+          "title": "Artifact Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_name"
+      ],
+      "title": "AgentOutput",
+      "type": "object"
+    },
+    "AgentOutputDecl": {
+      "additionalProperties": false,
+      "description": "One output an agent may persist (spec v3 \u00a73.4 `output_contract`): an artifact type\n(`artifacts/registry.ARTIFACT_TYPES`) or a run record type (`OUTPUT_RECORD_TYPES`), and the schema its\ncontent must satisfy before it is written: `contract:<module>.<Model>` (a Pydantic contract under\n`analystos.contracts`), an inline JSON Schema, or none (any JSON object).",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "AgentOutputDecl",
+      "type": "object"
+    },
+    "AgentPolicies": {
+      "properties": {
+        "max_rows_extract": {
+          "default": 500000,
+          "title": "Max Rows Extract",
+          "type": "integer"
+        },
+        "pii_access": {
+          "default": "restricted",
+          "enum": [
+            "none",
+            "restricted",
+            "allowed"
+          ],
+          "title": "Pii Access",
+          "type": "string"
+        },
+        "approval_for_publish": {
+          "default": true,
+          "title": "Approval For Publish",
+          "type": "boolean"
+        },
+        "max_iterations": {
+          "default": 3,
+          "title": "Max Iterations",
+          "type": "integer"
+        }
+      },
+      "title": "AgentPolicies",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "behaviours": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Behaviours",
+      "type": "object"
+    },
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "tools": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "model_purpose": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Purpose"
+    },
+    "model_purposes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Model Purposes",
+      "type": "array"
+    },
+    "prompt_version": {
+      "default": "v1",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "budget": {
+      "$ref": "#/$defs/AgentBudget"
+    },
+    "policies": {
+      "$ref": "#/$defs/AgentPolicies"
+    },
+    "phase": {
+      "default": "mvp",
+      "title": "Phase",
+      "type": "string"
+    },
+    "default_actions": {
+      "items": {
+        "$ref": "#/$defs/ActionTemplate"
+      },
+      "title": "Default Actions",
+      "type": "array"
+    },
+    "knowledge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentKnowledge"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "output_contract": {
+      "items": {
+        "$ref": "#/$defs/AgentOutputDecl"
+      },
+      "title": "Output Contract",
+      "type": "array"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "role",
+    "goal"
+  ],
+  "title": "AgentBody",
+  "type": "object"
+}

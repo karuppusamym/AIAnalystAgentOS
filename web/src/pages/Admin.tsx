@@ -89,7 +89,7 @@ function Agents({ canEdit }: { canEdit: boolean }) {
       <ErrorBox error={act.error} />
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Agent</th><th>Phase</th><th>Model profile</th><th>Tools / skills</th><th>Verification</th><th>Enabled</th></tr></thead>
+          <thead><tr><th>Agent</th><th>Phase</th><th>Model profile</th><th>Tools / skills</th><th>Knowledge / outputs</th><th>Enabled</th></tr></thead>
           <tbody>
             {list.data.map((a) => (
               <tr key={a.id}>
@@ -97,7 +97,7 @@ function Agents({ canEdit }: { canEdit: boolean }) {
                 <td><Tag tone={a.phase === "mvp" ? "info" : "neutral"}>{a.phase}</Tag></td>
                 <td><code className="small">{a.model_profile}</code></td>
                 <td className="small">{a.tools.length} tools · {a.skills.length} skills</td>
-                <td>{a.verification_required ? <Tag tone="success">required</Tag> : <span className="muted">—</span>}</td>
+                <td className="small">{a.knowledge?.sections.length ?? 0} knowledge sections · {(a.output_contract ?? []).map((o) => o.type).join(", ") || "no outputs"}</td>
                 <td><EnabledToggle enabled={a.enabled} disabled={!canEdit || act.busy} onChange={(v) => toggle(a, v)} label={`Enable agent ${a.id}`} /></td>
               </tr>
             ))}

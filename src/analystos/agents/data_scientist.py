@@ -32,6 +32,8 @@ def test_hypothesis(ctx: RunContext) -> dict:
                                                       sample_rows=platform().analysis.sample_rows))
     stat = _dump(outcome.stat)
     status = {True: "supported", False: "rejected"}.get(stat.get("supported"), "inconclusive")
+    ctx.check_output("experiment", {"method": spec.method, "params": spec.model_dump(), "result": stat,
+                                    "query_ids": list(outcome.query_ids), "role": "primary"})
     with session_scope() as s:
         exp = Experiment(id=new_id("exp"), workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=h.id,
                          method=spec.method, params=spec.model_dump(), result=stat, query_ids=list(outcome.query_ids), role="primary")

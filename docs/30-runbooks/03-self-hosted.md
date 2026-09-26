@@ -3,7 +3,8 @@
 Spec: [v3 §8](../00-intent/03-spec-v3-platform.md#8-scalability-and-self-hosted-operations-changes-v2-15).
 Chart: [`deploy/helm/analystos`](../../deploy/helm/analystos). Tests: `tests/unit/test_helm_chart.py`
 (lint + template when `helm` or `ANALYSTOS_HELM` is present), `tests/unit/test_model_providers.py`,
-`tests/unit/test_oidc_abac.py`, `tests/integration/test_oidc_sso.py`, `tests/unit/test_sandbox_runner.py`.
+`tests/unit/test_oidc_abac.py`, `tests/integration/test_oidc_sso.py`, `tests/unit/test_sandbox_runner.py`,
+`tests/unit/test_sandbox_isolation.py`, `tests/integration/test_bi_workspace_isolation.py`.
 
 ## 1. What the chart deploys
 
@@ -114,17 +115,56 @@ audience, expiry, nonce, `azp`) → AnalystOS token in the URL fragment of `<web
 
 Acceptance still open: a live login against a real IdP (Keycloak/Entra) with a dated evidence file.
 
-## 6. Sandbox network isolation
+## 6. Python sandbox isolation (P4-02)
 
-`sandbox/runner.py` starts each child in a new, empty network namespace (`unshare(CLONE_NEWNET)`,
-or with a user namespace when unprivileged). `ANALYSTOS_SANDBOX_NETWORK`: `require` (the chart's
-default: refuse to run where the kernel does not allow it), `isolate` (the application default outside
-the chart: a networked fallback logs a warning on every run and the result says `network_isolated: false`),
-`off` (development only).
+`sandbox/isolation.py` decides where sandboxed code (`python.execute`, the `python_sandbox` skill) runs;
+`ANALYSTOS_SANDBOX_ISOLATION` picks the mode:
 
-Under the chart's `RuntimeDefault` seccomp profile an unprivileged pod usually cannot create namespaces, so
-with `require` the Python sandbox refuses to run there rather than run with the pod's network. To run it
-anyway, either use nodes that allow unprivileged user namespaces (or gVisor), or set
-`config.sandboxNetwork=isolate` **together with** `networkPolicy.enabled=true` and
-`airGapped.allowedEgressCidrs` for the external services, so the NetworkPolicy is the boundary (the chart's
-NOTES warn when `isolate` is set without one).
+| Mode | Backend | Where it is used |
+|---|---|---|
+| `container` | `docker run --rm --network none --ipc none --read-only --tmpfs /scratch:size=… --user 65534 --cap-drop ALL --security-opt no-new-privileges --memory/--memory-swap --cpus --pids-limit` of `ANALYSTOS_SANDBOX_CONTAINER_IMAGE` (`deploy/sandbox/Dockerfile`: interpreter + numeric libraries only; `docker compose --profile sandbox build sandbox`); `ANALYSTOS_SANDBOX_CONTAINER_RUNTIME=runsc` for gVisor | a worker process on a host with a Docker CLI and socket (single host, development) |
+| `process` | the worker's child in fresh mount, network, PID, IPC and UTS namespaces (plus a user namespace when the worker is not root): only a down loopback, private `/proc`, the whole filesystem read-only except a tmpfs scratch of `ANALYSTOS_SANDBOX_SCRATCH_MB`, `ANALYSTOS_SANDBOX_MASKED_PATHS` (and `/run/secrets`, `/var/run/secrets`) hidden, rlimits for memory/CPU/files/file size/processes (`ANALYSTOS_SANDBOX_PIDS_LIMIT`), every capability dropped, `no_new_privs`, a one-off uid when the worker is real root | Kubernetes worker pods (the chart's default: the pod is the outer container) |
+| `auto` (application default) | `container` when its image is present, else `process`, else none | development hosts |
+| `off` | rlimits and the Python-level policy only | development only; refused when `ANALYSTOS_ENV=production` |
+
+**Fail closed.** When the chosen mode cannot be established (no namespaces because seccomp blocks
+`unshare(2)`, no Docker, no image) nothing runs: `run_python` returns `isolation: "unavailable"` with the
+reason, `python.execute` is denied with `sandbox_isolation_unavailable` (audited), and
+`GET /api/health` shows `checks.sandbox` (`available`, `isolated`, `backend`, `enforced`, `detail`) for the
+process that serves it. On a worker, `analystos sandbox-status` prints the same and exits 3 when refused.
+The status is probed once per process by running the real backend and checking what it established (PID 1
+alone in its namespace, only `lo`, root not writable, scratch writable).
+
+In the compose stack the containerised workers have neither a Docker socket nor namespaces (Docker's
+default seccomp), so their sandbox is refused; run a worker on the host (`.venv/bin/analystos worker`) for
+`process` or `container` isolation. Under the chart's `RuntimeDefault` seccomp an unprivileged pod usually
+cannot create namespaces either, so the sandbox is refused until the pool that runs it gets a seccomp
+profile that allows `unshare(2)` (`workers.<pool>.podSecurityContext`), or nodes with gVisor.
+
+Probes (`tests/unit/test_sandbox_isolation.py`, hostile code with the Python policy switched off, on each
+available backend): network egress and DNS, writes outside scratch and past its size, the worker's
+environment, other processes' `/proc/<pid>/environ`, masked secret files, remounting `/` and `setuid(0)`,
+a fork bomb, memory blow-up, CPU spin and wall clock; and the gate refusing under a seccomp filter that
+blocks `unshare(2)`. Not covered: kernel exploits (use gVisor where that matters) and syscall filtering
+inside the sandbox beyond the pod's own profile.
+
+## 7. BI workspace isolation (P4-02)
+
+Superset never connects as the shared reader login: that login is a member of every workspace role, so SQL
+in SQL Lab or a virtual dataset could run `SELECT set_config('role', '<another workspace role>', false)`.
+Each workspace's Superset database connects as that workspace's **BI login**
+(`ANALYSTOS_ANALYTICS_BI_ROLE_PREFIX` + workspace id, created by the loader): a member of that
+workspace's reader role only (`INHERIT TRUE, SET FALSE`), read-only, 60 s statement timeout. Its password
+is derived (HMAC of `ANALYSTOS_ANALYTICS_BI_SECRET`, else the JWT secret), never stored; rotating the
+secret moves every database on its next publish. Databases created before P4-02 are rewritten on the next
+publish (`ensure_database`).
+
+Superset users are scoped by `analystos bi-sync [--workspace ID]`: one Superset role per workspace
+(`AnalystOS workspace <ws>`, exactly `database_access` on that workspace's database), and each workspace
+member gets Gamma, their workspaces' roles and, for owner/editor/analyst, `sql_lab`. It needs
+`FAB_ADD_SECURITY_API = True` (in `deploy/superset/superset_config.py`; restart Superset after pulling
+this change: `docker compose up -d --force-recreate superset`). A synced user never keeps Admin/Alpha.
+
+Live evidence: `tests/integration/test_bi_workspace_isolation.py` (direct DB, SQL Lab, chart data and
+REST API denial across two workspaces). Catalog metadata (schema and table names in `pg_catalog`) stays
+visible to every login, as in any Postgres database; data does not.

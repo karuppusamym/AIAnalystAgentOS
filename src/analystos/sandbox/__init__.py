@@ -1,6 +1,7 @@
-"""Resource-limited subprocess execution of allow-listed numeric Python (spec §47).
+"""Isolated, resource-limited execution of allow-listed numeric Python (spec §47, P4-02).
 
-Defense in depth only; see `analystos.sandbox.runner` for what it does and does not protect against.
+`sandbox.isolation` picks the backend (container or namespaces) and refuses without one; see
+`analystos.sandbox.runner` for the layers and what they do and do not protect against.
 """
 from analystos.sandbox.runner import SandboxResult, check_code, run_python
 

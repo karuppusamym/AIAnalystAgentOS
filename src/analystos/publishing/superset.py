@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -245,6 +246,7 @@ class SupersetPublisher:
         public_url: str | None = None,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
+        bi_login: Callable[[str], tuple[str, str]] | None = None,
     ) -> None:
         if settings is None and base_url is None:
             from analystos.core.config import get_settings
@@ -255,6 +257,12 @@ class SupersetPublisher:
         self.public_url = (public_url or configured_public_url or self.base_url).rstrip("/")
         self.analytics_uri = analytics_sqlalchemy_uri or (settings.superset_analytics_sqlalchemy_uri if settings else "")
         self.role_prefix = getattr(settings, "analytics_workspace_role_prefix", "analystos_r_") if settings else "analystos_r_"
+        if bi_login is None and settings is not None:
+            from analystos.staging.roles import ensure_bi_login
+
+            def bi_login(workspace_id: str) -> tuple[str, str]:
+                return ensure_bi_login(settings, workspace_id)
+        self._bi_login = bi_login
         self.client = SupersetClient(
             self.base_url,
             username or (settings.superset_username if settings else "admin"),
@@ -308,32 +316,57 @@ class SupersetPublisher:
         return None
 
     def analytics_uri_for(self, workspace_id: str) -> str:
-        """The reader identity, switched at connect time to this workspace's reader role: the reader
-        login holds no grant on staged schemas, so each workspace's database sees only its own data."""
+        """The workspace's own BI login (P4-02): a member of this workspace's reader role only. The shared
+        reader login is never given to Superset, because it may SET ROLE into every workspace and SQL Lab
+        or a virtual dataset could run ``SELECT set_config('role', <other workspace>, false)``."""
         from sqlalchemy.engine import make_url
 
-        from analystos.connectors.naming import workspace_reader_role
+        if self._bi_login is None:
+            raise InvalidInput("no per-workspace BI login is configured for Superset (P4-02)")
+        login, password = self._bi_login(workspace_id)
+        url = make_url(self.analytics_uri).set(username=login, password=password)
+        query = {k: v for k, v in url.query.items() if k != "options"}  # no role switching at connect time
+        return url.set(query=query).render_as_string(hide_password=False)
 
-        url = make_url(self.analytics_uri)
-        role = workspace_reader_role(workspace_id, self.role_prefix)
-        return url.update_query_dict({"options": f"-c role={role}"}).render_as_string(hide_password=False)
+    @staticmethod
+    def _login_fingerprint(uri: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(uri.encode()).hexdigest()[:16]
+
+    def _database_extra(self, uri: str, current: str | None = None) -> str:
+        try:
+            extra = json.loads(current or "{}")
+        except ValueError:
+            extra = {}
+        extra.setdefault("allows_virtual_table_explore", True)
+        extra["aos_bi_login"] = self._login_fingerprint(uri)
+        return json.dumps(extra)
 
     def _reconcile_database_uri(self, database_id: int, workspace_id: str) -> None:
-        """Databases created before per-workspace roles still connect as the bare reader; move them over."""
+        """Databases created before BI logins connect as the shared reader (with ``-c role=``), and a
+        rotated secret changes the password: move them to the workspace's login. Fails loudly: a
+        database left on the shared reader is the cross-workspace path this closes."""
         from sqlalchemy.engine import make_url
 
         wanted = self.analytics_uri_for(workspace_id)
+        # 4.1 returns the (password-masked) URI only from /connection; older builds from the item itself.
+        body = self.client.get(f"/api/v1/database/{database_id}/connection", allow_404=True) \
+            or self.client.get(f"/api/v1/database/{database_id}") or {}
+        current = body.get("result") or {}
         try:
-            current = (self.client.get(f"/api/v1/database/{database_id}") or {}).get("result") or {}
-            try:
-                options = make_url(str(current.get("sqlalchemy_uri") or "")).query.get("options")
-            except Exception:  # noqa: BLE001 - unparseable: rewrite it
-                options = None
-            if options == make_url(wanted).query.get("options"):
-                return
-            self.client.put(f"/api/v1/database/{database_id}", {"sqlalchemy_uri": wanted})
-        except AnalystOSError as exc:
-            log.warning("could not move Superset database %s to the workspace reader role: %s", database_id, exc.message)
+            url = make_url(str(current.get("sqlalchemy_uri") or ""))
+            same_login = url.username == make_url(wanted).username and "options" not in url.query
+        except Exception:  # noqa: BLE001 - unparseable: rewrite it
+            same_login = False
+        try:
+            fingerprint = json.loads(current.get("extra") or "{}").get("aos_bi_login")
+        except ValueError:
+            fingerprint = None
+        if same_login and fingerprint == self._login_fingerprint(wanted):
+            return
+        self.client.put(f"/api/v1/database/{database_id}",
+                        {"sqlalchemy_uri": wanted, "extra": self._database_extra(wanted, current.get("extra"))})
 
     def ensure_database(self, workspace_id: str) -> tuple[int, bool]:
         """(id, created). Read-only analytics identity bound to the workspace's reader role; not
@@ -345,11 +378,12 @@ class SupersetPublisher:
             return existing, False
         if not self.analytics_uri:
             raise InvalidInput("superset_analytics_sqlalchemy_uri is not configured")
+        uri = self.analytics_uri_for(workspace_id)
         body = self.client.post(
             "/api/v1/database/",
             {
                 "database_name": self.database_name(workspace_id),
-                "sqlalchemy_uri": self.analytics_uri_for(workspace_id),
+                "sqlalchemy_uri": uri,
                 "expose_in_sqllab": False,
                 "allow_dml": False,
                 "allow_ctas": False,
@@ -357,10 +391,83 @@ class SupersetPublisher:
                 "allow_run_async": False,
                 "allow_file_upload": False,
                 "impersonate_user": False,
-                "extra": json.dumps({"allows_virtual_table_explore": True}),
+                "extra": self._database_extra(uri),
             },
         )
         return int(body["id"]), True
+
+    # -- workspace access (P4-02) ---------------------------------------------------------------
+    BASE_USER_ROLES = ("Gamma",)  # Superset's read-only application role: no data access of its own
+
+    @staticmethod
+    def workspace_role_name(workspace_id: str) -> str:
+        return f"AnalystOS workspace {workspace_slug(workspace_id)}"
+
+    def _security_api(self, resource: str, filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        try:
+            return self.client.list(f"security/{resource}", filters)
+        except NotFound as exc:
+            raise UpstreamUnavailable("Superset security API is disabled; set FAB_ADD_SECURITY_API = True "
+                                      "(deploy/superset/superset_config.py) to scope users per workspace") from exc
+
+    def _role_id(self, name: str, *, create: bool = False) -> int | None:
+        for r in self._security_api("roles", [{"col": "name", "opr": "eq", "value": name}]):
+            if r.get("name") == name:
+                return int(r["id"])
+        if not create:
+            return None
+        return int(self.client.post("/api/v1/security/roles/", {"name": name})["id"])
+
+    def _database_access_pvm(self, database_id: int) -> int:
+        """The ``database_access`` permission on this database's resource: every dataset and SQL Lab
+        query on that database, and nothing on any other."""
+        db = self.client.get(f"/api/v1/database/{database_id}")["result"]
+        resource = f"[{db['database_name']}].(id:{database_id})"
+        vms = [v for v in self._security_api("resources", [{"col": "name", "opr": "eq", "value": resource}])
+               if v.get("name") == resource]
+        perms = [p for p in self._security_api("permissions", [{"col": "name", "opr": "eq", "value": "database_access"}])
+                 if p.get("name") == "database_access"]
+        if not vms or not perms:
+            raise NotFound(f"Superset has no database_access permission for {resource}")
+        pvms = self._security_api("permissions-resources", [{"col": "view_menu", "opr": "rel_o_m", "value": vms[0]["id"]},
+                                                             {"col": "permission", "opr": "rel_o_m", "value": perms[0]["id"]}])
+        if not pvms:
+            raise NotFound(f"Superset has no database_access permission for {resource}")
+        return int(pvms[0]["id"])
+
+    def ensure_workspace_role(self, workspace_id: str) -> int:
+        """One Superset role per workspace holding exactly ``database_access`` on that workspace's
+        database (which itself connects as the workspace's BI login). Replaces whatever else the role
+        held, so a hand-added grant on another workspace's database does not survive a sync."""
+        database_id, _ = self.ensure_database(workspace_id)
+        role_id = self._role_id(self.workspace_role_name(workspace_id), create=True)
+        assert role_id is not None
+        pvm = self._database_access_pvm(database_id)
+        self.client.post(f"/api/v1/security/roles/{role_id}/permissions", {"permission_view_menu_ids": [pvm]})
+        return role_id
+
+    def sync_user(self, *, username: str, email: str, workspace_ids: list[str], first_name: str = "", last_name: str = "",
+                  password: str | None = None, sql_lab: bool = False, active: bool = True) -> int:
+        """Make a Superset user's roles exactly: Gamma (+ sql_lab) + the roles of ``workspace_ids``.
+        Admin/Alpha (all-data roles) are never granted here, and are removed from a synced user."""
+        import secrets
+
+        role_ids = [rid for rid in (self._role_id(n) for n in (*self.BASE_USER_ROLES, *(["sql_lab"] if sql_lab else [])))
+                    if rid is not None]
+        role_ids += [self.ensure_workspace_role(ws) for ws in sorted(set(workspace_ids))]
+        body = {"username": username, "email": email, "first_name": first_name or username,
+                "last_name": last_name or "-", "active": active, "roles": role_ids}
+        existing = [u for u in self._security_api("users", [{"col": "username", "opr": "eq", "value": username}])
+                    if u.get("username") == username]
+        if existing:
+            uid = int(existing[0]["id"])
+            if password:
+                body["password"] = password
+            self.client.put(f"/api/v1/security/users/{uid}", body)
+            return uid
+        # No password given: an unusable random one; the person signs in through SSO (P4-09) or an admin reset.
+        body["password"] = password or secrets.token_urlsafe(32)
+        return int(self.client.post("/api/v1/security/users/", body)["id"])
 
     # -- datasets -------------------------------------------------------------------------------
     def find_dataset(self, database_id: int, table_name: str) -> int | None:

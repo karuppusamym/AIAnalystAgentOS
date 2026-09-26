@@ -85,7 +85,8 @@ def previous_metrics(ctx: RunContext) -> list[MetricDef]:
         if not previous:
             return []
         out = []
-        for a in s.scalars(select(Artifact).where(Artifact.run_id == previous, Artifact.type == "metric").order_by(Artifact.created_at)):
+        for a in s.scalars(select(Artifact).where(Artifact.run_id == previous, Artifact.type == "metric")
+                           .order_by(Artifact.created_at, Artifact.name)):
             m = MetricDef.model_validate(a.content)
             out.append(m.model_copy(update={"status": "proposed", "validation": {}}))
         return out

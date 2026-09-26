@@ -49,7 +49,8 @@ def build_report_data(session: Session, run_id: str, kind: str = "executive", *,
     metrics = [ReportMetric(name=a.name, display_name=a.content.get("display_name", a.name), definition=a.content.get("definition", ""),
                             value=(a.content.get("validation") or {}).get("value"), previous_value=prev_values.get(a.name),
                             format=a.content.get("format", "number"))
-               for a in session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type == "metric").order_by(Artifact.created_at))]
+               for a in session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type == "metric")
+                                             .order_by(Artifact.created_at, Artifact.name))]
     charts = [ReportChart(key=a.name, title=a.content.get("title", a.name), chart_type=a.content.get("chart_type", "table"),
                           columns=(a.content.get("preview") or {}).get("columns", []), rows=(a.content.get("preview") or {}).get("rows", [])[:200])
               for a in session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type == "chart").order_by(Artifact.created_at))]

@@ -352,10 +352,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Agents */
+        /**
+         * Agents
+         * @description Every registered agent, derived from its current manifest (never from the cached row spec).
+         *     A row left from an agent whose manifest is gone is listed as `source: orphan` (it cannot run).
+         */
         get: operations["agents_api_agents_get"];
         put?: never;
-        /** Register Agent */
+        /**
+         * Register Agent
+         * @description Refused: an AgentSpec is a view of a manifest, so registering one on its own would fork the contract.
+         */
         post: operations["register_agent_api_agents_post"];
         delete?: never;
         options?: never;
@@ -376,7 +383,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Patch Agent */
+        /**
+         * Patch Agent
+         * @description Only the platform-wide `enabled` switch is editable here; the contract comes from the manifest.
+         */
         patch: operations["patch_agent_api_agents__agent_id__patch"];
         trace?: never;
     };

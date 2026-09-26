@@ -23,7 +23,7 @@ from analystos.contracts.evidence import DataManifest, Fact
 from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution
+from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution, by_code
 from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.evidence.bundle import assemble
@@ -71,7 +71,8 @@ def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
     with session_scope() as s:
-        insights = [(i.id, i.code) for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "draft"))]
+        insights = [(i.id, i.code) for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "draft")
+                                                          .order_by(*by_code(Insight.code)))]
     quality = task_output(ctx.run.id, "quality").get("issues") or []
     verified_codes, failed_codes = [], []
     directions: dict[tuple, list] = {}
@@ -236,6 +237,10 @@ def verify_insights(ctx: RunContext) -> dict:
             "jev": {"p_supports": jev.p, "model": jev.model, "by": jev.backend, "decision_id": jev.id} if jev else None,
             "contradictions": contradiction}, "verified": deterministic_ok,
             "note": "Verification is grounded in deterministic checks and reproducible data; model opinions only adjust confidence."}
+        if second is not None:
+            ctx.check_output("experiment", {"method": spec.method, "params": {"verification_of": code},
+                                            "result": _dump(second.stat), "query_ids": list(second.query_ids),
+                                            "role": "verification"})
         with session_scope() as s:
             ins = s.get(Insight, insight_id)
             ins.finding = finding

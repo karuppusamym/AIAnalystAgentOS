@@ -156,6 +156,13 @@ class RunContext:
 
         return body(self.manifest).budget if self.manifest is not None and self.manifest.kind == "Agent" else None
 
+    def check_output(self, type_: str, content: Any) -> None:
+        """The agent's output contract (FND-006), immediately before it writes a run record:
+        an undeclared type or content off its declared schema raises OutputContractViolation."""
+        from analystos.capabilities.agents import enforce_output
+
+        enforce_output(self.agent, self.agent.id, type_, content)
+
     def spend(self, kind: str, amount: float = 1) -> None:
         self.usage[kind] = self.usage.get(kind, 0) + amount
 

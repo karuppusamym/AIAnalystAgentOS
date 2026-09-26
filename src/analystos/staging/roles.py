@@ -116,6 +116,69 @@ def backfill(settings: Any, staged: Iterable[tuple[str, str]], *, loader_url: st
     return {"moved": moved, "orphaned": orphaned}
 
 
+def bi_login_for(settings: Any, workspace_id: str) -> str:
+    return workspace_reader_role(workspace_id, getattr(settings, "analytics_bi_role_prefix", "analystos_bi_"))
+
+
+def bi_password(settings: Any, login: str) -> str:
+    """Derived, not stored: HMAC of the platform secret, so every worker computes the same password and a
+    secret rotation moves every BI login on its next publish."""
+    import hashlib
+    import hmac
+
+    secret = getattr(settings, "analytics_bi_secret", None) or settings.jwt_secret
+    secret = secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret)
+    return hmac.new(secret.encode(), f"analystos-bi-login:{login}".encode(), hashlib.sha256).hexdigest()
+
+
+def ensure_bi_login(settings: Any, workspace_id: str, *, loader_url: str | None = None) -> tuple[str, str]:
+    """The workspace's BI login (P4-02, SEC-007): what Superset connects as for this workspace.
+
+    Unlike the shared reader login (a member of *every* workspace role, so SQL that runs
+    ``SET ROLE`` / ``set_config('role', ...)`` could switch to another workspace), this login is a
+    member of exactly one workspace role, inherits its SELECT grants and can SET to nothing else. It
+    is read-only by default and bounded by a statement timeout. Idempotent; returns (login, password)."""
+    login, role = bi_login_for(settings, workspace_id), role_for(settings, workspace_id)
+    for ident in (login, role):
+        if not is_safe_identifier(ident):
+            raise InvalidInput(f"Unsafe identifier {ident!r}")
+    password = bi_password(settings, login)
+    reader = reader_login(settings)
+    url = make_url(loader_url or settings.analytics_loader_url)
+    raw = get_engine(url.render_as_string(hide_password=False), plane="loader").raw_connection()
+    try:
+        conn = raw.driver_connection
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (login,))
+            ensure_workspace_role(cur, role, reader)
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (login,))
+            ident = sql.Identifier(login)
+            if cur.fetchone() is None:
+                try:
+                    cur.execute(sql.SQL("CREATE ROLE {} LOGIN INHERIT NOCREATEDB NOCREATEROLE CONNECTION LIMIT 20 "
+                                        "PASSWORD {}").format(ident, sql.Literal(password)))
+                except psycopg.errors.InsufficientPrivilege as exc:
+                    raise Forbidden("The analytics loader identity cannot create per-workspace BI logins (it needs "
+                                    "CREATEROLE); run `analystos migrate`.") from exc
+            else:
+                cur.execute(sql.SQL("ALTER ROLE {} LOGIN INHERIT PASSWORD {}").format(ident, sql.Literal(password)))
+            cur.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(ident))
+            cur.execute(sql.SQL("ALTER ROLE {} SET statement_timeout = '60s'").format(ident))
+            cur.execute("SHOW server_version_num")
+            if int(cur.fetchone()[0]) >= 160000:  # inherit the grants, never SET ROLE to the workspace role
+                cur.execute(sql.SQL("GRANT {} TO {} WITH INHERIT TRUE, SET FALSE").format(sql.Identifier(role), ident))
+            else:
+                cur.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(role), ident))
+            cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(url.database or ""), ident))
+        conn.commit()
+    except Exception:
+        raw.driver_connection.rollback()
+        raise
+    finally:
+        raw.close()
+    return login, password
+
+
 def provision_loader_createrole(admin_url: str, loader: str) -> bool:
     """Self-healing for clusters initialised before per-workspace roles: give the loader CREATEROLE
     when the administrative (control-plane) identity is allowed to. Returns whether it holds it."""

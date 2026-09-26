@@ -11,7 +11,7 @@ from analystos.artifacts.registry import link, save_artifact
 from analystos.context.service import add_entry
 from analystos.core.ids import utcnow
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Approval, Insight, RunTask
+from analystos.db.models import AnalysisRun, Approval, Insight, RunTask, by_code
 from analystos.events.bus import emit
 from analystos.graph.projection import project_workspace
 from analystos.runtime.context import RunContext, Services
@@ -85,7 +85,8 @@ _NUM = re.compile(r"-?\d+(?:[.,]\d+)?")
 
 def finalize(ctx: RunContext) -> dict:
     with session_scope() as s:
-        insights = list(s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")))
+        insights = list(s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
+                                  .order_by(*by_code(Insight.code))))
         facts = [{"code": i.code, "title": i.title, "finding": i.finding, "confidence": i.confidence,
                   "impact": i.business_impact} for i in insights]
     summary_md, source = None, "template"

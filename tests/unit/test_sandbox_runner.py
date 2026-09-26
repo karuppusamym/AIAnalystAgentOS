@@ -1,11 +1,27 @@
 """Sandbox: allowed numeric code runs; forbidden imports/builtins/attributes are rejected; timeout and
-memory limits are enforced; the child environment carries no secrets."""
+memory limits are enforced; the child environment carries no secrets.
+
+Runs on the process backend where this host allows namespaces, else on `off` (rlimits only); the
+isolation itself is probed in test_sandbox_isolation.py."""
 from __future__ import annotations
 
 import pytest
 
-from analystos.sandbox import runner
+from analystos.core.config import Settings, get_settings
+from analystos.sandbox import isolation, runner
 from analystos.sandbox.runner import check_code, run_python, sandbox_env
+
+_PROCESS = isolation.status(Settings(_env_file=None, sandbox_isolation="process")).available
+BACKEND = "process" if _PROCESS else "none"
+
+
+@pytest.fixture(autouse=True)
+def _backend(monkeypatch):
+    monkeypatch.setenv("ANALYSTOS_SANDBOX_ISOLATION", "process" if _PROCESS else "off")
+    monkeypatch.setenv("ANALYSTOS_ENV", "dev")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def test_allowed_numeric_code_with_inputs():
@@ -127,49 +143,7 @@ def test_result_errors_are_reported():
     assert r.ok is False and r.error == "result too large"
 
 
-NET_PROBE = """import socket
-names = [n for _, n in socket.if_nameindex()]
-try:
-    socket.create_connection(("1.1.1.1", 53), timeout=2).close()
-    reached = True
-except OSError as e:
-    reached = False
-result = {"interfaces": names, "reached": reached}
-"""
-
-
-@pytest.mark.skipif(not runner.network_isolation_available(), reason="this kernel does not allow a private network namespace")
-def test_child_has_no_network(monkeypatch):
-    """P4-S04: the child sees only a loopback in its own namespace and cannot reach any address, even
-    with `socket` let through the static check (as a C-extension escape would)."""
-    monkeypatch.setattr(runner, "check_code", lambda code, allowed: [])
-    r = run_python(NET_PROBE, allowed_imports=("socket",), network="require")
-    assert r.ok, r.error
-    assert r.network_isolated is True
-    assert r.result == {"interfaces": ["lo"], "reached": False}
-    assert run_python("result = 1").network_isolated is True  # isolate is the default
-
-
-def test_require_mode_refuses_when_isolation_is_impossible(monkeypatch):
-    monkeypatch.setattr(runner, "network_isolation_available", lambda: False)
-    r = run_python("result = 1", network="require")
-    assert r.ok is False and "network isolation is required" in r.error and r.network_isolated is False
-    r = run_python("result = 1", network="isolate")  # best effort: runs, and says it was not isolated
-    assert r.ok and r.network_isolated is False
-    with pytest.raises(ValueError):
-        run_python("result = 1", network="sometimes")
-
-
-def test_isolate_fallback_is_logged_and_recorded(monkeypatch, caplog):
-    """M5: a networked fallback under `isolate` is never silent: a warning every time, network_isolated False."""
-    import logging
-
-    monkeypatch.setattr(runner, "network_isolation_available", lambda: False)
-    with caplog.at_level(logging.WARNING, logger=runner.__name__):
-        r = run_python("result = 1", network="isolate")
-    assert r.ok and r.network_isolated is False
-    assert any("WITH network access" in rec.getMessage() for rec in caplog.records)
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger=runner.__name__):
-        run_python("result = 1", network="off")
-    assert not caplog.records  # `off` is an explicit development choice, not a fallback
+def test_results_record_the_backend():
+    r = run_python("result = 1")
+    assert r.ok and r.isolation == BACKEND
+    assert r.network_isolated is (BACKEND != "none")

@@ -34,3 +34,9 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  output_contract:
+    - type: context_package
+      schema:
+        type: object
+        required: [objective, tables, glossary, metrics]
+        properties: {objective: {type: string}, tables: {type: array}, glossary: {type: array}, metrics: {type: array}}

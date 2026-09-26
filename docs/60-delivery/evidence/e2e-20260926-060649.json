@@ -1,0 +1,1038 @@
+{
+  "api": "http://localhost:8000",
+  "started_at": "2026-09-26T06:06:49.828313+00:00",
+  "checks": {
+    "1_workspace_created": true,
+    "2_servicenow_source_added": true,
+    "3_incident_and_change_selected": true,
+    "19_requirement_added_and_replanned": true,
+    "18_user_can_interrupt_before_publish": true,
+    "approval_requires_approver_role": true,
+    "4_context_loaded": true,
+    "5_datasets_profiled": true,
+    "6_quality_issues_identified": true,
+    "7_hypotheses_proposed": true,
+    "8_iterative_analysis": true,
+    "9_three_evidence_backed_findings": true,
+    "10_rev_verified": true,
+    "11_reusable_dataset": true,
+    "12_kpi_definitions": true,
+    "13_five_charts": true,
+    "14_executive_dashboard": true,
+    "15_operational_dashboard": true,
+    "16_published_to_superset": true,
+    "17_queries_artifacts_lineage_stored": true,
+    "20_evidence_inspectable": true,
+    "safety_restricted_column_rejected": true,
+    "safety_write_rejected": true,
+    "safety_control_plane_unreachable": true,
+    "safety_cross_workspace_isolation": true,
+    "decisions_recorded_with_rung": true
+  },
+  "health": {
+    "ok": true,
+    "orchestrator": "local",
+    "checks": {
+      "postgres": {
+        "ok": true,
+        "ms": 2
+      },
+      "redis": {
+        "ok": true,
+        "ms": 4
+      },
+      "neo4j": {
+        "ok": true,
+        "ms": 0,
+        "enabled": false,
+        "status": "disabled"
+      },
+      "temporal": {
+        "ok": true,
+        "ms": 0
+      },
+      "superset": {
+        "ok": true,
+        "ms": 50
+      },
+      "models": {
+        "ok": true,
+        "ms": 4,
+        "chat": true,
+        "jev": true
+      },
+      "sandbox": {
+        "ok": true,
+        "mode": "auto",
+        "backend": "process",
+        "available": true,
+        "isolated": true,
+        "enforced": {
+          "network": true,
+          "filesystem": true,
+          "processes": true,
+          "memory": true,
+          "cpu": true,
+          "wall_clock": true,
+          "secrets": true
+        },
+        "detail": "namespaces, read-only root, scratch tmpfs, capabilities dropped"
+      }
+    }
+  },
+  "source": {
+    "discovered": [
+      "change_request",
+      "cmdb_ci",
+      "incident",
+      "sys_user_group"
+    ],
+    "loaded": [
+      {
+        "asset": "src_src_7b46768cb91f.change_request",
+        "row_count": 3000,
+        "schema": "src_src_7b46768cb91f",
+        "table": "change_request",
+        "columns": [
+          {
+            "name": "sys_id",
+            "type": "text"
+          },
+          {
+            "name": "number",
+            "type": "text"
+          },
+          {
+            "name": "type",
+            "type": "text"
+          },
+          {
+            "name": "risk",
+            "type": "bigint"
+          },
+          {
+            "name": "state",
+            "type": "bigint"
+          },
+          {
+            "name": "start_date",
+            "type": "timestamp"
+          },
+          {
+            "name": "end_date",
+            "type": "timestamp"
+          },
+          {
+            "name": "assignment_group",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group_name",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci_name",
+            "type": "text"
+          },
+          {
+            "name": "close_code",
+            "type": "text"
+          },
+          {
+            "name": "short_description",
+            "type": "text"
+          },
+          {
+            "name": "sys_updated_on",
+            "type": "timestamp"
+          }
+        ],
+        "content_fingerprint": "9e0efb0dcb5211961084eb3b00a4bea2a9997e73fb9cb9c657e61a393c3cdb46",
+        "snapshot": {
+          "rows_staged": 3000,
+          "source_total_rows": 3000,
+          "total_rows_basis": "x-total-count",
+          "population_rows": 3000,
+          "row_cap": 200000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-26T06:06:50.987398+00:00",
+          "load_id": "load_bc68cc0f7e95",
+          "content_fingerprint": "9e0efb0dcb5211961084eb3b00a4bea2a9997e73fb9cb9c657e61a393c3cdb46"
+        },
+        "truncated": false
+      },
+      {
+        "asset": "src_src_7b46768cb91f.incident",
+        "row_count": 20000,
+        "schema": "src_src_7b46768cb91f",
+        "table": "incident",
+        "columns": [
+          {
+            "name": "sys_id",
+            "type": "text"
+          },
+          {
+            "name": "number",
+            "type": "text"
+          },
+          {
+            "name": "opened_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "resolved_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "closed_at",
+            "type": "timestamp"
+          },
+          {
+            "name": "priority",
+            "type": "bigint"
+          },
+          {
+            "name": "impact",
+            "type": "bigint"
+          },
+          {
+            "name": "urgency",
+            "type": "bigint"
+          },
+          {
+            "name": "state",
+            "type": "bigint"
+          },
+          {
+            "name": "category",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group",
+            "type": "text"
+          },
+          {
+            "name": "assignment_group_name",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci",
+            "type": "text"
+          },
+          {
+            "name": "cmdb_ci_name",
+            "type": "text"
+          },
+          {
+            "name": "caused_by",
+            "type": "text"
+          },
+          {
+            "name": "caused_by_name",
+            "type": "text"
+          },
+          {
+            "name": "reassignment_count",
+            "type": "bigint"
+          },
+          {
+            "name": "reopen_count",
+            "type": "bigint"
+          },
+          {
+            "name": "made_sla",
+            "type": "boolean"
+          },
+          {
+            "name": "contact_type",
+            "type": "text"
+          },
+          {
+            "name": "short_description",
+            "type": "text"
+          },
+          {
+            "name": "caller_id",
+            "type": "text"
+          },
+          {
+            "name": "caller_id_name",
+            "type": "text"
+          },
+          {
+            "name": "sys_updated_on",
+            "type": "timestamp"
+          }
+        ],
+        "content_fingerprint": "6437ef7927520c2488f88b3bbf6bff99bdcb67b69744b1e3c93b3e2e20290e04",
+        "snapshot": {
+          "rows_staged": 20000,
+          "source_total_rows": 20000,
+          "total_rows_basis": "x-total-count",
+          "population_rows": 20000,
+          "row_cap": 200000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-26T06:06:53.369347+00:00",
+          "load_id": "load_35567b6a9520",
+          "content_fingerprint": "6437ef7927520c2488f88b3bbf6bff99bdcb67b69744b1e3c93b3e2e20290e04"
+        },
+        "truncated": false
+      }
+    ]
+  },
+  "redirect": {
+    "kind": "redirect",
+    "classified_by": "default",
+    "consequential_p": 0.0,
+    "decision_ids": [
+      "dec_737cee98b919",
+      "dec_a585644bd63b"
+    ],
+    "replan": {
+      "plan_version": 2,
+      "tasks_reset": 9,
+      "tasks_removed": 9,
+      "approvals_invalidated": 0
+    },
+    "interpretation": {
+      "filters": [
+        {
+          "asset": "src_src_7b46768cb91f.incident",
+          "column": "category",
+          "op": "!=",
+          "value": "inquiry"
+        }
+      ],
+      "focus": [
+        "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures."
+      ],
+      "summary": "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures.",
+      "interpreted_by": "rules"
+    },
+    "knowledge_draft": "ksug_78ac3a6feffb",
+    "feedback_id": "fb_a73986089a6d"
+  },
+  "analyst_approve_attempt": {
+    "status": 403,
+    "body": {
+      "error": {
+        "code": "forbidden",
+        "message": "role 'editor' cannot approve",
+        "retryable": false,
+        "details": {}
+      }
+    }
+  },
+  "approval": {
+    "id": "apr_0579c32ece48",
+    "workspace_id": "ws_2e16a2f92835",
+    "run_id": "run_cf36e0111aff",
+    "action": "publish_dashboard",
+    "risk_tier": "high",
+    "destination": "superset",
+    "affected_assets": [
+      "aos_analyze_incident_and_change_da_111aff",
+      "executive",
+      "operational"
+    ],
+    "payload_hash": "4f3230dbb94aa26a01d9bd6813c7115441078c697f87cfaf3d2931f3129227c4",
+    "plan_hash": "6d220b4ca0ea434c047c97b47448147e7aa1aba77a429ac5761044243a9a6437",
+    "policy_version": 1,
+    "requested_by": "usr_84234781ebd9",
+    "status": "approved",
+    "decided_by": "usr_6575847a9fd5",
+    "decided_at": "2026-09-26T06:07:08.998169+00:00",
+    "reason": "e2e demo",
+    "expires_at": "2026-09-29T06:07:05.076685+00:00",
+    "evidence": {
+      "charts": 10,
+      "policy": {
+        "details": {
+          "role": "editor",
+          "tool": null,
+          "agent": "publisher",
+          "action": "publish",
+          "purpose": "analysis",
+          "destination": "superset"
+        },
+        "reasons": [
+          "initial_release_requires_approval_for_external_side_effects"
+        ],
+        "decision": "approval_required",
+        "risk_tier": "high",
+        "policy_version": 1,
+        "effective_autonomy": 3
+      },
+      "metrics": 7,
+      "risk_tier_basis": "deterministic: publication is always high risk and approval-gated",
+      "governance_review": {
+        "ok": true,
+        "problems": []
+      }
+    },
+    "created_at": "2026-09-26T06:07:05.065743+00:00"
+  },
+  "run": {
+    "id": "run_cf36e0111aff",
+    "status": "COMPLETED",
+    "plan_version": 2,
+    "plan_hash": "6d220b4ca0ea434c047c97b47448147e7aa1aba77a429ac5761044243a9a6437",
+    "cost_usd": 0.0,
+    "tokens": 0,
+    "summary": {
+      "published": true,
+      "publication": {
+        "urls": {
+          "executive": "http://localhost:8088/superset/dashboard/171/",
+          "operational": "http://localhost:8088/superset/dashboard/172/"
+        },
+        "status": "succeeded",
+        "external_ids": {
+          "charts": {
+            "dist_hours": 1123,
+            "finding_i_1": 1122,
+            "finding_i_3": 1121,
+            "detail_table": 1125,
+            "trend_volume": 1120,
+            "heat_dow_hour": 1124,
+            "kpi_record_count": 1116,
+            "kpi_avg_reassignment_count": 1119,
+            "kpi_median_opened_at_after_hours": 1118,
+            "kpi_median_opened_at_to_resolved_at_hours": 1117
+          },
+          "metrics": {
+            "aos_analyze_incident_and_change_da_111aff:record_count": 393,
+            "aos_analyze_incident_and_change_da_111aff:avg_reopen_count": 397,
+            "aos_analyze_incident_and_change_da_111aff:avg_reassignment_count": 396,
+            "aos_analyze_incident_and_change_da_111aff:avg_opened_at_after_hours": 399,
+            "aos_analyze_incident_and_change_da_111aff:median_opened_at_after_hours": 395,
+            "aos_analyze_incident_and_change_da_111aff:avg_opened_at_to_resolved_at_hours": 398,
+            "aos_analyze_incident_and_change_da_111aff:median_opened_at_to_resolved_at_hours": 394
+          },
+          "database": 104,
+          "datasets": {
+            "aos_analyze_incident_and_change_da_111aff": 104
+          },
+          "dashboards": {
+            "executive": 171,
+            "operational": 172
+          },
+          "bundle_hash": "4f3230dbb94aa26a01d9bd6813c7115441078c697f87cfaf3d2931f3129227c4",
+          "idempotency_key": "run_cf36e0111aff:4f3230dbb94aa26a01d9bd6813c71154",
+          "database_created": true
+        },
+        "publication_id": "pub_8a2e26ac06f5"
+      },
+      "summary_source": "template",
+      "graph_projection": {
+        "ok": false,
+        "reason": "graph projection disabled (ANALYSTOS_GRAPH_ENABLED=false)",
+        "skipped": true
+      },
+      "summary_markdown": "- **Resolution hours is higher for opened after hours = true** \u2014 Median resolution hours is 52.0 for opened after hours = true versus 33.5 for false.\n- **Missed SLA concentrates in reassignment count = 3+** \u2014 Records with reassignment count = 3+ have a missed SLA rate of 28.8% versus 9.7% for reassignment count = 1 (3.0x).\n- **Volume is concentrated in few cmdb ci name values** \u2014 Payments Gateway accounts for 40.1% of records (where priority = 1).\n- **Missed SLA concentrates in assignment group name = Network Operations** \u2014 Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 12.8% for assignment group name = Cloud Platform (1.7x) (where category = network).\n- **Missed SLA concentrates in assignment group name = Network Operations** \u2014 Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 10.2% for assignment group name = Storage and Backup (2.2x).\n- **Missed SLA concentrates in category = network** \u2014 Records with category = network have a missed SLA rate of 19.3% versus 12.0% for category = hardware (1.6x).",
+      "verified_insights": 6
+    },
+    "instructions": [
+      {
+        "at": "2026-09-26T06:06:56.571906+00:00",
+        "kind": "redirect",
+        "text": "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures.",
+        "feedback_id": "fb_a73986089a6d"
+      }
+    ],
+    "constraints": {
+      "focus": [
+        "Exclude inquiry-category incidents from the analysis; they are requests, not operational failures."
+      ],
+      "filters": [
+        {
+          "op": "!=",
+          "asset": "src_src_7b46768cb91f.incident",
+          "value": "inquiry",
+          "column": "category"
+        }
+      ]
+    }
+  },
+  "insights": [
+    {
+      "code": "I-1",
+      "title": "Resolution hours is higher for opened after hours = true",
+      "finding": "Median resolution hours is 52.0 for opened after hours = true versus 33.5 for false.",
+      "confidence": 0.8,
+      "queries": [
+        {
+          "id": "qry_50e4e24ad21f",
+          "sql": "SELECT \"s\".\"segment\" AS \"segment\", \"s\".\"outcome\" AS \"outcome\", \"s\".\"_rows_total\" AS \"_rows_total\", \"s\".\"_rows_excluded\" AS \"_rows_excluded\" FROM (SELECT \"d\".\"segment\" AS \"segment\", \"d\".\"outcome\" AS \"outcome\", ROW_NUMBER() OVER (PARTITION BY \"d\".\"segment\", \"d\".\"outcome\" ORDER BY \"d\".\"segment\") AS \"_rn\", COUNT(*) OVER () AS \"_rows_total\", SUM(CASE WHEN \"d\".\"segment\" IS NULL OR \"d\".\"outcome\" IS NULL THEN 1 ELSE 0 END) OVER () AS \"_rows_excluded\" FROM (SELECT CASE WHEN \"opened_at\" IS NULL THEN NULL WHEN EXTRACT(HOUR FROM CAST(\"opened_at\" AS TIMESTAMP)) < 8 OR EXTRACT(HOUR FROM CAST(\"opened_at\" AS ",
+          "rows": 16905,
+          "result_hash": "71f0aaa0dd2479d2d028334e2d0ae01782e6803247b7c9cb80478c86206f76e6"
+        },
+        {
+          "id": "qry_52c8aebba5fc",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", AVG(\"outcome\") AS \"mean\", MIN(\"outcome\") AS \"min\", MAX(\"outcome\") AS \"max\", PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"outcome\") AS \"median\" FROM (SELECT CASE WHEN \"opened_at\" IS NULL THEN NULL WHEN EXTRACT(HOUR FROM CAST(\"opened_at\" AS TIMESTAMP)) < 8 OR EXTRACT(HOUR FROM CAST(\"opened_at\" AS TIMESTAMP)) >= 18 OR EXTRACT(DOW FROM CAST(\"opened_at\" AS TIMESTAMP)) IN (0, 6) THEN 1 ELSE 0 END AS \"segment\", CAST(CAST((EXTRACT(EPOCH FROM CAST(\"resolved_at\" AS TIMESTAMP)) - EXTRACT(EPOCH FROM CAST(\"opened_at\" AS TIMESTAMP))) AS DOUBLE",
+          "rows": 2,
+          "result_hash": "94187a916a7499a98be0dfdc075e196107b0fb4199792d1a557d6b3aa92d58f3"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    },
+    {
+      "code": "I-2",
+      "title": "Missed SLA concentrates in reassignment count = 3+",
+      "finding": "Records with reassignment count = 3+ have a missed SLA rate of 28.8% versus 9.7% for reassignment count = 1 (3.0x).",
+      "confidence": 0.85,
+      "queries": [
+        {
+          "id": "qry_6c3b359929e0",
+          "sql": "SELECT \"segment\", \"segment_order\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT CASE WHEN \"reassignment_count\" IS NULL THEN NULL WHEN \"reassignment_count\" < 0.0 THEN '(<0)' WHEN \"reassignment_count\" < 1.0 THEN '0' WHEN \"reassignment_count\" < 2.0 THEN '1' WHEN \"reassignment_count\" < 3.0 THEN '2' ELSE '3+' END AS \"segment\", CASE WHEN \"reassignment_count\" IS NULL THEN NULL WHEN \"reassignment_count\" < 0.0 THEN -1 WHEN \"reassignment_count\" < 1.0 THEN 0 WHEN \"reassignment_count\" < 2.0 THEN 1 WHEN \"reassignment_count\" < 3.0 THEN 2 ELSE 3 END AS \"segment_or",
+          "rows": 4,
+          "result_hash": "0c673461691c86886877b124d3c0a9857912940cdc94c576a5a35210c0dd0bf6"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    },
+    {
+      "code": "I-3",
+      "title": "Volume is concentrated in few cmdb ci name values",
+      "finding": "Payments Gateway accounts for 40.1% of records (where priority = 1).",
+      "confidence": 0.85,
+      "queries": [
+        {
+          "id": "qry_a2c544500a5c",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(*) AS \"volume\" FROM (SELECT \"cmdb_ci_name\" AS \"segment\" FROM \"src_src_7b46768cb91f\".\"incident\" WHERE \"priority\" = 1 AND \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"volume\" DESC NULLS LAST, \"segment\" LIMIT 5000",
+          "rows": 39,
+          "result_hash": "1c29783500d3a82ddd6707a7abd74089be0e7356ea75c8173e88d9b376a800ff"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    },
+    {
+      "code": "I-4",
+      "title": "Missed SLA concentrates in assignment group name = Network Operations",
+      "finding": "Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 12.8% for assignment group name = Cloud Platform (1.7x) (where category = network).",
+      "confidence": 0.85,
+      "queries": [
+        {
+          "id": "qry_f6e76c2f62f9",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT \"assignment_group_name\" AS \"segment\", CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_7b46768cb91f\".\"incident\" WHERE \"category\" = 'network' AND \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000",
+          "rows": 4,
+          "result_hash": "9940086d68b58edc858d906afac67d04688a26c11195af7f34dadb8d0b54b0ad"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    },
+    {
+      "code": "I-5",
+      "title": "Missed SLA concentrates in assignment group name = Network Operations",
+      "finding": "Records with assignment group name = Network Operations have a missed SLA rate of 22.1% versus 10.2% for assignment group name = Storage and Backup (2.2x).",
+      "confidence": 0.85,
+      "queries": [
+        {
+          "id": "qry_4a7353d68bd9",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT \"assignment_group_name\" AS \"segment\", CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_7b46768cb91f\".\"incident\" WHERE \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000",
+          "rows": 11,
+          "result_hash": "c5f9119fbdbf9b36d32df549101afedc78493c224e216df25185214aad2df58a"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    },
+    {
+      "code": "I-6",
+      "title": "Missed SLA concentrates in category = network",
+      "finding": "Records with category = network have a missed SLA rate of 19.3% versus 12.0% for category = hardware (1.6x).",
+      "confidence": 0.85,
+      "queries": [
+        {
+          "id": "qry_9abe67c79613",
+          "sql": "SELECT \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"outcome\") AS \"n\", SUM(\"outcome\") AS \"positives\" FROM (SELECT \"category\" AS \"segment\", CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_7b46768cb91f\".\"incident\" WHERE \"category\" <> 'inquiry') AS \"d\" GROUP BY \"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000",
+          "rows": 4,
+          "result_hash": "15a2d22f0e2987d12e150707c2efc6e41e03a48b24caee1480af760b6c0fb946"
+        }
+      ],
+      "checks": [
+        [
+          "method_fit",
+          true
+        ],
+        [
+          "sample_size",
+          true
+        ],
+        [
+          "significance_after_bh",
+          true
+        ],
+        [
+          "effect_size",
+          true
+        ],
+        [
+          "representative_population",
+          true
+        ],
+        [
+          "no_overreach",
+          true
+        ],
+        [
+          "fact_binding",
+          true
+        ],
+        [
+          "data_version_stable",
+          true
+        ],
+        [
+          "reproducible_rerun",
+          true
+        ],
+        [
+          "second_method",
+          true
+        ],
+        [
+          "evidence_complete",
+          true
+        ]
+      ],
+      "independent_model": {
+        "unavailable": "policy_off"
+      },
+      "jev": null
+    }
+  ],
+  "metrics": [
+    {
+      "name": "median_opened_at_after_hours",
+      "expr": "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"opened_at_after_hours\")",
+      "value": 0.0
+    },
+    {
+      "name": "avg_opened_at_after_hours",
+      "expr": "AVG(\"opened_at_after_hours\")",
+      "value": 0.3403942335981171
+    },
+    {
+      "name": "median_opened_at_to_resolved_at_hours",
+      "expr": "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"opened_at_to_resolved_at_hours\")",
+      "value": 38.61972222222222
+    },
+    {
+      "name": "avg_opened_at_to_resolved_at_hours",
+      "expr": "AVG(\"opened_at_to_resolved_at_hours\")",
+      "value": 53.444464376088796
+    },
+    {
+      "name": "avg_reopen_count",
+      "expr": "AVG(\"reopen_count\")",
+      "value": 0.052015298617240364
+    },
+    {
+      "name": "avg_reassignment_count",
+      "expr": "AVG(\"reassignment_count\")",
+      "value": 1.337805236834363
+    },
+    {
+      "name": "record_count",
+      "expr": "COUNT(*)",
+      "value": 16995
+    }
+  ],
+  "charts": [
+    {
+      "key": "detail_table",
+      "type": "table",
+      "external_id": "1125"
+    },
+    {
+      "key": "heat_dow_hour",
+      "type": "heatmap",
+      "external_id": "1124"
+    },
+    {
+      "key": "dist_hours",
+      "type": "histogram",
+      "external_id": "1123"
+    },
+    {
+      "key": "finding_i_1",
+      "type": "bar",
+      "external_id": "1122"
+    },
+    {
+      "key": "finding_i_3",
+      "type": "stacked_bar",
+      "external_id": "1121"
+    },
+    {
+      "key": "trend_volume",
+      "type": "line",
+      "external_id": "1120"
+    },
+    {
+      "key": "kpi_avg_reassignment_count",
+      "type": "kpi",
+      "external_id": "1119"
+    },
+    {
+      "key": "kpi_median_opened_at_after_hours",
+      "type": "kpi",
+      "external_id": "1118"
+    },
+    {
+      "key": "kpi_median_opened_at_to_resolved_at_hours",
+      "type": "kpi",
+      "external_id": "1117"
+    },
+    {
+      "key": "kpi_record_count",
+      "type": "kpi",
+      "external_id": "1116"
+    }
+  ],
+  "publication": {
+    "urls": {
+      "executive": "http://localhost:8088/superset/dashboard/171/",
+      "operational": "http://localhost:8088/superset/dashboard/172/"
+    },
+    "status": "succeeded",
+    "external_ids": {
+      "charts": {
+        "dist_hours": 1123,
+        "finding_i_1": 1122,
+        "finding_i_3": 1121,
+        "detail_table": 1125,
+        "trend_volume": 1120,
+        "heat_dow_hour": 1124,
+        "kpi_record_count": 1116,
+        "kpi_avg_reassignment_count": 1119,
+        "kpi_median_opened_at_after_hours": 1118,
+        "kpi_median_opened_at_to_resolved_at_hours": 1117
+      },
+      "metrics": {
+        "aos_analyze_incident_and_change_da_111aff:record_count": 393,
+        "aos_analyze_incident_and_change_da_111aff:avg_reopen_count": 397,
+        "aos_analyze_incident_and_change_da_111aff:avg_reassignment_count": 396,
+        "aos_analyze_incident_and_change_da_111aff:avg_opened_at_after_hours": 399,
+        "aos_analyze_incident_and_change_da_111aff:median_opened_at_after_hours": 395,
+        "aos_analyze_incident_and_change_da_111aff:avg_opened_at_to_resolved_at_hours": 398,
+        "aos_analyze_incident_and_change_da_111aff:median_opened_at_to_resolved_at_hours": 394
+      },
+      "database": 104,
+      "datasets": {
+        "aos_analyze_incident_and_change_da_111aff": 104
+      },
+      "dashboards": {
+        "executive": 171,
+        "operational": 172
+      },
+      "bundle_hash": "4f3230dbb94aa26a01d9bd6813c7115441078c697f87cfaf3d2931f3129227c4",
+      "idempotency_key": "run_cf36e0111aff:4f3230dbb94aa26a01d9bd6813c71154",
+      "database_created": true
+    },
+    "publication_id": "pub_8a2e26ac06f5"
+  },
+  "safety_restricted_column": {
+    "error": {
+      "code": "sql_rejected",
+      "message": "Column src_src_7b46768cb91f.incident.caller_id_name is restricted by policy and cannot be referenced. Remove it from the query.",
+      "retryable": false,
+      "details": {
+        "column": "src_src_7b46768cb91f.incident.caller_id_name"
+      }
+    }
+  },
+  "approver_can_view_as_member": 200,
+  "model_usage": {
+    "model_calls": 0,
+    "jev_calls": 0,
+    "failed_calls": 0,
+    "cost_usd": 0.0,
+    "purposes": [
+      "chart_selection",
+      "feedback_classification",
+      "feedback_interpretation",
+      "follow_up_generation",
+      "hypothesis_generation",
+      "hypothesis_priority",
+      "insight_narrative",
+      "planning",
+      "risk_check",
+      "semantic_modeling",
+      "summarization",
+      "verification"
+    ],
+    "by_rung": {
+      "rules": {
+        "calls": 0,
+        "tokens_used": 0,
+        "tokens_saved": 35947,
+        "cost_usd": 0.0
+      }
+    }
+  },
+  "finished_at": "2026-09-26T06:07:15.652689+00:00",
+  "duration": {
+    "scenario_seconds": 25.8,
+    "analysis_run_seconds": 21.6
+  }
+}

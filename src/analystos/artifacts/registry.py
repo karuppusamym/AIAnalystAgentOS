@@ -10,7 +10,7 @@ from sqlalchemy import Integer, String, and_, case, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from analystos.core.ids import new_id, stable_hash
+from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.db.models import AnalysisRun, Artifact, ArtifactVersion, LineageEdge
 
 ARTIFACT_TYPES = {"query", "profile", "quality_report", "relationship_map", "context_package", "plan", "dataset",
@@ -43,16 +43,21 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
     """Upsert by (workspace, run, type, name): unchanged content is a no-op, changed content is a new version.
 
     An agent writing inside a run passes the ``artifact.write`` tool gate (workspace ``tool_denylist``,
-    role, autonomy; spec v2 §6). Writes by a signed-in user are governed by their route's role check.
+    role, autonomy; spec v2 §6) and its manifest's ``output_contract`` (the type must be declared and the
+    content must match the declared schema, else OutputContractViolation and nothing is written).
+    Writes by a signed-in user are governed by their route's role check.
     Run artifacts are stamped with the writing task's plan version; a task of a superseded plan cannot
     overwrite what the current plan already wrote."""
     if type_ not in ARTIFACT_TYPES:
         raise ValueError(f"unknown artifact type {type_}")
     if creator_agent and run_id:
+        from analystos.capabilities.agents import contract_for, enforce_output
         from analystos.tools.registry import gate_agent_write
 
         gate_agent_write(session, workspace_id=workspace_id, run_id=run_id, agent_id=creator_agent,
                          inputs={"type": type_, "name": name})
+        # The agent's output contract (FND-006), as the run bound it: declared type, declared schema.
+        enforce_output(contract_for(session.get(AnalysisRun, run_id), creator_agent), creator_agent, type_, content)
     content_hash = stable_hash(content)
     plan_version = _plan_version(session, run_id)
     existing = session.scalar(select(Artifact).where(Artifact.workspace_id == workspace_id, Artifact.run_id == run_id,
@@ -70,9 +75,11 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
             session.add(ArtifactVersion(artifact_id=existing.id, version=existing.version, content=content,
                                         content_hash=content_hash, created_by=creator_agent or creator_user))
         return existing
+    # Stamped per row, not with the transaction time: an agent writes its metrics or charts in one
+    # transaction, and every `ORDER BY created_at` reader must get them back in the order written.
     artifact = Artifact(id=new_id("art"), workspace_id=workspace_id, run_id=run_id, type=type_, name=name, version=1,
                         plan_version=plan_version, status=status, creator_agent=creator_agent, creator_user=creator_user,
-                        content=content, content_hash=content_hash)
+                        content=content, content_hash=content_hash, created_at=utcnow())
     session.add(artifact)
     session.flush()
     session.add(ArtifactVersion(artifact_id=artifact.id, version=1, content=content, content_hash=content_hash,

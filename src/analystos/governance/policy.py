@@ -141,14 +141,15 @@ PII_ORDER = {"none": 0, "restricted": 1, "allowed": 2}
 
 def _selected_assets(session: Session, source_ids: list[str]) -> tuple[dict[str, list[tuple[str, str]]],
                                                                        dict[str, list[tuple[str, list[str] | None]]]]:
-    """Selected assets per source as (asset id, `schema.name`) and their columns in ordinal order as
+    """Selected assets per source as (asset id, `schema.name`) in name order and their columns in ordinal order as
     (name, tags): two reads for any number of sources and assets (P4-S02; was one per source and asset)."""
     if not source_ids:
         return {}, {}
     in_scope = (SourceAsset.source_id.in_(source_ids), SourceAsset.selected.is_(True))
     assets: dict[str, list[tuple[str, str]]] = {}
     for asset_id, source_id, schema_name, name in session.execute(
-            select(SourceAsset.id, SourceAsset.source_id, SourceAsset.schema_name, SourceAsset.name).where(*in_scope)):
+            select(SourceAsset.id, SourceAsset.source_id, SourceAsset.schema_name, SourceAsset.name).where(*in_scope)
+            .order_by(SourceAsset.schema_name, SourceAsset.name, SourceAsset.id)):
         assets.setdefault(source_id, []).append((asset_id, f"{schema_name}.{name}"))
     columns: dict[str, list[tuple[str, list[str] | None]]] = {}
     for asset_id, name, tags in session.execute(
@@ -211,7 +212,8 @@ def resolve_scope(session: Session, user: User, workspace_id: str, *, source_ids
     policy = load_policy(session, workspace)
     if pii_access is not None and PII_ORDER[pii_access] < PII_ORDER[policy.pii_access]:
         policy.pii_access = pii_access
-    sources = list(session.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.status == "ready")))
+    sources = list(session.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.status == "ready")
+                                   .order_by(Source.created_at, Source.name, Source.id)))
     if source_ids:
         sources = [s for s in sources if s.id in source_ids]
     pii_cleared = policy.pii_access == "allowed" or (
