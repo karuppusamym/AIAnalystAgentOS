@@ -51,9 +51,9 @@ def psi(expected: list[float], actual: list[float]) -> float:
 
 
 def feature_psi(profile: dict[str, Any], values: list[Any]) -> dict[str, Any]:
-    from analystos.ml.data import to_number
-
     import pandas as pd
+
+    from analystos.ml.data import to_number
 
     s = pd.Series(values, dtype=object)
     nulls = float(s.isna().mean()) if len(s) else 0.0

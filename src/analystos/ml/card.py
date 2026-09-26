@@ -16,7 +16,10 @@ def _fact(facts: list[dict[str, Any]], label: str, value: Any, path: str, unit: 
     if value is None:
         return "n/a"
     fid = f"F{len(facts) + 1}"
-    v = round(float(value), 4) if isinstance(value, int | float) and not isinstance(value, bool) else value
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        v = value
+    else:
+        v = int(value) if float(value).is_integer() and abs(value) >= 1 else round(float(value), 4)
     facts.append({"id": fid, "label": label, "value": v, "unit": unit, "source": f"evaluation{path}"})
     return f"{v}"
 
@@ -54,7 +57,9 @@ def build(spec: dict[str, Any], result: dict[str, Any], *, experiment_id: str, d
              f"trial(s) against the `{spec.get('baseline') or (result.get('trials') or [{}])[0].get('estimator')}` baseline on "
              "identical folds.", "",
              "## Performance",
-             f"Holdout {metric}: candidate {c}, baseline {b}; 95% interval of the gain {lo} to {hi}. {decision.get('reason', '')}"]
+             f"Holdout {metric}: candidate {c}, baseline {b}; gain {_fact(facts, 'gain over baseline', decision.get('gain'), '/decision/gain')} "
+             f"(95% interval {lo} to {hi}): "
+             f"{'an improvement' if decision.get('improved') else 'no improvement (a valid result; not promotable)'}."]
     if task == "classify" and ev.get("threshold"):
         t = _fact(facts, "decision threshold", ev["threshold"].get("threshold"), "/threshold/threshold", "probability")
         p = _fact(facts, "precision at threshold", cand.get("precision"), "/candidate/precision", "fraction")

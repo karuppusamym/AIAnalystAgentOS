@@ -139,6 +139,12 @@ def ask_metrics(run: Any) -> dict[str, Any]:
             "questions": o["questions"]}
 
 
+def ml_metrics() -> dict[str, Any]:
+    from evaluation.ml import run
+
+    return run()
+
+
 def _ask(tier: str) -> Callable[[], dict[str, Any]]:
     def go() -> dict[str, Any]:
         from evaluation.ask import run
@@ -151,6 +157,7 @@ RUNNERS: dict[str, Callable[[], dict[str, Any]]] = {
     "grounding": grounding_metrics,
     "analytical_component": analytical_component_metrics,
     "cost": cost_metrics,
+    "ml": ml_metrics,
     "ask_fake": _ask("fake"),
     "ask_off": _ask("off"),
     "ask_live": _ask("live"),

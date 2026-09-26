@@ -27,7 +27,15 @@ from sqlalchemy.orm import Session
 from analystos.contracts.definition import DefinitionRef
 from analystos.contracts.work import MLScoringSpec, MLSpec
 from analystos.core.config import get_settings
-from analystos.core.errors import AnalystOSError, Conflict, FeatureUnavailable, Forbidden, InvalidInput, NotFound, PolicyDenied
+from analystos.core.errors import (
+    AnalystOSError,
+    Conflict,
+    FeatureUnavailable,
+    Forbidden,
+    InvalidInput,
+    NotFound,
+    PolicyDenied,
+)
 from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.db.base import session_scope
 from analystos.db.models import (

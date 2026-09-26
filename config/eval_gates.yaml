@@ -7,10 +7,11 @@
 # * `min` / `max` bound a metric; a tier's metrics come from the suite's own scoring (evaluation/*.py).
 #
 # Run: python scripts/eval_gates.py [--tiers grounding,analytical_component,cost] [--out gate-result.json]
-version: 1
+version: 2
 owner: product owner (Context2AI)
 changelog:
   - {version: 1, date: 2026-09-26, change: "initial gates: today's measured values as the regression floor (P7-07)"}
+  - {version: 2, date: 2026-09-26, change: "add the ml tier (P5-01..P5-04): leakage refused, baseline parity, null abstains"}
 
 tiers:
   # --------------------------------------------------------------- deterministic: CI on every change
@@ -47,6 +48,18 @@ tiers:
     metrics:
       max_rise: {max: 0.10}                   # model calls, tokens or $ per recorded run, vs the baseline
       missing_baseline: {max: 0}
+  ml:
+    kind: deterministic
+    runs: ci
+    suite: "evaluation/ml.py (seeded fixtures through analystos.ml.jobs.run_ml_job)"
+    metrics:
+      leakage_refused_share: {min: 1.0}       # every leakage fixture is refused before a split or fit
+      leakage_fixtures: {min: 7}
+      baseline_parity_share: {min: 1.0}       # baseline and candidates on identical splits; holdout read after selection
+      null_abstain_share: {min: 1.0}          # an independent target never ends as an improvement
+      signal_detected_share: {min: 1.0}
+      deterministic_share: {min: 1.0}         # re-run from data + manifest + seed: same manifest, selection and seal
+      tamper_refused_share: {min: 1.0}
   ask_fake:
     kind: deterministic
     runs: ci                                  # needs Postgres: tests/integration/test_ask_benchmark.py
