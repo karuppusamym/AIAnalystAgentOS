@@ -22,7 +22,7 @@ from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.contracts.bi import DatasetDef
 from analystos.core.errors import AnalystOSError, InvalidInput, ModelUnavailable, SQLRejected
 from analystos.db.base import session_scope
-from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset
+from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset, by_code
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
 from analystos.runtime.context import RunContext
 
@@ -61,7 +61,7 @@ def build_dataset(ctx: RunContext) -> dict:
     with session_scope() as s:
         specs = [AnalysisSpec.model_validate(h.spec) for h in s.scalars(
             select(Hypothesis).join(Insight, Insight.hypothesis_id == Hypothesis.id)
-            .where(Insight.run_id == ctx.run.id, Insight.status == "verified"))]
+            .where(Insight.run_id == ctx.run.id, Insight.status == "verified").order_by(*by_code(Hypothesis.code)))]
     asset = primary_asset(ctx, specs)
     source_id = ctx.scope.asset_sources[asset]
     dialect = ctx.scope.source_dialects.get(source_id, "postgres")
@@ -88,7 +88,8 @@ def build_dataset(ctx: RunContext) -> dict:
         a_row = s.scalar(select(SourceAsset).where(SourceAsset.workspace_id == ctx.workspace.id,
                                                    SourceAsset.schema_name == asset.split(".")[0], SourceAsset.name == asset.split(".")[1]))
         rels = list(s.scalars(select(Relationship).where(Relationship.workspace_id == ctx.workspace.id,
-                                                         Relationship.from_asset_id == a_row.id, Relationship.validated.is_(True))))
+                                                         Relationship.from_asset_id == a_row.id, Relationship.validated.is_(True))
+                                  .order_by(Relationship.from_column, Relationship.to_column, Relationship.to_asset_id)))
         targets = {r.to_asset_id: s.get(SourceAsset, r.to_asset_id) for r in rels}
     for i, r in enumerate(rels):
         tgt = targets.get(r.to_asset_id)
@@ -128,7 +129,8 @@ def build_dataset(ctx: RunContext) -> dict:
                             creator_agent=ctx.agent.id)
         for a in ds.source_assets:
             link(s, ctx.workspace.id, ("dataset", art.id), "built_from", ("table", a), run_id=ctx.run.id)
-        for code in [i.code for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified"))]:
+        for code in [i.code for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
+                                                   .order_by(*by_code(Insight.code)))]:
             link(s, ctx.workspace.id, ("insight", code), "reproducible_in", ("dataset", art.id), run_id=ctx.run.id)
     ctx.event("dataset.created", {"name": name, "rows": ds.row_count, "columns": len(columns), "derived": list(derived)})
     ctx.say(f"Built virtual analytical dataset {name}: {ds.row_count:,} rows, {len(columns)} columns "

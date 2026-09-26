@@ -19,7 +19,7 @@ from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Experiment, Hypothesis
+from analystos.db.models import AnalysisRun, Experiment, Hypothesis, by_code
 from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.runtime.context import RunContext
@@ -439,7 +439,7 @@ def carried_forward(ctx: RunContext) -> list[dict]:
 
     with session_scope() as s:
         rows = s.execute(select(Hypothesis, Insight.code).join(Insight, Insight.hypothesis_id == Hypothesis.id)
-                         .where(Insight.run_id == previous, Insight.status == "verified")).all()
+                         .where(Insight.run_id == previous, Insight.status == "verified").order_by(*by_code(Insight.code))).all()
         return [{"question": h.question, "statement": h.statement, "rationale": f"Re-test of {code} from run {previous}",
                  "spec": {k: v for k, v in h.spec.items()}, "priority": "high", "origin": "carried"} for h, code in rows]
 
@@ -447,7 +447,8 @@ def carried_forward(ctx: RunContext) -> list[dict]:
 def _results_summary(run_id: str) -> list[dict]:
     with session_scope() as s:
         out = []
-        for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == run_id, Hypothesis.status != "superseded")):
+        for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == run_id, Hypothesis.status != "superseded")
+                           .order_by(*by_code(Hypothesis.code))):
             exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == h.id, Experiment.role == "primary"))
             out.append({"code": h.code, "statement": h.statement, "status": h.status, "spec": h.spec,
                         "result": {k: (exp.result or {}).get(k) for k in ("test", "n", "p_value", "effect_size", "effect_label", "highlights")} if exp else None})

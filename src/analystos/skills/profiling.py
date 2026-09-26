@@ -298,6 +298,8 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         u: exp.Expression = parts[0]
         for part in parts[1:]:
             u = exp.union(u, part, distinct=False)
+        # Ordered so the result (and its hash) does not depend on how a parallel engine emits groups.
+        u = u.order_by(exp.column("column_name", quoted=True), exp.column("bin", quoted=True))
         for r in q(u, dialect, "histograms"):
             p = by_name[r["column_name"]]
             k, cnt = int(r["bin"]), int(r["n"])

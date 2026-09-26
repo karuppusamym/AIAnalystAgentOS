@@ -16,7 +16,7 @@ from analystos.agents.common import llm_json, model_gate
 from analystos.artifacts.registry import link
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
-from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
+from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution, by_code
 from analystos.events.bus import emit
 from analystos.methods.base import cap, fmt_pct, text_parts
 from analystos.runtime.context import RunContext
@@ -134,7 +134,7 @@ def build_insights(ctx: RunContext) -> dict:
     with session_scope() as s:
         rows = []
         for h in s.scalars(select(Hypothesis).where(Hypothesis.run_id == ctx.run.id, Hypothesis.status != "superseded")
-                           .order_by(Hypothesis.created_at)):
+                           .order_by(Hypothesis.created_at, *by_code(Hypothesis.code))):
             exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == h.id, Experiment.role == "primary"))
             if exp is not None:
                 rows.append((h.id, exp.id))

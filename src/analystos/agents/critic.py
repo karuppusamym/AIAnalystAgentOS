@@ -23,7 +23,7 @@ from analystos.contracts.evidence import DataManifest, Fact
 from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution
+from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution, by_code
 from analystos.decisions import Question
 from analystos.events.bus import emit
 from analystos.evidence.bundle import assemble
@@ -71,7 +71,8 @@ def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
     with session_scope() as s:
-        insights = [(i.id, i.code) for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "draft"))]
+        insights = [(i.id, i.code) for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "draft")
+                                                          .order_by(*by_code(Insight.code)))]
     quality = task_output(ctx.run.id, "quality").get("issues") or []
     verified_codes, failed_codes = [], []
     directions: dict[tuple, list] = {}

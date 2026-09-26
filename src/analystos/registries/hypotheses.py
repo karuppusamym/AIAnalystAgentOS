@@ -76,7 +76,8 @@ def replay_proposals(session: Session, workspace_id: str, previous_run_id: str |
         register_run(session, previous_run_id)  # a baseline from before the registry existed
     stmt = select(RegisteredHypothesis).where(RegisteredHypothesis.workspace_id == workspace_id,
                                               RegisteredHypothesis.status == "active")
-    rows = list(session.scalars(stmt.order_by(RegisteredHypothesis.created_at, RegisteredHypothesis.id)))
+    # Rows registered together share created_at and were inserted in spec-hash order; the id is random.
+    rows = list(session.scalars(stmt.order_by(RegisteredHypothesis.created_at, RegisteredHypothesis.spec_hash)))
     if scope != "workspace":
         if not previous_run_id:
             return []

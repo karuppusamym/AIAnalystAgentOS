@@ -64,6 +64,14 @@ def test_profile_query_budget(profile):
     assert d["n_queries"] == profile.n_queries and d["columns"][0]["name"] == "sys_id"
 
 
+def test_histogram_rows_come_back_in_one_order(profile, duck):
+    # A parallel engine (DuckDB) emits GROUP BY groups in any order; the recorded result hash must not
+    # change between identical runs (DEX-001), so the statement orders its rows.
+    (sql,) = {c["sql"] for c in duck.calls if c["purpose"].endswith("histograms")}
+    tree = sqlglot.parse_one(sql, read="duckdb")
+    assert [o.this.name for o in tree.args["order"].expressions] == ["column_name", "bin"]
+
+
 def test_candidate_keys_detect_duplicates(profile):
     keys = {k["column"]: k for k in profile.candidate_keys}
     assert keys["sys_id"]["unique"] is True
