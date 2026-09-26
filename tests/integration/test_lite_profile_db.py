@@ -296,7 +296,22 @@ def test_utc_day_rollover_on_postgres(pg_counters):
     assert c.reserve(_day_cap(c, 0.1), 0.01).after["platform_daily"] == pytest.approx(0.01)
 
 
-def test_the_sink_seeds_refuses_over_the_cap_and_alerts_without_redis(pg_counters, monkeypatch):
+@pytest.fixture
+def spend_tag(control_db):
+    """A purpose tag whose model_call rows are removed afterwards: the platform day total is shared by
+    every later test of the session (the default daily cap is $2)."""
+    from sqlalchemy import delete
+
+    from analystos.db.base import session_scope
+    from analystos.db.models import ModelCall
+
+    tag = new_id("cap")
+    yield tag
+    with session_scope() as s:
+        s.execute(delete(ModelCall).where(ModelCall.purpose == tag))
+
+
+def test_the_sink_seeds_refuses_over_the_cap_and_alerts_without_redis(pg_counters, spend_tag, monkeypatch):
     from analystos.contracts.platform import LLMSettings, PlatformSettings
     from analystos.core.errors import SpendCapReached
     from analystos.db.base import session_scope
@@ -305,7 +320,7 @@ def test_the_sink_seeds_refuses_over_the_cap_and_alerts_without_redis(pg_counter
     from analystos.runtime.usage import DbUsageSink, day_cost_sql
 
     c = pg_counters
-    tag = new_id("cap")
+    tag = spend_tag
     with session_scope() as s:
         s.add(ModelCall(purpose=tag, profile="-", provider="openrouter", model="m", status="ok", attempt=1, cost_usd=0.7))
     with session_scope() as s:

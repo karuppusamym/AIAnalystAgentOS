@@ -742,7 +742,10 @@ def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], reques
     from analystos.publishing.base import default_destination
 
     destination = body.get("destination") or default_destination(policy.publish_destinations)
-    if destination not in policy.publish_destinations and destination != "preview":
+    # Without Superset (no `bi` profile) the default is the in-platform preview, as for run publications;
+    # a destination the caller names must still be one the policy allows.
+    defaulted_preview = destination == "preview" and not body.get("destination")
+    if destination not in policy.publish_destinations and not defaulted_preview:
         raise PolicyDenied(f"destination {destination} is not allowed by this workspace's policy")
     payload = {"kind": "ask_chart", "turn_id": turn.id, "question": turn.question, "sql": turn.sql,
                "chart": body.get("chart") or turn.chart, "dashboard": (body.get("dashboard") or "Ask answers")[:200],

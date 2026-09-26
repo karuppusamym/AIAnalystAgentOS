@@ -295,3 +295,39 @@ def test_signal_run_redrives_local_runs(fake, monkeypatch):
     finally:
         orch.reset_local_runtime(previous)
         rt.shutdown()
+
+
+def test_api_startup_resumes_local_runs_only_when_asked(fake, monkeypatch):
+    from analystos.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "orchestrator", "temporal")
+    assert orch.start_local_runtime() is None  # standard: Temporal re-dispatches its own work
+    monkeypatch.setattr(settings, "orchestrator", "local")
+    monkeypatch.setattr(settings, "local_resume", False)
+    assert orch.start_local_runtime() is None  # tests and the standard profile drive runs themselves
+    fake.add_run("r11", {"a": [], "b": ["a"]})
+    fake.runs["r11"]["tasks"]["a"]["status"] = "RUNNING"  # held by the process that died
+    monkeypatch.setattr(settings, "local_resume", True)
+    monkeypatch.setattr(settings, "local_sweep_seconds", 0.0)
+    rt = orch.LocalRuntime(2, poll=0.005)
+    previous = orch.reset_local_runtime(rt)
+    try:
+        assert orch.start_local_runtime() is rt
+        _until(lambda: fake.status("r11") == "COMPLETED")
+        assert fake.runs["r11"]["tasks"]["a"]["claim"] == 2  # the dead claim was released, then retaken
+    finally:
+        orch.reset_local_runtime(previous)
+        rt.shutdown()
+
+
+def test_the_in_process_scheduler_loops_until_stopped(monkeypatch):
+    from analystos.services import schedules
+
+    ticks = []
+    monkeypatch.setattr(schedules, "claim_due", lambda: ticks.append(1) or [])
+    monkeypatch.setattr(schedules, "nightly_calibration", lambda: None)
+    stop = schedules.start_inprocess_scheduler(poll_seconds=0.01)
+    _until(lambda: len(ticks) >= 3)
+    stop.set()
+    _until(lambda: not [t for t in threading.enumerate() if t.name == "inprocess-scheduler"])

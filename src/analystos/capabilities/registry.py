@@ -52,6 +52,8 @@ INSTALL_REQUIRES: dict[str, list[str]] = {
     "skill.logistic_regression": ["extra:ml"],
     "skill.feature_importance": ["extra:ml"],
 }
+
+
 class CapabilityLoadError(InvalidInput):
     code = "capability_load_failed"
 
