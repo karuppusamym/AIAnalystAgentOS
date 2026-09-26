@@ -481,6 +481,7 @@ def _reverify(s: Session, mat: Materialization, approval_id: str | None, payload
         raise PolicyDenied("approver no longer holds approval rights in this workspace")
 
 
+@scoped_loader
 def _claim(user: User, run_id: str, approval_id: str | None, workspace_id: str | None) -> dict[str, Any]:
     from analystos.governance.approvals import consume, verify_for_execution
 

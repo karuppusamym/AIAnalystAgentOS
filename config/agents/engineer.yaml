@@ -1,0 +1,34 @@
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+# The data engineer (P6-08): a declarative agent that only PROPOSES recipe nodes and PipelineSpecs. Its one
+# action, skill.pipeline_propose, returns a proposal only after the recipe IR validator, the scope check
+# and the PipelineSpec check accept it (rejected proposals come back with every problem). It never saves,
+# publishes, compiles, runs or materializes: a person does that, and materialization needs an approval.
+# `off` / `auto` model modes take the rules path (default_actions: a catalog-derived staging recipe).
+apiVersion: analystos/v1
+kind: Agent
+id: agent.engineer
+version: 1.0.0
+summary: Data Engineer Agent (proposes recipes and pipelines)
+entry: builtin:generic
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: tested
+  evidence: tests/unit/test_engineer_agent.py
+tags: [transformation, pipelines, data-engineering]
+spec:
+  role: Data Engineer Agent
+  goal: Propose a typed transformation recipe (recipe IR nodes) and a PipelineSpec (output grain, keys and schema,
+    join expectations, reconciliation checks, incremental block) that prepares the selected tables for analysis.
+    Proposals must pass the recipe IR validator; nothing is compiled, saved or run by this agent.
+  capabilities: [skill.pipeline_propose, skill.catalog_lookup]
+  tools: [metadata.read]
+  model_purpose: pipeline_proposal
+  budget: {llm_calls: 3, usd: 0.05, queries: 0, max_steps: 3}
+  policies: {max_rows_extract: 1000, pii_access: none, approval_for_publish: true, max_iterations: 1}
+  phase: mvp
+  default_actions:
+    - capability: skill.pipeline_propose
+      input: {assets: $scope.assets}
+  output: {artifact_type: agent_output, artifact_name: Pipeline proposal}
