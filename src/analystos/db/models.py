@@ -1519,3 +1519,147 @@ class RecipeRun(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ------------------------------------------------------------------------------ workspace brief and readiness (P4-04)
+class WorkspaceBrief(Base):
+    """One version of the workspace brief (workspace spec §2): every assertion with its origin, evidence,
+    review state and own version. A new version is written on every change; older ones stay readable."""
+
+    __tablename__ = "workspace_brief"
+    __table_args__ = (UniqueConstraint("workspace_id", "version", name="uq_workspace_brief_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    assertions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class ReadinessAssessment(Base):
+    """A readiness verdict for one job kind over given inputs: `ready | needs_input | blocked | unsupported`
+    with every check's own status, reason and remediation (no averaged score)."""
+
+    __tablename__ = "readiness_assessment"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    job_kind: Mapped[str] = mapped_column(String(30))
+    work_order_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    work_order_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brief_version: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20))  # ready | needs_input | blocked | unsupported
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    inputs_hash: Mapped[str] = mapped_column(String(64))
+    alternatives: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+# ------------------------------------------------------------------------------ steps, branches, notebooks (P7-04/05/12)
+class StepBranch(Base):
+    """A line of steps inside one container (a run, an Ask thread or a notebook). The main branch has no
+    parent; a fork keeps its parent pointer, the step it forked from and the versions it inherited."""
+
+    __tablename__ = "step_branch"
+    __table_args__ = (Index("ix_step_branch_container", "container_type", "container_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    container_type: Mapped[str] = mapped_column(String(20))  # run | ask_thread | notebook
+    container_id: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(200))
+    parent_branch_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    forked_from_step_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    forked_from_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    base: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # inherited [{step_id, version}]
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | merged
+    merged_into: Mapped[list[str]] = mapped_column(JSON, default=list)  # report artifact ids
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class AnalysisStep(Base):
+    """A step's identity (spec v4 §7): its kind, place in a branch and what it depends on. Its content
+    lives in versions; `current_version` is the one shown and the one dependents were computed from."""
+
+    __tablename__ = "analysis_step"
+    __table_args__ = (Index("ix_analysis_step_container", "container_type", "container_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    branch_id: Mapped[str] = mapped_column(ForeignKey("step_branch.id", ondelete="CASCADE"), index=True)
+    container_type: Mapped[str] = mapped_column(String(20))
+    container_id: Mapped[str] = mapped_column(String(40))
+    seq: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String(20))  # plan | query | method | recipe | train | chart | claim
+    title: Mapped[str] = mapped_column(String(300))
+    depends_on: Mapped[list[str]] = mapped_column(JSON, default=list)
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type: ask_turn|hypothesis|insight|cell|user, id}
+    forked_from: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # {step_id, version}
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AnalysisStepVersion(Base):
+    """One execution of a step: the spec it ran, the inputs (upstream version ids), receipts, a result
+    snapshot (artifact ref), checks, corrections and its verification record. Immutable once finished."""
+
+    __tablename__ = "analysis_step_version"
+    __table_args__ = (UniqueConstraint("step_id", "version", name="uq_analysis_step_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    step_id: Mapped[str] = mapped_column(ForeignKey("analysis_step.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # upstream step id -> its version row id
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|ok|flagged|failed|unsupported|recorded
+    reason: Mapped[str] = mapped_column(String(40), default="created")  # created|edited|rerun|upstream_changed|forked|ingested
+    receipts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    result_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    chart_spec: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    corrections: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    verification_record_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StepPin(Base):
+    """A step pinned to a dashboard tile or a schedule: the frozen query/spec of one version (ADR-0021),
+    replayed as frozen until the owner re-pins a newer version."""
+
+    __tablename__ = "step_pin"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str] = mapped_column(String(40), index=True)
+    step_version: Mapped[int] = mapped_column(Integer)
+    target: Mapped[str] = mapped_column(String(20))  # tile | schedule
+    target_id: Mapped[str | None] = mapped_column(String(40), nullable=True)  # chart artifact | schedule id
+    frozen: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    frozen_hash: Mapped[str] = mapped_column(String(64))
+    definition: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # the published DefinitionRef
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class Notebook(Base):
+    """A workspace notebook (P7-12): markdown, SQL and restricted-Python cells, each cell a step."""
+
+    __tablename__ = "notebook"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
