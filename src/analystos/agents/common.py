@@ -317,10 +317,49 @@ def _record_context_refusal(ctx: Any, purpose: str, call: Any, reason: str, esti
                     error=reason[:500], tokens_saved=estimated)
 
 
+class ModelOutcome(str):
+    """Why `llm_json` returned no data: a reason code (the string itself, so callers that log or
+    compare the old second element keep working) plus the message and details of the one cause.
+
+    Codes: mode_off, no_api_key, provider_cooldown (details.retry_in_s), policy_blocked,
+    residency_blocked, approval_required, budget_exceeded, cap_reached, context_over_budget,
+    invalid_output, purpose_not_declared, agent_budget_exhausted, upstream_unavailable, no_route."""
+
+    message: str
+    details: dict[str, Any]
+
+    def __new__(cls, code: str, message: str = "", **details: Any) -> ModelOutcome:
+        out = super().__new__(cls, code)
+        out.message = message or code
+        out.details = details
+        return out
+
+    @property
+    def code(self) -> str:
+        return str.__str__(self)
+
+
+_OUTCOME_BY_ERROR = {"llm_disabled": "mode_off", "provider_quota_exhausted": "provider_cooldown",
+                     "model_route_unavailable": "no_route", "egress_blocked": "policy_blocked"}
+
+
+def model_outcome(exc: AnalystOSError) -> ModelOutcome:
+    """The reason code of a router error (see `ModelOutcome`), keeping its message and details."""
+    code = _OUTCOME_BY_ERROR.get(exc.code, exc.code)
+    if code == "mode_off" and exc.details.get("oversize"):
+        code = "context_over_budget"
+    elif code == "budget_exceeded" and exc.details.get("cap"):
+        code = "cap_reached"
+    elif exc.code == "upstream_unavailable":
+        code = "upstream_unavailable"
+    return ModelOutcome(code, exc.message, **exc.details)
+
+
 def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
              prompt_vars: dict[str, str] | None = None) -> tuple[Any | None, str | None]:
-    """Call a chat model for JSON. Returns (data, model) or (None, reason) — callers degrade visibly.
+    """Call a chat model for JSON. Returns (data, model) or (None, ModelOutcome) — callers degrade
+    visibly, and can say which of the causes in `ModelOutcome` stopped the call.
 
     `payload` is a CompiledContext (`compile_for`, P4-T03) or, for purposes without run context
     (narrative, verification, summary), a plain dict. The prompt is laid out for provider prompt
@@ -342,13 +381,13 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     body: dict[str, Any] = compiled.body if compiled is not None else payload
     if ctx.router.mode(purpose) == "off":
         model_gate(ctx, purpose, payload, deterministic_ok=True)  # records the avoided call
-        return None, "llm_off"
+        return None, ModelOutcome("mode_off", f"model use for '{purpose}' is turned off by the administrator", purpose=purpose)
     refused = _agent_refusal(ctx, purpose)
     if refused:
         ctx.say(refused[1], kind="decision")
         ctx.router.record_skip(purpose, ctx.call_ctx(), estimated_tokens=estimate_tokens(_prompt_text(payload)) + 500,
                                reason=refused[1][:200])
-        return None, refused[0]
+        return None, ModelOutcome(refused[0], refused[1], purpose=purpose)
     system = prompt(prompt_name, **(prompt_vars or {}))
     call = dataclasses.replace(ctx.call_ctx(exclude_families=exclude_families), prompt_version=prompt_version_id(prompt_name, system))
     call.with_policy(getattr(ctx, "policy", None))
@@ -358,9 +397,11 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
         ctx.say(message, kind="decision", data={"purpose": purpose, "mandatory_chars": compiled.mandatory_chars,
                                                 "budget_chars": compiled.budget_chars})
         _record_context_refusal(ctx, purpose, call, message, estimate_tokens(compact_json(body)) + len(system) // 4)
-        return None, "context_over_budget"
+        return None, ModelOutcome("context_over_budget", message, purpose=purpose, mandatory_chars=compiled.mandatory_chars,
+                                  budget_chars=compiled.budget_chars)
     if not ctx.router.available(purpose, call):
-        return None, "llm_unavailable"
+        why = getattr(ctx.router, "unavailable", lambda *_: None)(purpose, call)
+        return None, (model_outcome(why) if why is not None else ModelOutcome("no_route", f"no model route for {purpose}"))
     llm = platform().llm
     if call.knowledge_version is None and call.workspace_id and llm.cache_enabled and purpose in llm.cacheable_purposes:
         from analystos.context.version import workspace_knowledge_version
@@ -391,4 +432,4 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     except AnalystOSError as exc:
         log.warning("llm %s failed: %s", purpose, exc)
         ctx.say(f"Model call for {purpose} unavailable ({exc.code}); using deterministic fallback.", kind="decision")
-        return None, exc.code
+        return None, model_outcome(exc)

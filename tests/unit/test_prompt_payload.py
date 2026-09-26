@@ -132,4 +132,4 @@ def test_llm_json_fails_closed_when_policy_blocks_the_provider(monkeypatch):
     monkeypatch.setattr("analystos.services.platform_settings.get", lambda: platform)
     data, reason = common.llm_json(_ctx(router, WorkspacePolicyDoc(allowed_providers=["typesafe"])), "sql_generation",
                                    "sql_generation.v1", {"question": "q"}, prompt_vars={"dialect": "tsql"})
-    assert data is None and reason == "llm_unavailable" and transport.chat_calls == []
+    assert data is None and reason == "policy_blocked" and "typesafe" in reason.message and transport.chat_calls == []

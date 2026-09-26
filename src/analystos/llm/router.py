@@ -16,6 +16,7 @@ reconstructed and re-executed offline with `analystos.llm.replay.ReplayTransport
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -33,6 +34,10 @@ from analystos.core.errors import (
     BudgetExceeded,
     EgressBlocked,
     LLMDisabled,
+    ModelKeyMissing,
+    ModelOutputInvalid,
+    ModelPolicyBlocked,
+    ModelResidencyBlocked,
     ModelRouteUnavailable,
     ProviderQuotaExhausted,
     UpstreamUnavailable,
@@ -196,13 +201,25 @@ _PROVIDER_COOLDOWN: dict[str, float] = {}  # provider -> monotonic time the cool
 
 
 def _cooling_down(provider: str) -> bool:
+    return cooldown_left(provider) is not None
+
+
+def cooldown_left(provider: str) -> float | None:
+    """Seconds until a provider that refused for credits (HTTP 402) is tried again, or None."""
     until = _PROVIDER_COOLDOWN.get(provider)
     if until is None:
-        return False
-    if time.monotonic() >= until:
+        return None
+    left = until - time.monotonic()
+    if left <= 0:
         _PROVIDER_COOLDOWN.pop(provider, None)
-        return False
-    return True
+        return None
+    return left
+
+
+def _quota_exhausted(provider: str, message: str) -> ProviderQuotaExhausted:
+    left = cooldown_left(provider)
+    return ProviderQuotaExhausted(message, details={"provider": provider, "status": 402,
+                                                    "retry_in_s": int(left + 0.999) if left is not None else None})
 
 
 def cached_prompt_tokens(usage: dict | None) -> int:
@@ -414,12 +431,43 @@ class ModelRouter:
         return None
 
     def _no_route(self, purpose: str, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> ModelRouteUnavailable:
-        reason = self._policy_block(profile, ctx)
-        if reason is None and ctx.data_residency:
-            reason = (f"no model of profile {profile_name} has a known region matching the workspace data_residency "
-                      f"'{ctx.data_residency}' (unknown regions fail closed)")
-        return ModelRouteUnavailable(f"no allowed model for purpose '{purpose}' (profile {profile_name})"
-                                     + (f": {reason}" if reason else ""))
+        """Why a profile has no model, as its own error class: the workspace provider list (or the
+        air-gapped install), the data-residency filter, or the model allowlists."""
+        head = f"no allowed model for purpose '{purpose}' (profile {profile_name})"
+        details = {"purpose": purpose, "profile": profile_name, "provider": profile.provider}
+        blocked = self._policy_block(profile, ctx)
+        if blocked is not None:
+            return ModelPolicyBlocked(f"{head}: {blocked}", details={**details, "allowed_providers": ctx.allowed_providers})
+        if ctx.data_residency:
+            unfiltered = dataclasses.replace(ctx, data_residency=None)
+            if self._resolve(profile_name, profile, unfiltered)[2]:
+                return ModelResidencyBlocked(
+                    f"{head}: no model of profile {profile_name} has a known region matching the workspace data_residency "
+                    f"'{ctx.data_residency}' (unknown regions fail closed)", details={**details, "data_residency": ctx.data_residency})
+        return ModelRouteUnavailable(f"{head}: every model is excluded by the platform or workspace model allowlist",
+                                     details=details)
+
+    def unavailable(self, purpose: str, ctx: CallContext | None = None) -> ModelRouteUnavailable | None:
+        """Why `available()` is False, as the error `complete()` would raise (not raised): mode off,
+        no route (policy, residency, allowlist), no API key in this process, or a 402 cooldown.
+        None when the purpose is available."""
+        ctx = ctx or CallContext()
+        if self.mode(purpose) == "off":
+            return LLMDisabled(f"model use for '{purpose}' is turned off by the administrator", details={"purpose": purpose})
+        try:
+            profile_name, profile, models = self.candidates(purpose, ctx)
+        except KeyError:
+            return ModelRouteUnavailable(f"no model profile is configured for purpose '{purpose}'", details={"purpose": purpose})
+        if not models:
+            return self._no_route(purpose, profile_name, profile, ctx)
+        try:
+            self._provider(profile)
+        except ModelRouteUnavailable as exc:
+            return exc
+        if _cooling_down(profile.provider):
+            return _quota_exhausted(profile.provider, f"provider '{profile.provider}' refused for credits (HTTP 402); "
+                                                      f"deterministic path until the cooldown ends")
+        return None
 
     def _within_cost(self, purpose: str, profile_name: str, profile: ProfileConfig, models: list[str], ctx: CallContext,
                      *, input_tokens: int, output_tokens: int, request_hash: str, request: dict) -> list[str]:
@@ -470,7 +518,8 @@ class ModelRouter:
             return provider.url(), ""
         key = self.api_key_lookup(provider.api_key_env)
         if not key:
-            raise ModelRouteUnavailable(f"no API key for provider '{profile.provider}' (set {provider.api_key_env})")
+            raise ModelKeyMissing(f"no API key for provider '{profile.provider}' (set {provider.api_key_env})",
+                                  details={"provider": profile.provider, "env": provider.api_key_env})
         return provider.url(), key
 
     def _chat(self, profile: ProfileConfig, base_url: str, key: str, payload: dict, timeout: float) -> dict:
@@ -515,7 +564,8 @@ class ModelRouter:
                              status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                              request_hash=request_hash, error=f"prompt ~{estimate} tokens > limit {llm.max_prompt_tokens}",
                              tokens_saved=estimate, request=request, answered_by="rules", cost_source="none")
-            raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}")
+            raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}",
+                              details={"oversize": True, "prompt_tokens": estimate, "limit": llm.max_prompt_tokens})
         models = self._within_cost(purpose, profile_name, profile, models, ctx, input_tokens=estimate,
                                    output_tokens=max_tokens or profile.max_tokens, request_hash=request_hash, request=request)
         cache_key = None
@@ -534,8 +584,8 @@ class ModelRouter:
                 return ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
                                      cached=True)
         if _cooling_down(profile.provider):
-            raise ProviderQuotaExhausted(f"provider '{profile.provider}' refused for credits recently; "
-                                         f"deterministic path until the cooldown ends")
+            raise _quota_exhausted(profile.provider, f"provider '{profile.provider}' refused for credits recently; "
+                                                     f"deterministic path until the cooldown ends")
         last_error: Exception | None = None
         attempt = 0
         for model in models:
@@ -589,7 +639,7 @@ class ModelRouter:
                                      request=request, answered_by=rung, cost_source="none")
                     _PROVIDER_COOLDOWN[profile.provider] = time.monotonic() + PROVIDER_COOLDOWN_SECONDS
                     log.warning("provider %s refused for credits; cooling down %ss", profile.provider, PROVIDER_COOLDOWN_SECONDS)
-                    raise
+                    raise _quota_exhausted(profile.provider, exc.message) from exc
                 except ModelRouteUnavailable as exc:  # 4xx: this model will not work; try next model
                     last_error = exc
                     self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
@@ -597,6 +647,9 @@ class ModelRouter:
                                      input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
                                      request=request, answered_by=rung, cost_source="none")
                     break
+        if isinstance(last_error, (json.JSONDecodeError, ValueError)):
+            raise ModelOutputInvalid(f"no model returned valid output for purpose '{purpose}': {last_error}",
+                                     details={"purpose": purpose, "attempts": attempt})
         raise ModelRouteUnavailable(f"all models failed for purpose '{purpose}': {last_error}")
 
     def complete_json(self, purpose: str, system: str, user: str, *, ctx: CallContext | None = None,

@@ -7,12 +7,20 @@ from typing import Any
 import sqlglot
 from sqlalchemy import select
 
-from analystos.agents.common import asset_rows, catalog_for_prompt, compact_json, compile_for, llm_json, task_output
+from analystos.agents.common import (
+    ModelOutcome,
+    asset_rows,
+    catalog_for_prompt,
+    compact_json,
+    compile_for,
+    llm_json,
+    task_output,
+)
 from analystos.artifacts.registry import link, save_artifact
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.contracts.bi import DatasetDef
-from analystos.core.errors import AnalystOSError, InvalidInput, SQLRejected
+from analystos.core.errors import AnalystOSError, InvalidInput, ModelUnavailable, SQLRejected
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
@@ -126,7 +134,8 @@ def build_dataset(ctx: RunContext) -> dict:
 # ------------------------------------------------------------------------------------------- ad hoc
 # ask_route options (spec v3 §4.2): the ladder, tool-first. A rule decides; a model may only break a tie.
 ASK_ROUTES = {"verified_query": "Answer from a verified query in the registry (no model call)",
-              "tool": "Answer a supported count distribution with a schema-bound rule",
+              "tool": "Answer with a schema-bound rule: a pack-declared distribution or a simple single-table shape "
+                      "(count, distribution, average/median/total, top N, over time) built from the catalog",
               "generate": "Write new SQL with the model, then validate and run it through the gateway",
               "decline": "Do not answer yet: a required input is missing, ask the user for it"}
 
@@ -204,10 +213,10 @@ def _registry_match(ctx: Any, question: str, parameters: dict[str, Any] | None) 
     return _registry_lookup(ctx, question, parameters).hit
 
 
-def _record_skip(ctx: Any, reason: str, avoided: int) -> None:
+def _record_skip(ctx: Any, reason: str, avoided: int, rung: str = "registry") -> None:
     router = getattr(ctx, "router", None)
     if router is not None:
-        router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=reason, rung="registry")
+        router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=avoided, reason=reason, rung=rung)
 
 
 def _registry_answer(ctx: Any, question: str, hit: Any) -> dict[str, Any]:
@@ -322,6 +331,34 @@ def _distribution_answer(ctx: Any, question: str, plan: dict[str, Any], paramete
             "explanation": f"Count of {plan['entity']} records grouped by {label.lower()} (schema-bound rule; no model call)."}
 
 
+def _rules_answer(ctx: Any, question: str, plan: Any) -> dict[str, Any]:
+    """Ladder rung L2 (rules): run the plan `agents/ask_rules` resolved from the catalog, or ask which
+    column was meant when a phrase names several. The SQL comes from skills/sqlbuild and runs through
+    the gateway; the avoided generation call is recorded as a skip."""
+    from analystos.agents import ask_rules
+    from analystos.llm.cache import estimate_tokens
+
+    table = plan.table
+    avoided = estimate_tokens(compact_json({"question": question, "tables": [
+        {"asset": table.fq, "columns": [c.name for c in table.columns]}] if table else []})) + 500
+    if plan.status == "clarify":
+        (phrase, options), = plan.ambiguous.items()
+        _stage(ctx, "clarify", f"'{phrase}' matches more than one column: {', '.join(options)}")
+        _record_skip(ctx, f"L2 rules: clarify '{phrase}' ({', '.join(options)})", avoided, rung="rules")
+        example = f" For example: \"{plan.suggestions[0]}\"." if plan.suggestions else ""
+        return {"status": "clarify", "answered_by": "rules", "sql": None, "model": None, "attempts": [], "result": None,
+                "missing": [{"name": phrase, "values": options}], "suggestions": plan.suggestions,
+                "explanation": f"'{phrase}' could mean {' or '.join(options)}. Say which one; nothing was guessed.{example}"}
+    sql = ask_rules.sql_for(plan)
+    _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
+    result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE, run_id=None, task_id=None)
+    _record_skip(ctx, f"L2 rules: {plan.measure[1]} over {table.fq} by {', '.join(a for a, _, _ in plan.dims) or 'nothing'}",
+                 avoided, rung="rules")
+    return {"status": "answered", "answered_by": "rules", "sql": sql, "explanation": ask_rules.explain(plan),
+            "chart": ask_rules.chart_for(plan), "model": None, "attempts": [], "result": _result(result),
+            "suggestions": plan.suggestions, "rules": plan.summary()}
+
+
 def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | None = None,
           *, tool_match: float = 0.0) -> dict[str, Any]:
     """`ask_route` (authority `route`): verified query > tool > generate, decline when a required input
@@ -369,20 +406,25 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
             _stage(ctx, "registry", f"A verified query is close but does not answer this: {rejected[0]['reasons'][0]}",
                    rejected=[r["name"] for r in rejected])
     plan = _distribution_plan(ctx, question, parameters)
-    chosen = route(ctx, question, hit, rejected, tool_match=1.0 if plan is not None and hit is None else 0.0)
+    rules = None
+    if plan is None and hit is None:
+        from analystos.agents.ask_rules import plan_for
+
+        rules = plan_for(ctx, question)
+    chosen = route(ctx, question, hit, rejected, tool_match=1.0 if (plan or rules) is not None and hit is None else 0.0)
     decisions = [chosen]
     path = chosen["value"]
-    if (path == "tool" and plan is None) or (path in ("verified_query", "decline") and hit is None):
+    if (path == "tool" and plan is None and rules is None) or (path in ("verified_query", "decline") and hit is None):
         path = "verified_query" if hit is not None else "generate"  # nothing to run on that rung: the next one
     _stage(ctx, "route", {"verified_query": "Answering from the verified query registry",
                           "decline": "A required input is missing",
-                          "tool": "Answering with a schema-bound count rule",
+                          "tool": "Answering with a schema-bound rule built from the catalog (no model)",
                           "generate": "No verified answer fits: writing new SQL"}[path], route=chosen["value"])
     if path in ("verified_query", "decline"):
         out = _registry_answer(ctx, question, hit)
         return {**out, "route": chosen["value"], "decisions": decisions}
     if path == "tool":
-        out = _distribution_answer(ctx, question, plan, parameters)
+        out = _distribution_answer(ctx, question, plan, parameters) if plan is not None else _rules_answer(ctx, question, rules)
         return {**out, "route": chosen["value"], "decisions": decisions}
     asked = clarify(ctx, question)
     decisions.append(asked)
@@ -402,7 +444,8 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
                                        catalog=catalog, reference_text=question),
                            prompt_vars={"dialect": dialect})
     if not isinstance(data, dict) or not data.get("sql"):
-        raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
+        raise _generation_unavailable(model if data is None else ModelOutcome(
+            "invalid_output", "the model answered without a SQL statement", purpose="sql_generation"))
     attempts = []
     sql = str(data["sql"])
     for attempt in range(max_repairs + 1):
@@ -428,6 +471,14 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
                 raise
             sql = str(fix["sql"])
     raise InvalidInput("unreachable")
+
+
+def _generation_unavailable(outcome: Any) -> ModelUnavailable:
+    """The one reason generation got no SQL (ModelOutcome from llm_json), as the Ask refusal carries it."""
+    reason = getattr(outcome, "code", None) or str(outcome or "no_route")
+    message = getattr(outcome, "message", None) or f"SQL generation unavailable ({reason})"
+    return ModelUnavailable(f"SQL generation unavailable: {message}",
+                            details={**(getattr(outcome, "details", None) or {}), "reason": reason})
 
 
 def dataset_def(run_id: str) -> tuple[DatasetDef, dict]:

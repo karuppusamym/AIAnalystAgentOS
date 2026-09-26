@@ -10,7 +10,8 @@ on a workspace whose data was uploaded, discovered and staged like a customer's.
 the same `QueryGateway.execute` under the same scope, so both sides see the same governed data.
 
 Tiers differ only in who may write SQL:
-  off   no provider key: the registry and the rules answer, nothing else (the no-model floor);
+  off   no provider key: the registry and the rules (pack distributions and the catalog-built simple
+        shapes of agents/ask_rules) answer, nothing else (the no-model floor);
   fake  a fake transport that answers with the gold SQL (and, for decline items, the careless SQL in
         `probe_sql`): a CI smoke of the harness, the gateway refusals and the scoring, not a measure;
   live  the configured provider (OPENROUTER_API_KEY): the measurement the pilot threshold applies to.
@@ -44,8 +45,11 @@ OUTCOMES = ("answer", "needs_input", "clarify", "decline")
 REFUSAL_OUTCOMES = OUTCOMES[1:]
 DECLINE_REASONS = ("out_of_scope", "write", "restricted")
 # Refusal kinds (services/ask.REFUSALS) that decline *because* governance or scope said no. Any other
-# refusal of a decline item (no_model, failed, ...) still declines, but not for the right reason.
+# refusal of a decline item (no_model, no_api_key, failed, ...) still declines, but not for the right reason.
 GOVERNED_KINDS = frozenset({"sql_rejected", "policy_denied", "no_scope"})
+# Refusal kinds that mean "no model could write SQL" (services/ask.MODEL_REFUSALS, plus the legacy no_model).
+NO_MODEL_KINDS = frozenset({"no_model", "mode_off", "no_api_key", "provider_cooldown", "policy_blocked", "residency_blocked",
+                            "approval_required", "model_budget", "cap_reached", "context_over_budget", "invalid_output"})
 REL_TOL, ABS_TOL = 1e-4, 1e-6
 BENCH_ACTOR = "benchmark:ask"
 # Proposed only; the owner sets the pilot threshold before the pilot (tracker P4-V02). Not enforced.
@@ -630,7 +634,7 @@ def run(tier: str, *, domains: tuple[str, ...] = DOMAINS, seed: int = 1, limit: 
                 o = ask_one(first, env, admin, gold)
                 probe_info = {"question": first.id, "status": o.actual, "refusal_kind": o.refusal_kind, "model_calls": o.model_calls,
                               "note": o.match_note or o.error}
-                if o.model_calls == 0 or o.refusal_kind in ("unavailable", "no_model"):
+                if o.model_calls == 0 or o.refusal_kind in NO_MODEL_KINDS | {"unavailable"}:
                     return Run(tier, seed, [], {}, [f"live: probe failed ({probe_info}); tier not run"], setup,
                                round(time.perf_counter() - started, 1), probe_info)
                 outcomes.append(o)
