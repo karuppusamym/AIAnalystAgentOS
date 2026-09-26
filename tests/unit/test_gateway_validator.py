@@ -189,7 +189,7 @@ def test_table_outside_scope_rejected(scope: DataScope) -> None:
         "SELECT table_name FROM information_schema.tables",
         "SELECT name FROM sys.objects",
         "SELECT usename FROM pg_user",
-        "SELECT COUNT(*) FROM sn.incident, pg_shadow",
+        "SELECT COUNT(*) FROM sn.incident JOIN pg_shadow ON sn.incident.number = pg_shadow.usename",
     ],
 )
 def test_system_catalogs_rejected(scope: DataScope, sql: str) -> None:

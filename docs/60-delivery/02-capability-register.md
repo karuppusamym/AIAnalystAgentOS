@@ -5,6 +5,15 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-26 — P7-15 gateway hardening, partial
+
+`gateway/dialects.py` and `gateway/validator.py` enable strict PostgreSQL and T-SQL function
+checks and reject table hints and unconditioned joins. The focused validator suites in
+`tests/unit/test_gateway_validator.py` and `tests/unit/test_gateway_dialects.py` pass. The
+integration timeout fixture now uses a keyed join. Remaining: the 106-case corpus and expectations
+file in CI, plus live source tests; this is why P7-15 remains Partial. See the
+[AgentSwarms implementation comparison](../70-reviews/2026-09-26-agentswarms-implementation.md).
+
 ## 2026-09-25 — Phase 0 + Phase 1 MVP
 
 Environment: compose stack on one host (Postgres 16 + pgvector, Redis 7, Neo4j 5, Temporal 1.25,

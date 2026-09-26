@@ -3,8 +3,7 @@
 Each dialect in gateway/dialects.py gets the same generic suite (read-only enforcement, denied
 columns through every path, one statement, DDL/DML/session statements) plus its own attack list:
 the functions and syntax of that dialect that read files, call out, sleep, reveal session state,
-read stages or time-travel. postgres and tsql keep their increment-3 rules (their suites are
-tests/unit/test_gateway_validator.py); the checks here show they are not loosened or tightened.
+read stages or time-travel. PostgreSQL and T-SQL also refuse unmodelled functions.
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ from analystos.core.errors import SQLRejected
 from analystos.gateway.dialects import PROFILES, SUPPORTED_DIALECTS
 from analystos.gateway.validator import validate_sql
 
-STRICT = ["snowflake", "bigquery", "databricks", "trino", "duckdb", "mysql"]
+STRICT = ["postgres", "tsql", "snowflake", "bigquery", "databricks", "trino", "duckdb", "mysql"]
 COLS = ["id", "region", "amount", "email", "customer_id"]
 
 
@@ -36,16 +35,41 @@ def rejected(dialect: str, sql: str, match: str | None = None) -> None:
 
 
 def test_every_strict_dialect_has_a_profile() -> None:
-    assert set(STRICT) | {"postgres", "tsql"} == SUPPORTED_DIALECTS
+    assert set(STRICT) == SUPPORTED_DIALECTS
     assert all(PROFILES[d].strict for d in STRICT)
-    assert not PROFILES["postgres"].strict and not PROFILES["tsql"].strict
+
+
+@pytest.mark.parametrize("dialect", STRICT)
+@pytest.mark.parametrize("sql", [
+    "SELECT o.id FROM sales.orders o, sales.customers c",
+    "SELECT o.id FROM sales.orders o JOIN sales.customers c ON TRUE",
+    "SELECT o.id FROM sales.orders o JOIN sales.customers c ON 1 = 1",
+    "SELECT o.id FROM sales.orders o CROSS JOIN sales.customers c",
+])
+def test_unconditioned_join_is_rejected(dialect: str, sql: str) -> None:
+    rejected(dialect, sql, "Unconditioned joins")
+
+
+@pytest.mark.parametrize("hint", ["UPDLOCK", "HOLDLOCK", "NOLOCK"])
+def test_tsql_table_hints_are_rejected(hint: str) -> None:
+    rejected("tsql", f"SELECT o.id FROM sales.orders o WITH ({hint})", "Table hints")
+
+
+def test_sqlbuild_functions_remain_available() -> None:
+    ok("postgres", "SELECT DATE_TRUNC('month', o.amount) AS period FROM sales.orders o")
+    ok("tsql", "SELECT DATEDIFF(DAY, 0, o.amount) AS elapsed FROM sales.orders o")
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "tsql"])
+def test_unknown_function_cannot_have_external_effects(dialect: str) -> None:
+    rejected(dialect, "SELECT fn_send_mail(o.id) FROM sales.orders o", "not a known built-in")
 
 
 # ------------------------------------------------------------------------------ generic suite
 @pytest.mark.parametrize("dialect", STRICT)
 def test_legitimate_queries_pass_and_are_capped(dialect: str) -> None:
     sql = ok(dialect, "SELECT o.region, SUM(o.amount) AS total FROM sales.orders o GROUP BY o.region ORDER BY total DESC")
-    assert "LIMIT 101" in sql
+    assert ("TOP 101" if dialect == "tsql" else "LIMIT 101") in sql
     ok(dialect, "WITH t AS (SELECT region, amount FROM sales.orders) SELECT region, COUNT(*) AS n FROM t GROUP BY region")
     ok(dialect, "SELECT c.tier, AVG(o.amount) AS a FROM sales.orders o JOIN sales.customers c ON c.id = o.customer_id "
                 "GROUP BY c.tier")
@@ -234,9 +258,9 @@ def test_dialect_quoting_in_output() -> None:
     assert '"sales"."orders"' in ok("trino", "SELECT region FROM sales.orders")
 
 
-def test_postgres_rules_are_unchanged() -> None:
-    """Unknown functions stay allowed in postgres (increment-3 behaviour); its denylist still applies."""
-    ok("postgres", "SELECT my_udf(amount) AS x FROM sales.orders")
-    ok("postgres", "SELECT region FROM sales.orders WHERE region = $1")
+def test_postgres_function_boundary() -> None:
+    ok("postgres", "SELECT DATE_TRUNC('month', amount) AS x FROM sales.orders")
+    rejected("postgres", "SELECT my_udf(amount) AS x FROM sales.orders", "not a known built-in")
+    rejected("postgres", "SELECT region FROM sales.orders WHERE region = $1", "Parameters")
     rejected("postgres", "SELECT pg_read_file('/etc/passwd') AS f FROM sales.orders", "not allowed")
     rejected("postgres", "SELECT email FROM sales.orders", "restricted by policy")
