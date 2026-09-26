@@ -38,6 +38,11 @@ EVENT_TYPES = {
     # Transformation recipes (P6-04..07) and file ingestion (P6-06)
     "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
     "recipe.run.refused", "recipe.run.failed", "file.ingested",
+    # Pipelines, incremental runs and the managed writer (P6-01..P6-03): operational alerts included
+    "pipeline.saved", "pipeline.published", "pipeline.dry_run.completed", "pipeline.dry_run.blocked",
+    "pipeline.dry_run.failed", "pipeline.run.completed", "pipeline.run.blocked", "pipeline.run.failed",
+    "writer_destination.provisioned", "pipeline.materialized", "pipeline.materialization.failed",
+    "pipeline.rolled_back", "pipeline.freshness.breached",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

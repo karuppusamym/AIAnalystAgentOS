@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # workspace reader role. Never used for queries; the query identities never write.
     analytics_builder_url: str = "postgresql+psycopg://analystos_builder:builder@localhost:5432/analytics"
     analytics_build_role_prefix: str = "analystos_b_"
+    # Managed output writer (P6-03, ADR-0011): a fourth analytics identity used only to materialize approved
+    # pipeline outputs. It reaches per-workspace NOLOGIN writer roles (<prefix><workspace id>) by SET ROLE;
+    # each holds CREATE on that workspace's allowlisted destination schemas and reads no source.
+    analytics_writer_url: str = "postgresql+psycopg://analystos_writer:writer@localhost:5432/analytics"
+    analytics_writer_role_prefix: str = "analystos_w_"
+    writer_keep_versions: int = Field(default=3, ge=2, le=50)  # version tables kept per destination (rollback depth)
     # The customer's dbt runner (P4-E04): a dbt Core executable run as a separate process (its own
     # venv or container image), never imported in-process. Projects and job logs live under build_dir.
     dbt_executable: str = "dbt"
