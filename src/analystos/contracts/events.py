@@ -38,6 +38,10 @@ EVENT_TYPES = {
     # Transformation recipes (P6-04..07) and file ingestion (P6-06)
     "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
     "recipe.run.refused", "recipe.run.failed", "file.ingested",
+    # Governed classical ML (P5-01..P5-06, ADR-0024): experiments, the model registry, approved batch scoring
+    "ml.experiment.started", "ml.experiment.completed", "ml.experiment.refused", "ml.experiment.failed",
+    "ml.model.registered", "ml.model.promoted", "ml.model.rolled_back", "ml.scoring.planned", "ml.scoring.completed",
+    "ml.scoring.refused", "ml.scoring.duplicate",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

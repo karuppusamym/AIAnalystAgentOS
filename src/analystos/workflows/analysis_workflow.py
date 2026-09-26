@@ -105,6 +105,18 @@ class RecipeComputeWorkflow:
                                                **_queue_kwargs(opts, "compute"))
 
 
+@workflow.defn(name="MLComputeWorkflow")
+class MLComputeWorkflow:
+    """One ML job over its snapshots (ADR-0024, P5-01) on the `compute` pool until `compute-ml` exists (P7-06).
+    The job is pure (content-addressed files in and out), so a retry is safe."""
+
+    @workflow.run
+    async def run(self, job: dict[str, Any], opts: dict[str, Any] | None = None) -> dict:
+        opts = opts or fallback_options(workflow.info().task_queue.removesuffix("-analysis"))
+        return await workflow.execute_activity("run_ml_job", args=[job], retry_policy=TASK_RETRY,
+                                               **_queue_kwargs(opts, "compute"))
+
+
 @workflow.defn(name="CrawlWorkflow")
 class CrawlWorkflow:
     """One metadata crawl on the `crawl` pool. `run_crawl` records failure on the crawl_run row

@@ -11,7 +11,10 @@ version it had when REV decided, and the record's fingerprint is ``sha256(canoni
 * ``method``     ref = the method name; version = manifest id + version + digest of its code;
 * ``context``    ref = a glossary entry / knowledge document id; version = its content hash;
 * ``model_call`` ref = a model call id whose output survived into the claim; version = purpose, model, prompt;
-* ``policy``     ref = the workspace id; version = the policy fields that shape scope, masking and REV.
+* ``policy``     ref = the workspace id; version = the policy fields that shape scope, masking and REV;
+* ``ml_dataset`` ref = ``<workspace_id>/<snapshot hash>``; version = the snapshot hash while its file verifies;
+* ``ml_split``   ref = the split manifest row; version = its manifest hash;
+* ``ml_package`` ref = the experiment; version = the sha256 of its package file now (tampering voids).
 
 Every change path calls `dependency_changed` (or `void_dependents` when it already knows the new version)
 in the transaction that makes the change; dependents found through the indexed ``(kind, ref)`` table turn
@@ -40,7 +43,7 @@ from analystos.core.logging import get_logger
 
 log = get_logger(__name__)
 
-KINDS = ("query", "data", "semantic", "method", "context", "model_call", "policy")
+KINDS = ("query", "data", "semantic", "method", "context", "model_call", "policy", "ml_dataset", "ml_split", "ml_package")
 LIVE = ("PENDING", "ACTIVE")
 QUERY_COMPILER = "sqlbuild.v1"
 # Policy fields that shape what a verdict saw (scope, masking, truncation) or how REV judged it (alpha).
@@ -156,6 +159,10 @@ def _method_version(session: Session, ref: str) -> str | None:
 
     m = methods.current().manifests.get(ref)
     if m is None:
+        if ref.startswith("ml."):  # the ML method pack (P5-04): manifest + digest of the whole ml package
+            from analystos.ml.methods import method_version
+
+            return method_version(ref)
         return None
     return stable_hash({"id": m.id, "version": m.version, "code": _code_digest(m.entry)})
 
@@ -195,8 +202,40 @@ def _policy_version(session: Session, ref: str) -> str | None:
     return stable_hash({k: doc.get(k) for k in POLICY_FIELDS})
 
 
+def _ml_dataset_version(session: Session, ref: str) -> str | None:
+    from analystos.core.config import get_settings
+    from analystos.core.errors import AnalystOSError
+    from analystos.ml.store import snapshots
+
+    digest = ref.rsplit("/", 1)[-1]
+    try:
+        snapshots(get_settings().artifact_dir).get(digest)
+    except AnalystOSError:
+        return None
+    return digest
+
+
+def _ml_split_version(session: Session, ref: str) -> str | None:
+    from analystos.db.models import MLSplit
+
+    row = session.get(MLSplit, ref)
+    return row.manifest_hash if row is not None else None
+
+
+def _ml_package_version(session: Session, ref: str) -> str | None:
+    from analystos.core.config import get_settings
+    from analystos.db.models import MLExperiment
+    from analystos.ml.store import MLStore
+
+    exp = session.get(MLExperiment, ref)
+    if exp is None or not exp.package_hash:
+        return None
+    return MLStore(get_settings().artifact_dir).file_hash(exp.package_hash)
+
+
 RESOLVERS = {"query": _query_version, "data": _data_version, "semantic": _semantic_version, "method": _method_version,
-             "context": _context_version, "model_call": _model_call_version, "policy": _policy_version}
+             "context": _context_version, "model_call": _model_call_version, "policy": _policy_version,
+             "ml_dataset": _ml_dataset_version, "ml_split": _ml_split_version, "ml_package": _ml_package_version}
 
 
 def current_version(session: Session, kind: str, ref: str) -> str | None:
@@ -398,7 +437,8 @@ def recheck(session: Session, *, kinds: Iterable[str] | None = None, workspace_i
 
 def _reason(kind: str, ref: str, reason: str) -> str:
     what = {"query": "step", "data": "data snapshot", "semantic": "metric", "method": "method", "context": "knowledge",
-            "model_call": "model call", "policy": "workspace policy"}[kind]
+            "model_call": "model call", "policy": "workspace policy", "ml_dataset": "dataset snapshot",
+            "ml_split": "split manifest", "ml_package": "model package"}[kind]
     shown = ref.split("/", 1)[1] if kind in ("data", "semantic") and "/" in ref else ref
     return f"{what} {shown} changed ({reason})"
 

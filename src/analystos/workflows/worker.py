@@ -27,11 +27,16 @@ def build_workers(client: Any, workloads: list[str], *, prefix: str, stack: cont
     from temporalio.worker import SharedStateManager, Worker
 
     from analystos.workflows.activities import BY_WORKLOAD
-    from analystos.workflows.analysis_workflow import AnalysisWorkflow, CrawlWorkflow, RecipeComputeWorkflow
+    from analystos.workflows.analysis_workflow import (
+        AnalysisWorkflow,
+        CrawlWorkflow,
+        MLComputeWorkflow,
+        RecipeComputeWorkflow,
+    )
 
     specs = specs or load_config()[0]
     activities = activities or BY_WORKLOAD
-    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow], "crawl": [CrawlWorkflow]}
+    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow, MLComputeWorkflow], "crawl": [CrawlWorkflow]}
     workers = []
     for workload in workloads:
         spec = specs[workload]

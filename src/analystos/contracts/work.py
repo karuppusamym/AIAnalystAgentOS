@@ -252,6 +252,19 @@ class MLSpec(BaseModel):
         return out
 
 
+class MLScoringSpec(BaseModel):
+    """A batch-scoring definition (kind `ml_scoring`, P5-03). Published and pinned: it names the exact model
+    version and package hash, the input table and the managed output it writes. Scoring a new version is a
+    new definition version, never a silent switch."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str = Field(min_length=1, max_length=120)  # the model name (its ml_spec definition key)
+    model_version_id: str = Field(pattern=r"^mlv_[0-9a-f]+$")
+    package_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    input: DatasetRef | None = None  # None only for a forecast (it writes its stored forward forecast)
+    output: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")  # output table name in the managed output source
+
+
 class ExperimentSpec(BaseModel):
     """One bounded experiment over a *published* `ml_spec` definition (P5-01/P5-02): which version, an
     optional hypothesis, and budget overrides that can only tighten the definition's own."""

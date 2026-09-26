@@ -1519,3 +1519,127 @@ class RecipeRun(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ------------------------------------------------------------------------------ governed classical ML (P5-01..P5-06)
+class MLSplit(Base):
+    """An immutable split manifest (ADR-0024): partition sizes and membership hashes of one dataset version
+    under one strategy and seed. Its holdout is consumed by the first experiment that reads it; tuning again
+    after that needs a new partition (another seed or holdout fraction) and so a new manifest."""
+
+    __tablename__ = "ml_split"
+    __table_args__ = (UniqueConstraint("workspace_id", "manifest_hash", name="uq_ml_split_manifest"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    manifest_hash: Mapped[str] = mapped_column(String(64))
+    dataset_version: Mapped[str] = mapped_column(String(64))
+    strategy: Mapped[str] = mapped_column(String(30))
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    membership_hash: Mapped[str] = mapped_column(String(64))
+    holdout_consumed_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    holdout_spec_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    holdout_consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class MLExperiment(Base):
+    """One experiment over a published `ml_spec` definition: readiness, split, bounded search, sealed holdout
+    evaluation, package and verdict. Its records (spec, manifest, trials, package, evaluation, model card)
+    are artifacts; this row indexes them and is the platform record a package must match to load."""
+
+    __tablename__ = "ml_experiment"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    definition_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    definition_key: Mapped[str] = mapped_column(String(120))
+    definition_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    task: Mapped[str] = mapped_column(String(20))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | succeeded | refused | failed
+    verdict: Mapped[str | None] = mapped_column(String(30), nullable=True)  # improved | no_improvement | guardrail_failed | invalid
+    dataset_asset: Mapped[str] = mapped_column(String(300))
+    dataset_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    dataset_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    split_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selection_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evaluation_seal: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    package_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    code_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    environment_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    readiness: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    artifacts: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # record type -> artifact id
+    verification_record_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    reproduction_of: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MLModelVersion(Base):
+    """A registered model version (the registry is the artifact store, ADR-0024). Retraining registers a
+    challenger; only a hash-bound approval makes a version the champion. One champion per model name; the
+    champion it replaced is kept as the rollback version."""
+
+    __tablename__ = "ml_model_version"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version", name="uq_ml_model_version"),
+                      Index("uq_ml_model_one_champion", "workspace_id", "name", unique=True,
+                            postgresql_where=text("status = 'champion'"), sqlite_where=text("status = 'champion'")))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey("ml_experiment.id", ondelete="CASCADE"), index=True)
+    task: Mapped[str] = mapped_column(String(20))
+    package_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate | challenger | champion | retired
+    feature_schema: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    previous_champion_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    promoted_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+
+
+class MLScoringRun(Base):
+    """One approved batch scoring of a published `ml_scoring` definition: the pinned model version and
+    package, the input snapshot, rows scored and rejected, and where they were written (the managed output
+    source). `dedupe_key` (definition hash + package + input version) makes a repeat a no-op."""
+
+    __tablename__ = "ml_scoring_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    definition_id: Mapped[str] = mapped_column(String(40))
+    definition_key: Mapped[str] = mapped_column(String(120))
+    definition_version: Mapped[int] = mapped_column(Integer)
+    definition_hash: Mapped[str] = mapped_column(String(64))
+    model_version_id: Mapped[str] = mapped_column(String(40), index=True)
+    package_hash: Mapped[str] = mapped_column(String(64))
+    input_asset: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    input_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    input_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dedupe_key: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="awaiting_approval")  # awaiting_approval|succeeded|refused|failed
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    rows_input: Mapped[int] = mapped_column(Integer, default=0)
+    rows_scored: Mapped[int] = mapped_column(Integer, default=0)
+    rows_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    output_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    output_table: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    rejected_table: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

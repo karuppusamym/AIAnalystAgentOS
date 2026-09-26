@@ -1,0 +1,105 @@
+# The ML method pack (P5-04, ADR-0024). Each method: a typed MLSpec, allowlisted estimators, a mandatory
+# baseline on identical splits and a bounded search, run by `analystos.ml.jobs.run_ml_job` over an immutable
+# snapshot. Not part of the analysis vocabulary (`spec.family: ml`). Disabled per workspace until an owner
+# enables it (or enables playbook.train / playbook.score, which bind them); `tested`, so never autonomous.
+# Widening an allowlist or a grid is a version change of the method with its own evaluation.
+- apiVersion: analystos/v1
+  kind: Method
+  id: method.ml.classify
+  version: 1.0.0
+  summary: Classification - logistic, gradient boosting or random forest pipelines vs a dummy baseline; threshold, calibration, slices
+  entry: python:analystos.ml.methods:classify
+  determinism: seeded
+  side_effect: write_internal
+  cost_class: compute
+  permissions: [role:analyst]
+  requires: [extra:ml]
+  certification: {status: tested, evidence: tests/unit/test_ml_core.py}
+  tags: [ml, supervised]
+  spec: {family: ml, task: classify, estimators: [dummy_prior, logistic, gradient_boosting, random_forest],
+         baseline: dummy_prior, evidence: [threshold, error_costs, precision_recall, calibration, slice_guardrails]}
+- apiVersion: analystos/v1
+  kind: Method
+  id: method.ml.regress
+  version: 1.0.0
+  summary: Regression - ridge, gradient boosting or random forest pipelines vs a mean baseline; error in business units, residuals, slices
+  entry: python:analystos.ml.methods:regress
+  determinism: seeded
+  side_effect: write_internal
+  cost_class: compute
+  permissions: [role:analyst]
+  requires: [extra:ml]
+  certification: {status: tested, evidence: tests/unit/test_ml_core.py}
+  tags: [ml, supervised]
+  spec: {family: ml, task: regress, estimators: [dummy_mean, linear, gradient_boosting, random_forest], baseline: dummy_mean,
+         evidence: [business_unit_error, residual_diagnostics, slices]}
+- apiVersion: analystos/v1
+  kind: Method
+  id: method.ml.forecast
+  version: 1.0.0
+  summary: Forecast - statsmodels ETS / ARIMA vs a seasonal-naive baseline; rolling-origin error by horizon, interval coverage
+  entry: python:analystos.ml.methods:forecast
+  determinism: seeded
+  side_effect: write_internal
+  cost_class: compute
+  permissions: [role:analyst]
+  requires: [extra:ml]
+  certification: {status: tested, evidence: tests/unit/test_ml_core.py}
+  tags: [ml, time_series]
+  spec: {family: ml, task: forecast, estimators: [seasonal_naive, ets, arima], baseline: seasonal_naive,
+         evidence: [rolling_origin_error_by_horizon, interval_coverage]}
+- apiVersion: analystos/v1
+  kind: Method
+  id: method.ml.cluster
+  version: 1.0.0
+  summary: Clustering - k-means / Gaussian mixture vs a random partition; stability across seeds and bootstraps, no causal wording
+  entry: python:analystos.ml.methods:cluster
+  determinism: seeded
+  side_effect: write_internal
+  cost_class: compute
+  permissions: [role:analyst]
+  requires: [extra:ml]
+  certification: {status: tested, evidence: tests/unit/test_ml_core.py}
+  tags: [ml, unsupervised]
+  spec: {family: ml, task: cluster, estimators: [random_partition, kmeans, gmm], baseline: random_partition,
+         evidence: [stability_across_seeds_and_bootstraps]}
+- apiVersion: analystos/v1
+  kind: Method
+  id: method.ml.anomaly
+  version: 1.0.0
+  summary: Anomaly detection - seasonal residual / isolation forest vs a robust-z baseline; thresholds calibrated on history, false-alarm rate on backtest
+  entry: python:analystos.ml.methods:anomaly
+  determinism: seeded
+  side_effect: write_internal
+  cost_class: compute
+  permissions: [role:analyst]
+  requires: [extra:ml]
+  certification: {status: tested, evidence: tests/unit/test_ml_core.py}
+  tags: [ml, monitoring]
+  spec: {family: ml, task: anomaly, estimators: [robust_z, seasonal_residual, isolation_forest], baseline: robust_z,
+         evidence: [threshold_calibrated_on_history, backtest_false_alarm_rate]}
+- apiVersion: analystos/v1
+  kind: Skill
+  id: skill.ml_propose_spec
+  version: 1.0.0
+  summary: Propose an MLSpec (task, target, features, estimators, split) for one in-scope table from the catalog; validated, never trained
+  entry: python:analystos.ml.propose:propose_spec
+  determinism: deterministic
+  side_effect: none
+  cost_class: free
+  input_schema:
+    type: object
+    additionalProperties: false
+    required: [asset]
+    properties:
+      asset: {type: string}
+      objective: {type: string, maxLength: 4000}
+      target: {type: string}
+      task: {type: string, enum: [classify, regress, forecast, cluster, anomaly]}
+      features: {type: array, items: {type: string}, maxItems: 100}
+      estimators: {type: array, items: {type: string}, maxItems: 10}
+      time_column: {type: string}
+      horizon: {type: integer, minimum: 1, maximum: 366}
+  certification: {status: tested, evidence: tests/unit/test_ml_propose.py}
+  tags: [ml, catalog]
+  spec: {call: context, tool: metadata.read}
