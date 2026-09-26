@@ -32,3 +32,16 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  output_contract:
+    - type: insight
+      schema:
+        type: object
+        required: [title, finding, caveats, evidence, narrative_source]
+        properties:
+          title: {type: string, minLength: 1}
+          finding: {type: string, minLength: 1}
+          caveats: {type: array, items: {type: string}}
+          evidence: {type: array, minItems: 1, items: {type: object, required: [type, id]}}
+          narrative_source: {type: string}
+    - type: report
+      schema: {type: object, required: [kind, title, files], properties: {kind: {type: string}, files: {type: object}}}

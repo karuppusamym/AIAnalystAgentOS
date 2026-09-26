@@ -35,3 +35,13 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  knowledge:
+    sections: [metrics, glossary, business_rules]
+  output_contract:
+    - type: semantic_model
+      schema:
+        type: object
+        required: [dataset, metrics, dimensions]
+        properties: {dataset: {type: string}, metrics: {type: array}, dimensions: {type: array}}
+    - type: metric
+      schema: contract:bi.MetricDef

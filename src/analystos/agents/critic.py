@@ -237,6 +237,10 @@ def verify_insights(ctx: RunContext) -> dict:
             "jev": {"p_supports": jev.p, "model": jev.model, "by": jev.backend, "decision_id": jev.id} if jev else None,
             "contradictions": contradiction}, "verified": deterministic_ok,
             "note": "Verification is grounded in deterministic checks and reproducible data; model opinions only adjust confidence."}
+        if second is not None:
+            ctx.check_output("experiment", {"method": spec.method, "params": {"verification_of": code},
+                                            "result": _dump(second.stat), "query_ids": list(second.query_ids),
+                                            "role": "verification"})
         with session_scope() as s:
             ins = s.get(Insight, insight_id)
             ins.finding = finding

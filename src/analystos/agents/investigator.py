@@ -267,8 +267,27 @@ def _prioritise(ctx: RunContext, accepted: list[dict]) -> str:
     return "jev" if decision.backend == "jev" else "rules"
 
 
+def _contracted(ctx: RunContext, accepted: list[dict]) -> list[dict]:
+    """The agent's output contract (FND-006, `hypothesis: contract:analysis.AnalysisSpec`): a spec off the
+    declared schema is dropped with its reason; an undeclared output type refuses the whole write."""
+    from analystos.core.errors import OutputContractViolation
+
+    kept = []
+    for a in accepted:
+        try:
+            ctx.check_output("hypothesis", a.get("spec"))
+        except OutputContractViolation as exc:
+            if exc.details.get("reason") != "schema":
+                raise
+            ctx.say(f"Hypothesis dropped: {exc.message}", kind="decision", data={"statement": a.get("statement")})
+            continue
+        kept.append(a)
+    return kept
+
+
 def _persist(ctx: RunContext, accepted: list[dict], *, iteration: int, round_key: str) -> list[str]:
     keys = []
+    accepted = _contracted(ctx, accepted)
     with session_scope() as s:
         run = s.get(AnalysisRun, ctx.run.id, with_for_update=True)
         if run.plan_version != ctx.task.plan_version:

@@ -43,16 +43,21 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
     """Upsert by (workspace, run, type, name): unchanged content is a no-op, changed content is a new version.
 
     An agent writing inside a run passes the ``artifact.write`` tool gate (workspace ``tool_denylist``,
-    role, autonomy; spec v2 §6). Writes by a signed-in user are governed by their route's role check.
+    role, autonomy; spec v2 §6) and its manifest's ``output_contract`` (the type must be declared and the
+    content must match the declared schema, else OutputContractViolation and nothing is written).
+    Writes by a signed-in user are governed by their route's role check.
     Run artifacts are stamped with the writing task's plan version; a task of a superseded plan cannot
     overwrite what the current plan already wrote."""
     if type_ not in ARTIFACT_TYPES:
         raise ValueError(f"unknown artifact type {type_}")
     if creator_agent and run_id:
+        from analystos.capabilities.agents import contract_for, enforce_output
         from analystos.tools.registry import gate_agent_write
 
         gate_agent_write(session, workspace_id=workspace_id, run_id=run_id, agent_id=creator_agent,
                          inputs={"type": type_, "name": name})
+        # The agent's output contract (FND-006), as the run bound it: declared type, declared schema.
+        enforce_output(contract_for(session.get(AnalysisRun, run_id), creator_agent), creator_agent, type_, content)
     content_hash = stable_hash(content)
     plan_version = _plan_version(session, run_id)
     existing = session.scalar(select(Artifact).where(Artifact.workspace_id == workspace_id, Artifact.run_id == run_id,

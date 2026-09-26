@@ -34,7 +34,7 @@ def _matches(ref: str, manifests: dict[str, CapabilityManifest]) -> bool:
 
 def validate_kinds(manifests: dict[str, CapabilityManifest], *, references: bool = True) -> list[str]:
     from analystos.artifacts.registry import ARTIFACT_TYPES
-    from analystos.capabilities.agents import GENERIC_ENTRY, AgentBody
+    from analystos.capabilities.agents import GENERIC_ENTRY, AgentBody, declaration_problems
     from analystos.capabilities.playbook import PlaybookBody
 
     problems: list[str] = []
@@ -59,6 +59,7 @@ def validate_kinds(manifests: dict[str, CapabilityManifest], *, references: bool
                     problems.append(f"{where}: default action {a.capability} is not one of the agent's capabilities")
             if body.output and body.output.artifact_type not in ARTIFACT_TYPES:
                 problems.append(f"{where}: unknown artifact type {body.output.artifact_type}")
+            problems += [f"{where}: {p}" for d in body.output_contract for p in declaration_problems(d)]
         elif m.kind == "Playbook":
             try:
                 body_pb = PlaybookBody.model_validate(m.spec)

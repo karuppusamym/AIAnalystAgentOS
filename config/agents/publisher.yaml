@@ -34,3 +34,6 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  output_contract:
+    - type: publication
+      schema: contract:bi.PublishBundle
