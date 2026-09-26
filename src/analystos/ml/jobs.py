@@ -190,7 +190,8 @@ def train(job: dict[str, Any]) -> dict[str, Any]:
             "caps": {**caps, "trials_run": len(trials) - 1, "trials_planned": len(order)},
             "selection": selection, "selection_hash": selection_hash, "evaluation": report,
             "package": {"hash": package_hash, "bytes": size, "estimator": best["estimator"], "params": best["params"],
-                        "schema": pkg.get("schema") or [], "task": spec.task, "forecast": pkg.get("forecast")},
+                        "schema": pkg.get("schema") or [], "task": spec.task, "forecast": pkg.get("forecast"),
+                        "positive": pkg.get("positive"), "classes": pkg.get("classes")},
             "reference_profile": pkg.get("reference_profile") or {}, "code_digest": pkg["code_digest"],
             "environment": pkg["environment"], "environment_digest": env_digest,
             "seconds": round(time.monotonic() - started, 3)}

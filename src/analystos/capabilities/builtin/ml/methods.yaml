@@ -82,7 +82,7 @@
   kind: Skill
   id: skill.ml_propose_spec
   version: 1.0.0
-  summary: Propose an MLSpec (task, target, features, estimators, split) for one in-scope table from the catalog; validated, never trained
+  summary: Propose an MLSpec (task, target, features, estimators, split) per in-scope table from the catalog; validated, never trained
   entry: python:analystos.ml.propose:propose_spec
   determinism: deterministic
   side_effect: none
@@ -90,9 +90,9 @@
   input_schema:
     type: object
     additionalProperties: false
-    required: [asset]
     properties:
       asset: {type: string}
+      assets: {type: array, items: {type: string}, minItems: 1, maxItems: 20}
       objective: {type: string, maxLength: 4000}
       target: {type: string}
       task: {type: string, enum: [classify, regress, forecast, cluster, anomaly]}

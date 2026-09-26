@@ -1,0 +1,31 @@
+# Approved batch scoring (P5-06, P5-03, ADR-0024): a published ml_scoring definition (origin.scoring_definition)
+# pinned to the champion's version and package. The plan step checks the champion, feature parity and the
+# input snapshot and requests an approval bound to the definition hash, package, input version and plan hash;
+# the side-effect step writes predictions and rejected rows into the managed output only after it is granted.
+# The same input scored twice requests nothing (the scoring step is skipped).
+apiVersion: analystos/v1
+kind: Playbook
+id: playbook.score
+version: 1.0.0
+summary: Score a published, pinned ml_scoring definition into the managed output under a hash-bound approval
+determinism: deterministic
+side_effect: write_internal
+cost_class: compute
+certification: {status: tested, evidence: tests/integration/test_ml_governed.py}
+tags: [ml, scoring]
+spec:
+  framing: false
+  steps:
+    - key: ml_score_plan
+      use: agent.ml_engineer
+      behaviour: score_plan
+      title: Check the champion and feature parity, snapshot the input, request the scoring approval
+      type: approval_gate
+      payload: score
+      approval_for: ml_score
+    - key: ml_score
+      use: agent.ml_engineer
+      behaviour: score
+      title: Write the approved predictions and rejected rows to the managed output
+      type: side_effect
+      after: [ml_score_plan]

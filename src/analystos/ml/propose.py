@@ -105,22 +105,34 @@ def propose(columns: list[dict[str, Any]], *, asset: str, row_count: int | None 
             "note": "a proposal only: publish it as an ml_spec definition to train; readiness and leakage checks run on the data"}
 
 
-def propose_spec(ctx: Any, asset: str, objective: str | None = None, target: str | None = None, task: str | None = None,
-                 features: list[str] | None = None, estimators: list[str] | None = None, time_column: str | None = None,
+def propose_spec(ctx: Any, asset: str | None = None, assets: list[str] | None = None, objective: str | None = None,
+                 target: str | None = None, task: str | None = None, features: list[str] | None = None,
+                 estimators: list[str] | None = None, time_column: str | None = None,
                  horizon: int | None = None) -> dict[str, Any]:
+    """One proposal per requested table (`asset`, or each of `assets`); `best` is the first without problems."""
     from analystos.agents.common import asset_rows
     from analystos.core.errors import PolicyDenied
 
-    if asset not in ctx.scope.assets:
-        raise PolicyDenied(f"{asset} is outside the authorized scope of this run")
+    wanted = [asset] if asset else list(assets or [])
+    if not wanted:
+        return {"proposals": [], "best": None, "problems": ["name asset or assets"]}
+    outside = [a for a in wanted if a not in ctx.scope.assets]
+    if outside:
+        raise PolicyDenied(f"{', '.join(outside)} outside the authorized scope of this run")
     denied = set(ctx.scope.denied_columns)
+    proposals = []
     for a, cols in asset_rows(ctx):
-        if f"{a.schema_name}.{a.name}" != asset:
+        fq = f"{a.schema_name}.{a.name}"
+        if fq not in wanted:
             continue
         visible = [{"name": c.name, "data_type": c.data_type, "semantic_type": c.semantic_type, "is_key": bool(c.is_key),
                     "distinct": (c.profile or {}).get("distinct")} for c in cols
-                   if f"{asset}.{c.name}" not in denied and not ("pii" in (c.tags or []) and
-                                                              ctx.agent.policies.pii_access == "none")]
-        return propose(visible, asset=asset, row_count=a.row_count, objective=objective or ctx.run.objective, target=target,
-                       task=task, features=features, estimators=estimators, time_column=time_column, horizon=horizon)
-    return {"proposal": None, "problems": [f"{asset} has no catalog entry"], "source": "rules"}
+                   if f"{fq}.{c.name}" not in denied and not ("pii" in (c.tags or []) and
+                                                          ctx.agent.policies.pii_access == "none")]
+        proposals.append({"asset": fq, **propose(visible, asset=fq, row_count=a.row_count,
+                                                  objective=objective or ctx.run.objective, target=target, task=task,
+                                                  features=features, estimators=estimators, time_column=time_column,
+                                                  horizon=horizon)})
+    best = next((p for p in proposals if p["proposal"] and not p["problems"]), None)
+    return {"proposals": proposals, "best": best["proposal"] if best else None,
+            "note": "proposals only: a person publishes one as an ml_spec definition before anything trains"}

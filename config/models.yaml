@@ -108,6 +108,7 @@ ladders:
   feedback_interpretation: [cache, rules, llm_large]
   summarization: [cache, rules, llm_small]
   agent_actions: [cache, rules, llm_small]
+  ml_spec_proposal: [cache, rules, llm_small]  # P5-06: the ml_practitioner proposes MLSpec inputs; rules = default_actions
   metadata_enrichment: [cache, rules, llm_small]
   verification: [cache, llm_large]  # runs only when the workspace policy opts in (independent_model_verification)
   hypothesis_priority: [cache, rules, decision]
@@ -137,6 +138,7 @@ routing:
   dashboard_design: low_cost
   feedback_interpretation: coding
   summarization: low_cost
+  ml_spec_proposal: low_cost  # proposals only: skill.ml_propose_spec validates, readiness checks decide
   agent_actions: low_cost  # declarative agents (agents/generic.py) propose typed actions; default_actions are the rule path
   metadata_enrichment: low_cost
   verification: independent_model_family
@@ -164,6 +166,7 @@ escalation:
     metadata_enrichment: never   # batch crawl prompts; the deterministic semantics already ran
     decision_structured: never   # the DecisionService falls back to its rules backend
     agent_actions: never         # declarative agents have default_actions
+    ml_spec_proposal: never      # the ml_practitioner has default_actions (the rule path)
     dashboard_design: never
     summarization: never
     health_probe: never
