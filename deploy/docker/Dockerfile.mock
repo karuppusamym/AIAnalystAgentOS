@@ -1,0 +1,16 @@
+# The ServiceNow demo source (compose profile `demo`, ADR-0025): FastAPI + the synthetic data generator
+# only. No AnalystOS platform code beyond the two connector modules, no database driver, no model client.
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/src
+WORKDIR /app
+# Optional build secret `pipcert`: CA bundle for TLS-inspecting proxies.
+RUN --mount=type=secret,id=pipcert,required=false \
+    if [ -f /run/secrets/pipcert ]; then export PIP_CERT=/run/secrets/pipcert; fi; \
+    pip install --no-cache-dir "fastapi>=0.121" "uvicorn>=0.30" "numpy>=1.26" "pyarrow>=17" \
+    && useradd --create-home --uid 10001 mock
+COPY src/analystos/__init__.py ./src/analystos/__init__.py
+COPY src/analystos/connectors/__init__.py src/analystos/connectors/servicenow_mock.py \
+     src/analystos/connectors/synthetic_servicenow.py ./src/analystos/connectors/
+USER mock
+EXPOSE 8090
+CMD ["uvicorn", "analystos.connectors.servicenow_mock:app", "--host", "0.0.0.0", "--port", "8090"]

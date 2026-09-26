@@ -22,6 +22,7 @@ import numpy as np
 from scipy import stats as sps
 
 from analystos.contracts.analysis import StatResult
+from analystos.core.errors import FeatureUnavailable
 from analystos.skills.stats import _f, _period_str, _q
 
 MIN_HW_POINTS = 8
@@ -129,6 +130,8 @@ def _fit(y: np.ndarray, horizon: int, seasonal_periods: int | None, level: float
     if n >= MIN_HW_POINTS:
         try:
             return _fit_holt_winters(y, horizon, seasonal_periods, level, warns)
+        except FeatureUnavailable:  # a lite install without the `ml` extra: a stated, labelled degradation
+            warns.append("Holt-Winters needs the `ml` extra (statsmodels), which this installation lacks; used drift")
         except Exception as e:  # noqa: BLE001 - numerical failure falls back to drift, never to the caller
             warns.append(f"Holt-Winters fit failed ({type(e).__name__}); used drift")
     else:
@@ -158,6 +161,9 @@ def _fit(y: np.ndarray, horizon: int, seasonal_periods: int | None, level: float
 
 def _fit_holt_winters(y: np.ndarray, horizon: int, seasonal_periods: int | None, level: float,
                       warns: list[str]) -> dict[str, Any]:
+    from analystos.core.profiles import require_extra
+
+    require_extra("ml", "Holt-Winters forecasting")
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
     n = int(y.size)

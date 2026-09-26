@@ -1,12 +1,35 @@
 """P4-V02 on the local stack: the Ask accuracy benchmark's `fake` and `off` tiers over the full ITSM,
 sales and finance question sets. Data is uploaded, discovered and staged like a customer's; every
 gold and answer statement goes through the gateway. CI runs this file as its own step
-(`Ask benchmark`) with a small time budget; the live tier is `scripts/benchmark_ask.py --models live`."""
+(`Ask benchmark`) with a small time budget; the live tier is `scripts/benchmark_ask.py --models live`.
+
+Both tiers are also evaluation gates (P7-07): their metrics must hold the owner's thresholds in
+config/eval_gates.yaml (`ask_fake`, `ask_off`). With ANALYSTOS_EVAL_RESULTS_DIR set (CI) the gate
+result of each tier is written there and attached to the build."""
 from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.integration
+
+
+def _gate(tier: str, run) -> None:
+    from evaluation import gates as G
+
+    gates = G.load()
+    metrics = G.ask_metrics(run)
+    failures = G.check(tier, metrics, gates)
+    out = os.environ.get("ANALYSTOS_EVAL_RESULTS_DIR")
+    if out:
+        Path(out).mkdir(parents=True, exist_ok=True)
+        (Path(out) / f"{tier}.json").write_text(json.dumps({
+            "config": {"version": gates.version, "sha256": gates.digest}, "tier": tier, "metrics": metrics,
+            "failures": failures, "status": "failed" if failures else "passed"}, indent=1, default=str) + "\n")
+    assert not failures, failures
 
 
 def test_fake_tier_harness_gateway_refusals_and_scoring(control_db):
@@ -25,6 +48,7 @@ def test_fake_tier_harness_gateway_refusals_and_scoring(control_db):
     # Everything the registry did not answer reached the oracle and matched its gold result.
     by_model = [x for x in r.outcomes if x.answered_by == "model"]
     assert by_model and all(x.match for x in by_model)
+    _gate("ask_fake", r)
 
 
 def test_off_tier_is_the_no_model_floor(control_db):
@@ -52,6 +76,7 @@ def test_off_tier_is_the_no_model_floor(control_db):
     # is not served from the registry: no confident wrong answer, and the registry's own phrasings still answer.
     assert o["confident_wrong"] == 0, [x.id for x in r.outcomes if x.confident_wrong]
     assert o["by_tag"]["registry_exact"]["accuracy"] == 1.0 and o["by_tag"]["parameter"]["accuracy"] == 1.0
+    _gate("ask_off", r)
 
 
 def test_governed_slice_compiles_identical_sql_and_never_mislabels(control_db):

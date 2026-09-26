@@ -372,6 +372,33 @@ def _reset(run_id: str, key: str, error: str, claim: int) -> None:
                   .values(status="NEW", error=error))
 
 
+def nonterminal_runs() -> list[str]:
+    """Runs a local orchestrator should be driving (oldest first)."""
+    with session_scope() as s:
+        return list(s.scalars(select(AnalysisRun.id).where(AnalysisRun.status.not_in(sorted(RUN_TERMINAL)))
+                              .order_by(AnalysisRun.created_at)))
+
+
+def release_orphaned_claims(run_ids: list[str] | None = None) -> list[str]:
+    """Local orchestrator restart (ADR-0025): the process that held these RUNNING claims is gone, so
+    each goes back to NEW under a new claim version (a late result of the old attempt, should one ever
+    land, is `superseded`). Returns the non-terminal runs to re-drive. Only the local orchestrator calls
+    this, once per start of the single process that drives local runs; Temporal re-dispatches its own.
+    `run_ids` narrows it to those runs (still only the non-terminal ones)."""
+    live = nonterminal_runs()
+    run_ids = live if run_ids is None else [r for r in live if r in set(run_ids)]
+    if not run_ids:
+        return []
+    with session_scope() as s:
+        released = s.execute(update(RunTask).where(RunTask.run_id.in_(run_ids), RunTask.status == "RUNNING")
+                             .values(status="NEW", started_at=None, claim_version=RunTask.claim_version + 1,
+                                     error="claim released: the local orchestrator restarted while this task ran")
+                             .execution_options(synchronize_session=False)).rowcount
+    if released:
+        log.warning("released %d task claim(s) held by a previous local orchestrator process", released)
+    return run_ids
+
+
 def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id, with_for_update=True)

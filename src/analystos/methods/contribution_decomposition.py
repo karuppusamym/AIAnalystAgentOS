@@ -225,16 +225,12 @@ class ContributionDecomposition(AnalysisMethod):
         assert spec.outcome is not None
         n1 = sum(c["n"] for c in c1.values())
         if spec.outcome.type in BOOLEAN_OUT:
-            from statsmodels.stats.contingency_tables import StratifiedTable
-
             tables = [np.array([[c1[s]["total"], c1[s]["n"] - c1[s]["total"]], [c0[s]["total"], c0[s]["n"] - c0[s]["total"]]])
                       for s in common]
             tables = [t + 0.5 if (t == 0).any() else t for t in tables]
-            strat = StratifiedTable(tables)
-            res = strat.test_null_odds(correction=False)
-            odds = float(strat.oddsratio_pooled)
-            lo, hi = (float(x) for x in strat.oddsratio_pooled_confint(alpha=alpha))
-            pv, stat_v = float(res.pvalue), float(res.statistic)
+            mh = st.mantel_haenszel(tables, alpha=alpha)
+            odds, lo, hi = mh["odds_ratio"], mh["ci_low"], mh["ci_high"]
+            pv, stat_v = mh["p_value"], mh["statistic"]
             direction = odds > 1 if (primary.statistic or 0) >= 0 else odds < 1
             supported = st._sig(pv, alpha) and (lo > 1 or hi < 1)
             v = StatResult(method=spec.method, test="cochran_mantel_haenszel", n=int(sum(c0[s]["n"] + c1[s]["n"] for s in common)),

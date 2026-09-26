@@ -122,6 +122,17 @@ class BIPublisher(Protocol):
     def rollback(self, external_ids: dict[str, Any]) -> list[str]: ...
 
 
+def default_destination(allowed: list[str], settings: Settings | None = None) -> str | None:
+    """The first allowed destination this installation can reach; `preview` (in-platform, no external
+    side effect) when Superset is not installed (no `bi` profile, ADR-0025) or nothing else is allowed."""
+    if settings is None:
+        from analystos.core.config import get_settings
+
+        settings = get_settings()
+    usable = [d for d in allowed if d != "superset" or settings.superset_url]
+    return usable[0] if usable else "preview"
+
+
 def get_publisher(destination: str, settings: Settings | None = None) -> BIPublisher:
     """Factory. ``preview`` needs no BI tool; ``superset`` uses Settings.superset_*."""
     if destination == "preview":

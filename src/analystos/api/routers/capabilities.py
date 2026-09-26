@@ -59,10 +59,12 @@ def _agent_bindings(m: CapabilityManifest, snap: registry.Snapshot, enabled: dic
 
 def _out(m: CapabilityManifest, enabled: bool | None, *, snap: registry.Snapshot | None = None,
          enabled_map: dict[str, bool] | None = None) -> dict:
+    reason = registry.install_reason(m)  # ADR-0025: shown as unavailable with the reason, never a broken button
     result = {"id": m.id, "kind": m.kind, "version": m.version, "ref": m.ref, "summary": m.summary, "source": m.source,
             "entry": m.entry, "determinism": m.determinism, "side_effect": m.side_effect, "cost_class": m.cost_class,
             "certification": m.certification.model_dump(), "autonomous_ok": m.autonomous_ok, "needs_approval": m.needs_approval,
-            "tags": m.tags, "ui": m.ui.model_dump(), "input_schema": m.input_schema, "enabled": enabled}
+            "tags": m.tags, "ui": m.ui.model_dump(), "input_schema": m.input_schema, "enabled": enabled,
+            "requires": m.requires, "available": reason is None, "unavailable_reason": reason}
     if m.kind == "Agent" and snap is not None:
         result["bindings"] = _agent_bindings(m, snap, enabled_map or {})
     return result

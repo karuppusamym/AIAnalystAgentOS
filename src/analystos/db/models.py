@@ -1052,6 +1052,19 @@ class CrawlRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class SpendCounter(Base):
+    """Hard spend cap counters without Redis (ADR-0025, lite): the same keys as the Redis counters
+    (platform day, workspace month, alert marks). A reservation locks every cap's row, checks every cap,
+    then adds to every row in one transaction: atomic, and a database error refuses the call (fail
+    closed). A row past `expires_at` is dead and is re-seeded from model_call like a missing Redis key."""
+
+    __tablename__ = "spend_counter"
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    value: Mapped[float] = mapped_column(Float, default=0.0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ModelPayload(Base):
     """Redacted model request/response bodies, content-addressed (P4-C09).
 

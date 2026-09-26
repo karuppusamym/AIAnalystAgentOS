@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Context2AI AnalystOS - autonomous, governed data & analytics agent operating system"
 readme = "README.md"
 requires-python = ">=3.11"
+# Core = the lite API (ADR-0025): FastAPI, Postgres, the gateway, the deterministic statistics (numpy, scipy,
+# duckdb stay here because the methods need them). Heavy or deployment-specific libraries are extras below;
+# a feature whose extra is missing reports "unavailable" with the reason (analystos.core.profiles).
 dependencies = [
   "fastapi>=0.121",
   "uvicorn[standard]>=0.30",
@@ -21,24 +24,29 @@ dependencies = [
   "pyarrow>=17",
   "numpy>=1.26",
   "scipy>=1.13",
-  "statsmodels>=0.14",
-  "scikit-learn>=1.5",
-  "temporalio>=1.7",
-  "neo4j>=5.23",
-  "redis>=5.0",
+  "redis>=5.0",  # small client; optional at runtime (lite runs without a Redis server)
   "pyjwt>=2.9",
   "bcrypt>=4.2",
   "pyyaml>=6.0",
   "croniter>=3.0",
   "python-multipart>=0.0.9",
-  "fpdf2>=2.7",
-  "openpyxl>=3.1",
-  "matplotlib>=3.9",
   "jsonschema>=4.20",  # capability input schemas (the generic agent runtime validates every action)
 ]
 
 [project.optional-dependencies]
+# ML stack: the driver model (logistic regression, random forest importance) and Holt-Winters forecasts.
+# Only the isolated compute-ml image (ADR-0022) needs it; without it those features say so.
+ml = ["scikit-learn>=1.5", "statsmodels>=0.14"]
+# PDF and XLSX reports (charts rendered with matplotlib). The API/lite image installs it; md/html need nothing.
+reports = ["matplotlib>=3.9", "fpdf2>=2.7", "openpyxl>=3.1"]
+# The Temporal orchestrator and `analystos worker` (standard and scale profiles).
+temporal = ["temporalio>=1.7"]
+# The optional Neo4j projection (ANALYSTOS_GRAPH_ENABLED, the `graph` profile).
+graph = ["neo4j>=5.23"]
+# Everything a standard/scale deployment image carries.
+standard = ["analystos[ml,reports,temporal,graph]"]
 dev = [
+  "analystos[ml,reports,temporal,graph]",  # the test suite exercises every extra
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "respx>=0.21",

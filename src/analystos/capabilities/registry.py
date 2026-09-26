@@ -35,12 +35,23 @@ from pydantic import ValidationError
 from analystos.contracts.capability import CapabilityManifest
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import stable_hash
+from analystos.core.profiles import EXTRAS, FEATURES, requirement_reason
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
 METHODS_DIR = Path(__file__).resolve().parents[1] / "methods"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKS_DIR = REPO_ROOT / "packs"
 ENTRY_POINT_GROUP = "analystos.capabilities"
+
+
+# What the bridged tools and skills need from the installation (ADR-0025). Without it they are listed as
+# unavailable with the reason and refused when invoked; manifests declare the same in `requires`.
+INSTALL_PREFIXES = ("profile:", "extra:")
+INSTALL_REQUIRES: dict[str, list[str]] = {
+    "tool.superset_publish": ["profile:bi"],
+    "skill.logistic_regression": ["extra:ml"],
+    "skill.feature_importance": ["extra:ml"],
+}
 
 
 class CapabilityLoadError(InvalidInput):
@@ -107,6 +118,7 @@ def _legacy_manifests() -> list[dict[str, Any]]:
                     "summary": t.name, "entry": f"builtin:{t.tool_id}", "input_schema": t.input_schema,
                     "output_schema": t.output_schema, "side_effect": effect,
                     "cost_class": {"low": "free", "medium": "query", "high": "compute"}[t.cost_profile],
+                    "requires": INSTALL_REQUIRES.get("tool." + t.tool_id.replace(".", "_"), []),
                     "permissions": [f"role:{t.min_role}"], "certification": {"status": "certified", "evidence": "tests/unit"},
                     "tags": [t.category], "spec": {"tool_id": t.tool_id, "approval_policy": t.approval_policy,
                                                    "risk": t.risk, "description": t.description}})
@@ -115,8 +127,17 @@ def _legacy_manifests() -> list[dict[str, Any]]:
                     "entry": f"python:{s['function']}",
                     "determinism": "deterministic" if s.get("deterministic", True) else "model",
                     "side_effect": "read_source", "cost_class": "query",
+                    "requires": INSTALL_REQUIRES.get("skill." + s["id"], []),
                     "certification": {"status": "certified", "evidence": "tests/unit"}, "tags": [s["category"]]})
     return out
+
+
+def install_reason(m: CapabilityManifest, settings: Any = None) -> str | None:
+    """Why the capability cannot run on this installation (a missing profile or extra), or None."""
+    for req in m.requires:
+        if req.startswith(INSTALL_PREFIXES) and (reason := requirement_reason(req, settings)):
+            return reason
+    return None
 
 
 def _agent_manifests(directory: Path | None = None) -> list[tuple[str, dict[str, Any]]]:
@@ -203,6 +224,12 @@ def load(*, builtin_dir: Path | None = BUILTIN_DIR, packs_dir: Path | None | str
         for req in m.requires:
             if req.startswith("engine:"):
                 continue  # engine features are checked when an engine is bound (wave 4)
+            if req.startswith(INSTALL_PREFIXES):
+                kind, name = req.split(":", 1)
+                if name not in (FEATURES if kind == "profile" else EXTRAS):
+                    problems.append(f"{m.source}: {m.id} requires unknown {req} (profiles: {', '.join(FEATURES)}; "
+                                    f"extras: {', '.join(EXTRAS)})")
+                continue
             if not any(fnmatch.fnmatchcase(i, req) for i in manifests):
                 problems.append(f"{m.source}: {m.id} requires unknown capability {req}")
     from analystos.capabilities.validation import validate_kinds

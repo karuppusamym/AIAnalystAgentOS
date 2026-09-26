@@ -278,6 +278,54 @@ def permutation_chi_square(groups: Sequence[Mapping[str, Any]], *, n_perm: int =
     return {"p_value": p, "statistic": obs, "n_perm": n_perm}
 
 
+def binomial_glm(X: np.ndarray, pos: np.ndarray, neg: np.ndarray, *, tol: float = 1e-12,
+                 max_iter: int = 100) -> tuple[np.ndarray, np.ndarray, float]:
+    """Logit-link binomial GLM on aggregated (positives, negatives) rows by IRLS: (params, covariance,
+    log-likelihood without the constant binomial term). The same estimator as statsmodels' GLM Binomial
+    (tests/unit/test_skills_stats.py compares them); numpy only, so core methods need no `ml` extra."""
+    n = pos + neg
+    y = pos / n
+    beta = np.zeros(X.shape[1])
+    for _ in range(max_iter):
+        mu = np.clip(1.0 / (1.0 + np.exp(-(X @ beta))), 1e-12, 1 - 1e-12)
+        w = n * mu * (1 - mu)
+        z = X @ beta + (y - mu) / (mu * (1 - mu))
+        xtw = X.T * w
+        new = np.linalg.solve(xtw @ X, xtw @ z)
+        done = np.max(np.abs(new - beta)) < tol
+        beta = new
+        if done:
+            break
+    mu = np.clip(1.0 / (1.0 + np.exp(-(X @ beta))), 1e-300, 1 - 1e-16)
+    cov = np.linalg.inv((X.T * (n * mu * (1 - mu))) @ X)
+    llf = float(np.sum(pos * np.log(mu) + neg * np.log1p(-mu)))
+    return beta, cov, llf
+
+
+def mantel_haenszel(tables: Sequence[Any], *, alpha: float = 0.05) -> dict[str, float]:
+    """Cochran-Mantel-Haenszel test of a common odds ratio of 1 over 2x2 strata [[a, b], [c, d]] (no
+    continuity correction), the Mantel-Haenszel pooled odds ratio and its Robins-Breslow-Greenland
+    confidence interval. Matches statsmodels' StratifiedTable (tests/unit/test_skills_stats.py)."""
+    t = np.asarray(tables, dtype=float)
+    a, b, c, d = t[:, 0, 0], t[:, 0, 1], t[:, 1, 0], t[:, 1, 1]
+    n = a + b + c + d
+    stat = float(np.sum(a - (a + b) * (a + c) / n)) ** 2 / float(np.sum((a + b) * (a + c) * (b + d) * (c + d) / (n ** 2 * (n - 1))))
+    ad, bc, apd = a * d / n, b * c / n, (a + d) / n
+    adns, bcns = float(np.sum(ad)), float(np.sum(bc))
+    odds = adns / bcns
+    var = (np.sum(apd * ad) / adns ** 2 + np.sum(apd * bc + (1 - apd) * ad) / (adns * bcns)
+           + np.sum((1 - apd) * bc) / bcns ** 2) / 2
+    half = float(sps.norm.ppf(1 - alpha / 2)) * math.sqrt(float(var))
+    return {"statistic": stat, "p_value": float(sps.chi2.sf(stat, 1)), "odds_ratio": odds,
+            "ci_low": math.exp(math.log(odds) - half), "ci_high": math.exp(math.log(odds) + half)}
+
+
+def durbin_watson(resid: Any) -> float:
+    """Durbin-Watson statistic of OLS residuals: sum of squared differences over the sum of squares."""
+    e = np.asarray(resid, dtype=float)
+    return float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2))
+
+
 def grouped_logistic(groups: Sequence[Mapping[str, Any]], *, baseline: str, alpha: float = 0.05) -> dict[str, Any]:
     """Logistic regression with segment dummies fitted on the aggregated binomial table.
 
@@ -287,8 +335,6 @@ def grouped_logistic(groups: Sequence[Mapping[str, Any]], *, baseline: str, alph
     all positives would make its odds ratio infinite (separation); in that case 0.5 is added to every
     cell (Haldane-Anscombe) and a warning is returned.
     """
-    import statsmodels.api as sm
-
     segs = [str(g["segment"]) for g in groups]
     if baseline not in segs:
         raise ValueError("baseline must be one of the segments")
@@ -300,18 +346,17 @@ def grouped_logistic(groups: Sequence[Mapping[str, Any]], *, baseline: str, alph
         warns.append("a segment has 0% or 100% positives (separation); applied +0.5 Haldane-Anscombe correction")
     others = [s for s in segs if s != baseline]
     X = np.array([[1.0] + [1.0 if s == o else 0.0 for o in others] for s in segs])
-    endog = np.column_stack([pos, neg])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        res = sm.GLM(endog, X, family=sm.families.Binomial()).fit()
-        null = sm.GLM(endog, np.ones((len(segs), 1)), family=sm.families.Binomial()).fit()
-    lr = 2 * (res.llf - null.llf)
+    params, cov, llf = binomial_glm(X, pos, neg)
+    _, _, llf_null = binomial_glm(np.ones((len(segs), 1)), pos, neg)
+    lr = 2 * (llf - llf_null)
     lr_p = float(sps.chi2.sf(lr, len(others))) if others else None
-    ci = np.asarray(res.conf_int(alpha=alpha))
+    se = np.sqrt(np.diag(cov))
+    zq = float(sps.norm.ppf(1 - alpha / 2))
     ors = {}
     for i, o in enumerate(others, start=1):
-        ors[o] = {"odds_ratio": _f(math.exp(res.params[i])), "ci_low": _f(math.exp(ci[i][0])),
-                  "ci_high": _f(math.exp(ci[i][1])), "p_value": _f(res.pvalues[i], 12)}
+        p_i = float(2 * sps.norm.sf(abs(params[i] / se[i]))) if se[i] > 0 else None
+        ors[o] = {"odds_ratio": _f(math.exp(params[i])), "ci_low": _f(math.exp(params[i] - zq * se[i])),
+                  "ci_high": _f(math.exp(params[i] + zq * se[i])), "p_value": _f(p_i, 12)}
     return {"baseline": baseline, "odds_ratios": ors, "lr_statistic": _f(lr), "lr_p_value": _f(lr_p, 12),
             "warnings": warns}
 
@@ -529,6 +574,9 @@ def logistic_regression(X: Any, y: Sequence[float], feature_names: Sequence[str]
     errors, the model is refit with L2 regularisation (sklearn, C=1) to report stable odds ratios;
     p-values and CIs are then None and a warning explains why.
     """
+    from analystos.core.profiles import require_extra
+
+    require_extra("ml", "logistic regression (method driver_model)")
     import statsmodels.api as sm
 
     Xm = _as_matrix(X)
@@ -634,6 +682,9 @@ def feature_importance(X: Any, y: Sequence[float], feature_names: Sequence[str],
     Classification (binary y, metric ROC AUC) or regression (metric R²). Features listed together
     in `feature_groups` (one-hot blocks) are permuted together so each driver gets one importance.
     """
+    from analystos.core.profiles import require_extra
+
+    require_extra("ml", "feature importance (method driver_model)")
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
     from sklearn.metrics import r2_score, roc_auc_score
     from sklearn.model_selection import train_test_split
@@ -713,8 +764,6 @@ def linear_trend(values: Sequence[float], periods: Sequence[Any] | None = None, 
 
     Effect: fitted % change first->last period = (fit[-1] - fit[0]) / |fit[0]|.
     """
-    from statsmodels.stats.stattools import durbin_watson
-
     y = np.asarray(list(values), dtype=float)
     per = list(periods) if periods is not None else list(range(len(y)))
     ok = np.isfinite(y)

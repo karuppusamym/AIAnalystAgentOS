@@ -172,23 +172,29 @@ def test_reconcile_gives_orphaned_new_runs_an_outbox_row(sqlite_db, monkeypatch)
 
 
 def test_local_orchestrator_ignores_a_redelivered_start(monkeypatch):
+    """A re-delivered dispatch (outbox relay) for a run this process already drives is not a second driver."""
     from analystos.workflows import orchestrator
 
     gate, calls = threading.Event(), []
 
-    def slow(run_id, **kw):
+    def slow(self, run_id, **kw):
         calls.append(run_id)
         gate.wait(5)
         return "COMPLETED"
-    monkeypatch.setattr(orchestrator, "run_local", slow)
+    monkeypatch.setattr(orchestrator.LocalRuntime, "drive", slow)
     monkeypatch.setattr(orchestrator, "get_settings", lambda: type("S", (), {"orchestrator": "local"})())
-    assert orchestrator.start_run("run_x") == orchestrator.start_run("run_x") == "local-run_x"
-    gate.set()
-    for _ in range(50):
-        if "run_x" not in orchestrator._local_active:
-            break
-        threading.Event().wait(0.02)
-    assert calls == ["run_x"] and "run_x" not in orchestrator._local_active
+    runtime = orchestrator.LocalRuntime(None)
+    previous = orchestrator.reset_local_runtime(runtime)
+    try:
+        assert orchestrator.start_run("run_x") == orchestrator.start_run("run_x") == "local-run_x"
+        gate.set()
+        for _ in range(50):
+            if not runtime.active():
+                break
+            threading.Event().wait(0.02)
+        assert calls == ["run_x"] and runtime.active() == []
+    finally:
+        orchestrator.reset_local_runtime(previous)
 
 
 # ------------------------------------------------------------------------------------ http helpers

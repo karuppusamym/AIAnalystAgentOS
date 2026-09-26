@@ -65,5 +65,8 @@ async def _main(workloads: list[str]) -> None:
 
 
 def run_worker(queues: str | None = None) -> None:
+    from analystos.core.profiles import require_extra
+
     configure_logging()
+    require_extra("temporal", "`analystos worker` (the standard profile)")
     asyncio.run(_main(parse_workloads(queues if queues is not None else get_settings().worker_queues)))

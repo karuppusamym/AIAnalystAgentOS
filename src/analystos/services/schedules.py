@@ -7,6 +7,7 @@ the schedule owner's permissions as they are at fire time, not when the schedule
 """
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -493,10 +494,14 @@ def nightly_verification_sweep() -> None:
         log.exception("verification sweep failed")
 
 
-def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
+def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False, stop: threading.Event | None = None,
+                  configure: bool = True) -> None:
+    """The schedule/monitor loop: `analystos scheduler`, or a thread of the API process in the lite
+    profile (`start_inprocess_scheduler`). Claim-then-execute keeps several loops from double firing."""
     from analystos.core.logging import configure_logging
 
-    configure_logging()
+    if configure:
+        configure_logging()
     log.info("scheduler started (poll %ss)", poll_seconds)
     while True:
         try:
@@ -509,4 +514,15 @@ def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
         nightly_verification_sweep()
         if once:
             return
-        time.sleep(poll_seconds)
+        if stop is None:
+            time.sleep(poll_seconds)
+        elif stop.wait(poll_seconds):
+            return
+
+
+def start_inprocess_scheduler(poll_seconds: float = 15.0) -> threading.Event:
+    """Run the scheduler in a daemon thread of this process (lite, ADR-0025); set the event to stop it."""
+    stop = threading.Event()
+    threading.Thread(target=run_scheduler, args=(poll_seconds,), kwargs={"stop": stop, "configure": False},
+                     daemon=True, name="inprocess-scheduler").start()
+    return stop
