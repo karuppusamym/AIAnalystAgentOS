@@ -14,6 +14,123 @@
         "title": "AllowIn",
         "type": "object"
       },
+      "AnalysisSpec": {
+        "description": "One executable hypothesis test. `method` must be a registered analysis method: the vocabulary,\nits JSON Schema enum and the per-method requirements come from the method registry\n(`analystos.methods`, spec v3 §3.5), never from a list kept here.",
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "drivers": {
+            "items": {
+              "$ref": "#/components/schemas/Derivation"
+            },
+            "title": "Drivers",
+            "type": "array"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/Filter"
+            },
+            "title": "Filters",
+            "type": "array"
+          },
+          "method": {
+            "description": "A registered analysis method:\nrate_by_segment: Boolean outcome rate across segment groups -> chi-square (+ grouped logistic and permutation check)\nnumeric_by_segment: Numeric outcome across segment groups -> Mann-Whitney / Kruskal-Wallis (+ bootstrap median difference)\ntrend: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)\npareto: Share of volume by segment -> concentration (top-k share, Gini, GOF) (+ multinomial bootstrap of the top share)\ncorrelation: Numeric vs numeric -> Spearman (+ Pearson and a bootstrap CI of the primary coefficient)\ndriver_model: Boolean outcome vs several drivers -> logistic regression (+ random-forest permutation importance)\ncohort_retention: Retention of entity cohorts over time buckets -> chi-square across cohorts (+ grouped logistic and permutation check)\ncontribution_decomposition: Mix / volume / rate decomposition of a KPI change between two periods -> z test of the within-segment effect (+ stratified CMH / Stouffer check)",
+            "enum": [
+              "rate_by_segment",
+              "numeric_by_segment",
+              "trend",
+              "pareto",
+              "correlation",
+              "driver_model",
+              "cohort_retention",
+              "contribution_decomposition"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "min_group_size": {
+            "default": 30,
+            "title": "Min Group Size",
+            "type": "integer"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Derivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "segment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Derivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "time": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Derivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "top_k": {
+            "default": 12,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "method",
+          "asset"
+        ],
+        "title": "AnalysisSpec",
+        "type": "object"
+      },
+      "AnalysisWork": {
+        "additionalProperties": false,
+        "description": "Describe / compare / diagnose / monitor: a frozen set of `AnalysisSpec`s replayed as given.",
+        "properties": {
+          "analyses": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisSpec"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Analyses",
+            "type": "array"
+          },
+          "statements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "type": {
+            "const": "analysis",
+            "default": "analysis",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "analyses"
+        ],
+        "title": "AnalysisWork",
+        "type": "object"
+      },
       "AskIn": {
         "properties": {
           "parameters": {
@@ -747,6 +864,170 @@
         "title": "CrawlIn",
         "type": "object"
       },
+      "DefinitionDraftIn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "kind",
+          "key",
+          "spec"
+        ],
+        "title": "DefinitionDraftIn",
+        "type": "object"
+      },
+      "DefinitionPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "DefinitionPatch",
+        "type": "object"
+      },
+      "Derivation": {
+        "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)",
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edges"
+          },
+          "end_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Column"
+          },
+          "end_hour": {
+            "default": 18,
+            "title": "End Hour",
+            "type": "integer"
+          },
+          "grain": {
+            "anyOf": [
+              {
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "quarter"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grain"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "start_hour": {
+            "default": 8,
+            "title": "Start Hour",
+            "type": "integer"
+          },
+          "type": {
+            "default": "column",
+            "enum": [
+              "column",
+              "duration_hours",
+              "after_hours",
+              "bucket",
+              "equals",
+              "is_true",
+              "date_trunc",
+              "hour_of_day",
+              "day_of_week"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "column"
+        ],
+        "title": "Derivation",
+        "type": "object"
+      },
       "DocumentSaveIn": {
         "properties": {
           "base_sha256": {
@@ -846,6 +1127,31 @@
         "title": "EnabledPatch",
         "type": "object"
       },
+      "ExperimentSpec": {
+        "additionalProperties": true,
+        "description": "Placeholder for P5 experiment design. Not executable yet.",
+        "properties": {
+          "hypothesis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hypothesis"
+          },
+          "type": {
+            "const": "experiment",
+            "default": "experiment",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ExperimentSpec",
+        "type": "object"
+      },
       "FeedbackIn": {
         "properties": {
           "kind": {
@@ -892,12 +1198,67 @@
         "title": "FeedbackIn",
         "type": "object"
       },
+      "Filter": {
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "=",
+              "!=",
+              ">",
+              ">=",
+              "<",
+              "<=",
+              "in",
+              "not in",
+              "is null",
+              "is not null"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "origin": {
+            "default": "plan",
+            "enum": [
+              "plan",
+              "user_redirect",
+              "policy"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "column",
+          "op"
+        ],
+        "title": "Filter",
+        "type": "object"
+      },
       "FindingOutcomeIn": {
         "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "signal": {
             "enum": [
               "accept",
-              "dismiss"
+              "dismiss",
+              "wrong"
             ],
             "title": "Signal",
             "type": "string"
@@ -986,6 +1347,60 @@
         "title": "HypothesisPatch",
         "type": "object"
       },
+      "InputRef": {
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset"
+          },
+          "dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "InputRef",
+        "type": "object"
+      },
       "InvokeIn": {
         "properties": {
           "approval_id": {
@@ -1035,6 +1450,79 @@
           "password"
         ],
         "title": "Login",
+        "type": "object"
+      },
+      "MLSpec": {
+        "additionalProperties": true,
+        "description": "Placeholder for P5-01 (ADR-0024). Envelope-level fields only; not executable yet.",
+        "properties": {
+          "horizon": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizon"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "target_metric": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Metric"
+          },
+          "task": {
+            "enum": [
+              "forecast",
+              "classify",
+              "regress",
+              "cluster",
+              "anomaly"
+            ],
+            "title": "Task",
+            "type": "string"
+          },
+          "time_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Column"
+          },
+          "type": {
+            "const": "ml",
+            "default": "ml",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "title": "MLSpec",
         "type": "object"
       },
       "MemberIn": {
@@ -1283,6 +1771,32 @@
         "title": "NewUser",
         "type": "object"
       },
+      "PipelineSpec": {
+        "additionalProperties": true,
+        "description": "Placeholder for P6-04 (recipe IR). Envelope-level fields only; not executable yet.",
+        "properties": {
+          "output_grain": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Output Grain",
+            "type": "array"
+          },
+          "recipe": {
+            "additionalProperties": true,
+            "title": "Recipe",
+            "type": "object"
+          },
+          "type": {
+            "const": "pipeline",
+            "default": "pipeline",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "PipelineSpec",
+        "type": "object"
+      },
       "PresetIn": {
         "properties": {
           "preset": {
@@ -1412,6 +1926,23 @@
           "ids"
         ],
         "title": "ReadIn",
+        "type": "object"
+      },
+      "ReasonIn": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ReasonIn",
         "type": "object"
       },
       "RegisteredHypothesisPatch": {
@@ -1544,6 +2075,21 @@
               }
             ],
             "title": "Autonomy Level"
+          },
+          "definition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Definition"
           },
           "objective": {
             "anyOf": [
@@ -1873,6 +2419,23 @@
         "title": "TagsIn",
         "type": "object"
       },
+      "UpgradeIn": {
+        "properties": {
+          "upgrade_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upgrade Hash"
+          }
+        },
+        "title": "UpgradeIn",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1911,6 +2474,35 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmatory": {
+            "default": false,
+            "title": "Confirmatory",
+            "type": "boolean"
+          },
+          "min_group_size": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Group Size"
+          },
+          "require_second_method": {
+            "default": false,
+            "title": "Require Second Method",
+            "type": "boolean"
+          }
+        },
+        "title": "ValidationPolicy",
         "type": "object"
       },
       "VerifiedQueryPatch": {
@@ -1979,6 +2571,206 @@
           }
         },
         "title": "VerifiedQueryPatch",
+        "type": "object"
+      },
+      "WorkBudget": {
+        "additionalProperties": false,
+        "description": "Requested limits; the server clamps them to workspace and platform policy.",
+        "properties": {
+          "max_cost_usd": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Cost Usd"
+          },
+          "max_queries": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Queries"
+          },
+          "max_trials": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Trials"
+          },
+          "max_wall_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Wall Seconds"
+          }
+        },
+        "title": "WorkBudget",
+        "type": "object"
+      },
+      "WorkOrderSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Acceptance",
+            "type": "array"
+          },
+          "brief_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brief Revision"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/WorkBudget"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputRef"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "describe",
+              "compare",
+              "diagnose",
+              "forecast",
+              "predict",
+              "experiment",
+              "prepare",
+              "monitor"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "objective": {
+            "maxLength": 4000,
+            "minLength": 10,
+            "title": "Objective",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Outputs",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "scope_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Hash"
+          },
+          "semantic_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Version"
+          },
+          "source_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ids"
+          },
+          "spec": {
+            "discriminator": {
+              "mapping": {
+                "analysis": "#/components/schemas/AnalysisWork",
+                "experiment": "#/components/schemas/ExperimentSpec",
+                "ml": "#/components/schemas/MLSpec",
+                "pipeline": "#/components/schemas/PipelineSpec"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisWork"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineSpec"
+              },
+              {
+                "$ref": "#/components/schemas/MLSpec"
+              },
+              {
+                "$ref": "#/components/schemas/ExperimentSpec"
+              }
+            ],
+            "title": "Spec"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/ValidationPolicy"
+          }
+        },
+        "required": [
+          "kind",
+          "objective",
+          "spec"
+        ],
+        "title": "WorkOrderSpec",
         "type": "object"
       },
       "WorkspaceIn": {
@@ -4708,7 +5500,7 @@
     },
     "/api/ask/threads/{thread_id}/turns": {
       "post": {
-        "description": "Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`\nevents, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.\nA streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.",
+        "description": "Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`\nevents, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.\nA streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.\nWith `Idempotency-Key` a retry of the same question returns the turn the first request produced\n(`Idempotent-Replayed: true`), 409 while that one still runs, 409 for a different body (P4-06).",
         "operationId": "ask_turn_api_ask_threads__thread_id__turns_post",
         "parameters": [
           {
@@ -4718,6 +5510,22 @@
             "schema": {
               "title": "Thread Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -6651,7 +7459,7 @@
     },
     "/api/insights/{insight_id}/outcome": {
       "post": {
-        "description": "Accept or dismiss a finding (a rejection goes through run feedback, which also replans).",
+        "description": "Accept, dismiss or flag a finding wrong (a rejection that replans goes through run feedback).\nFlagging *wrong* needs a reason: it is stored with the verification record and becomes a Negative\nKnowledge draft (ADR-0020 presentation rules).",
         "operationId": "finding_outcome_api_insights__insight_id__outcome_post",
         "parameters": [
           {
@@ -6729,6 +7537,111 @@
         "summary": "Finding Outcome",
         "tags": [
           "decisions"
+        ]
+      }
+    },
+    "/api/insights/{insight_id}/why": {
+      "get": {
+        "description": "\"Why this number?\" (P7-08): each displayed number of the finding (or the one given as `number` text\nor `fact_id`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,\nevery link with its current state; broken and voided links are returned, never dropped.",
+        "operationId": "why_number_api_insights__insight_id__why_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insight_id",
+            "required": true,
+            "schema": {
+              "title": "Insight Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "number",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fact Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Why Number",
+        "tags": [
+          "evidence"
         ]
       }
     },
@@ -7393,6 +8306,7 @@
         ]
       },
       "patch": {
+        "description": "Edit a schedule. `If-Match` (its ETag) makes a stale edit 412; clients that predate revisions may omit it.",
         "operationId": "patch_schedule_api_schedules__schedule_id__patch",
         "parameters": [
           {
@@ -7402,6 +8316,22 @@
             "schema": {
               "title": "Schedule Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
             }
           },
           {
@@ -8645,6 +9575,7 @@
     },
     "/api/workspaces/{workspace_id}/analysis": {
       "get": {
+        "description": "Newest runs first. With `limit` or `cursor`: a `{items, next_cursor}` page; without: the old array of 50.",
         "operationId": "list_runs_api_workspaces__workspace_id__analysis_get",
         "parameters": [
           {
@@ -8654,6 +9585,38 @@
             "schema": {
               "title": "Workspace Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {
@@ -8715,6 +9678,7 @@
         ]
       },
       "post": {
+        "description": "Start a run. With `Idempotency-Key` a retried request returns the run the first one created\n(`Idempotent-Replayed: true`); the same key with a different body is 409 (P4-06).",
         "operationId": "start_api_workspaces__workspace_id__analysis_post",
         "parameters": [
           {
@@ -8724,6 +9688,22 @@
             "schema": {
               "title": "Workspace Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -9545,6 +10525,88 @@
         "summary": "Resume",
         "tags": [
           "analysis"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/analysis/{run_id}/why": {
+      "get": {
+        "description": "Every number of the run's reported findings resolved as in `/insights/{id}/why`, with counts by state.",
+        "operationId": "why_run_api_workspaces__workspace_id__analysis__run_id__why_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Why Run",
+        "tags": [
+          "evidence"
         ]
       }
     },
@@ -11171,6 +12233,763 @@
         "summary": "Create Dashboards",
         "tags": [
           "artifacts"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/definitions": {
+      "get": {
+        "description": "Workspace definition versions, newest first, as `{items, next_cursor}` (plus `builtin` playbooks on request).",
+        "operationId": "list_definitions_api_workspaces__workspace_id__definitions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_builtin",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Builtin",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Definitions",
+        "tags": [
+          "definitions"
+        ]
+      },
+      "post": {
+        "operationId": "create_draft_api_workspaces__workspace_id__definitions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionDraftIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Draft",
+        "tags": [
+          "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}": {
+      "get": {
+        "operationId": "get_definition_api_workspaces__workspace_id__definitions__definition_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Definition",
+        "tags": [
+          "definitions"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_draft_api_workspaces__workspace_id__definitions__definition_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Draft",
+        "tags": [
+          "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/diff": {
+      "get": {
+        "description": "Field diff from this version to `against` (another version id), default: the newest published one.",
+        "operationId": "diff_api_workspaces__workspace_id__definitions__definition_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "against",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Against"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diff",
+        "tags": [
+          "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish": {
+      "post": {
+        "operationId": "publish_api_workspaces__workspace_id__definitions__definition_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish",
+        "tags": [
+          "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/{action}": {
+      "post": {
+        "description": "`deprecate` (keeps running with a warning) or `retire` (never runs again; pinned schedules block).",
+        "operationId": "change_status_api_workspaces__workspace_id__definitions__definition_id___action__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action",
+            "required": true,
+            "schema": {
+              "title": "Action",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Status",
+        "tags": [
+          "definitions"
         ]
       }
     },
@@ -14542,6 +16361,7 @@
     },
     "/api/workspaces/{workspace_id}/schedules": {
       "get": {
+        "description": "Oldest first as an array (existing clients); with `limit`/`cursor`, newest-first `{items, next_cursor}` pages.",
         "operationId": "list_schedules_api_workspaces__workspace_id__schedules_get",
         "parameters": [
           {
@@ -14551,6 +16371,38 @@
             "schema": {
               "title": "Workspace Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {
@@ -14625,6 +16477,22 @@
           },
           {
             "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
             "name": "authorization",
             "required": false,
             "schema": {
@@ -14687,6 +16555,196 @@
           }
         },
         "summary": "Create Schedule",
+        "tags": [
+          "continuous"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/schedules/{schedule_id}": {
+      "get": {
+        "description": "The schedule, its ETag revision and its pin status computed now: upgrade available (with the\ndiff), deprecated (keeps running, with a warning) or blocked (a retired or rejected pin).",
+        "operationId": "get_schedule_api_workspaces__workspace_id__schedules__schedule_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Schedule",
+        "tags": [
+          "continuous"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/schedules/{schedule_id}/upgrade": {
+      "post": {
+        "description": "The owner accepts the available upgrade: a new schedule revision whose next fire is the new\nbaseline. Requires If-Match (the revision) and the `upgrade_hash` the owner reviewed.",
+        "operationId": "accept_schedule_upgrade_api_workspaces__workspace_id__schedules__schedule_id__upgrade_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Schedule Upgrade",
         "tags": [
           "continuous"
         ]
@@ -16532,6 +18590,507 @@
         "summary": "Promote Verified Query",
         "tags": [
           "registries"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/work-orders": {
+      "get": {
+        "operationId": "list_work_orders_api_workspaces__workspace_id__work_orders_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Work Orders",
+        "tags": [
+          "work-orders"
+        ]
+      },
+      "post": {
+        "operationId": "create_work_order_api_workspaces__workspace_id__work_orders_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkOrderSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Work Order",
+        "tags": [
+          "work-orders"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/work-orders/{work_order_id}": {
+      "get": {
+        "operationId": "get_work_order_api_workspaces__workspace_id__work_orders__work_order_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "work_order_id",
+            "required": true,
+            "schema": {
+              "title": "Work Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Work Order",
+        "tags": [
+          "work-orders"
+        ]
+      },
+      "patch": {
+        "description": "Replace the typed spec: a new revision. `If-Match` is required (428 without, 412 when stale).",
+        "operationId": "patch_work_order_api_workspaces__workspace_id__work_orders__work_order_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "work_order_id",
+            "required": true,
+            "schema": {
+              "title": "Work Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkOrderSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Work Order",
+        "tags": [
+          "work-orders"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/work-orders/{work_order_id}/runs": {
+      "post": {
+        "description": "Start the work order's revision named by `If-Match` (required). Returns the run (202: it executes\nin the durable workers). A pipeline or ML work order is refused with `unsupported_capability`.",
+        "operationId": "start_work_order_api_workspaces__workspace_id__work_orders__work_order_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "work_order_id",
+            "required": true,
+            "schema": {
+              "title": "Work Order Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Work Order",
+        "tags": [
+          "work-orders"
         ]
       }
     }

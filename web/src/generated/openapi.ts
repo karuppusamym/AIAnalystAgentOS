@@ -547,6 +547,8 @@ export interface paths {
          * @description Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
          *     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
          *     A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.
+         *     With `Idempotency-Key` a retry of the same question returns the turn the first request produced
+         *     (`Idempotent-Replayed: true`), 409 while that one still runs, 409 for a different body (P4-06).
          */
         post: operations["ask_turn_api_ask_threads__thread_id__turns_post"];
         delete?: never;
@@ -1051,9 +1053,33 @@ export interface paths {
         put?: never;
         /**
          * Finding Outcome
-         * @description Accept or dismiss a finding (a rejection goes through run feedback, which also replans).
+         * @description Accept, dismiss or flag a finding wrong (a rejection that replans goes through run feedback).
+         *     Flagging *wrong* needs a reason: it is stored with the verification record and becomes a Negative
+         *     Knowledge draft (ADR-0020 presentation rules).
          */
         post: operations["finding_outcome_api_insights__insight_id__outcome_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/insights/{insight_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Number
+         * @description "Why this number?" (P7-08): each displayed number of the finding (or the one given as `number` text
+         *     or `fact_id`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
+         *     every link with its current state; broken and voided links are returned, never dropped.
+         */
+        get: operations["why_number_api_insights__insight_id__why_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1213,7 +1239,10 @@ export interface paths {
         delete: operations["delete_schedule_api_schedules__schedule_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Schedule */
+        /**
+         * Patch Schedule
+         * @description Edit a schedule. `If-Match` (its ETag) makes a stale edit 412; clients that predate revisions may omit it.
+         */
         patch: operations["patch_schedule_api_schedules__schedule_id__patch"];
         trace?: never;
     };
@@ -1424,10 +1453,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Runs */
+        /**
+         * List Runs
+         * @description Newest runs first. With `limit` or `cursor`: a `{items, next_cursor}` page; without: the old array of 50.
+         */
         get: operations["list_runs_api_workspaces__workspace_id__analysis_get"];
         put?: never;
-        /** Start */
+        /**
+         * Start
+         * @description Start a run. With `Idempotency-Key` a retried request returns the run the first one created
+         *     (`Idempotent-Replayed: true`); the same key with a different body is 409 (P4-06).
+         */
         post: operations["start_api_workspaces__workspace_id__analysis_post"];
         delete?: never;
         options?: never;
@@ -1597,6 +1633,26 @@ export interface paths {
         put?: never;
         /** Resume */
         post: operations["resume_api_workspaces__workspace_id__analysis__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/analysis/{run_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Run
+         * @description Every number of the run's reported findings resolved as in `/insights/{id}/why`, with counts by state.
+         */
+        get: operations["why_run_api_workspaces__workspace_id__analysis__run_id__why_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1870,6 +1926,102 @@ export interface paths {
          * @description Dashboards are produced by an analysis run (design -> approval -> publish). This starts one.
          */
         post: operations["create_dashboards_api_workspaces__workspace_id__dashboards_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Definitions
+         * @description Workspace definition versions, newest first, as `{items, next_cursor}` (plus `builtin` playbooks on request).
+         */
+        get: operations["list_definitions_api_workspaces__workspace_id__definitions_get"];
+        put?: never;
+        /** Create Draft */
+        post: operations["create_draft_api_workspaces__workspace_id__definitions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Definition */
+        get: operations["get_definition_api_workspaces__workspace_id__definitions__definition_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Draft */
+        patch: operations["patch_draft_api_workspaces__workspace_id__definitions__definition_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diff
+         * @description Field diff from this version to `against` (another version id), default: the newest published one.
+         */
+        get: operations["diff_api_workspaces__workspace_id__definitions__definition_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish */
+        post: operations["publish_api_workspaces__workspace_id__definitions__definition_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Status
+         * @description `deprecate` (keeps running with a warning) or `retire` (never runs again; pinned schedules block).
+         */
+        post: operations["change_status_api_workspaces__workspace_id__definitions__definition_id___action__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2547,11 +2699,56 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Schedules */
+        /**
+         * List Schedules
+         * @description Oldest first as an array (existing clients); with `limit`/`cursor`, newest-first `{items, next_cursor}` pages.
+         */
         get: operations["list_schedules_api_workspaces__workspace_id__schedules_get"];
         put?: never;
         /** Create Schedule */
         post: operations["create_schedule_api_workspaces__workspace_id__schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule
+         * @description The schedule, its ETag revision and its pin status computed now: upgrade available (with the
+         *     diff), deprecated (keeps running, with a warning) or blocked (a retired or rejected pin).
+         */
+        get: operations["get_schedule_api_workspaces__workspace_id__schedules__schedule_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/schedules/{schedule_id}/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Schedule Upgrade
+         * @description The owner accepts the available upgrade: a new schedule revision whose next fire is the new
+         *     baseline. Requires If-Match (the revision) and the `upgrade_hash` the owner reviewed.
+         */
+        post: operations["accept_schedule_upgrade_api_workspaces__workspace_id__schedules__schedule_id__upgrade_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2906,6 +3103,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/work-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Work Orders */
+        get: operations["list_work_orders_api_workspaces__workspace_id__work_orders_get"];
+        put?: never;
+        /** Create Work Order */
+        post: operations["create_work_order_api_workspaces__workspace_id__work_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/work-orders/{work_order_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Work Order */
+        get: operations["get_work_order_api_workspaces__workspace_id__work_orders__work_order_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Work Order
+         * @description Replace the typed spec: a new revision. `If-Match` is required (428 without, 412 when stale).
+         */
+        patch: operations["patch_work_order_api_workspaces__workspace_id__work_orders__work_order_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/work-orders/{work_order_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Work Order
+         * @description Start the work order's revision named by `If-Match` (required). Returns the run (202: it executes
+         *     in the durable workers). A pipeline or ML work order is refused with `unsupported_capability`.
+         */
+        post: operations["start_work_order_api_workspaces__workspace_id__work_orders__work_order_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2914,6 +3171,62 @@ export interface components {
         AllowIn: {
             /** Allowed */
             allowed: boolean;
+        };
+        /**
+         * AnalysisSpec
+         * @description One executable hypothesis test. `method` must be a registered analysis method: the vocabulary,
+         *     its JSON Schema enum and the per-method requirements come from the method registry
+         *     (`analystos.methods`, spec v3 §3.5), never from a list kept here.
+         */
+        AnalysisSpec: {
+            /** Asset */
+            asset: string;
+            /** Drivers */
+            drivers?: components["schemas"]["Derivation"][];
+            /** Filters */
+            filters?: components["schemas"]["Filter"][];
+            /**
+             * Method
+             * @description A registered analysis method:
+             *     rate_by_segment: Boolean outcome rate across segment groups -> chi-square (+ grouped logistic and permutation check)
+             *     numeric_by_segment: Numeric outcome across segment groups -> Mann-Whitney / Kruskal-Wallis (+ bootstrap median difference)
+             *     trend: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)
+             *     pareto: Share of volume by segment -> concentration (top-k share, Gini, GOF) (+ multinomial bootstrap of the top share)
+             *     correlation: Numeric vs numeric -> Spearman (+ Pearson and a bootstrap CI of the primary coefficient)
+             *     driver_model: Boolean outcome vs several drivers -> logistic regression (+ random-forest permutation importance)
+             *     cohort_retention: Retention of entity cohorts over time buckets -> chi-square across cohorts (+ grouped logistic and permutation check)
+             *     contribution_decomposition: Mix / volume / rate decomposition of a KPI change between two periods -> z test of the within-segment effect (+ stratified CMH / Stouffer check)
+             * @enum {string}
+             */
+            method: "rate_by_segment" | "numeric_by_segment" | "trend" | "pareto" | "correlation" | "driver_model" | "cohort_retention" | "contribution_decomposition";
+            /**
+             * Min Group Size
+             * @default 30
+             */
+            min_group_size?: number;
+            outcome?: components["schemas"]["Derivation"] | null;
+            segment?: components["schemas"]["Derivation"] | null;
+            time?: components["schemas"]["Derivation"] | null;
+            /**
+             * Top K
+             * @default 12
+             */
+            top_k?: number;
+        };
+        /**
+         * AnalysisWork
+         * @description Describe / compare / diagnose / monitor: a frozen set of `AnalysisSpec`s replayed as given.
+         */
+        AnalysisWork: {
+            /** Analyses */
+            analyses: components["schemas"]["AnalysisSpec"][];
+            /** Statements */
+            statements?: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "analysis";
         };
         /** AskIn */
         AskIn: {
@@ -3166,6 +3479,73 @@ export interface components {
             /** Profile */
             profile?: boolean | null;
         };
+        /** DefinitionDraftIn */
+        DefinitionDraftIn: {
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title?: string | null;
+        };
+        /** DefinitionPatch */
+        DefinitionPatch: {
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            } | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * Derivation
+         * @description A column or a safe derived expression over one column (or two for durations).
+         *
+         *     type:
+         *       column          -> the raw column
+         *       duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end
+         *       after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend
+         *       bucket          -> numeric column bucketed by `edges` (labels like "0", "1", "2", "3+")
+         *       equals          -> TRUE when column = value (boolean outcome from a categorical)
+         *       is_true         -> column interpreted as boolean
+         *       date_trunc      -> date_trunc(grain, column)
+         *       hour_of_day     -> extract(hour from column)
+         *       day_of_week     -> extract(dow from column)
+         */
+        Derivation: {
+            /** Column */
+            column: string;
+            /** Edges */
+            edges?: number[] | null;
+            /** End Column */
+            end_column?: string | null;
+            /**
+             * End Hour
+             * @default 18
+             */
+            end_hour?: number;
+            /** Grain */
+            grain?: ("day" | "week" | "month" | "quarter") | null;
+            /** Label */
+            label?: string | null;
+            /**
+             * Start Hour
+             * @default 8
+             */
+            start_hour?: number;
+            /**
+             * Type
+             * @default column
+             * @enum {string}
+             */
+            type?: "column" | "duration_hours" | "after_hours" | "bucket" | "equals" | "is_true" | "date_trunc" | "hour_of_day" | "day_of_week";
+            /** Value */
+            value?: unknown;
+        };
         /** DocumentSaveIn */
         DocumentSaveIn: {
             /**
@@ -3207,6 +3587,21 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * ExperimentSpec
+         * @description Placeholder for P5 experiment design. Not executable yet.
+         */
+        ExperimentSpec: {
+            /** Hypothesis */
+            hypothesis?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "experiment";
+        } & {
+            [key: string]: unknown;
+        };
         /** FeedbackIn */
         FeedbackIn: {
             /** Kind */
@@ -3218,13 +3613,33 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** Filter */
+        Filter: {
+            /** Column */
+            column: string;
+            /**
+             * Op
+             * @enum {string}
+             */
+            op: "=" | "!=" | ">" | ">=" | "<" | "<=" | "in" | "not in" | "is null" | "is not null";
+            /**
+             * Origin
+             * @default plan
+             * @enum {string}
+             */
+            origin?: "plan" | "user_redirect" | "policy";
+            /** Value */
+            value?: unknown;
+        };
         /** FindingOutcomeIn */
         FindingOutcomeIn: {
+            /** Reason */
+            reason?: string | null;
             /**
              * Signal
              * @enum {string}
              */
-            signal: "accept" | "dismiss";
+            signal: "accept" | "dismiss" | "wrong";
         };
         /** GrantIn */
         GrantIn: {
@@ -3254,6 +3669,17 @@ export interface components {
             /** Status */
             status?: string | null;
         };
+        /** InputRef */
+        InputRef: {
+            /** Asset */
+            asset?: string | null;
+            /** Dataset Id */
+            dataset_id?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            /** Version */
+            version?: number | string | null;
+        };
         /** InvokeIn */
         InvokeIn: {
             /** Approval Id */
@@ -3271,6 +3697,32 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /**
+         * MLSpec
+         * @description Placeholder for P5-01 (ADR-0024). Envelope-level fields only; not executable yet.
+         */
+        MLSpec: {
+            /** Horizon */
+            horizon?: number | null;
+            /** Seed */
+            seed?: number | null;
+            /** Target Metric */
+            target_metric?: string | null;
+            /**
+             * Task
+             * @enum {string}
+             */
+            task: "forecast" | "classify" | "regress" | "cluster" | "anomaly";
+            /** Time Column */
+            time_column?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ml";
+        } & {
+            [key: string]: unknown;
         };
         /** MemberIn */
         MemberIn: {
@@ -3365,6 +3817,25 @@ export interface components {
             /** Password */
             password: string;
         };
+        /**
+         * PipelineSpec
+         * @description Placeholder for P6-04 (recipe IR). Envelope-level fields only; not executable yet.
+         */
+        PipelineSpec: {
+            /** Output Grain */
+            output_grain?: string[];
+            /** Recipe */
+            recipe?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pipeline";
+        } & {
+            [key: string]: unknown;
+        };
         /** PresetIn */
         PresetIn: {
             /** Preset */
@@ -3402,6 +3873,11 @@ export interface components {
         ReadIn: {
             /** Ids */
             ids: number[];
+        };
+        /** ReasonIn */
+        ReasonIn: {
+            /** Reason */
+            reason?: string | null;
         };
         /** RegisteredHypothesisPatch */
         RegisteredHypothesisPatch: {
@@ -3457,6 +3933,10 @@ export interface components {
         RunIn: {
             /** Autonomy Level */
             autonomy_level?: number | null;
+            /** Definition */
+            definition?: {
+                [key: string]: unknown;
+            } | string | null;
             /** Objective */
             objective?: string | null;
             /** Playbook */
@@ -3580,6 +4060,11 @@ export interface components {
             /** Tags */
             tags: string[];
         };
+        /** UpgradeIn */
+        UpgradeIn: {
+            /** Upgrade Hash */
+            upgrade_hash?: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3592,6 +4077,21 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** ValidationPolicy */
+        ValidationPolicy: {
+            /**
+             * Confirmatory
+             * @default false
+             */
+            confirmatory?: boolean;
+            /** Min Group Size */
+            min_group_size?: number | null;
+            /**
+             * Require Second Method
+             * @default false
+             */
+            require_second_method?: boolean;
         };
         /** VerifiedQueryPatch */
         VerifiedQueryPatch: {
@@ -3607,6 +4107,54 @@ export interface components {
             patterns?: string[] | null;
             /** Status */
             status?: string | null;
+        };
+        /**
+         * WorkBudget
+         * @description Requested limits; the server clamps them to workspace and platform policy.
+         */
+        WorkBudget: {
+            /** Max Cost Usd */
+            max_cost_usd?: number | null;
+            /** Max Queries */
+            max_queries?: number | null;
+            /** Max Trials */
+            max_trials?: number | null;
+            /** Max Wall Seconds */
+            max_wall_seconds?: number | null;
+        };
+        /** WorkOrderSpec */
+        WorkOrderSpec: {
+            /** Acceptance */
+            acceptance?: string[];
+            /** Brief Revision */
+            brief_revision?: number | null;
+            budget?: components["schemas"]["WorkBudget"];
+            /** Inputs */
+            inputs?: components["schemas"]["InputRef"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "describe" | "compare" | "diagnose" | "forecast" | "predict" | "experiment" | "prepare" | "monitor";
+            /** Objective */
+            objective: string;
+            /** Outputs */
+            outputs?: string[];
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version?: 1;
+            /** Scope Hash */
+            scope_hash?: string | null;
+            /** Semantic Version */
+            semantic_version?: string | null;
+            /** Source Ids */
+            source_ids?: string[] | null;
+            /** Spec */
+            spec: components["schemas"]["AnalysisWork"] | components["schemas"]["PipelineSpec"] | components["schemas"]["MLSpec"] | components["schemas"]["ExperimentSpec"];
+            validation?: components["schemas"]["ValidationPolicy"];
         };
         /** WorkspaceIn */
         WorkspaceIn: {
@@ -4861,6 +5409,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "Idempotency-Key"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -5822,6 +6371,43 @@ export interface operations {
             };
         };
     };
+    why_number_api_insights__insight_id__why_get: {
+        parameters: {
+            query?: {
+                number?: string | null;
+                fact_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                insight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     patch_monitor_api_monitors__monitor_id__patch: {
         parameters: {
             query?: never;
@@ -6138,6 +6724,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "if-match"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -6733,7 +7320,10 @@ export interface operations {
     };
     list_runs_api_workspaces__workspace_id__analysis_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
@@ -6769,6 +7359,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "Idempotency-Key"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -7090,6 +7681,41 @@ export interface operations {
         };
     };
     resume_api_workspaces__workspace_id__analysis__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    why_run_api_workspaces__workspace_id__analysis__run_id__why_get: {
         parameters: {
             query?: never;
             header?: {
@@ -7801,6 +8427,275 @@ export interface operations {
                 "application/json": {
                     [key: string]: unknown;
                 };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_definitions_api_workspaces__workspace_id__definitions_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+                key?: string | null;
+                status?: string | null;
+                limit?: number | null;
+                cursor?: string | null;
+                include_builtin?: boolean;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_draft_api_workspaces__workspace_id__definitions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionDraftIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_definition_api_workspaces__workspace_id__definitions__definition_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_draft_api_workspaces__workspace_id__definitions__definition_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    diff_api_workspaces__workspace_id__definitions__definition_id__diff_get: {
+        parameters: {
+            query?: {
+                against?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_api_workspaces__workspace_id__definitions__definition_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_status_api_workspaces__workspace_id__definitions__definition_id___action__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReasonIn"];
             };
         };
         responses: {
@@ -9271,7 +10166,10 @@ export interface operations {
     };
     list_schedules_api_workspaces__workspace_id__schedules_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
@@ -9307,6 +10205,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "Idempotency-Key"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -9318,6 +10217,81 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ScheduleIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_schedule_api_workspaces__workspace_id__schedules__schedule_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_schedule_upgrade_api_workspaces__workspace_id__schedules__schedule_id__upgrade_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpgradeIn"];
             };
         };
         responses: {
@@ -10135,6 +11109,194 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_work_orders_api_workspaces__workspace_id__work_orders_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_work_order_api_workspaces__workspace_id__work_orders_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkOrderSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_work_order_api_workspaces__workspace_id__work_orders__work_order_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                work_order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_work_order_api_workspaces__workspace_id__work_orders__work_order_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                work_order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkOrderSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_work_order_api_workspaces__workspace_id__work_orders__work_order_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                "Idempotency-Key"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                work_order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
