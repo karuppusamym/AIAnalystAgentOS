@@ -207,6 +207,255 @@ def render(template: str, params: list[dict[str, Any]], values: dict[str, Any], 
     return sql
 
 
+# ------------------------------------------------------------------------------ compatibility
+# Token overlap says a question is *about* the same thing as a verified query; it cannot see that the
+# question asks for another aggregate, an extra group or filter, or another value than the one the SQL
+# hard-codes (P4-V02 off tier: 9 confident wrong answers, all such near misses). These checks compare
+# what the question asks for with what the entry's SQL computes (derived by sqlglot) and its phrasings.
+_AGG_CUES = {"sum": r"\b(?:sum|sums|total|totals)\b", "avg": r"\b(?:average|averages|avg|mean)\b",
+             "count": r"\b(?:count|counts|how many|number of)\b", "median": r"\bmedian\b",
+             "max": r"\b(?:max|maximum)\b", "min": r"\b(?:min|minimum)\b",
+             "ratio": r"\b(?:rate|rates|share|percent|percentage|fraction|proportion|ratio)\b"}
+_AGG_SQL = {exp.Sum: "sum", exp.Avg: "avg", exp.Count: "count", exp.Max: "max", exp.Min: "min", exp.Median: "median",
+            exp.PercentileCont: "median", exp.PercentileDisc: "median"}
+_DIM_CUE = re.compile(r"\b(?:broken down by|grouped by|split by|for each|for every|by|per|each|across)\s+(.+?)"
+                      r"(?=\s+(?:for|in|with|where|since|between|from|during|over|under|above|below|that|which|who|when|"
+                      r"having|including|excluding|except|on|at|versus|vs)\b|[?.,;:!]|\s*$)", re.IGNORECASE)
+_DIM_SPLIT = re.compile(r"\s*(?:,|&|\band\b|\bthen\b)\s*", re.IGNORECASE)
+_TIME_UNITS = frozenset(("hour", "day", "week", "month", "quarter", "year"))
+_GENERIC = frozenset(("name", "id", "type", "code", "date", "at", "by", "count", "sum", "average", "top", "bottom", "value"))
+_CAPITALISED = re.compile(r"(?<![\w'])[A-Z][\w-]*")
+_PARAM_SENTINEL = "__aos_param_{}__"
+
+
+@dataclass(frozen=True)
+class Semantics:
+    """What a verified query's SQL computes: its aggregates, one token set per group-by expression,
+    and the literals it hard-codes in comparisons (column, value). Derived from the template."""
+
+    aggregates: frozenset[str]
+    dimensions: tuple[frozenset[str], ...]
+    literals: tuple[tuple[str, str], ...]
+    tables: tuple[str, ...]
+
+
+_semantics_cache: dict[tuple[str, str], Semantics | None] = {}
+
+
+def _column_tokens(names: list[str]) -> frozenset[str]:
+    return frozenset(tokens(" ".join(names)))
+
+
+def semantics(template: str, dialect: str = "postgres") -> Semantics | None:
+    """Declared semantics of a template, or None when sqlglot cannot parse it (no checks then)."""
+    key = (template, dialect)
+    if key in _semantics_cache:
+        return _semantics_cache[key]
+    sql = _PLACEHOLDER.sub(lambda m: "'" + _PARAM_SENTINEL.format(m.group(1)) + "'", template)
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError, ValueError):
+        _semantics_cache[key] = None
+        return None
+    aggs: set[str] = set()
+    for node in tree.walk():
+        for cls, name in _AGG_SQL.items():
+            if isinstance(node, cls):
+                aggs.add(name)
+        if isinstance(node, exp.Div) and any(True for _ in node.find_all(exp.AggFunc)):
+            aggs.add("ratio")
+    if "avg" in aggs:
+        aggs.add("ratio")  # a rate is an average of a 0/1 flag
+    dims: list[frozenset[str]] = []
+    for group in tree.find_all(exp.Group):
+        select_ = group.parent if isinstance(group.parent, exp.Select) else None
+        projections = list(select_.expressions) if select_ is not None else []
+        by_alias = {p.alias.lower(): p for p in projections if isinstance(p, exp.Alias)}
+        for g in group.expressions:
+            if isinstance(g, exp.Literal) and not g.is_string and str(g.this).isdigit() and 0 < int(g.this) <= len(projections):
+                g = projections[int(g.this) - 1]
+            elif isinstance(g, exp.Column) and not g.table and g.name.lower() in by_alias:
+                g = by_alias[g.name.lower()]
+            words = [c.name for c in g.find_all(exp.Column)]
+            if isinstance(g, exp.Alias):
+                words.append(g.alias)
+            words += [str(v.this).lower() for v in g.find_all(exp.Var, exp.Literal) if str(v.this).lower() in _TIME_UNITS]
+            dims.append(_column_tokens(words))
+    literals: list[tuple[str, str]] = []
+    for lit in tree.find_all(exp.Literal):
+        value = str(lit.this)
+        if value.startswith("__aos_param_"):
+            continue
+        parent = lit.parent
+        column = None
+        if isinstance(parent, exp.In):
+            column = parent.this
+        elif isinstance(parent, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Like, exp.ILike)):
+            column = parent.left if parent.right is lit else parent.right
+        if isinstance(column, exp.Column):
+            literals.append((column.name, value))
+    tables = tuple(".".join(p for p in (t.db, t.name) if p) for t in tree.find_all(exp.Table))
+    out = Semantics(frozenset(aggs), tuple(dims), tuple(literals), tables)
+    _semantics_cache[key] = out
+    return out
+
+
+def aggregates_asked(text: str, dimension_words: frozenset[str] = frozenset()) -> set[str]:
+    """Aggregate words of a question. "number of X" where X is a grouped column names a dimension
+    ("breach rate by the number of reassignments"), not a count."""
+    low = text.lower()
+    out = {name for name, cue in _AGG_CUES.items() if re.search(cue, low)}
+    if "count" in out and not re.search(r"\b(?:count|counts|how many)\b", low):
+        nouns = [_stem(m.group(1)) for m in re.finditer(r"\bnumber of\s+(?:the\s+)?(\w+)", low)]
+        if nouns and all(n in dimension_words for n in nouns):
+            out.discard("count")
+    return out
+
+
+def dimensions_asked(text: str, lex: Lexicon | None = None) -> list[set[str]]:
+    """Group-by phrases of a question ("by X", "per X", "for each X", "X and Y"), as token sets."""
+    out = []
+    for m in _DIM_CUE.finditer(text):
+        for part in _DIM_SPLIT.split(m.group(1)):
+            t = tokens(part, lex)
+            if t:
+                out.append(t)
+    return out
+
+
+def _significant(t: set[str] | frozenset[str]) -> set[str]:
+    return set(t) - _GENERIC or set(t)
+
+
+def _covers(asked: set[str], grouped: set[str] | frozenset[str]) -> bool:
+    """One names the other: "region" ~ sales_region, "sales channel" ~ channel; a shared word alone
+    ("sales channel" vs sales_region) is another dimension."""
+    a, g = _significant(asked), _significant(grouped)
+    return bool(a) and bool(g) and (a <= g or g <= a)
+
+
+def _mentions(text: str, value: str) -> bool:
+    return _find_phrase(text, value) is not None
+
+
+def _unexplained_values(question: str, residual: str, entry: VerifiedQuery, sem: Semantics, found: dict[str, Any],
+                        vocabulary: dict[str, list[str]], lex: Lexicon | None) -> list[str]:
+    """Values the question names that neither a parameter, a hard-coded literal nor a phrasing of the
+    entry accounts for: each is a filter (or another value) the entry does not apply."""
+    patterns = " \n ".join(entry.patterns or [])
+    pattern_tokens = set().union(*(tokens(p, lex) for p in entry.patterns or [])) if entry.patterns else set()
+    literal_values = {v.lower() for _, v in sem.literals}
+    date_values = {str(found[p["name"]]) for p in entry.parameters or [] if p.get("type") == "date" and p["name"] in found}
+    out: list[str] = []
+
+    def explained(value: str) -> bool:
+        return value.lower() in literal_values or _mentions(patterns, value)
+
+    for start, end, iso in _dates(question):
+        if iso not in date_values and not explained(iso) and not explained(question[start:end]):
+            out.append(question[start:end])
+    text = residual
+    for m in _QUOTED.finditer(text):
+        value = m.group(1) or m.group(2)
+        if not explained(value):
+            out.append(value)
+        text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    for column, values in vocabulary.items():
+        for v in sorted(values, key=len, reverse=True):
+            span = _find_phrase(text, v)
+            if span is None:
+                continue
+            if not explained(v):
+                out.append(f"{column} = {v}")
+            text = text[:span[0]] + " " * (span[1] - span[0]) + text[span[1]:]
+    for m in _NUMBER.finditer(text):
+        if not explained(m.group(0)):
+            out.append(m.group(0))
+    first = re.search(r"[A-Za-z]", question)
+    for m in _CAPITALISED.finditer(text):
+        if first is not None and m.start() == first.start():
+            continue
+        word = m.group(0)
+        t = tokens(word, lex)
+        if t and not t <= pattern_tokens and not explained(word):
+            out.append(word)
+    return out
+
+
+def _vocabularies(session: Session | None, workspace_id: str, entries: list[VerifiedQuery]) -> dict[str, dict[str, list[str]]]:
+    """Known values per table: profiled top values of non-sensitive columns, plus the enum
+    vocabularies recorded on the workspace's verified-query parameters."""
+    by_table: dict[str, dict[str, list[str]]] = {}
+    for e in entries:
+        for p in e.parameters or []:
+            if p.get("type") == "enum" and p.get("values"):
+                ref = str(p.get("column") or p["name"])
+                table, _, column = ref.rpartition(".")
+                by_table.setdefault(table.lower(), {})[column] = [str(v) for v in p["values"]]
+    if session is not None:
+        names = {t.rpartition(".")[2] for e in entries if (s := semantics(e.sql_template, e.dialect)) for t in s.tables}
+        if names:
+            rows = session.execute(select(SourceColumn.name, SourceColumn.profile, SourceColumn.tags, SourceAsset.schema_name,
+                                          SourceAsset.name).join(SourceAsset, SourceAsset.id == SourceColumn.asset_id)
+                                   .where(SourceAsset.workspace_id == workspace_id, SourceAsset.name.in_(names)))
+            for name, profile, tags, schema, asset in rows:
+                if {"pii", "restricted"} & set(tags or []):
+                    continue
+                values = [str(t.get("value")) for t in (profile or {}).get("top_values") or [] if t.get("value") is not None]
+                if values:
+                    by_table.setdefault(f"{schema}.{asset}".lower(), {}).setdefault(name, values)
+    return by_table
+
+
+def _usable_value(v: str) -> bool:
+    low = v.strip().lower()
+    return len(low) >= 2 and low not in ("true", "false", "null", "none", "yes", "no") and not _NUMBER.fullmatch(low)
+
+
+def incompatibilities(question: str, residual: str, entry: VerifiedQuery, found: dict[str, Any], pattern: str,
+                      vocabulary: dict[str, dict[str, list[str]]] | None = None, lex: Lexicon | None = None) -> list[str]:
+    """Why the entry does not answer the question although its words match (empty: it does). Checks
+    the aggregate, the group-by, filters/values the entry does not apply, and a value the entry
+    hard-codes that the question does not ask for."""
+    sem = semantics(entry.sql_template, entry.dialect or "postgres")
+    if sem is None:
+        return []
+    reasons: list[str] = []
+    dim_words = frozenset().union(*sem.dimensions) if sem.dimensions else frozenset()
+    patterns = list(entry.patterns or [])
+    declared = set(sem.aggregates)
+    for p in patterns:
+        declared |= aggregates_asked(p, dim_words)
+    asked = aggregates_asked(residual, dim_words)
+    if asked and declared and not asked & declared:
+        reasons.append(f"aggregate: the question asks for {'/'.join(sorted(asked))}, the verified query computes "
+                       f"{'/'.join(sorted(declared - {'ratio'}) or sorted(declared))}")
+    q_dims = dimensions_asked(residual, lex)
+    options = [set(d) for d in sem.dimensions] + [d for p in patterns for d in dimensions_asked(_PLACEHOLDER.sub(" ", p), lex)]
+    uncovered = [d for d in q_dims if not any(_covers(d, o) for o in options)]
+    if uncovered:
+        reasons.append("group-by: the verified query does not group by " + ", ".join(" ".join(sorted(d)) for d in uncovered))
+    elif len(q_dims) > len(sem.dimensions):
+        reasons.append(f"group-by: the question groups by {len(q_dims)} dimension(s), the verified query by {len(sem.dimensions)}")
+    vocab: dict[str, list[str]] = {}
+    for table in sem.tables:
+        for column, values in (vocabulary or {}).get(table.lower(), {}).items():
+            usable = [v for v in values if _usable_value(v)]
+            if usable:
+                vocab.setdefault(column, usable)
+    extra = _unexplained_values(question, residual, entry, sem, found, vocab, lex)
+    hard = [(c, v) for c, v in sem.literals if _mentions(_PLACEHOLDER.sub(" ", pattern), v) and not _mentions(question, v)]
+    for column, value in hard:
+        if extra:
+            reasons.append(f"literal: the verified query hard-codes {column} = {value}; the question asks about "
+                           f"{', '.join(extra)}")
+        else:
+            reasons.append(f"literal: the verified query hard-codes {column} = {value}, which the question does not ask for")
+    if extra and not hard:
+        reasons.append("filter: the verified query does not filter on " + ", ".join(extra))
+    return reasons
+
+
 # ------------------------------------------------------------------------------ matching
 @dataclass
 class Match:
@@ -217,21 +466,39 @@ class Match:
     pattern: str
 
 
-def match(session: Session, workspace_id: str, question: str, explicit: dict[str, Any] | None = None) -> Match | None:
-    """Best active verified query for the question, or None (a miss: the model path may answer)."""
+@dataclass
+class Lookup:
+    """The registry's answer to a question: the best compatible match (or None), and the entries whose
+    words matched better but whose SQL does not answer the question, with the reasons."""
+
+    hit: Match | None
+    rejected: list[dict[str, Any]] = field(default_factory=list)
+
+
+def find(session: Session, workspace_id: str, question: str, explicit: dict[str, Any] | None = None) -> Lookup:
+    """Best active verified query that is compatible with the question. A token match whose SQL would
+    answer a different question (another aggregate, a missing group-by or filter, a contradicted
+    hard-coded value) is rejected and reported, never served."""
     entries = list(session.scalars(select(VerifiedQuery).where(VerifiedQuery.workspace_id == workspace_id,
                                                                VerifiedQuery.status == "active")))
     if not entries:
-        return None
-    lex = lexicon(session, workspace_id)
-    best: Match | None = None
-    best_key: tuple = ()
+        return Lookup(None)
+    return choose(entries, question, explicit, lexicon(session, workspace_id),
+                  lambda: _vocabularies(session, workspace_id, entries))
+
+
+def choose(entries: list[VerifiedQuery], question: str, explicit: dict[str, Any] | None = None, lex: Lexicon | None = None,
+           vocabulary: Any = None) -> Lookup:
+    """`find` without the database: rank the entries by token match, then serve the best compatible one.
+    `vocabulary` is {table: {column: values}} or a callable returning it (loaded only when needed)."""
+    candidates: list[tuple[tuple, Match, str]] = []
     for entry in entries:
         params = list(entry.parameters or [])
         found, residual = extract(question, params)
         q = tokens(residual, lex)
         if not q:
             continue
+        best: tuple[tuple, str, float] | None = None
         for pattern in entry.patterns or []:
             p = tokens(pattern, lex)
             if not p:
@@ -241,14 +508,35 @@ def match(session: Session, workspace_id: str, question: str, explicit: dict[str
             if coverage < MIN_COVERAGE or precision < MIN_PRECISION:
                 continue
             key = (round(coverage + precision, 6), entry.hits, entry.id)
-            if best is None or key > best_key:
-                values = {**found, **{k: v for k, v in (explicit or {}).items() if any(x["name"] == k for x in params)}}
-                for x in params:
-                    if x["name"] not in values and x.get("default") is not None:
-                        values[x["name"]] = x["default"]
-                missing = [x for x in params if x["name"] not in values]
-                best, best_key = Match(entry, values, missing, coverage + precision, pattern), key
-    return best
+            if best is None or key > best[0]:
+                best = (key, pattern, coverage + precision)
+        if best is None:
+            continue
+        values = {**found, **{k: v for k, v in (explicit or {}).items() if any(x["name"] == k for x in params)}}
+        for x in params:
+            if x["name"] not in values and x.get("default") is not None:
+                values[x["name"]] = x["default"]
+        missing = [x for x in params if x["name"] not in values]
+        candidates.append((best[0], Match(entry, values, missing, best[2], best[1]), residual))
+    if not candidates:
+        return Lookup(None)
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    if callable(vocabulary):
+        vocabulary = vocabulary()
+    rejected: list[dict[str, Any]] = []
+    for _, m, residual in candidates:
+        found = {k: v for k, v in m.values.items() if k not in (explicit or {})}
+        reasons = incompatibilities(question, residual, m.entry, found, m.pattern, vocabulary, lex)
+        if not reasons:
+            return Lookup(m, rejected)
+        rejected.append({"id": m.entry.id, "name": m.entry.name, "pattern": m.pattern, "score": round(m.score, 3),
+                         "reasons": reasons})
+    return Lookup(None, rejected)
+
+
+def match(session: Session, workspace_id: str, question: str, explicit: dict[str, Any] | None = None) -> Match | None:
+    """Best active compatible verified query for the question, or None (a miss: the model path may answer)."""
+    return find(session, workspace_id, question, explicit).hit
 
 
 def record_hit(session: Session, entry_id: str) -> None:

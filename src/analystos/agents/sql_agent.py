@@ -189,14 +189,19 @@ def verified_match_score(score: float) -> float:
     return round(0.8 + 0.2 * max(0.0, min(1.0, (score - floor) / (2.0 - floor))), 4)
 
 
-def _registry_match(ctx: Any, question: str, parameters: dict[str, Any] | None) -> Any:
+def _registry_lookup(ctx: Any, question: str, parameters: dict[str, Any] | None) -> Any:
+    """The registry's best compatible match and the closer token matches it rejected (with reasons)."""
     from analystos.registries import verified_queries as vqr
 
     with session_scope() as s:
-        hit = vqr.match(s, ctx.workspace.id, question, parameters)
-        if hit is not None:
-            s.expunge(hit.entry)
-        return hit
+        found = vqr.find(s, ctx.workspace.id, question, parameters)
+        if found.hit is not None:
+            s.expunge(found.hit.entry)
+        return found
+
+
+def _registry_match(ctx: Any, question: str, parameters: dict[str, Any] | None) -> Any:
+    return _registry_lookup(ctx, question, parameters).hit
 
 
 def _record_skip(ctx: Any, reason: str, avoided: int) -> None:
@@ -240,14 +245,18 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
     return None if hit is None else _registry_answer(ctx, question, hit)
 
 
-def route(ctx: Any, question: str, hit: Any) -> dict[str, Any]:
+def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """`ask_route` (authority `route`): verified query > tool > generate, decline when a required input
-    is missing. The facts are deterministic; the rule answers every case but a close tie."""
+    is missing. The facts are deterministic; the rule answers every case but a close tie. A verified
+    query whose words matched but whose SQL does not answer the question (`rejected`) scores 0: it is
+    never a candidate, and the decision records why it was passed over."""
     from analystos.decisions.types import Question
 
     facts = {"verified_match": verified_match_score(hit.score) if hit is not None else 0.0,
              "tool_match": 0.0,  # no parameterised Ask tools are registered yet: the rung is never matched
              "missing_inputs": [p["name"] for p in hit.missing] if hit is not None else []}
+    if rejected:
+        facts["verified_rejected"] = [{k: r[k] for k in ("name", "score", "reasons")} for r in rejected]
     return decide(ctx, "ask_route", {"question": question},
                   Question.choice("How should this analytics question be answered?", ASK_ROUTES, default="generate"), facts)
 
@@ -273,11 +282,15 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
     _stage(ctx, "scope", "Checking what you are allowed to see")
     _authorize_ask(ctx)
     _check_budget(ctx)
-    hit = None
+    hit, rejected = None, []
     if use_registry:
         _stage(ctx, "registry", "Looking for a verified answer to this question")
-        hit = _registry_match(ctx, question, parameters)
-    chosen = route(ctx, question, hit)
+        found = _registry_lookup(ctx, question, parameters)
+        hit, rejected = found.hit, found.rejected
+        if rejected and hit is None:
+            _stage(ctx, "registry", f"A verified query is close but does not answer this: {rejected[0]['reasons'][0]}",
+                   rejected=[r["name"] for r in rejected])
+    chosen = route(ctx, question, hit, rejected)
     decisions = [chosen]
     path = chosen["value"]
     if path == "tool" or (path in ("verified_query", "decline") and hit is None):

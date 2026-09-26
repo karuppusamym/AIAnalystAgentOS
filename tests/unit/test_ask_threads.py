@@ -21,6 +21,7 @@ from analystos.core.errors import (
 )
 from analystos.decisions.service import DecisionService
 from analystos.decisions.store import MemoryDecisionStore
+from analystos.registries.verified_queries import Lookup
 from analystos.services import ask as ask_svc
 
 
@@ -70,7 +71,7 @@ def test_every_registry_match_scores_as_a_verified_match_so_the_rule_keeps_routi
 
 
 def test_a_registry_hit_is_routed_to_the_verified_query_by_the_rule_with_no_model(no_gate, monkeypatch):
-    monkeypatch.setattr(sql_agent, "_registry_match", lambda ctx, q, p: _hit())
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(_hit()))
     monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no model call on a registry hit"))
     ctx, stages = _ctx()
     out = sql_agent.ask(ctx, "P1 by group")
@@ -81,7 +82,7 @@ def test_a_registry_hit_is_routed_to_the_verified_query_by_the_rule_with_no_mode
 
 
 def test_a_missing_required_input_declines_before_any_model(no_gate, monkeypatch):
-    monkeypatch.setattr(sql_agent, "_registry_match", lambda ctx, q, p: _hit(missing=["priority"]))
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(_hit(missing=["priority"])))
     monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no model call when an input is missing"))
     ctx, _ = _ctx()
     out = sql_agent.ask(ctx, "P1 by group")
@@ -90,7 +91,7 @@ def test_a_missing_required_input_declines_before_any_model(no_gate, monkeypatch
 
 
 def test_a_miss_generates_and_the_sql_still_goes_through_the_gateway(no_gate, monkeypatch):
-    monkeypatch.setattr(sql_agent, "_registry_match", lambda ctx, q, p: None)
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
     monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: ({"sql": "SELECT g, COUNT(*) FROM stg.incident GROUP BY 1"}, "m"))
     ctx, stages = _ctx()
     out = sql_agent.ask(ctx, "How many incidents per group?")
@@ -101,8 +102,22 @@ def test_a_miss_generates_and_the_sql_still_goes_through_the_gateway(no_gate, mo
     assert "Finding the tables that answer this" in [t for _, t in stages]
 
 
+def test_a_rejected_registry_match_is_not_served_and_the_route_says_why(no_gate, monkeypatch):
+    rejected = [{"id": "vq_1", "name": "monthly_amount", "pattern": "Monthly invoice amount", "score": 2.0,
+                 "reasons": ["aggregate: the question asks for avg, the verified query computes sum"]}]
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None, rejected))
+    monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: ({"sql": "SELECT AVG(amount) FROM stg.incident"}, "m"))
+    ctx, stages = _ctx()
+    out = sql_agent.ask(ctx, "Average invoice amount per month")
+    assert out["answered_by"] == "model" and out["route"] == "generate"
+    route = out["decisions"][0]
+    assert route["details"]["verified_rejected"][0]["reasons"] == rejected[0]["reasons"]
+    assert "monthly_amount does not fit" in route["note"]
+    assert any("does not answer this" in t for k, t in stages if k == "registry")
+
+
 def test_a_question_that_names_nothing_to_measure_is_clarified_not_generated(no_gate, monkeypatch):
-    monkeypatch.setattr(sql_agent, "_registry_match", lambda ctx, q, p: None)
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(None))
     monkeypatch.setattr(sql_agent, "llm_json", lambda *a, **k: pytest.fail("no generation for an ambiguous question"))
     ctx, _ = _ctx()
     out = sql_agent.ask(ctx, "what about it?")
@@ -114,7 +129,7 @@ def test_decisions_are_recorded_against_the_turn_when_a_router_is_present(no_gat
 
     store = MemoryDecisionStore()
     r = router()
-    monkeypatch.setattr(sql_agent, "_registry_match", lambda ctx, q, p: _hit())
+    monkeypatch.setattr(sql_agent, "_registry_lookup", lambda ctx, q, p: Lookup(_hit()))
     ctx, _ = _ctx(router=r, decisions=DecisionService(r, store=store))
     seen = {}
     ctx.subject = "ask:askt_1"
