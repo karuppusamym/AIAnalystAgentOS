@@ -9,6 +9,7 @@ deployment gets. Dispatches go through `TemporalTransport.run_async`, exactly as
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import sys
@@ -74,7 +75,7 @@ class TemporalPool:
 
         src = str(Path(analystos.__file__).resolve().parents[1])
         for pool in ISOLATED_POOLS:
-            log = tempfile.TemporaryFile()
+            log = tempfile.TemporaryFile()  # noqa: SIM115 - closed with the pool
             env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src, "ANALYSTOS_WORKER_QUEUES": pool,
                    "ANALYSTOS_WORKER_ARTIFACT_URL": self.artifact_url, "ANALYSTOS_TEMPORAL_ADDRESS": address,
                    "ANALYSTOS_TEMPORAL_QUEUE_PREFIX": self.prefix, "HOME": tempfile.gettempdir()}
@@ -108,10 +109,8 @@ class TemporalPool:
         async def stop() -> None:
             self.worker_task.cancel()
             await self.env.shutdown()
-        try:
+        with contextlib.suppress(Exception):  # best-effort teardown
             self._call(stop(), timeout=60)
-        except Exception:  # noqa: BLE001, S110 - best-effort teardown
-            pass
         self.loop.call_soon_threadsafe(self.loop.stop)
 
 

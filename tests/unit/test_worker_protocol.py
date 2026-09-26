@@ -3,6 +3,7 @@ pool configuration, the handler registry and the recipe routing. The pool behavi
 conformance suite (tests/conformance/worker)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 import subprocess
@@ -79,10 +80,8 @@ def test_the_egress_guard_allows_only_the_store():
     def accept(s):
         s.settimeout(0.2)
         while not stop.is_set():
-            try:
+            with contextlib.suppress(OSError):
                 s.accept()[0].close()
-            except OSError:
-                pass
     for s in (listener, other):
         threading.Thread(target=accept, args=(s,), daemon=True).start()
     code = f"""
@@ -290,9 +289,9 @@ def test_recipe_compute_goes_to_compute_py_only_when_the_pool_is_configured(monk
 
 
 def test_the_isolated_workflow_is_registered_where_the_control_plane_runs():
+    from analystos.workers.temporal import run_isolated_task
     from analystos.workflows.activities import BY_WORKLOAD, record_task_events
     from analystos.workflows.analysis_workflow import IsolatedTaskWorkflow
-    from analystos.workers.temporal import run_isolated_task
 
     assert IsolatedTaskWorkflow.__temporal_workflow_definition.name == "IsolatedTaskWorkflow"
     assert record_task_events in BY_WORKLOAD["analysis"]

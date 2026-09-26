@@ -39,7 +39,7 @@ async def run_isolated_task(dispatch: dict) -> dict:
     while True:
         try:
             event = await asyncio.wait_for(queue.get(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             event = None
         if event is not None:
             activity.heartbeat({"event": event.type, "seq": event.seq})

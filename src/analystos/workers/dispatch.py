@@ -202,7 +202,7 @@ class SubprocessTransport:
         self._locks: dict[str, threading.Lock] = {p: threading.Lock() for p in ISOLATED_POOLS}
 
     def _spawn(self, pool: str) -> subprocess.Popen:
-        log_file = tempfile.TemporaryFile()
+        log_file = tempfile.TemporaryFile()  # noqa: SIM115 - lives as long as the worker process; closed in close()
         argv = [self.python, "-m", "analystos.workers.main", "--queues", pool, "--stdio"]
         if self.conformance:
             argv.append("--conformance")

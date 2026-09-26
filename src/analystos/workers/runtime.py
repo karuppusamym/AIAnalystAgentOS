@@ -8,6 +8,7 @@ structured error; the supervisor itself never dies with a task.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -143,15 +144,11 @@ def run_child(job: dict[str, Any], budget: dict[str, Any], scratch: Path, config
         for raw in proc.stdout:  # type: ignore[union-attr]
             line = raw.decode("utf-8", "replace").rstrip("\n")
             if line.startswith(RESULT_MARK):
-                try:
+                with contextlib.suppress(ValueError):
                     body["result"] = json.loads(line[len(RESULT_MARK):])
-                except ValueError:
-                    pass
             elif line.startswith(EVENT_MARK):
-                try:
+                with contextlib.suppress(Exception):  # a malformed progress line is dropped
                     on_progress(json.loads(line[len(EVENT_MARK):]))
-                except Exception:  # noqa: BLE001 - a malformed progress line is dropped
-                    pass
 
     def read_stderr() -> None:
         size = 0
@@ -180,10 +177,8 @@ def run_child(job: dict[str, Any], budget: dict[str, Any], scratch: Path, config
     waiter.join(timeout=float(budget["wall_seconds"]))
     killed = waiter.is_alive()
     if killed:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         waiter.join(timeout=30)
     for t in readers:
         t.join(timeout=5)
@@ -227,10 +222,8 @@ def execute(dispatch: TaskDispatch, config: WorkerConfig, *, emit: Callable[[Tas
             e = TaskEvent(task_id=env.task_id, type=type_, seq=len(events), at=time.time(), data=data)
             events.append(e)
         if emit is not None:
-            try:
+            with contextlib.suppress(Exception):  # reporting never fails the task
                 emit(e)
-            except Exception:  # noqa: BLE001 - reporting never fails the task
-                pass
 
     own_client = client is None
     client = client or StoreClient(config.artifact_url)

@@ -185,7 +185,7 @@ def network_namespace_preexec(limits: list[tuple[int, tuple[int, int]]], try_net
                 except OSError:
                     pass
         for which, value in limits:
-            try:
+            try:  # noqa: SIM105 - plain try in a post-fork hook: nothing to import or allocate
                 resource.setrlimit(which, value)
             except (ValueError, OSError):
                 pass
