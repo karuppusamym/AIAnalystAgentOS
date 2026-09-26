@@ -166,7 +166,7 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     Returns a CompiledContext for `llm_json`. When the mandatory part alone is over budget the
     context comes back `refused` (never cut): `llm_json` then records the refusal and the caller
     takes its deterministic path."""
-    from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
+    from analystos.context.compiler import CompiledContext
     from analystos.contracts.platform import PurposeProfile
     from analystos.services.platform_settings import get as platform
 
@@ -180,7 +180,27 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
                    if "catalog" in profile.sections else None)
     if not settings.context.compiler_enabled:  # admin kill switch: the increment-3 payload, fit_payload only
         return CompiledContext(purpose=purpose, header={}, body={**required, **({"catalog": catalog} if catalog else {})})
+    header = context_header(ctx)
+    limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
+    key = _context_key(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
+                       reference_text=reference_text, header=header, limit=limit)
+    reused = _COMPILED.get(key, purpose) if key else None
+    if reused is not None:
+        return reused
+    compiled, complete = _compile(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
+                                  reference_text=reference_text, header=header, limit=limit)
+    if key and complete:  # a context compiled without its knowledge (load failed) is not kept
+        _COMPILED.put(key, purpose, compiled)
+    return compiled
+
+
+def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any], catalog: Any,
+             reference_text: str | None, header: dict[str, Any], limit: int) -> tuple[Any, bool]:
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
+
+    run = getattr(ctx, "run", None)
     knowledge: list = []
+    complete = True
     sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
     workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
     if sections and workspace_id:
@@ -190,20 +210,114 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
                                            query=" ".join(x for x in (objective, reference_text) if x) or None)
         except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
             log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
-    limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
+            complete = False
     generic = {w for a in (getattr(getattr(ctx, "scope", None), "assets", None) or []) for w in terms(a.split(".")[-1])}
     try:
         return compile_context(purpose, profile, objective=objective, required=required, catalog=catalog,
-                               knowledge=knowledge, header=context_header(ctx), reference_text=reference_text,
+                               knowledge=knowledge, header=header, reference_text=reference_text,
                                limit_chars=max(2_000, limit), min_relevance=settings.context.min_relevance,
-                               generic_terms=generic)
+                               generic_terms=generic), complete
     except ContextOverBudget as exc:
         return CompiledContext(purpose=purpose, header={}, body=dict(required), refused=exc.message,
                                budget_chars=int(exc.details.get("budget_chars") or 0),
-                               mandatory_chars=int(exc.details.get("mandatory_chars") or 0))
+                               mandatory_chars=int(exc.details.get("mandatory_chars") or 0)), complete
 
 
 _SYSTEM_RESERVE_CHARS = 8_000  # room for the static system text inside max_prompt_tokens (fit_payload re-checks exactly)
+
+
+# ------------------------------------------------------------------------------ compiled-context reuse (CTX-005)
+COMPILED_CONTEXT_TTL_SECONDS = 900
+COMPILED_CONTEXT_MAX_ENTRIES = 256
+
+
+class CompiledContextCache:
+    """Compiled contexts reused within one run or Ask thread (CTX-005).
+
+    Key: (purpose, workspace knowledge version, scope hash, inputs hash), and the run or thread it
+    was compiled for. The knowledge version covers the context entries, the knowledge packs the
+    workspace sees, the enabled domain packs and the platform settings (so an edit to any of them
+    compiles afresh); the scope hash covers what the caller may see; the inputs hash covers the
+    mandatory inputs, the objective and reference text, the catalog as sent, the purpose profile and
+    the budget. Knowledge that changes without a version (verified findings of *other* runs, which a
+    prompt may cite) is bounded by the run/thread and a TTL. A context without a run or thread, or
+    whose knowledge version cannot be computed, is never cached. Hits return a copy."""
+
+    def __init__(self, ttl: float = COMPILED_CONTEXT_TTL_SECONDS, max_entries: int = COMPILED_CONTEXT_MAX_ENTRIES) -> None:
+        import threading
+        from collections import OrderedDict
+
+        self.ttl, self.max_entries = ttl, max_entries
+        self._items: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self._lock = threading.Lock()
+        self.stats: dict[str, dict[str, int]] = {}
+
+    def _count(self, purpose: str, what: str, chars: int = 0) -> None:
+        row = self.stats.setdefault(purpose, {"compiled": 0, "reused": 0, "chars_reused": 0})
+        row[what] += 1
+        row["chars_reused"] += chars
+
+    def get(self, key: str, purpose: str) -> Any | None:
+        import copy
+        import time
+
+        with self._lock:
+            item = self._items.get(key)
+            if item is None or time.monotonic() - item[0] > self.ttl:
+                self._items.pop(key, None)
+                return None
+            self._items.move_to_end(key)
+            self._count(purpose, "reused", item[1].chars)
+            return copy.deepcopy(item[1])
+
+    def put(self, key: str, purpose: str, compiled: Any) -> None:
+        import copy
+        import time
+
+        with self._lock:
+            self._count(purpose, "compiled")
+            self._items[key] = (time.monotonic(), copy.deepcopy(compiled))
+            self._items.move_to_end(key)
+            while len(self._items) > self.max_entries:
+                self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+            self.stats = {}
+
+
+_COMPILED = CompiledContextCache()
+
+
+def compiled_context_stats() -> dict[str, dict[str, int]]:
+    """Per purpose: contexts compiled (misses, stored) and reused (hits), with the characters reused."""
+    return {p: dict(v) for p, v in _COMPILED.stats.items()}
+
+
+def _context_key(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any],
+                 catalog: Any, reference_text: str | None, header: dict[str, Any], limit: int) -> str | None:
+    from analystos.context.version import workspace_knowledge_version
+    from analystos.core.ids import stable_hash
+
+    run = getattr(ctx, "run", None)
+    session = f"run:{run.id}" if getattr(run, "id", None) else (
+        f"thread:{ctx.thread_id}" if getattr(ctx, "thread_id", None) else None)
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    if session is None or workspace_id is None:
+        return None
+    knowledge = workspace_knowledge_version(workspace_id, policy=getattr(ctx, "policy", None))
+    if knowledge is None:
+        return None
+    scope = getattr(ctx, "scope", None)
+    try:
+        scope_hash = scope.scope_hash() if hasattr(scope, "scope_hash") else stable_hash(compact_json(scope))
+        inputs = stable_hash({"required": required, "objective": objective, "reference_text": reference_text,
+                              "catalog": catalog, "header": header, "profile": profile.model_dump(mode="json"),
+                              "limit": limit, "min_relevance": settings.context.min_relevance})
+    except (TypeError, ValueError):  # an input that cannot be hashed canonically is simply not cached
+        return None
+    return stable_hash({"purpose": purpose, "knowledge": knowledge, "scope": scope_hash, "inputs": inputs, "session": session})
 
 
 def _size(value: Any) -> int:

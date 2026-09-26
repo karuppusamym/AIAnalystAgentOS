@@ -184,6 +184,7 @@ class AdhocContext:
     run: Any = None
     task: Any = None
     turn_id: str | None = None
+    thread_id: str | None = None  # compiled contexts are reused within a thread (CTX-005)
     on_stage: Callable[[str, str, dict[str, Any]], None] | None = None
 
     @property
@@ -384,7 +385,7 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
     try:
         with session_scope() as s:
             ctx = adhoc_context(s, user, workspace_id)
-        ctx.turn_id, ctx.on_stage = turn_id, stage
+        ctx.turn_id, ctx.thread_id, ctx.on_stage = turn_id, thread_id, stage
         if not ctx.scope.assets:
             out = {"status": "refused", "refusal": refusal("no_scope", "No selected, ready tables are in your scope.")}
         else:
