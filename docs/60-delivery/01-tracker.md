@@ -10,6 +10,9 @@ review. 2026-09-26: increment 7 and rows P5-04..06, P6-04..08 added from
 [spec v4](../00-intent/04-spec-v4-unified-data-platform.md) (one platform; Atlas and DataPilot as donors); P7-15..P7-18 and revised port rows from the
 [build-right study](../70-reviews/2026-09-26-build-right-study.md) (measured donor verdicts, lite by default, light IA). The [architecture review](../70-reviews/2026-09-25-architecture-review.md) records the
 platform workstream; the [workspace review](04-design-review.md) records its remaining scope.
+2026-09-26: N-12 added (catalog classification confidence — sample-based domain/role confirmation
+and a scoped, review-gated LLM domain-classification-assist purpose), from session discussion of
+crawl-time classification.
 
 ## P. Current execution queue
 
@@ -180,6 +183,7 @@ Waves and exits: spec v4 §16.
 | N-9 | What-if scenarios (parameterised `SemanticQuery`, simulated vs observed labels) | Deferred | Needs P7-02 |
 | N-10 | PPTX/DOCX report formats from verified snapshots | Deferred | HTML/PDF/XLSX exist (`services/reports.py`) |
 | N-11 | Index/optimisation advice, never auto-applied (DataPilot `index_advisor.py`) | Deferred | Later donor port |
+| N-12 | Catalog classification confidence, two parts: (a) extend the deterministic value-sample confirmation pattern already used for PII (`skills/catalog._VALUE_DETECTORS`) to table role/domain (`_structural_role`, `_domain`) — sample a few distinct values per column (categorical cardinality, FK value-shape) to raise confidence, on top of today's name/structure-only rules, never lowering below the rule's floor; (b) a scoped `domain_classification_assist` model purpose, same shape as `metadata_enrichment` (`services/crawler.py:_enrich`) — screened name/type metadata only, no sample values, no sensitive columns — for tables `_domain` scores `generic` or low-confidence. The model proposes a candidate domain + rationale as a `knowledge/suggestions` review-queue draft; it never writes `TableSemantics.domain` directly (rule 3, models propose/code decides). An approved suggestion is a signal to add the missing term to `DOMAIN_KEYWORDS` or the workspace's domain pack (`capabilities/packs.py`), turning a repeat model call into permanent rule coverage, not a standing per-crawl cost | Not started | Raised 2026-09-26 in session discussion of crawl-time classification; builds on P3-02/P3-05 (crawler + catalog semantics) and the P4-K07 suggestion/review-queue pattern; needs a new `config/models.yaml` purpose + rule path (CLAUDE.md conventions) before (b) can run under `auto` mode; (a) has no dependency and can start first |
 
 N-1, N-4 and N-5 are mapped into P4/P6 above; the platform workstream also tracks related pieces.
 
