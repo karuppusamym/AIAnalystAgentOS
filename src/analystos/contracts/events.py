@@ -17,6 +17,8 @@ EVENT_TYPES = {
     "build_target.provisioned", "build.planned", "build.started", "build.completed", "build.failed", "build.refused",
     "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
+    # Semantic compilation and review (P7-02, P7-09, P4-05)
+    "semantic.metric.stale", "semantic.model.approved", "semantic.relationship.candidate", "semantic.relationship.validated",
     "ask.answered", "ask.promoted", "capability.invoked",
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
     # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches

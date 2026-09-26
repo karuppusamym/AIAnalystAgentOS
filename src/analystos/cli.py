@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge | check-semantics"""
 from __future__ import annotations
 
 import argparse
@@ -201,11 +201,17 @@ def main(argv: list[str] | None = None) -> int:
         return knowledge_main(argv[1:])
     if argv[:1] == ["schedules"]:
         return schedules_main(argv[1:])
+    if argv[:1] == ["check-semantics"]:  # offline semantic model validation (ADR-0019 §6)
+        from analystos.semantic.check import main as check_semantics
+
+        rest = [a for a in argv[1:] if a != "--json"]
+        return check_semantics(rest, as_json="--json" in argv[1:])
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
                                             "export-contracts", "replay-run", "packs", "calibrate", "knowledge", "schedules",
-                                            "bi-sync", "sandbox-status"],
+                                            "bi-sync", "sandbox-status", "check-semantics"],
                         help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...); "
+                             "check-semantics: `analystos check-semantics PATH... [--json]` (offline model validation); "
                              "schedules: `analystos schedules disable-demo [--all] [--workspace W] [--dry-run]`")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")

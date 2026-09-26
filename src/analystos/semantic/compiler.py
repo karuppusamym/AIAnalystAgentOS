@@ -55,10 +55,12 @@ class CompiledMetricQuery:
 # ------------------------------------------------------------------------------------ catalog
 def load_catalog(session, workspace_id: str) -> dict[str, Any] | None:
     """The approved model version and approved metrics, plus glossary synonyms for the rules rung."""
-    from analystos.semantic.service import approved_metrics, current_model
+    from analystos.semantic.review import approved_model
+    from analystos.semantic.service import approved_metrics
 
-    model = current_model(session, workspace_id)
-    if model is None or model.status != "approved":
+    # The newest approved structure: an agent's pending proposal does not switch governed answers off.
+    model = approved_model(session, workspace_id)
+    if model is None:
         return None
     metrics = {name: {"id": m.id, "version": m.version, "hash": m.content_hash, "definition": m.definition}
                for name, m in approved_metrics(session, workspace_id).items()}
@@ -321,6 +323,53 @@ class _Join:
     pre_aggregated: bool = False
 
 
+def join_path(relationships: list[dict[str, Any]], base: str, target: str) -> list[_Join]:
+    """The one shortest relationship path from `base` to `target`, every edge validated; ties are refused
+    (not guessed). Offline: needs only the model's relationships (also used by reconciliation)."""
+    rels = sorted(relationships, key=lambda r: r["name"])
+    adj: dict[str, list[tuple[str, dict[str, Any], bool]]] = {}
+    for r in rels:
+        adj.setdefault(r["from"], []).append((r["to"], r, True))
+        adj.setdefault(r["to"], []).append((r["from"], r, False))
+    best: list[list[tuple[str, str, dict[str, Any], bool]]] = []
+    queue = deque([(base, [])])
+    seen_depth: dict[str, int] = {base: 0}
+    while queue:
+        node, trail = queue.popleft()
+        if best and len(trail) >= len(best[0]):
+            continue
+        for nxt, r, forward in adj.get(node, []):
+            if any(step[1] == nxt for step in trail) or nxt == base:
+                continue
+            step = [*trail, (node, nxt, r, forward)]
+            if nxt == target:
+                if not best or len(step) == len(best[0]):
+                    best.append(step)
+                continue
+            if seen_depth.get(nxt, len(step)) < len(step):
+                continue
+            seen_depth[nxt] = len(step)
+            queue.append((nxt, step))
+    if not best:
+        raise InvalidInput(f"No relationship in the approved model joins {base} to {target}.")
+    if len(best) > 1:
+        routes = ["; ".join(r["name"] for _, _, r, _ in p) for p in best]
+        raise InvalidInput(f"More than one join path leads from {base} to {target} ({' | '.join(routes)}). "
+                           "The compiler does not choose between them: remove or rename a relationship.",
+                           details={"paths": routes})
+    out = []
+    for src, dst, r, forward in best[0]:
+        card = r.get("cardinality")
+        if not card or not r.get("validated_at") or not r.get("validated_by"):
+            raise InvalidInput(
+                f"Relationship {r['name']} ({r['from']} -> {r['to']}) has no validated cardinality. Governed "
+                "metrics join only over relationships measured and accepted in the relationship review queue.",
+                details={"edge": r["name"], "fix": "review the relationship candidate for these columns"})
+        out.append(_Join(r, src, dst, card if forward else _REVERSE[card], forward))
+    return out
+
+
+
 class _Compilation:
     def __init__(self, query: SemanticQuery, catalog: dict[str, Any], scope: DataScope):
         self.query, self.catalog, self.scope = query, catalog, scope
@@ -397,48 +446,7 @@ class _Compilation:
 
     # -- joins
     def path(self, base: str, target: str) -> list[_Join]:
-        """The one shortest relationship path from the base dataset; ties are refused (not guessed)."""
-        rels = sorted(self.catalog.get("relationships") or [], key=lambda r: r["name"])
-        adj: dict[str, list[tuple[str, dict[str, Any], bool]]] = {}
-        for r in rels:
-            adj.setdefault(r["from"], []).append((r["to"], r, True))
-            adj.setdefault(r["to"], []).append((r["from"], r, False))
-        best: list[list[tuple[str, str, dict[str, Any], bool]]] = []
-        queue = deque([(base, [])])
-        seen_depth: dict[str, int] = {base: 0}
-        while queue:
-            node, trail = queue.popleft()
-            if best and len(trail) >= len(best[0]):
-                continue
-            for nxt, r, forward in adj.get(node, []):
-                if any(step[1] == nxt for step in trail) or nxt == base:
-                    continue
-                step = [*trail, (node, nxt, r, forward)]
-                if nxt == target:
-                    if not best or len(step) == len(best[0]):
-                        best.append(step)
-                    continue
-                if seen_depth.get(nxt, len(step)) < len(step):
-                    continue
-                seen_depth[nxt] = len(step)
-                queue.append((nxt, step))
-        if not best:
-            raise InvalidInput(f"No relationship in the approved model joins {base} to {target}.")
-        if len(best) > 1:
-            routes = ["; ".join(r["name"] for _, _, r, _ in p) for p in best]
-            raise InvalidInput(f"More than one join path leads from {base} to {target} ({' | '.join(routes)}). "
-                               "The compiler does not choose between them: remove or rename a relationship.",
-                               details={"paths": routes})
-        out = []
-        for src, dst, r, forward in best[0]:
-            card = r.get("cardinality")
-            if not card or not r.get("validated_at") or not r.get("validated_by"):
-                raise InvalidInput(
-                    f"Relationship {r['name']} ({r['from']} -> {r['to']}) has no validated cardinality. Governed "
-                    "metrics join only over relationships measured and accepted in the relationship review queue.",
-                    details={"edge": r["name"], "fix": "review the relationship candidate for these columns"})
-            out.append(_Join(r, src, dst, card if forward else _REVERSE[card], forward))
-        return out
+        return join_path(self.catalog.get("relationships") or [], base, target)
 
     # -- the statement
     def compile(self) -> CompiledMetricQuery:

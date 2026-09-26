@@ -14,9 +14,9 @@ def evidence_status(session, turn, freshness: dict) -> dict:
     model = session.get(SemanticModel, semantic["model_id"])
     if not model or model.workspace_id != turn.workspace_id or model.status != "approved" or model.content_hash != semantic["model_hash"]:
         reasons.append("The recorded semantic model is unavailable or no longer approved.")
-    from analystos.semantic.service import current_model
+    from analystos.semantic.review import approved_model
 
-    current = current_model(session, turn.workspace_id)
+    current = approved_model(session, turn.workspace_id)
     if not current or current.id != semantic["model_id"]:
         reasons.append("The semantic model has a different current version.")
     for ref in semantic["metrics"]:

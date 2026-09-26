@@ -104,12 +104,15 @@ def save_model(session: Session, workspace_id: str, *, actor: str, origin: str, 
     if cur and cur.content_hash == digest:
         return cur
     human = not origin.startswith("agent:")
+    # P4-05: a person's change on top of an unreviewed (proposed) version would approve that proposal's
+    # content without review, so it stays a proposal too; decide_model approves it (separation of duties).
+    reviewed = cur is None or cur.status == "approved"
     owner = cur.owner_id if cur and cur.owner_id else (actor.split(":", 1)[1] if human and actor.startswith("user:") else None)
     for attempt in range(_VERSION_ATTEMPTS):
         version = (session.scalar(select(func.max(SemanticModel.version))
                                   .where(SemanticModel.workspace_id == workspace_id)) or 0) + 1
         row = SemanticModel(id=new_id("sem"), workspace_id=workspace_id, name=name, version=version,
-                            status=status or ("approved" if human else "proposed"), owner_id=owner,
+                            status=status or ("approved" if human and reviewed else "proposed"), owner_id=owner,
                             description=content["description"], ai_context=content["ai_context"], datasets=content["datasets"],
                             relationships=content["relationships"], custom_extensions=content["custom_extensions"],
                             origin=origin, run_id=run_id, content_hash=digest, created_by=actor)
@@ -125,6 +128,10 @@ def save_model(session: Session, workspace_id: str, *, actor: str, origin: str, 
          run_id=run_id, actor=actor, session=session)
     audit(actor, "semantic.model.saved", workspace_id=workspace_id, run_id=run_id, target=row.id,
           details={"version": version, "origin": origin, "content_hash": digest}, session=session)
+    if row.status == "approved":
+        from analystos.semantic.review import invalidate_stale
+
+        invalidate_stale(session, workspace_id, actor=actor)
     return row
 
 
@@ -206,12 +213,15 @@ def propose_metric(session: Session, workspace_id: str, defn: SemanticMetricDef,
     session.add(row)
     session.flush()
     found = [c for c in conflicts(session, workspace_id) if defn.name in c.names]
+    approved_row = next((r for r in reversed(history) if r.status == "approved"), None)
+    diff = _diff(approved_row.definition if approved_row else None, defn.model_dump(mode="json"))
     approval = request_approval(session, workspace_id=workspace_id, run_id=None, action=APPROVAL_ACTION,
                                 payload=_payload(workspace_id, defn.name, version, defn), plan_hash=None,
                                 policy_version=ws.policy_version, requested_by=proposed_by, risk_tier="medium", destination=None,
                                 affected_assets=[f"metric:{defn.name}"],
                                 evidence={"proposed_via": via, "run_id": run_id, "expression": defn.expression,
-                                          "conflicts": [c.model_dump() for c in found], "problem": problem})
+                                          "conflicts": [c.model_dump() for c in found], "problem": problem,
+                                          "diff": {"base_version": approved_row.version if approved_row else None, **diff}})
     row.approval_id = approval.id
     if source:
         from analystos.artifacts.registry import link
@@ -236,7 +246,7 @@ def _definition_from_input(body: MetricProposalIn) -> tuple[SemanticMetricDef | 
         defn = SemanticMetricDef(name=body.name, expressions=[DialectExpression(dialect=body.dialect, expression=body.expression)],
                                  description=body.description, ai_context=body.ai_context, display_name=body.display_name,
                                  format=body.format, grain=body.grain, filters=body.filters, dimensions=body.dimensions,
-                                 dataset=body.dataset)
+                                 dataset=body.dataset, pre_aggregations=body.pre_aggregations)
     except ValidationError as exc:
         fields = {"name": "name", "expressions": "expression"}
         return None, [{"field": fields.get(str(e["loc"][0]), str(e["loc"][0])) if e["loc"] else "definition",
@@ -271,8 +281,35 @@ def validate_proposal(session: Session, workspace_id: str, body: MetricProposalI
                       "detail": f"{defn.name} already has {len(competing)} live definition(s) "
                                 f"({', '.join(f'v{r.version} {r.status}' for r in competing)}); "
                                 "approving this one deprecates the approved version"})
+    approved_row = next((r for r in reversed(same_name) if r.status == "approved"), None)
     return {"ok": True, "problems": [], "conflicts": found, "normalized_expression": norm,
-            "existing": {"version": unchanged.version, "status": unchanged.status} if unchanged else None}
+            "existing": {"version": unchanged.version, "status": unchanged.status} if unchanged else None,
+            "diff": {"base_version": approved_row.version if approved_row else None,
+                     **_diff(approved_row.definition if approved_row else None, defn.model_dump(mode="json"))}}
+
+
+def _diff(before: dict[str, Any] | None, after: dict[str, Any] | None) -> dict[str, Any]:
+    from analystos.semantic.diff import diff_semantic_object, metric_snapshot
+
+    return diff_semantic_object(metric_snapshot(before), metric_snapshot(after)).as_dict()
+
+
+def metric_diff(session: Session, workspace_id: str, name: str, version: int | None = None) -> dict[str, Any]:
+    """A metric version (default: the newest open proposal, else the newest) against the approved one:
+    what an approver sees before deciding (P7-02)."""
+    rows = metric_rows(session, workspace_id, name=name)
+    if not rows:
+        raise NotFound(f"metric {name} not found")
+    if version is not None:
+        target = next((r for r in rows if r.version == version), None)
+        if target is None:
+            raise NotFound(f"metric {name} v{version} not found")
+    else:
+        target = next((r for r in reversed(rows) if r.status == "proposed"), rows[-1])
+    base = next((r for r in reversed(rows) if r.status == "approved" and r.id != target.id), None)
+    return {"name": name, "version": target.version, "status": target.status,
+            "base_version": base.version if base else None,
+            **_diff(base.definition if base else None, target.definition)}
 
 
 def propose_from_input(session: Session, workspace_id: str, body: MetricProposalIn, user: User) -> tuple[SemanticMetric, bool]:
@@ -321,6 +358,8 @@ def decide_metric(session: Session, workspace_id: str, name: str, user: User, *,
     from analystos.governance.approvals import decide
 
     row = _pending(session, workspace_id, name, version)
+    if approve:
+        _check_definition(session, row)
     if row.proposed_by == user.id:
         # own session: the caller's transaction rolls back with the Forbidden, the denial must stay on record
         audit(f"user:{user.id}", "semantic.metric.self_approval_blocked", workspace_id=workspace_id, target=row.id,
@@ -350,6 +389,7 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
         return row
     if approval.status != "approved":
         return row
+    _check_definition(session, row)  # also when the decision came through the approvals inbox
     # Bound to the hash of exactly this version's definition: a changed definition cannot ride on it.
     verify_for_execution(session, approval.id, payload=_payload(row.workspace_id, row.name, row.version, definition(row)),
                          plan_hash=None)
@@ -365,7 +405,43 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
     from analystos.knowledge.learning import draft_from_metric
 
     draft_from_metric(session, row)  # P4-K08: the approved KPI becomes a knowledge draft for review
+    _link_metric(session, row)
     return row
+
+
+def _check_definition(session: Session, row: SemanticMetric) -> None:
+    """ADR-0019 §5: at approval the expression must parse for its dialect and read only its dataset's
+    columns (and a cross-dataset dimension needs a validated, fan-out-safe join)."""
+    from analystos.semantic.review import definition_problems
+
+    model = current_model(session, row.workspace_id)
+    problems = definition_problems(definition(row), model.datasets if model else [], model.relationships if model else [])
+    if problems:
+        raise InvalidInput(f"metric {row.name} v{row.version} cannot be approved: {'; '.join(problems)}",
+                           details={"problems": [{"field": "definition", "message": p} for p in problems]})
+
+
+def _link_metric(session: Session, row: SemanticMetric) -> None:
+    """Lineage: an approved metric is defined on its dataset's tables."""
+    import sqlglot
+    from sqlglot import exp
+
+    from analystos.artifacts.registry import link
+
+    model = current_model(session, row.workspace_id)
+    defn = definition(row)
+    dataset = next((d for d in (model.datasets if model else []) if d["name"] == defn.dataset), None)
+    if dataset is None:
+        return
+    try:
+        tree = sqlglot.parse_one(dataset["source"])
+    except sqlglot.errors.SqlglotError:
+        return
+    tables = [tree] if isinstance(tree, exp.Table) else list(tree.find_all(exp.Table))
+    for t in tables:
+        if t.name:
+            link(session, row.workspace_id, ("semantic_metric", row.id), "defined_on",
+                 ("table", f"{t.db}.{t.name}" if t.db else t.name))
 
 
 def deprecate_metric(session: Session, workspace_id: str, name: str, user: User, *, reason: str | None = None) -> list[SemanticMetric]:
@@ -411,7 +487,43 @@ def conflicts(session: Session, workspace_id: str) -> list[SemanticConflict]:
         if len({r.normalized_expression for r in rows}) > 1:
             out.append(SemanticConflict(kind="conflicting_definition", names=[name], metrics=[brief(r) for r in rows],
                                         detail=f"{name} has {len(rows)} competing definitions; approve one, reject the others"))
+    # P4-05 denominator reconciliation: two ratios over one dataset with the same numerator and another
+    # denominator are two answers to one question ("the rate of X") that will silently disagree.
+    by_numerator: dict[tuple[str | None, str], list[tuple[SemanticMetric, str]]] = defaultdict(list)
+    for r in live:
+        parts = _ratio(r)
+        if parts:
+            by_numerator[(definition(r).dataset, parts[0])].append((r, parts[1]))
+    for (dataset, _num), items in by_numerator.items():
+        names = sorted({r.name for r, _ in items})
+        if len(names) > 1 and len({d for _, d in items}) > 1:
+            out.append(SemanticConflict(
+                kind="denominator_mismatch", names=names, metrics=[brief(r) | {"denominator": d} for r, d in items],
+                detail=f"{', '.join(names)} share a numerator{f' on {dataset}' if dataset else ''} but divide by different "
+                       "denominators; agree on one population or name the difference"))
     return out
+
+
+def _ratio(row: SemanticMetric) -> tuple[str, str] | None:
+    """(normalized numerator, normalized denominator) of a top-level ratio of aggregates, else None."""
+    import sqlglot
+    from sqlglot import exp
+
+    defn = definition(row)
+    if defn.dialect not in ossie._SQLGLOT:
+        return None
+    try:
+        tree = sqlglot.parse_one(defn.expression, read=ossie._SQLGLOT[defn.dialect] or None)
+    except sqlglot.errors.SqlglotError:
+        return None
+    while isinstance(tree, exp.Paren):
+        tree = tree.this
+    if not isinstance(tree, exp.Div):
+        return None
+    num, den = tree.this, tree.expression
+    if not any(num.find_all(exp.AggFunc)) or not any(den.find_all(exp.AggFunc)):
+        return None
+    return ossie.normalize_expression(num.sql()), ossie.normalize_expression(den.sql())
 
 
 # ------------------------------------------------------------------------------------ Ossie documents

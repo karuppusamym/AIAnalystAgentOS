@@ -187,6 +187,7 @@ class MetricProposalIn(BaseModel):
     dimensions: list[str] = Field(default_factory=list)
     dataset: str | None = None
     ai_context: str | dict[str, Any] | None = None
+    pre_aggregations: list[str] = Field(default_factory=list)
 
 
 class SemanticConflict(BaseModel):

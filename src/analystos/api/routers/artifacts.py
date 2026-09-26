@@ -99,6 +99,13 @@ def _decide(approval_id: str, user: User, session: Session, approve: bool, reaso
     approval = approval_svc.decide(session, approval_id, session.merge(user), approve=approve, reason=reason)
     if approval.action == semantic_svc.APPROVAL_ACTION:  # a KPI decided from the approvals inbox takes effect now
         semantic_svc.apply_decision(session, approval)
+    else:
+        from analystos.semantic import review
+
+        if approval.action == review.MODEL_APPROVAL_ACTION:  # P4-05: a structure version
+            review.apply_model_decision(session, approval)
+        elif approval.action == review.RELATIONSHIP_APPROVAL_ACTION:  # P7-09: a measured relationship
+            review.apply_candidate_decision(session, approval)
     session.flush()
     result = row(approval, exclude={"payload"})
     run_id = approval.run_id
