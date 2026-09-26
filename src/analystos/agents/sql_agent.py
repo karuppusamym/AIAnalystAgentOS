@@ -245,65 +245,81 @@ def ask_registry(ctx: Any, question: str, parameters: dict[str, Any] | None = No
     return None if hit is None else _registry_answer(ctx, question, hit)
 
 
-_DISTRIBUTION_QUESTION = re.compile(
-    r"(?:show(?: me)? |give me (?:the )?|what is (?:the )?)?"
-    r"(?:distribution|breakdown) (?:of )?incidents? (?:based on|by|per|across) "
-    r"(?:incident )?(type|category|contact type|channel)"
-)
-_INCIDENT_DIMENSIONS = {"Category": "category", "Contact channel": "contact_type"}
+def _distribution_specs() -> tuple[dict[str, Any], ...]:
+    """Count distributions the installed domain packs declare (`ask_distributions` hints): core
+    names no table or column; the pack says which entity and dimensions a rule may count."""
+    from analystos.capabilities import packs
+
+    return packs.hints().ask_distributions
+
+
+def _distribution_pattern(spec: dict[str, Any]) -> re.Pattern[str]:
+    words = [w for d in spec.get("dimensions") or [] for w in d.get("words") or []] + list(spec.get("ambiguous") or [])
+    alt = lambda xs: "|".join(re.escape(str(x).lower()) for x in sorted(xs, key=len, reverse=True))  # noqa: E731
+    entity = re.escape(str(spec["entity"]).lower())
+    return re.compile(rf"(?:show(?: me)? |give me (?:the )?|what is (?:the )?)?(?:distribution|breakdown) (?:of )?"
+                      rf"(?:{alt(spec.get('nouns') or [spec['entity']])}) (?:based on|by|per|across) "
+                      rf"(?:{entity} )?({alt(words)})")
 
 
 def _distribution_plan(ctx: Any, question: str, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Only the complete, unfiltered incident distribution question is covered by this rule.
+    """Only a complete, unfiltered distribution question for a pack-declared entity is covered.
 
-    Identifiers come from the caller's scope; a vague "type" is never silently mapped to a field.
-    Other questions keep the verified-query/model route and its refusal behavior.
+    Identifiers come from the caller's scope; an ambiguous word (e.g. "type") is never silently
+    mapped to a field. Other questions keep the verified-query/model route and its refusals.
     """
     plain = re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
-    match = _DISTRIBUTION_QUESTION.fullmatch(plain)
-    if match is None:
-        return None
-    assets = [fq for fq in ctx.scope.assets if fq.rpartition(".")[2].lower() == "incident"]
-    if len(assets) != 1:
-        return None
-    asset = assets[0]
-    columns = set(getattr(ctx.scope, "columns", {}).get(asset, []))
-    denied = set(getattr(ctx.scope, "denied_columns", []))
-    available = {label: column for label, column in _INCIDENT_DIMENSIONS.items()
-                 if column in columns and f"{asset}.{column}" not in denied}
-    if not available:
-        return None
-    requested = match.group(1)
-    label = ("Category" if requested == "category" else "Contact channel" if requested in ("contact type", "channel")
-             else str((parameters or {}).get("incident_type") or ""))
-    if requested != "type" and label not in available:
-        return None
-    return {"asset": asset, "available": available, "label": label if label in available else None}
+    for spec in _distribution_specs():
+        match = _distribution_pattern(spec).fullmatch(plain)
+        if match is None:
+            continue
+        entity = str(spec["entity"]).lower()
+        assets = [fq for fq in ctx.scope.assets if fq.rpartition(".")[2].lower() == entity]
+        if len(assets) != 1:
+            return None
+        asset = assets[0]
+        columns = set(getattr(ctx.scope, "columns", {}).get(asset, []))
+        denied = set(getattr(ctx.scope, "denied_columns", []))
+        dims = spec.get("dimensions") or []
+        available = {d["label"]: d["column"] for d in dims
+                     if d["column"] in columns and f"{asset}.{d['column']}" not in denied}
+        if not available:
+            return None
+        requested = match.group(1)
+        param = f"{entity}_type"
+        named = next((d["label"] for d in dims if requested in [str(w).lower() for w in d.get("words") or []]), None)
+        if named is not None and named not in available:
+            return None
+        label = named or str((parameters or {}).get(param) or "")
+        return {"asset": asset, "entity": entity, "param": param, "available": available,
+                "label": label if label in available else None}
+    return None
 
 
 def _distribution_answer(ctx: Any, question: str, plan: dict[str, Any], parameters: dict[str, Any] | None) -> dict[str, Any]:
     label = plan["label"]
     if label is None:
         choices = list(plan["available"])
-        _stage(ctx, "clarify", "Checking which incident type you mean")
+        _stage(ctx, "clarify", f"Checking which {plan['entity']} type you mean")
         return {"status": "needs_input", "answered_by": "rules", "model": None, "sql": None, "attempts": [],
                 "result": None, "parameters": parameters or {},
-                "missing": [{"name": "incident_type", "values": choices}],
+                "missing": [{"name": plan["param"], "values": choices}],
                 "explanation": f"‘Type’ could mean {' or '.join(choices)}. Choose the field to group by; nothing was guessed."}
     column = plan["available"][label]
-    sql = (f"SELECT {column}, COUNT(*) AS incident_count FROM {plan['asset']} "
-           f"GROUP BY {column} ORDER BY incident_count DESC")
-    _stage(ctx, "execute", f"Counting incidents by {label.lower()} through the read-only query gateway")
+    count = f"{plan['entity']}_count"
+    sql = (f"SELECT {column}, COUNT(*) AS {count} FROM {plan['asset']} "
+           f"GROUP BY {column} ORDER BY {count} DESC")
+    _stage(ctx, "execute", f"Counting {plan['entity']} records by {label.lower()} through the read-only query gateway")
     result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                           run_id=None, task_id=None)
     if getattr(ctx, "router", None) is not None:
         from analystos.llm.cache import estimate_tokens
 
         ctx.router.record_skip("sql_generation", ctx.call_ctx(), estimated_tokens=estimate_tokens(question) + 500,
-                               reason=f"L2 rule: incident distribution by {column}", rung="rules")
+                               reason=f"L2 rule: {plan['entity']} distribution by {column}", rung="rules")
     return {"status": "answered", "answered_by": "rules", "model": None, "sql": sql, "attempts": [],
-            "result": _result(result), "chart": {"type": "bar", "x": column, "y": "incident_count"},
-            "explanation": f"Count of incidents grouped by {label.lower()} (schema-bound rule; no model call)."}
+            "result": _result(result), "chart": {"type": "bar", "x": column, "y": count},
+            "explanation": f"Count of {plan['entity']} records grouped by {label.lower()} (schema-bound rule; no model call)."}
 
 
 def route(ctx: Any, question: str, hit: Any, rejected: list[dict[str, Any]] | None = None,
