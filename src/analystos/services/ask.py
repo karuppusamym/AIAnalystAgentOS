@@ -757,7 +757,9 @@ def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], reques
     if apr is None or apr.workspace_id != turn.workspace_id or apr.action != DASHBOARD_ACTION:
         raise InvalidInput("the approval does not cover adding this answer to a dashboard")
     verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-    apr.status = "executed"  # single use
+    from analystos.governance.approvals import consume
+
+    consume(s, apr)  # single use (compare-and-set)
     art = save_artifact(s, workspace_id=turn.workspace_id, type_="chart", name=_slug(turn.question), creator_user=me.id,
                         status="approved", content={"title": turn.question[:200], "sql": turn.sql, "chart": payload["chart"],
                                                     "dashboard": payload["dashboard"], "destination": destination,

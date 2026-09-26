@@ -49,7 +49,7 @@ from analystos.core.errors import (
 from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.db.models import AnalysisRun, Approval, McpServer, ToolExecution, User
 from analystos.events.bus import emit
-from analystos.governance.approvals import request_approval, verify_for_execution
+from analystos.governance.approvals import consume, request_approval, verify_for_execution
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate, get_workspace, load_policy, member_role, require_role
 from analystos.skills.catalog import has_injection, screen_text
@@ -528,7 +528,7 @@ def invoke_tool(session_factory: Callable[[], Any], user: User, workspace_id: st
             verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
             if member_role(s, s.merge(user), workspace_id) is None:
                 raise Forbidden("caller is no longer a workspace member")
-            apr.status = "executed"  # single use: consumed before the side effect, never replayable
+            consume(s, apr)  # single use (compare-and-set): consumed before the side effect, never replayable
             decision_doc["approval_id"] = approval_id
         server_snapshot = McpServer(id=srv.id, workspace_id=srv.workspace_id, name=srv.name, url=srv.url,
                                     transport=srv.transport, secret_ref=srv.secret_ref, config=dict(srv.config or {}))

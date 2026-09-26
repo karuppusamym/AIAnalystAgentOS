@@ -101,7 +101,7 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
     from analystos.contracts.registry import AgentPolicies, AgentSpec
     from analystos.db.models import Approval
     from analystos.events.bus import emit
-    from analystos.governance.approvals import request_approval, verify_for_execution
+    from analystos.governance.approvals import consume, request_approval, verify_for_execution
     from analystos.governance.audit import audit
     from analystos.governance.policy import get_workspace, load_policy, require_role, resolve_scope
     from analystos.runtime.context import default_services
@@ -170,7 +170,7 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
                       details={"approval_id": approval_id})  # own transaction: survives the refusal
                 raise PolicyDenied("this approval was requested by another user; request your own")
             verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-            apr.status = "executed"  # single use: consumed immediately before the side effect, never replayable
+            consume(s, apr)  # single use (compare-and-set): consumed immediately before the side effect
     result = fn(ctx, **arguments)
     with session_scope() as s:
         audit(f"user:{user.id}", "capability.invoked", workspace_id=workspace_id, target=m.ref,
