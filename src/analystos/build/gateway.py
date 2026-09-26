@@ -54,7 +54,7 @@ from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Approval, Artifact, BuildJob, BuildTarget, Source, User
 from analystos.events.bus import emit
-from analystos.governance.approvals import verify_for_execution
+from analystos.governance.approvals import consume, verify_for_execution
 from analystos.governance.audit import audit
 
 BUILD_ACTION = "elt_build"
@@ -231,7 +231,7 @@ class BuildGateway:
                 emit(job.workspace_id, "build.refused", {"job_id": job.id, "reason": exc.message[:300]}, run_id=job.run_id,
                      actor=actor, session=s)
             if refusal is None:
-                approval.status = "executed"  # single use: consumed before the side effect
+                consume(s, approval)  # single use (compare-and-set): consumed before the side effect
                 job.status, job.approval_id, job.started_at, job.error = "running", approval_id, utcnow(), None
                 audit(actor, "build.started", workspace_id=job.workspace_id, run_id=job.run_id, target=job.id, decision="allow",
                       details={"approval_id": approval_id, "project_hash": job.project_hash, "engine": job.engine,

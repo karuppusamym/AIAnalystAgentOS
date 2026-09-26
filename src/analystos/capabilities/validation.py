@@ -77,6 +77,15 @@ def validate_kinds(manifests: dict[str, CapabilityManifest], *, references: bool
                     problems.append(f"{where}: step {key}: agent {use} has no default entry")
                 if behaviour is not None and behaviour not in (target.spec.get("behaviours") or {}):
                     problems.append(f"{where}: step {key}: agent {use} has no behaviour {behaviour}")
+        elif m.kind == "Tool" and (m.entry or "").startswith("http:"):
+            from analystos.core.errors import InvalidInput
+            from analystos.tools.http import http_spec
+
+            try:
+                http_spec(m)
+            except InvalidInput as exc:
+                problems.append(f"{where}: {exc.message}")
+            problems += _schema_problems(where, m.input_schema)
         elif m.kind in EXECUTABLE_KINDS and isinstance(m.spec, dict) and m.spec.get("call") == "context":
             tool = m.spec.get("tool")
             if tool is not None and tool not in tools:

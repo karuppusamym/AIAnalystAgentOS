@@ -38,6 +38,7 @@ from typing import Any
 
 from analystos.contracts.platform import PurposeProfile
 from analystos.core.errors import ContextOverBudget
+from analystos.security.injection import is_injection
 
 NO_MATCH = "NO_MATCH"
 
@@ -368,6 +369,11 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
                 rendered["trusted"] = False
             if n >= profile.max_items_per_section:
                 omitted.append({"section": section, "id": item.id, "name": item.name, "reason": "section item cap"})
+                continue
+            if is_injection(rendered["text"]) or is_injection(item.name):
+                # P7-10: the last check before a prompt, whatever the item's origin or trust.
+                omitted.append({"section": section, "id": item.id, "name": "(withheld)", "reason": "screened: reads like "
+                                "an instruction to a model"})
                 continue
             body[section].append(rendered)
             over_agent = knowledge_chars is not None and used() - before_knowledge > knowledge_chars

@@ -24,6 +24,7 @@ from analystos.core.errors import AnalystOSError, InvalidInput, ModelUnavailable
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset, by_code
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
+from analystos.llm.redaction import QUESTION_MODEL_INSTRUCTION, redact_question, restore_values, tokenize_values
 from analystos.runtime.context import RunContext
 
 
@@ -486,19 +487,26 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
                 "missing": [{"name": n} for n in asked["missing_inputs"]],
                 "explanation": "This question is too open to answer safely. Say what to measure (a count, a rate, an "
                                "average), over which records and period, and how to group it."}
+    # P7-10: account/customer numbers, cards, SSNs, IBANs and e-mails typed into the question leave as
+    # tokens; the model writes the token and the real value is restored here, before the gateway.
+    rq = redact_question(question)
+    asked_text = rq.text
     _stage(ctx, "context", "Finding the tables that answer this")
-    catalog = catalog_for_prompt(ctx, objective=question, capped=False)
+    catalog = catalog_for_prompt(ctx, objective=asked_text, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     _stage(ctx, "generate", "Writing the SQL")
-    generation = compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
-                             catalog=catalog, reference_text=question)
+    required = {"question": asked_text, "dialect": dialect}
+    if rq.redacted:
+        required["redacted_values"] = QUESTION_MODEL_INSTRUCTION
+    generation = compile_for(ctx, "sql_generation", required, objective=asked_text, catalog=catalog,
+                             reference_text=asked_text)
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", generation, prompt_vars={"dialect": dialect},
                            validate=has_sql)
     if has_sql(data):  # no data, or an answer without a SQL statement: say which cause stopped it
         raise _generation_unavailable(model if data is None else ModelOutcome(
             "invalid_output", "the model answered without a SQL statement", purpose="sql_generation"))
     attempts = []
-    sql = str(data["sql"])
+    sql = restore_values(str(data["sql"]), rq.values)
     escalated = False
     attempt = 0
     while True:
@@ -508,7 +516,10 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
             _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
             result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
-            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": data.get("explanation"),
+            explanation = data.get("explanation")
+            if isinstance(explanation, str):
+                explanation = restore_values(explanation, rq.values)
+            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": explanation,
                     "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result),
                     "route": chosen["value"], "decisions": decisions}
         except (SQLRejected, AnalystOSError) as exc:
@@ -527,17 +538,18 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
                     raise
                 _stage(ctx, "escalate", f"The gateway still refused the SQL ({exc.message[:120]}); a stronger model rewrites it",
                        model=better_model)
-                data, model, sql = better, better_model, str(better["sql"])
+                data, model, sql = better, better_model, restore_values(str(better["sql"]), rq.values)
                 attempt += 1
                 continue
             _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
+            sent_sql, sent_error = tokenize_values(sql, rq.values), tokenize_values(exc.message, rq.values)
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
-                              compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
-                                                              "error": exc.message}, objective=question, catalog=catalog,
-                                          reference_text=f"{sql}\n{exc.message}"), validate=has_sql)
+                              compile_for(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
+                                          objective=asked_text, catalog=catalog,
+                                          reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
             if has_sql(fix):
                 raise
-            sql = str(fix["sql"])
+            sql = restore_values(str(fix["sql"]), rq.values)
             attempt += 1
 
 

@@ -48,8 +48,27 @@ def request_approval(session: Session, *, workspace_id: str, run_id: str | None,
     return approval
 
 
+def claim(session: Session, approval: Approval, *, expect: str, to: str, **values: Any) -> Approval:
+    """Compare-and-set the approval's status: one guarded ``UPDATE ... WHERE status = expect`` and a
+    rowcount check (P7-10). Two deciders or two executors that both read ``expect`` cannot both win,
+    whatever the isolation level or row locking of the database; the loser gets ``Conflict``."""
+    result = session.execute(
+        update(Approval).where(Approval.id == approval.id, Approval.status == expect).values(status=to, **values)
+        .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        session.expire(approval)
+        raise Conflict(f"approval {approval.id} is no longer {expect}; it was claimed concurrently")
+    session.expire(approval)
+    return approval
+
+
+def consume(session: Session, approval: Approval) -> Approval:
+    """Single use: claim a verified approval (approved -> executed) immediately before the side effect."""
+    return claim(session, approval, expect="approved", to="executed")
+
+
 def decide(session: Session, approval_id: str, user: User, *, approve: bool, reason: str | None = None) -> Approval:
-    approval = session.get(Approval, approval_id, with_for_update=True)
+    approval = session.get(Approval, approval_id)
     if approval is None:
         raise NotFound(f"approval {approval_id} not found")
     role = member_role(session, user, approval.workspace_id)
@@ -72,10 +91,8 @@ def decide(session: Session, approval_id: str, user: User, *, approve: bool, rea
         approval.status = "invalidated"
         approval.reason = "policy changed since the proposal was created"
         raise Conflict("policy changed since the proposal was created; a new approval is required")
-    approval.status = "approved" if approve else "rejected"
-    approval.decided_by = user.id
-    approval.decided_at = utcnow()
-    approval.reason = reason
+    claim(session, approval, expect="pending", to="approved" if approve else "rejected", decided_by=user.id,
+          decided_at=utcnow(), reason=reason)
     emit(approval.workspace_id, "approval.completed", {"approval_id": approval.id, "status": approval.status},
          run_id=approval.run_id, actor=f"user:{user.id}", session=session)
     audit(f"user:{user.id}", "approval.decided", workspace_id=approval.workspace_id, run_id=approval.run_id,
