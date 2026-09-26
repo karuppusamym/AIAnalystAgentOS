@@ -135,6 +135,10 @@ def test_triggers_refuse_drafts_outside_dev_and_retired_versions(world):
         with pytest.raises(PolicyDenied, match="draft"):  # a schedule may not even name it
             sch_svc.create_schedule(s, s.merge(owner), WS, name="weekly", kind="reanalysis", cron="0 7 * * 1",
                                     config={"definition": draft})
+        from analystos.services.monitors import create_monitor
+
+        with pytest.raises(PolicyDenied, match="draft: monitor runs published versions only"):  # nor a monitor
+            create_monitor(s, s.merge(owner), WS, name="mttr drift", kind="data_quality", config={"investigate_definition": draft})
         s.get(Workspace, WS).settings = {"environment": "dev"}
         s.flush()
         caps = runs_svc._capabilities(s, WS, playbook=None, definition=draft, pins=None, trigger="api")

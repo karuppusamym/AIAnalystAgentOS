@@ -53,6 +53,10 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
+    if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
+        from analystos.services.definitions import resolve_runnable
+
+        resolve_runnable(session, workspace_id, config["investigate_definition"], trigger="monitor")
     key = condition_key(workspace_id, kind, config)
     for existing in session.scalars(select(Monitor).where(Monitor.workspace_id == workspace_id, Monitor.kind == kind,
                                                           Monitor.enabled.is_(True))):
