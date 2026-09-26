@@ -1,0 +1,99 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "container": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Container",
+      "type": "object"
+    },
+    "parent_branch_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Branch Id"
+    },
+    "forked_from": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Forked From"
+    },
+    "base": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Base",
+      "type": "array"
+    },
+    "status": {
+      "default": "open",
+      "enum": [
+        "open",
+        "merged"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "merged_into": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Merged Into",
+      "type": "array"
+    },
+    "created_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created By"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "container"
+  ],
+  "title": "Branch",
+  "type": "object"
+}
