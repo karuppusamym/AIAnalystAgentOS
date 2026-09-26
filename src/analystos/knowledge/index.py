@@ -25,7 +25,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, event, select, text
 from sqlalchemy.orm import Session
 
 from analystos.core.logging import get_logger
@@ -104,9 +104,11 @@ def _use_provider(session: Session, p: emb.EmbeddingProvider) -> None:
         session.execute(text(f"ALTER TABLE knowledge_section ALTER COLUMN embedding TYPE vector({int(p.dim)}) USING NULL"))
         session.execute(text(f"CREATE INDEX {HNSW_INDEX} ON knowledge_section USING hnsw (embedding vector_cosine_ops)"))
         # psycopg prepares repeated statements server-side; a plan prepared against the old column type
-        # fails ("cached plan must not change result type") once the type changes. Other pooled
-        # connections re-prepare on their next use of a new statement; re-embed is an admin step.
+        # fails ("cached plan must not change result type") once the type changes, on this connection
+        # and on every pooled one. Re-embed is an admin step, so drop the pool once the change commits.
         session.execute(text("DEALLOCATE ALL"))
+        engine = session.get_bind().engine
+        event.listen(session, "after_commit", lambda _s: engine.dispose(), once=True)
     _set_state(session, EMBEDDING_KEY, emb.describe(p))
 
 
