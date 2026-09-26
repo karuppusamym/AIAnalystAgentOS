@@ -320,3 +320,20 @@ A read-only governance review of the build, Ask and self-hosting merges found no
 | m1–m11 | Invoke gate runs before approval use; editor role for side effects; Azure internal only with `private_link`; Bedrock endpoint egress check; OIDC byte compare, exact issuer and admin only for SSO-created accounts; `AttributeRule` needs a condition; explain hides out-of-scope relations; runbook notes | per-finding unit and integration tests |
 
 Compatibility: a stored workspace policy with an attribute rule whose `require` is empty now fails validation on load (m9).
+
+## 2026-09-26 — cost controls, Ask reliability, roadmap P0 rows
+
+The owner reported roughly $10 of OpenRouter credit spent in a day, mostly on Sonnet. This container's ledger recorded $3.31 in total ($2.98 of it Sonnet), all during the live evidence runs on 2026-09-25. Two causes were found:
+
+- `scripts/e2e_increment3.py` restored the `max_quality` preset (Sonnet first).
+- Dev schedules and monitors (16 schedules, 28 monitors) were left enabled, and the scheduler was running with the key in its environment.
+
+| Capability | Code | Coverage | Measured |
+|---|---|---|---|
+| Cheap-first routing with escalation only on a failed check | `config/models.yaml` (`escalation_models`), `llm/router.py` (`validate`, `_run_tier`), migration 0027 (`escalated_from`) | `test_escalation_and_caps.py`, `scripts/cost_gate.py` (usd metric, `escalation.json`) | Model-heavy standard run $0.0853 → $0.0090 (9.4× cheaper); a novel question $0.0249 → $0.0050 (fake transport, price table) |
+| Hard spend caps | `runtime/budget_counters.py` (atomic Lua reservation), `llm.daily_spend_cap_usd` (default $2/day), monthly workspace cap, 80 % alerts | `test_escalation_and_caps.py`, `test_spend_caps.py` (competing threads never overshoot) | — |
+| Model health | `GET /api/admin/models/health` (`?probe=1`), Admin models panel | `test_escalation_and_caps.py`, `modelHealth.test.tsx` | — |
+| Demo cleanup | `[demo]` naming and end-of-script disabling in evidence scripts; `analystos schedules disable-demo` | script tests | This container's 44 leftover demo items disabled |
+| Precise Ask refusals | `agents/common.ModelOutcome`, `services/ask.MODEL_REFUSALS`, web refusal card | `test_ask_model_refusals.py` (one per reason) | "no model route" is now `no_api_key`, `provider_cooldown` (with seconds left), `cap_reached`, and so on |
+| Deterministic Ask rules | `agents/ask_rules.py`, `skills/sqlbuild.aggregate_query`, the pack-declared `ask_distributions` | `test_ask_rules.py`, Ask benchmark | Off-tier accuracy 0.495 → 0.619 with no model; 0 confident wrong, 0 leaks (`evidence/2026-09-26-ask-benchmark-off-rules.md`) |
+| Connection pooling | `db/pools.py`, PgBouncer (compose `pooled`, Helm) | `test_db_pools.py`, `test_semantic_concurrent_saves.py` | 50/50 concurrent runs (`evidence/load-s05-runs-20260926.md`) |
