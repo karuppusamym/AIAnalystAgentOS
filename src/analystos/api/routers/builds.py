@@ -13,9 +13,8 @@ from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows
 from analystos.build import service as build_svc
 from analystos.build.targets import DEFAULT_ENGINE
-from analystos.core.errors import NotFound
 from analystos.db.models import Approval, BuildJob, BuildTarget, User
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role, scoped_loader
 
 router = APIRouter(prefix="/api", tags=["builds"])
 _SUMMARY_EXCLUDE = {"project_files", "openlineage", "log_tail", "manifest"}
@@ -65,12 +64,9 @@ def list_builds(workspace_id: str, user: User = Depends(current_user), session: 
     return out
 
 
+@scoped_loader
 def _job(session: Session, user: User, job_id: str) -> BuildJob:
-    job = session.get(BuildJob, job_id)
-    if job is None:
-        raise NotFound("build job not found")
-    require_role(session, user, job.workspace_id, "viewer")
-    return job
+    return load_in_workspace(session, BuildJob, job_id, user=user, label="build job")
 
 
 @router.get("/builds/{job_id}")

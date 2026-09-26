@@ -22,7 +22,7 @@ from analystos.db.models import (
     User,
 )
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.llm.config import load_models_config
 from analystos.tools.registry import list_tools
 
@@ -63,8 +63,9 @@ def context_entity(entry_id: str, user: User = Depends(current_user), session: S
     owner = e.workspace_id if e is not None else (doc.workspace_id if doc is not None else None)
     if e is None and doc is None:
         raise NotFound("context entry not found")
-    if owner:
-        require_role(session, user, owner, "viewer")
+    if owner:  # a workspace's entry or document: the caller's role there decides (404 otherwise)
+        load_in_workspace(session, ContextEntry if e is not None else KnowledgeDocument, entry_id, user=user,
+                          label="context entry")
     view = get_entry(session, owner, entry_id) if owner else None
     if view is None:  # a platform-pack document: visible to every workspace
         from analystos.knowledge.entries import doc_entry

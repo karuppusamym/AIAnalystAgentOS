@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.api.deps import current_user, db, streaming_user
+from analystos.api.deps import StreamAuth, current_user, db, stream_guard, streaming_auth
 from analystos.api.serialize import row, rows
-from analystos.core.errors import InvalidInput, NotFound
+from analystos.core.errors import InvalidInput
 from analystos.db.base import session_scope
 from analystos.db.models import (
     AgentMessage,
@@ -23,7 +25,7 @@ from analystos.db.models import (
     ToolExecution,
     User,
 )
-from analystos.governance.policy import require_role, resolve_scope
+from analystos.governance.policy import load_in_workspace, require_role, resolve_scope, scoped_loader
 from analystos.services import runs as run_svc
 from analystos.services.ask import AdhocContext, adhoc_context, explain_sql
 
@@ -91,52 +93,51 @@ def _run_detail(session: Session, run: AnalysisRun) -> dict:
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}")
 def get_run(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    run = run_svc.get_run_for(session, user, run_id)
-    if run.workspace_id != workspace_id:
-        raise NotFound("run not in workspace")
-    return _run_detail(session, run)
+    return _run_detail(session, run_svc.get_run_for(session, user, run_id, workspace_id=workspace_id))
 
 
 @router.get("/agent-runs/{task_id}")
 def agent_run(task_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    task = session.get(RunTask, task_id)
-    if task is None:
-        raise NotFound("agent run not found")
-    run_svc.get_run_for(session, user, task.run_id)
+    task = load_in_workspace(session, RunTask, task_id, user=user, label="agent run", workspace_of=_task_workspace)
     return {**row(task), "messages": rows(session.scalars(select(AgentMessage).where(AgentMessage.task_id == task_id))),
             "tool_calls": rows(session.scalars(select(ToolExecution).where(ToolExecution.task_id == task_id))),
             "model_calls": rows(session.scalars(select(ModelCall).where(ModelCall.task_id == task_id))),
             "queries": rows(session.scalars(select(QueryExecution).where(QueryExecution.task_id == task_id)))}
 
 
-def _control(run_id: str, action: str, user: User):
-    return row(run_svc.control(user, run_id, action), exclude={"scope", "plan"})
+def _task_workspace(session: Session, task: RunTask) -> str | None:
+    return session.scalar(select(AnalysisRun.workspace_id).where(AnalysisRun.id == task.run_id))
+
+
+@scoped_loader
+def _control(workspace_id: str, run_id: str, action: str, user: User):
+    return row(run_svc.control(user, run_id, action, workspace_id), exclude={"scope", "plan"})
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/pause")
 def pause(workspace_id: str, run_id: str, user: User = Depends(current_user)):
-    return _control(run_id, "pause", user)
+    return _control(workspace_id, run_id, "pause", user)
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/resume")
 def resume(workspace_id: str, run_id: str, user: User = Depends(current_user)):
-    return _control(run_id, "resume", user)
+    return _control(workspace_id, run_id, "resume", user)
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/cancel")
 def cancel(workspace_id: str, run_id: str, user: User = Depends(current_user)):
-    return _control(run_id, "cancel", user)
+    return _control(workspace_id, run_id, "cancel", user)
 
 
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/feedback")
 def feedback(workspace_id: str, run_id: str, body: FeedbackIn, user: User = Depends(current_user)):
-    return run_svc.submit_feedback(user, run_id, **body.model_dump())
+    return run_svc.submit_feedback(user, run_id, **body.model_dump(), workspace_id=workspace_id)
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/console")
 def console(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Agent console (§52.7): messages, tool calls, model calls, queries, cost."""
-    run = run_svc.get_run_for(session, user, run_id)
+    run = run_svc.get_run_for(session, user, run_id, workspace_id=workspace_id)
     calls = list(session.scalars(select(ModelCall).where(ModelCall.run_id == run_id).order_by(ModelCall.id)))
     return {"messages": rows(session.scalars(select(AgentMessage).where(AgentMessage.run_id == run_id).order_by(AgentMessage.id))),
             "tool_calls": rows(session.scalars(select(ToolExecution).where(ToolExecution.run_id == run_id).order_by(ToolExecution.id))),
@@ -167,30 +168,31 @@ def _spend_by(calls: list, key) -> dict:
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/events")
-async def events(workspace_id: str, run_id: str, request: Request, after_id: int = 0, user: User = Depends(streaming_user)):
+async def events(workspace_id: str, run_id: str, request: Request, after_id: int = 0,
+                 auth: StreamAuth = Depends(streaming_auth)):
     """Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).
-    Database reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback)."""
+    Database reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback).
+    The caller is re-authorized while the stream is open: when the token expires or access is lost the
+    stream ends with an `expired` or `revoked` event and sends nothing after it."""
     from analystos.events.stream import run_blocking, run_event_stream
 
-    await run_blocking(_authorize_stream, user, workspace_id, run_id)
+    def load(session: Session, user: User) -> AnalysisRun:
+        return run_svc.get_run_for(session, user, run_id, workspace_id=workspace_id)
+
+    await run_blocking(_authorize_stream, auth.user, load)
     last = int(request.headers.get("last-event-id") or after_id)
-    return StreamingResponse(run_event_stream(run_id, last, is_disconnected=request.is_disconnected),
-                             media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    stream = run_event_stream(run_id, last, is_disconnected=request.is_disconnected, guard=stream_guard(auth, load))
+    return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def _authorize_stream(user: User, workspace_id: str, run_id: str) -> None:
+def _authorize_stream(user: User, load: Callable[[Session, User], object]) -> None:
     with session_scope() as s:
-        run = run_svc.get_run_for(s, user, run_id)
-        if run.workspace_id != workspace_id:
-            raise NotFound("run not in workspace")
+        load(s, user)
 
 
 @router.patch("/hypotheses/{hypothesis_id}")
 def edit_hypothesis(hypothesis_id: str, body: HypothesisPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    h = session.get(Hypothesis, hypothesis_id)
-    if h is None:
-        raise NotFound("hypothesis not found")
-    require_role(session, user, h.workspace_id, "analyst")
+    h = load_in_workspace(session, Hypothesis, hypothesis_id, user=user, minimum="analyst", label="hypothesis")
     if h.status not in ("proposed", "approved") and body.statement:
         raise InvalidInput("only untested hypotheses can be edited; submit feedback to redirect the analysis instead")
     if body.statement:

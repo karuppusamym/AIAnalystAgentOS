@@ -15,9 +15,9 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.core.errors import InvalidInput
-from analystos.db.models import ModelCall, User
-from analystos.governance.policy import require_role
-from analystos.knowledge import bundle, remote, store, studio, suggestions
+from analystos.db.models import KnowledgePack, ModelCall, User
+from analystos.governance.policy import load_in_workspace, require_role, scoped_loader
+from analystos.knowledge import bundle, remote, studio, suggestions
 
 router = APIRouter(prefix="/api", tags=["knowledge"])
 
@@ -105,9 +105,11 @@ def _can_edit(session: Session, user: User, workspace_id: str) -> bool:
     return role_at_least(require_role(session, user, workspace_id, "viewer"), "editor")
 
 
+@scoped_loader
 def _pack(session: Session, user: User, workspace_id: str, pack_id: str, minimum: str = "viewer"):
-    require_role(session, user, workspace_id, minimum)
-    return store.get_pack(session, pack_id, workspace_id)
+    """The workspace's own pack or the platform pack (shared), for a caller with `minimum` there."""
+    return load_in_workspace(session, KnowledgePack, pack_id, workspace_id, user=user, minimum=minimum,
+                             label="knowledge pack", shared=True)
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs")
