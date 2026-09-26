@@ -88,7 +88,7 @@ def backfill(settings: Any, staged: Iterable[tuple[str, str]], *, loader_url: st
     no workspace role (fail closed). Idempotent; run by ``analystos migrate``."""
     reader = reader_login(settings)
     owners = {staging_schema_for(src): ws for src, ws in staged}
-    raw = get_engine(loader_url or settings.analytics_loader_url).raw_connection()
+    raw = get_engine(loader_url or settings.analytics_loader_url, plane="loader").raw_connection()
     moved, orphaned = [], []
     try:
         conn = raw.driver_connection

@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from analystos.contracts.bi import MetricDef, PublishBundle
@@ -71,12 +72,21 @@ def _model_content(name: str, description: str | None, ai_context: Any, datasets
             "relationships": relationships, "custom_extensions": extensions}
 
 
+# Each failed attempt waited for a competing transaction to commit, so this bounds retries, not
+# spinning; 20 was too few for 50 runs of one workspace saving within the same second.
+_VERSION_ATTEMPTS = 100
+
+
 def save_model(session: Session, workspace_id: str, *, actor: str, origin: str, datasets: list[SemanticDataset] | None = None,
                relationships: list[SemanticRelationship] | None = None, description: str | None = None,
                ai_context: Any = None, custom_extensions: list[dict] | None = None, run_id: str | None = None,
                status: str | None = None) -> SemanticModel:
     """New structure version when anything changed (datasets/relationships merged by name). A human
-    change is `approved`; an agent's is `proposed` for review. Unchanged content is a no-op."""
+    change is `approved`; an agent's is `proposed` for review. Unchanged content is a no-op.
+
+    Concurrent saves in one workspace (many runs at once; P4-S05 load) can pick the same
+    ``max(version) + 1``; the loser retries in a savepoint with the next number. Optimistic on
+    purpose: a lock would hold a pooled connection per waiter while the holder may need another."""
     ws = session.get(Workspace, workspace_id)
     cur = current_model(session, workspace_id)
     ds = {d["name"]: d for d in (cur.datasets if cur else [])}
@@ -93,16 +103,24 @@ def save_model(session: Session, workspace_id: str, *, actor: str, origin: str, 
     digest = stable_hash(content)
     if cur and cur.content_hash == digest:
         return cur
-    version = (session.scalar(select(func.max(SemanticModel.version)).where(SemanticModel.workspace_id == workspace_id)) or 0) + 1
     human = not origin.startswith("agent:")
     owner = cur.owner_id if cur and cur.owner_id else (actor.split(":", 1)[1] if human and actor.startswith("user:") else None)
-    row = SemanticModel(id=new_id("sem"), workspace_id=workspace_id, name=name, version=version,
-                        status=status or ("approved" if human else "proposed"), owner_id=owner,
-                        description=content["description"], ai_context=content["ai_context"], datasets=content["datasets"],
-                        relationships=content["relationships"], custom_extensions=content["custom_extensions"],
-                        origin=origin, run_id=run_id, content_hash=digest, created_by=actor)
-    session.add(row)
-    session.flush()
+    for attempt in range(_VERSION_ATTEMPTS):
+        version = (session.scalar(select(func.max(SemanticModel.version))
+                                  .where(SemanticModel.workspace_id == workspace_id)) or 0) + 1
+        row = SemanticModel(id=new_id("sem"), workspace_id=workspace_id, name=name, version=version,
+                            status=status or ("approved" if human else "proposed"), owner_id=owner,
+                            description=content["description"], ai_context=content["ai_context"], datasets=content["datasets"],
+                            relationships=content["relationships"], custom_extensions=content["custom_extensions"],
+                            origin=origin, run_id=run_id, content_hash=digest, created_by=actor)
+        try:
+            with session.begin_nested():
+                session.add(row)
+                session.flush()
+            break
+        except IntegrityError as exc:
+            if "uq_semantic_model_version" not in str(exc.orig) or attempt == _VERSION_ATTEMPTS - 1:
+                raise
     emit(workspace_id, "semantic.model.updated", {"version": version, "origin": origin, "datasets": len(content["datasets"])},
          run_id=run_id, actor=actor, session=session)
     audit(actor, "semantic.model.saved", workspace_id=workspace_id, run_id=run_id, target=row.id,

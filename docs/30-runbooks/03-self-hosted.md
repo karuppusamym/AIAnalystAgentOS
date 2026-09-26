@@ -14,6 +14,7 @@ Chart: [`deploy/helm/analystos`](../../deploy/helm/analystos). Tests: `tests/uni
 | Scheduler | Deployment | claim-then-execute, so 2 replicas in `values-ha.yaml` never double-fire |
 | Web | Deployment + Service + PDB | nginx with an upstream ConfigMap pointing at this release's API Service; SSE unbuffered |
 | Migrate | pre-install / pre-upgrade Job | `analystos migrate && analystos seed` (with `ANALYSTOS_ENV=production` no demo accounts are seeded) |
+| PgBouncer | optional Deployment + Service (+ PDB), `pgbouncer.enabled` (off) | transaction pooling for the control plane and analytics loader/reader, never the builder; pool sizes `database.pools.*` ([operations runbook](02-operations.md#connection-pooling-p4-s05)) |
 | NetworkPolicy | optional, forced on in air-gapped mode | DNS, the release's own pods and `airGapped.allowedEgressCidrs` only |
 | ELT worker pool | Deployment at `replicas: 0` | dbt Core is **not** in the app image; scale it up only with an image that has dbt (`ANALYSTOS_DBT_EXECUTABLE`) and the builder login in the Secret |
 

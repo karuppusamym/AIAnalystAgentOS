@@ -50,8 +50,10 @@ def json_dumps(value) -> str:
 
 @lru_cache
 def get_engine(url: str | None = None) -> Engine:
-    return create_engine(url or get_settings().database_url, pool_pre_ping=True, pool_size=10, max_overflow=20,
-                         json_serializer=json_dumps)
+    from analystos.db.pools import engine_kwargs
+
+    url = url or get_settings().database_url
+    return create_engine(url, json_serializer=json_dumps, **engine_kwargs("control", url))
 
 
 @lru_cache

@@ -1,0 +1,471 @@
+{
+  "started_at": "2026-09-26T01:31:08.488065+00:00",
+  "target": "50 concurrent runs on a four-node worker deployment",
+  "runs": 50,
+  "workers": 4,
+  "deadline_s": 1080.0,
+  "task_queue_prefix": "aosload-s05p",
+  "pooling": {
+    "app_hostport": "localhost:6432",
+    "direct_hostport": "localhost:5432",
+    "settings": {
+      "ANALYSTOS_ANALYTICS_MAX_OVERFLOW": "10",
+      "ANALYSTOS_ANALYTICS_POOL_SIZE": "2",
+      "ANALYSTOS_DB_MAX_OVERFLOW": "16",
+      "ANALYSTOS_DB_POOL_SIZE": "4",
+      "ANALYSTOS_DB_TRANSACTION_POOLER": "true"
+    }
+  },
+  "staging_seconds": 3.3,
+  "worker_logs": [
+    "/tmp/aosload-worker0-0dloit6r.log",
+    "/tmp/aosload-worker1-r1z7lk73.log",
+    "/tmp/aosload-worker2-go8kdk43.log",
+    "/tmp/aosload-worker3-cuzgpbkw.log"
+  ],
+  "baseline": {
+    "status": "COMPLETED",
+    "submit_ms": 214.2,
+    "error": null,
+    "seconds": 22.5
+  },
+  "submitted": 50,
+  "submit_errors": [],
+  "submit_latency_ms": {
+    "n": 50,
+    "p50": 1204.8,
+    "p95": 1644.3,
+    "p99": 1781.8,
+    "max": 1781.8
+  },
+  "submit_wall_s": 1.9,
+  "completed": 21,
+  "failed": 29,
+  "waiting_user": 0,
+  "unfinished_at_deadline": 0,
+  "errors": [
+    "required task(s) failed: semantic"
+  ],
+  "run_seconds": {
+    "n": 21,
+    "p50": 431.3,
+    "p95": 438.8,
+    "p99": 442.8,
+    "max": 442.8
+  },
+  "start_delay_seconds": {
+    "n": 50,
+    "p50": 1.2,
+    "p95": 2.4,
+    "p99": 2.5,
+    "max": 2.5
+  },
+  "peak_running": 50,
+  "batch_wall_seconds": 444.2,
+  "throughput_runs_per_min": 2.84,
+  "resources": {
+    "samples": 441,
+    "load1_max": 59.92,
+    "load1_mean": 46.22,
+    "platform_rss_mb_max": 7612.0,
+    "platform_cpu_pct_mean": 334.6,
+    "platform_cpu_pct_max": 395.6,
+    "pg_connections_max": 26,
+    "pg_server_connections_max": 95,
+    "mem_available_mb_min": 6166,
+    "cores": 4
+  },
+  "timeline": [
+    [
+      0.1,
+      0,
+      0,
+      0
+    ],
+    [
+      7.4,
+      50,
+      0,
+      0
+    ],
+    [
+      14.7,
+      50,
+      0,
+      0
+    ],
+    [
+      21.8,
+      50,
+      0,
+      0
+    ],
+    [
+      28.9,
+      50,
+      0,
+      0
+    ],
+    [
+      36.1,
+      50,
+      0,
+      0
+    ],
+    [
+      43.2,
+      50,
+      0,
+      0
+    ],
+    [
+      50.3,
+      50,
+      0,
+      0
+    ],
+    [
+      57.4,
+      50,
+      0,
+      0
+    ],
+    [
+      64.4,
+      50,
+      0,
+      0
+    ],
+    [
+      71.4,
+      50,
+      0,
+      0
+    ],
+    [
+      78.5,
+      50,
+      0,
+      0
+    ],
+    [
+      85.5,
+      50,
+      0,
+      0
+    ],
+    [
+      92.6,
+      50,
+      0,
+      0
+    ],
+    [
+      99.7,
+      50,
+      0,
+      0
+    ],
+    [
+      106.8,
+      50,
+      0,
+      0
+    ],
+    [
+      113.8,
+      50,
+      0,
+      0
+    ],
+    [
+      120.8,
+      50,
+      0,
+      0
+    ],
+    [
+      128.0,
+      50,
+      0,
+      0
+    ],
+    [
+      135.0,
+      50,
+      0,
+      0
+    ],
+    [
+      142.0,
+      50,
+      0,
+      0
+    ],
+    [
+      149.1,
+      50,
+      0,
+      0
+    ],
+    [
+      156.2,
+      50,
+      0,
+      0
+    ],
+    [
+      163.3,
+      50,
+      0,
+      0
+    ],
+    [
+      170.4,
+      50,
+      0,
+      0
+    ],
+    [
+      177.4,
+      50,
+      0,
+      0
+    ],
+    [
+      184.5,
+      50,
+      0,
+      0
+    ],
+    [
+      191.5,
+      50,
+      0,
+      0
+    ],
+    [
+      198.6,
+      50,
+      0,
+      0
+    ],
+    [
+      205.6,
+      50,
+      0,
+      0
+    ],
+    [
+      212.7,
+      50,
+      0,
+      0
+    ],
+    [
+      219.8,
+      50,
+      0,
+      0
+    ],
+    [
+      226.8,
+      50,
+      0,
+      0
+    ],
+    [
+      233.8,
+      50,
+      0,
+      0
+    ],
+    [
+      240.9,
+      50,
+      0,
+      0
+    ],
+    [
+      248.0,
+      50,
+      0,
+      0
+    ],
+    [
+      255.1,
+      50,
+      0,
+      0
+    ],
+    [
+      262.2,
+      50,
+      0,
+      0
+    ],
+    [
+      269.3,
+      50,
+      0,
+      0
+    ],
+    [
+      276.3,
+      50,
+      0,
+      0
+    ],
+    [
+      283.4,
+      50,
+      0,
+      0
+    ],
+    [
+      290.4,
+      50,
+      0,
+      0
+    ],
+    [
+      297.5,
+      50,
+      0,
+      0
+    ],
+    [
+      304.6,
+      50,
+      0,
+      0
+    ],
+    [
+      311.6,
+      50,
+      0,
+      0
+    ],
+    [
+      318.7,
+      50,
+      0,
+      0
+    ],
+    [
+      325.8,
+      50,
+      0,
+      0
+    ],
+    [
+      332.9,
+      50,
+      0,
+      0
+    ],
+    [
+      340.0,
+      50,
+      0,
+      0
+    ],
+    [
+      347.2,
+      50,
+      0,
+      0
+    ],
+    [
+      354.4,
+      50,
+      0,
+      0
+    ],
+    [
+      361.6,
+      50,
+      0,
+      0
+    ],
+    [
+      368.9,
+      50,
+      0,
+      0
+    ],
+    [
+      376.4,
+      50,
+      0,
+      0
+    ],
+    [
+      383.6,
+      50,
+      0,
+      0
+    ],
+    [
+      390.9,
+      50,
+      0,
+      0
+    ],
+    [
+      398.3,
+      49,
+      1,
+      0
+    ],
+    [
+      405.6,
+      49,
+      1,
+      0
+    ],
+    [
+      412.9,
+      46,
+      4,
+      0
+    ],
+    [
+      420.1,
+      44,
+      6,
+      0
+    ],
+    [
+      427.2,
+      30,
+      20,
+      0
+    ],
+    [
+      434.3,
+      8,
+      42,
+      0
+    ],
+    [
+      441.3,
+      1,
+      49,
+      0
+    ]
+  ],
+  "checks": {
+    "all_runs_submitted": true,
+    "all_runs_completed": false,
+    "50_running_at_once": true,
+    "no_failures": false
+  },
+  "worker_log_signals": {
+    "pg_too_many_clients": 0,
+    "pg_connection_failed": 0,
+    "activity_failed_after_retries": 0,
+    "task_crashed": 106,
+    "heartbeat_timeout": 0
+  }
+}
