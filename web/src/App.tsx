@@ -8,7 +8,6 @@ import { ApprovalsPage } from "./pages/Approvals";
 import { AskPage } from "./pages/Ask";
 import { ConsolePage } from "./pages/Console";
 import { GovernancePage } from "./pages/Governance";
-import { InsightsPage } from "./pages/Insights";
 import { LoginPage } from "./pages/Login";
 import { MonitoringPage } from "./pages/Monitoring";
 import { WorkPage } from "./pages/Runs";
@@ -40,7 +39,7 @@ const ELEMENTS: Record<ScreenId, ReactElement> = {
   investigation: <RunViewPage />,
   "investigation-console": <ConsolePage />,
   outputs: <OutputsPage />,
-  finding: <InsightsPage />,
+  finding: <OutputsPage />,
   sources: <SourcesPage />,
   catalog: <Suspense fallback={<div className="page"><Loading /></div>}><CatalogPage /></Suspense>,
   approvals: <ApprovalsPage />,

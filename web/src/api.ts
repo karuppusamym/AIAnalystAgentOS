@@ -1329,9 +1329,10 @@ export interface RecipeRun {
   engine: string | null;
   status: "running" | "succeeded" | "blocked" | "refused" | "failed" | string;
   plan?: Dict | null;
-  preflight?: Dict | null;
+  preflight?: Dict[] | null;
   snapshots?: Dict | null;
-  gates?: unknown;
+  /** Per output: its gate outcome (recipes/gates.py `GateOutcome.summary`). */
+  gates?: Record<string, RecipeGateOutcome> | null;
   schema_changes?: unknown;
   outputs?: Dict | null;
   lineage?: unknown;
@@ -1340,6 +1341,16 @@ export interface RecipeRun {
   created_by: string;
   created_at: string;
   finished_at: string | null;
+  /** Preview mode only: the rows each output would have; nothing was written. */
+  preview?: Record<string, { columns: string[]; rows: unknown[][]; row_count: number; truncated: boolean; dropped_rows: number; would_block: boolean }>;
+}
+
+export interface RecipeGateOutcome {
+  blocked: boolean;
+  kept_rows: number;
+  dropped_rows: number;
+  gates: { gate: string; type: string; severity: string; columns: string[]; checked_rows: number; failed_rows: number; status: string; note?: string }[];
+  warnings: string[];
 }
 
 /** POST …/sources/{id}/ingest (services/file_ingest.py). */
@@ -2542,6 +2553,8 @@ export const api = {
 
   // recipes and file ingestion: Work → Prepare data (P6-04..07)
   listRecipes: (ws: string) => get("/api/workspaces/{workspace_id}/recipes", { path: W(ws) }) as Promise<Recipe[]>,
+  saveRecipe: (ws: string, spec: Dict) =>
+    post("/api/workspaces/{workspace_id}/recipes", { path: W(ws), body: { spec } }) as Promise<Recipe>,
   publishRecipe: (ws: string, id: string) =>
     post("/api/workspaces/{workspace_id}/recipes/{recipe_id}/publish", { path: { workspace_id: ws, recipe_id: id } }) as Promise<Recipe>,
   runRecipe: (ws: string, id: string, body: Schemas["RecipeRunIn"]) =>

@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { api, type Workspace } from "../api";
 import { useAuth } from "../auth";
 import { nextThemePref, setThemePref, useTheme } from "../lib/theme";
-import { fillPath, JOURNEYS, SCREENS } from "../routes";
+import { AREAS, canSee, fillPath, SCREENS } from "../routes";
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { NotificationBell } from "./NotificationBell";
@@ -36,8 +36,21 @@ function useWorkspace(wsId: string | undefined): Workspace | null {
   return ws;
 }
 
-/** Side nav grouped by journey (spec v3 §9), built from the route manifest. */
-function JourneyNav({ wsId, wsName }: { wsId?: string; wsName?: string }) {
+/**
+ * The navigation screens a person sees: the five areas, then the gear (Settings) with only the
+ * screens their role allows. Built from the route manifest; the palette uses the same filter.
+ */
+export function visibleNav(who: { isAdmin: boolean; role?: string | null }, wsId?: string) {
+  return AREAS.map((a) => ({
+    area: a,
+    screens: SCREENS.filter((s) => s.area === a.id && s.nav && (!s.workspace || wsId) && !(wsId && s.id === "workspaces") && canSee(s, who)),
+  })).filter((g) => g.screens.length > 0);
+}
+
+/** Side nav grouped by area (spec v4 §15), built from the route manifest. */
+function AreaNav({ wsId, wsName, role }: { wsId?: string; wsName?: string; role?: string | null }) {
+  const { user } = useAuth();
+  const groups = visibleNav({ isAdmin: !!user?.is_admin, role }, wsId);
   return (
     <>
       {wsId && (
@@ -46,25 +59,22 @@ function JourneyNav({ wsId, wsName }: { wsId?: string; wsName?: string }) {
           <div className="nav-ws" title={wsName ?? wsId}>{wsName ?? "Workspace"}</div>
         </div>
       )}
-      {JOURNEYS.map((j) => {
-        const screens = SCREENS.filter((s) => s.journey === j.id && s.nav && (!s.workspace || wsId) && !(wsId && s.id === "workspaces"));
-        if (!screens.length) return null;
-        return (
-          <div key={j.id} className="nav-journey" role="group" aria-labelledby={`nav-j-${j.id}`}>
-            <div id={`nav-j-${j.id}`} className="nav-journey-label" title={j.description}>{j.label}</div>
-            <ul className="nav-list">
-              {screens.map((s) => (
-                <li key={s.id}>
-                  <NavLink to={fillPath(s.path, { wsId })} end={s.id === "workspace-home" || s.id === "workspaces" || s.id === "investigations"}
-                    className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-                    {s.id === "workspace-home" ? "What changed" : s.title}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
-      })}
+      {groups.map(({ area, screens }) => (
+        <div key={area.id} className={`nav-journey nav-area-${area.id}`} role="group" aria-labelledby={`nav-a-${area.id}`}>
+          <div id={`nav-a-${area.id}`} className="nav-journey-label" title={area.description}>
+            {area.id === "settings" && <span aria-hidden="true">⚙ </span>}{area.label}</div>
+          <ul className="nav-list">
+            {screens.map((s) => (
+              <li key={s.id}>
+                <NavLink to={fillPath(s.path, { wsId })} end={s.id === "overview" || s.id === "workspaces" || s.id === "work"}
+                  className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
+                  {s.title}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </>
   );
 }
@@ -118,7 +128,7 @@ export function Layout() {
       </header>
       <div className="body">
         <nav id="sidenav" className={`sidenav ${navOpen ? "open" : ""}`} aria-label="Main">
-          <JourneyNav wsId={wsId} wsName={ws?.name} />
+          <AreaNav wsId={wsId} wsName={ws?.name} role={ws?.role} />
         </nav>
         <main id="main" className="main" tabIndex={-1}>
           <ErrorBoundary resetKey={location.pathname}>
@@ -126,7 +136,7 @@ export function Layout() {
           </ErrorBoundary>
         </main>
       </div>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} wsId={wsId} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} wsId={wsId} role={ws?.role} />
     </div>
   );
 }
