@@ -7,7 +7,7 @@ from analystos.core.errors import InvalidInput, PolicyDenied
 from analystos.core.ids import stable_hash
 from analystos.db.models import Schedule
 from analystos.governance.approvals import request_approval, verify_for_execution
-from analystos.governance.policy import get_workspace, require_role
+from analystos.governance.policy import get_workspace, require_role, scoped_loader
 
 ACTION = "ask.schedule"
 
@@ -37,6 +37,7 @@ def verify(session, user, workspace_id, name, cron, timezone, config):
     return turn
 
 
+@scoped_loader
 def request_schedule(session, user, turn_id, *, name, cron, timezone, approval_id=None):
     from analystos.services import schedules
     from analystos.services.ask import _turn_for, turn_out

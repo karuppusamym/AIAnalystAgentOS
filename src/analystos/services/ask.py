@@ -228,8 +228,8 @@ class AdhocContext:
 
 def adhoc_context(session: Session, user: User, workspace_id: str) -> AdhocContext:
     from analystos.runtime.context import default_services
-    from analystos.tools.registry import get_agent_spec
     from analystos.semantic.compiler import load_catalog
+    from analystos.tools.registry import get_agent_spec
 
     scope = resolve_scope(session, session.merge(user), workspace_id)
     ws = get_workspace(session, workspace_id)
@@ -531,6 +531,7 @@ def inspector(session: Session, user: User, turn_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------ explain pasted SQL
+@scoped_loader
 def rerun_turn(user: User, turn_id: str, sql: str | None = None) -> dict[str, Any]:
     """A fresh immutable turn, with a link to the old result and current access checks."""
     from analystos.agents.sql_agent import _authorize_ask, _check_budget, _result
