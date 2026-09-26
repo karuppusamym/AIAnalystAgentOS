@@ -250,8 +250,9 @@ def _thread_for(session: Session, user: User, thread_id: str, workspace_id: str 
 
 
 @scoped_loader
-def _turn_for(session: Session, user: User, turn_id: str) -> AskTurn:
-    turn = load_in_workspace(session, AskTurn, turn_id, user=user, label="question")
+def _turn_for(session: Session, user: User, turn_id: str, workspace_id: str | None = None) -> AskTurn:
+    """`workspace_id` (a saved-analysis schedule's) additionally requires the turn to belong there."""
+    turn = load_in_workspace(session, AskTurn, turn_id, workspace_id, user=user, label="question")
     try:
         _thread_for(session, user, turn.thread_id, turn.workspace_id)
     except NotFound:

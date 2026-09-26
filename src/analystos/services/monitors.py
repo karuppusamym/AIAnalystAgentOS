@@ -53,6 +53,10 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
+    if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
+        from analystos.services.definitions import resolve_runnable
+
+        resolve_runnable(session, workspace_id, config["investigate_definition"], trigger="monitor")
     key = condition_key(workspace_id, kind, config)
     for existing in session.scalars(select(Monitor).where(Monitor.workspace_id == workspace_id, Monitor.kind == kind,
                                                           Monitor.enabled.is_(True))):
@@ -409,8 +413,11 @@ def start_investigation(alert_id: str, user: User, *, automatic: bool = False) -
         objective = (f"Investigate this monitored change and identify its drivers: {alert.message} "
                      f"Business objective: {ws.objective}")[:2000]
         ws_id = ws.id
-    run = create_run(user, ws_id, objective=objective, origin={"type": "alert", "alert_id": alert_id, "publish": "skip",
-                                                               "automatic": automatic})
+        monitor = s.get(Monitor, alert.monitor_id) if getattr(alert, "monitor_id", None) else None
+        # A monitor may name the playbook version it investigates with; like every trigger it runs a published one.
+        definition = (monitor.config or {}).get("investigate_definition") if monitor is not None else None
+    run = create_run(user, ws_id, objective=objective, definition=definition,
+                     origin={"type": "alert", "alert_id": alert_id, "publish": "skip", "automatic": automatic})
     with session_scope() as s:
         a = s.get(Alert, alert_id)
         a.investigation_run_id = run.id

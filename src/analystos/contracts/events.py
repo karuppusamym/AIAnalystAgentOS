@@ -28,6 +28,11 @@ EVENT_TYPES = {
     # Verification records (P7-01, ADR-0020): a verdict bound to its dependency fingerprint; voided when a
     # dependency changes (with its cause), swept nightly; a finding flagged wrong carries its reason
     "verification.recorded", "verification.voided", "verification.sweep_completed", "insight.flagged_wrong",
+    # Definition lifecycle and pinned schedules (P7-03, ADR-0021)
+    "definition.draft_saved", "definition.published", "definition.deprecated", "definition.retired",
+    "schedule.upgrade_available", "schedule.upgraded", "schedule.pin_warning", "schedule.blocked", "narrative.stale",
+    # Typed work orders and the dispatch outbox (P4-06)
+    "work_order.created", "work_order.updated", "run.dispatched", "run.dispatch_failed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

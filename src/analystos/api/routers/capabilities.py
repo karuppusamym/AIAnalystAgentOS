@@ -125,5 +125,9 @@ def reload_capabilities(admin: User = Depends(admin_user), session: Session = De
     audit(f"user:{admin.id}", "capabilities.reloaded", details={"before": before, "after": snap.digest,
                                                                "count": len(snap.manifests),
                                                                "verifications_voided": len(voided["voided"])}, session=session)
+    from analystos.services.pins import refresh_workspace
+
+    pinned = refresh_workspace(session) if snap.digest != before else {}  # a pack upgrade: "upgrade available", no change
     return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems),
-            "verifications_voided": len(voided["voided"])}
+            "verifications_voided": len(voided["voided"]),
+            "pinned_schedules": {state: sum(1 for v in pinned.values() if v == state) for state in sorted(set(pinned.values()))}}

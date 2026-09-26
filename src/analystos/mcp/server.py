@@ -53,7 +53,11 @@ TOOL_DEFS: dict[str, dict[str, Any]] = {
     "investigate": {"description": "Start an autonomous analysis run for a business objective; returns a run handle.",
                     "schema": {"type": "object", "properties": {"workspace_id": _ws_prop(),
                                                                 "objective": {"type": "string", "minLength": 10},
-                                                                "source_ids": {"type": "array", "items": {"type": "string"}}},
+                                                                "source_ids": {"type": "array", "items": {"type": "string"}},
+                                                                # a published playbook version (P7-03); drafts only in dev
+                                                                "definition": {"type": "object", "properties": {
+                                                                    "key": {"type": "string"}, "version": {"type": "integer"}},
+                                                                    "required": ["key"]}},
                                "required": ["objective"]}, "read_only": False},
     "get_finding_evidence": {"description": "A finding with its evidence queries, statistics and independent verification.",
                              "schema": {"type": "object", "properties": {"workspace_id": _ws_prop(),
@@ -101,7 +105,11 @@ def _tool_investigate(principal: G.ClientPrincipal, ws: str, args: dict[str, Any
     source_ids = args.get("source_ids") or None
     if source_ids is not None and not (isinstance(source_ids, list) and all(isinstance(x, str) for x in source_ids)):
         raise InvalidInput("source_ids must be a list of strings")
+    definition = args.get("definition")
+    if definition is not None and not (isinstance(definition, dict) and isinstance(definition.get("key"), str)):
+        raise InvalidInput("definition must be {key, version}")
     run = create_run(user, ws, objective=str(args.get("objective") or ""), source_ids=source_ids,
+                     definition={k: definition[k] for k in ("key", "version") if k in definition} if definition else None,
                      origin={"type": "mcp", "client_id": principal.client_id})
     return {"run_id": run.id, "status": run.status, "workspace_id": ws, "workflow_id": run.workflow_id}
 

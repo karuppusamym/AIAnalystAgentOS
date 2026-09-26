@@ -13,11 +13,13 @@ from analystos.api.routers import admin, analysis, artifacts, auth, capabilities
 from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
 from analystos.api.routers import decisions as decisions_router
+from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
 from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
+from analystos.api.routers import work_orders as work_orders_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -40,7 +42,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
               description="Autonomous, governed data & analytics agent operating system (Phase 1 MVP).")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
-                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=["ETag", "Idempotent-Replayed", "Location"])  # P4-06: revisions and replays
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router,
           capabilities.router, registries_router.router, semantic_router.router):
     app.include_router(r)
@@ -50,6 +53,8 @@ app.include_router(builds_router.router)
 app.include_router(ask_router.router)
 app.include_router(knowledge_router.router)
 app.include_router(evidence_router.router)
+app.include_router(definitions_router.router)
+app.include_router(work_orders_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
@@ -60,8 +65,11 @@ async def domain_error(_: Request, exc: AnalystOSError):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(_: Request, exc: RequestValidationError):
+    import json
+
+    errors = json.loads(json.dumps(exc.errors(), default=str))  # a validator's ValueError in `ctx` is not JSON
     return JSONResponse(status_code=422, content={"error": {"code": "invalid_input", "message": "request validation failed",
-                                                            "details": {"errors": exc.errors()}, "retryable": False}})
+                                                            "details": {"errors": errors}, "retryable": False}})
 
 
 @app.get("/api/health")

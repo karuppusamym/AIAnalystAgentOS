@@ -17,6 +17,7 @@ from analystos.agents.common import asset_rows, catalog_for_prompt, compile_for,
 from analystos.artifacts.registry import link
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
+from analystos.core.errors import InvalidInput
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Experiment, Hypothesis, by_code
@@ -384,17 +385,25 @@ def replay_hypotheses(ctx: RunContext, settings: dict[str, Any]) -> dict:
     the only model use, within its own budget; its hypotheses are labelled `novelty`."""
     from analystos.agents.common import compact_json
     from analystos.llm.cache import estimate_tokens
-    from analystos.registries.hypotheses import replay_proposals
+    from analystos.registries.hypotheses import pinned_proposals, replay_proposals
 
     types = semantic_types(ctx)
     previous = (ctx.run.origin or {}).get("previous_run_id")
+    pinned = settings.get("analyses") or []
+    label = settings.get("label") or "registry"
     with session_scope() as s:
-        proposals = replay_proposals(s, ctx.workspace.id, previous, ctx.scope.assets, scope=settings["registry_scope"])
+        if pinned:  # a frozen set (ADR-0021): exactly the baseline's (or the work order's) specs, never re-planned
+            proposals = pinned_proposals(s, ctx.workspace.id, pinned, ctx.scope.assets, label=label)
+        else:
+            proposals = replay_proposals(s, ctx.workspace.id, previous, ctx.scope.assets, scope=settings["registry_scope"])
     seen: set[str] = set()
-    accepted, rejected = _accept(ctx, proposals, types, origin="registry", seen=seen)
-    source = "registry"
+    accepted, rejected = _accept(ctx, proposals, types, origin=label, seen=seen)
+    source = "pinned set" if pinned else "registry"
     for a in accepted:
         a["priority_by"] = "registry"
+    if not accepted and pinned:
+        raise InvalidInput(f"none of the {len(pinned)} pinned analyses is valid on the current scope: "
+                           + "; ".join(r["reason"] for r in rejected[:3]))
     if not accepted:  # no usable baseline yet: the rule playbook, still without a model
         accepted, rejected_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types)], types,
                                            origin="heuristic", seen=seen)

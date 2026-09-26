@@ -15,6 +15,7 @@ log = get_logger(__name__)
 _loop: asyncio.AbstractEventLoop | None = None
 _client = None
 _lock = threading.Lock()
+_local_active: set[str] = set()  # runs this process's local orchestrator is driving
 
 
 def _event_loop() -> asyncio.AbstractEventLoop:
@@ -61,7 +62,18 @@ def start_run(run_id: str) -> str:
                 await client.get_workflow_handle(workflow_id(run_id)).signal("nudge")
         _run(go())
         return workflow_id(run_id)
-    threading.Thread(target=run_local, args=(run_id,), daemon=True, name=f"run-{run_id}").start()
+    with _lock:
+        if run_id in _local_active:  # a re-delivered dispatch (outbox relay): this process already drives it
+            return f"local-{run_id}"
+        _local_active.add(run_id)
+
+    def drive() -> None:
+        try:
+            run_local(run_id)
+        finally:
+            with _lock:
+                _local_active.discard(run_id)
+    threading.Thread(target=drive, daemon=True, name=f"run-{run_id}").start()
     return f"local-{run_id}"
 
 
