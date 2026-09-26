@@ -12,7 +12,7 @@ import pytest
 from analystos.contracts.policy import DataScope
 from analystos.core.config import Settings
 from analystos.core.errors import Forbidden, InvalidInput, SQLRejected
-from analystos.db.models import QueryExecution
+from analystos.db.models import QueryExecution, Workspace
 from analystos.gateway.cache import QueryCache, cache_key
 from analystos.gateway.service import QueryGateway, json_safe, result_hash
 
@@ -44,6 +44,8 @@ class FakeSession:
         self.sources = sources
 
     def get(self, model, key):  # noqa: ANN001
+        if model is Workspace and key == "ws_1":
+            return SimpleNamespace(id=key, status="active", deleted_at=None)
         return self.sources.get(key)
 
     def execute(self, stmt):  # noqa: ANN001

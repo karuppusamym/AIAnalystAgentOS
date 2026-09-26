@@ -110,7 +110,7 @@ def list_(user: User = Depends(current_user), session: Session = Depends(db, sco
     summaries = _summaries(session, ws_svc.list_workspaces(session, user))
     roles = {} if user.is_admin or not summaries else dict(session.execute(
         select(WorkspaceMember.workspace_id, WorkspaceMember.role).where(
-            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))))
+            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))).all())
     return [{**w, "role": "owner" if user.is_admin else roles.get(w["id"])} for w in summaries]
 
 
