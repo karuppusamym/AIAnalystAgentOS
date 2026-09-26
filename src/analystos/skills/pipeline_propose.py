@@ -22,7 +22,7 @@ from analystos.contracts.recipe import RecipeInvalid, canonical_type, family, va
 from analystos.core.errors import AnalystOSError, PolicyDenied
 
 _COLUMN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-_WATERMARK = re.compile(r"(^|_)(updated|modified|changed|last_update)(_|$)|sys_updated_on")
+_WATERMARK = re.compile(r"(^|_)(updated|modified|changed|last_update)(_|$)")
 
 
 def _visible(ctx: Any, fq: str, col: Any) -> bool:
