@@ -322,6 +322,21 @@ class StagingLoader:
             raw.close()
         return dict(row[0]) if row and row[0] else None
 
+    def table_info(self, source_id: str, table: str) -> dict[str, Any]:
+        """Row count, columns and content fingerprint of a staged table as it is now."""
+        schema_name, table_name = self._names(source_id, table)
+        raw = self._engine().raw_connection()
+        try:
+            with raw.driver_connection.cursor() as cur:
+                ident = sql.Identifier(schema_name, table_name)
+                cols = _columns_of(cur, ident)
+                fp, rows = _table_fingerprint(cur, ident, [c for c, _ in cols], [t for _, t in cols])
+            raw.driver_connection.rollback()
+        finally:
+            raw.close()
+        return {"schema": schema_name, "table": table_name, "row_count": rows, "content_fingerprint": fp,
+                "columns": [{"name": n, "type": t} for n, t in cols]}
+
     def save_state(self, source_id: str, table: str, state: StateFn) -> dict[str, Any] | None:
         """Update only the load state (an empty window still advances its watermark), under the table lock."""
         schema_name, table_name = self._names(source_id, table)
