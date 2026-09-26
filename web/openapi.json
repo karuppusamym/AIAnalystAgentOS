@@ -2024,6 +2024,17 @@
               }
             ],
             "title": "Settings"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           }
         },
         "title": "WorkspacePatch",
