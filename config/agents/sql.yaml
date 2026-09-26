@@ -36,3 +36,8 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  knowledge:
+    sections: [glossary, metrics]
+  output_contract:
+    - type: dataset
+      schema: contract:bi.DatasetDef

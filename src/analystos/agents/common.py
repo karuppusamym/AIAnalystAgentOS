@@ -173,6 +173,7 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
 
     settings = platform()
     profile = settings.context.profiles.get(purpose) or PurposeProfile(max_chars=1_500_000)
+    profile, knowledge_chars = knowledge_scope(ctx, profile)
     run = getattr(ctx, "run", None)
     if objective is None:
         objective = getattr(run, "objective", None) or str(required.get("objective") or required.get("question") or "")
@@ -184,19 +185,38 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     header = context_header(ctx)
     limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
     key = _context_key(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
-                       reference_text=reference_text, header=header, limit=limit)
+                       reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars)
     reused = _COMPILED.get(key, purpose) if key else None
     if reused is not None:
         return reused
     compiled, complete = _compile(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
-                                  reference_text=reference_text, header=header, limit=limit)
+                                  reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars)
     if key and complete:  # a context compiled without its knowledge (load failed) is not kept
         _COMPILED.put(key, purpose, compiled)
     return compiled
 
 
+def knowledge_scope(ctx: Any, profile: Any) -> tuple[Any, int | None]:
+    """The agent's knowledge contract (FND-006) applied to a purpose profile: knowledge sections the
+    agent does not declare are removed (so they are neither loaded nor compiled), and its
+    `budget_chars` caps what the knowledge sections may take. Callers without an agent contract
+    (feedback, the knowledge preview) keep the profile as configured."""
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS
+    from analystos.contracts.registry import AgentSpec
+
+    agent = getattr(ctx, "agent", None)
+    if not isinstance(agent, AgentSpec):
+        return profile, None
+    allowed = set(agent.knowledge_sections)
+    sections = [s for s in profile.sections if s not in KNOWLEDGE_SECTIONS or s in allowed]
+    if sections != list(profile.sections):
+        profile = profile.model_copy(update={"sections": sections})
+    return profile, (agent.knowledge.budget_chars if agent.knowledge is not None else None)
+
+
 def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any], catalog: Any,
-             reference_text: str | None, header: dict[str, Any], limit: int) -> tuple[Any, bool]:
+             reference_text: str | None, header: dict[str, Any], limit: int,
+             knowledge_chars: int | None = None) -> tuple[Any, bool]:
     from analystos.context.compiler import KNOWLEDGE_SECTIONS, CompiledContext, compile_context, load_knowledge, terms
 
     run = getattr(ctx, "run", None)
@@ -217,7 +237,7 @@ def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: 
         return compile_context(purpose, profile, objective=objective, required=required, catalog=catalog,
                                knowledge=knowledge, header=header, reference_text=reference_text,
                                limit_chars=max(2_000, limit), min_relevance=settings.context.min_relevance,
-                               generic_terms=generic), complete
+                               generic_terms=generic, knowledge_chars=knowledge_chars), complete
     except ContextOverBudget as exc:
         return CompiledContext(purpose=purpose, header={}, body=dict(required), refused=exc.message,
                                budget_chars=int(exc.details.get("budget_chars") or 0),
@@ -297,7 +317,8 @@ def compiled_context_stats() -> dict[str, dict[str, int]]:
 
 
 def _context_key(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any],
-                 catalog: Any, reference_text: str | None, header: dict[str, Any], limit: int) -> str | None:
+                 catalog: Any, reference_text: str | None, header: dict[str, Any], limit: int,
+                 knowledge_chars: int | None = None) -> str | None:
     from analystos.context.version import workspace_knowledge_version
     from analystos.core.ids import stable_hash
 
@@ -315,7 +336,8 @@ def _context_key(ctx: Any, purpose: str, profile: Any, settings: Any, *, objecti
         scope_hash = scope.scope_hash() if hasattr(scope, "scope_hash") else stable_hash(compact_json(scope))
         inputs = stable_hash({"required": required, "objective": objective, "reference_text": reference_text,
                               "catalog": catalog, "header": header, "profile": profile.model_dump(mode="json"),
-                              "limit": limit, "min_relevance": settings.context.min_relevance})
+                              "limit": limit, "min_relevance": settings.context.min_relevance,
+                              "knowledge_chars": knowledge_chars})
     except (TypeError, ValueError):  # an input that cannot be hashed canonically is simply not cached
         return None
     return stable_hash({"purpose": purpose, "knowledge": knowledge, "scope": scope_hash, "inputs": inputs, "session": session})

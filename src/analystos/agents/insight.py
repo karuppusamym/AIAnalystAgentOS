@@ -221,14 +221,16 @@ def build_insights(ctx: RunContext) -> dict:
         if population:  # a sampled or truncated snapshot: say which population the finding describes (P4-C12)
             caveats.append(population)
         ctx.check_control()  # never write findings into a plan that was replaced while we ran
+        evidence = ([{"type": "hypothesis", "id": hid, "label": code}, {"type": "experiment", "id": eid, "label": stat.get("test")}]
+                    + [{"type": "query", "id": q, "label": "evidence query"} for q in qids])
+        ctx.check_output("insight", {"title": title, "finding": finding, "caveats": caveats, "evidence": evidence,
+                                     "narrative_source": source, "evidence_bundle": draft})
         with session_scope() as s:
             n = s.query(Insight).filter(Insight.run_id == ctx.run.id).count() + 1
             ins = Insight(id=new_id("ins"), workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=hid, code=f"I-{n}",
                           title=title, finding=finding, confidence=0.0, population_size=int(stat.get("n") or 0),
                           business_impact={**impact, **({"recommended_action": action} if action else {})}, caveats=caveats,
-                          evidence=[{"type": "hypothesis", "id": hid, "label": code}, {"type": "experiment", "id": eid, "label": stat.get("test")}]
-                          + [{"type": "query", "id": q, "label": "evidence query"} for q in qids],
-                          status="draft", narrative_source=source, evidence_bundle=draft, validation="exploratory",
+                          evidence=evidence, status="draft", narrative_source=source, evidence_bundle=draft, validation="exploratory",
                           data_version=manifest.version if manifest else None)
             s.add(ins)
             link(s, ctx.workspace.id, ("insight", ins.id), "supported_by", ("experiment", eid), run_id=ctx.run.id)

@@ -113,6 +113,9 @@ def reload_capabilities(admin: User = Depends(admin_user), session: Session = De
     before = registry.current().digest
     snap = registry.reload()
     packs.reset()
+    from analystos.tools.registry import sync_agent_definitions
+
+    sync_agent_definitions(session)  # agent_definition rows cache the manifest-derived contract (FND-006)
     audit(f"user:{admin.id}", "capabilities.reloaded", details={"before": before, "after": snap.digest,
                                                                "count": len(snap.manifests)}, session=session)
     return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems)}

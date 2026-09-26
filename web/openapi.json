@@ -3705,6 +3705,7 @@
     },
     "/api/agents": {
       "get": {
+        "description": "Every registered agent, derived from its current manifest (never from the cached row spec).\nA row left from an agent whose manifest is gone is listed as `source: orphan` (it cannot run).",
         "operationId": "agents_api_agents_get",
         "parameters": [
           {
@@ -3766,6 +3767,7 @@
         ]
       },
       "post": {
+        "description": "Refused: an AgentSpec is a view of a manifest, so registering one on its own would fork the contract.",
         "operationId": "register_agent_api_agents_post",
         "parameters": [
           {
@@ -3841,6 +3843,7 @@
     },
     "/api/agents/{agent_id}": {
       "patch": {
+        "description": "Only the platform-wide `enabled` switch is editable here; the contract comes from the manifest.",
         "operationId": "patch_agent_api_agents__agent_id__patch",
         "parameters": [
           {

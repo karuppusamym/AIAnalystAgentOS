@@ -18,3 +18,4 @@ spec:
   capabilities: []
   tools: []
   phase: phase2
+  output_contract: []

@@ -104,11 +104,12 @@ def list_packs() -> None:
 
 
 def export_contracts() -> None:
+    from analystos.capabilities.agents import AgentBody
     from analystos.contracts import analysis, bi, capability, evidence, platform, policy, registry, semantic
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)
-    models = {"agent": registry.AgentSpec, "tool": registry.ToolSpec, "skill": registry.SkillSpec, "policy": policy.WorkspacePolicyDoc,
+    models = {"agent": registry.AgentSpec, "agent_manifest": AgentBody, "tool": registry.ToolSpec, "skill": registry.SkillSpec, "policy": policy.WorkspacePolicyDoc,
               "data_scope": policy.DataScope, "policy_decision": policy.PolicyDecision, "analysis_spec": analysis.AnalysisSpec,
               "stat_result": analysis.StatResult, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
               "dataset": bi.DatasetDef, "publish_bundle": bi.PublishBundle,

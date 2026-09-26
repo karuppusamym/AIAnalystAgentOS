@@ -38,3 +38,8 @@ spec:
     approval_for_publish: true
     max_iterations: 3
   phase: mvp
+  output_contract:
+    - type: profile  # technical metadata of the selected tables
+      schema: {type: object, required: [tables], properties: {tables: {type: array}}}
+    - type: relationship_map
+      schema: {type: object, required: [relationships], properties: {relationships: {type: array}}}

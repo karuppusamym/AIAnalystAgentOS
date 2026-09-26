@@ -71,8 +71,8 @@ TOOLS = {t.tool_id: t for t in BUILTIN_TOOLS}
 
 
 def load_agent_specs(directory: Path | None = None) -> list[AgentSpec]:
-    """AgentSpecs (agent_definition rows, the tool gate) derived from the agent manifests in the
-    catalog directory. Old `agent:` files are still read during the compatibility window."""
+    """AgentSpecs derived from the agent manifests in the catalog directory. Old `agent:` files are
+    still read during the compatibility window."""
     from analystos.capabilities.agents import from_legacy, to_agent_spec
     from analystos.contracts.capability import CapabilityManifest
 
@@ -84,6 +84,28 @@ def load_agent_specs(directory: Path | None = None) -> list[AgentSpec]:
     return specs
 
 
+def sync_agent_definitions(session: Session, specs: list[AgentSpec] | None = None) -> None:
+    """Refresh the agent_definition cache from the manifests (FND-006). The row's spec and version always
+    follow the manifest; only `enabled` (the platform-wide kill switch) is owned by the row. With
+    explicit `specs` (seed: the catalog directory) missing rows are created; without them (a registry
+    reload) only existing rows are refreshed, so a pack agent keeps having no row (= enabled)."""
+    create = specs is not None
+    if specs is None:
+        from analystos.capabilities import registry
+        from analystos.capabilities.agents import to_agent_spec
+
+        specs = [to_agent_spec(m) for m in registry.current().list("Agent")]
+    for spec in specs:
+        row = session.get(AgentDefinition, spec.id)
+        dumped = spec.model_dump(mode="json", by_alias=True)
+        if row is None and not create:
+            continue
+        if row is None:
+            session.add(AgentDefinition(id=spec.id, version=spec.version, spec=dumped, enabled=spec.phase == "mvp"))
+        elif row.version != spec.version or row.spec != dumped:
+            row.version, row.spec = spec.version, dumped
+
+
 def seed_registries(session: Session) -> None:
     for tool in BUILTIN_TOOLS:
         row = session.get(ToolDefinition, tool.tool_id)
@@ -91,12 +113,7 @@ def seed_registries(session: Session) -> None:
             session.add(ToolDefinition(id=tool.tool_id, spec=tool.model_dump()))
         else:
             row.spec = tool.model_dump()
-    for spec in load_agent_specs():
-        row = session.get(AgentDefinition, spec.id)
-        if row is None:
-            session.add(AgentDefinition(id=spec.id, version=spec.version, spec=spec.model_dump(), enabled=spec.phase == "mvp"))
-        elif row.version != spec.version:
-            row.version, row.spec = spec.version, spec.model_dump()
+    sync_agent_definitions(session, load_agent_specs())
     from analystos.skills.registry import SKILLS
 
     for skill in SKILLS:
@@ -110,10 +127,14 @@ def seed_registries(session: Session) -> None:
 
 
 def get_agent_spec(session: Session, agent_id: str) -> AgentSpec:
+    """The enabled agent's contract, derived from its current manifest (never from the cached row spec,
+    which could lag a reload); the row only says whether the agent is registered and enabled."""
+    from analystos.capabilities.agents import contract_for
+
     row = session.get(AgentDefinition, agent_id)
     if row is None or not row.enabled:
         raise NotFound(f"agent {agent_id} is not registered or disabled")
-    return AgentSpec.model_validate(row.spec)
+    return contract_for(None, agent_id) or AgentSpec.model_validate(row.spec)
 
 
 def _summarize(value: Any, limit: int = 2000) -> Any:
@@ -215,11 +236,13 @@ def gate_agent_write(session: Session, *, workspace_id: str, run_id: str, agent_
         if run is None:
             return
         requested_by = run.requested_by
+    from analystos.capabilities.agents import contract_for
+
     with session_scope() as s:
         user = s.get(User, requested_by)
         row = s.get(AgentDefinition, agent_id)
-        spec = AgentSpec.model_validate(row.spec) if row else AgentSpec.model_validate(
-            {"id": agent_id, "name": agent_id, "description": "", "tools": []})
+        spec = contract_for(None, agent_id) or (AgentSpec.model_validate(row.spec) if row else AgentSpec.model_validate(
+            {"id": agent_id, "name": agent_id, "description": "", "tools": []}))
         s.expunge_all()
     if user is None:
         raise PolicyDenied("run owner no longer exists")

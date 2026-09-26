@@ -275,7 +275,7 @@ Both stay Not started and are scheduled after wave 3.
 | FND-003 | CI pipeline | Done | `.github/workflows/ci.yml` (lint, unit, integration with services, web build) |
 | FND-004 | CD skeleton | Partial | Images build from compose; no deploy target defined |
 | FND-005 | Workspace schema | Done | migration 0001 |
-| FND-006 | Agent contract | Partial | Declarative manifests now validate skills and enforce purposes, policies, budgets and tool gates (P4-X01, P4-X03). The legacy `AgentSpec` summary still needs reconciliation with the manifest; `knowledge` and `output_contract` remain unenforced |
+| FND-006 | Agent contract | Done | 2026-09-26: the `kind: Agent` manifest is the contract's only source. `AgentSpec` is a view (`capabilities/agents.to_agent_spec`), and `GET /api/agents`, the `agent_definition` cache and the tool gate derive from it; spec edits through the API are refused. `knowledge` (sections + `budget_chars`) is enforced in `agents/common.compile_for`. `output_contract` is enforced before artifact and run-record writes (`enforce_output`, `OutputContractViolation`). Evidence: `tests/unit/test_agent_contract.py`, register 2026-09-26 FND-006. Field status: `docs/20-contracts/03-agent-contract.md` |
 | FND-007 | Skill contract | Done | `SkillSpec`, `skills/registry.py` |
 | FND-008 | Tool contract | Done | `ToolSpec`, `tools/registry.py` |
 | FND-009 | Artifact model | Done | `artifact`, `artifact_version`, `lineage_edge` |

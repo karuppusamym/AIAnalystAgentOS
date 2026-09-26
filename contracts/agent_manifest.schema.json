@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "ActionTemplate": {
+      "additionalProperties": false,
+      "description": "One deterministic action. String values `$scope.assets` / `$objective` are filled at run time.",
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "title": "ActionTemplate",
+      "type": "object"
+    },
     "AgentBudget": {
       "additionalProperties": false,
       "properties": {
@@ -91,6 +111,25 @@
       "title": "AgentKnowledge",
       "type": "object"
     },
+    "AgentOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "default": "agent_output",
+          "title": "Artifact Type",
+          "type": "string"
+        },
+        "artifact_name": {
+          "title": "Artifact Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_name"
+      ],
+      "title": "AgentOutput",
+      "type": "object"
+    },
     "AgentOutputDecl": {
       "additionalProperties": false,
       "description": "One output an agent may persist (spec v3 \u00a73.4 `output_contract`): an artifact type\n(`artifacts/registry.ARTIFACT_TYPES`) or a run record type (`OUTPUT_RECORD_TYPES`), and the schema its\ncontent must satisfy before it is written: `contract:<module>.<Model>` (a Pydantic contract under\n`analystos.contracts`), an inline JSON Schema, or none (any JSON object).",
@@ -154,49 +193,28 @@
       "type": "object"
     }
   },
-  "description": "The agent contract as the runtime, the tool gate and the admin API see it.\n\nA view derived from the `kind: Agent` capability manifest (`capabilities.agents.to_agent_spec`),\nnever authored on its own: `agent_definition` rows cache it and carry only the platform-wide\n`enabled` switch. `name`/`description`/`capabilities`/`skills`/`model_profile` are the v1 names of\nthe manifest's `role`/`goal`/`tags`/`skill.*` capabilities/first model purpose.",
+  "additionalProperties": false,
   "properties": {
-    "id": {
-      "title": "Id",
+    "role": {
+      "title": "Role",
       "type": "string"
     },
-    "capability_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Capability Id"
-    },
-    "version": {
-      "default": "1.0",
-      "title": "Version",
+    "goal": {
+      "title": "Goal",
       "type": "string"
     },
-    "name": {
-      "title": "Name",
-      "type": "string"
-    },
-    "description": {
-      "title": "Description",
-      "type": "string"
+    "behaviours": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Behaviours",
+      "type": "object"
     },
     "capabilities": {
       "items": {
         "type": "string"
       },
       "title": "Capabilities",
-      "type": "array"
-    },
-    "skills": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Skills",
       "type": "array"
     },
     "tools": {
@@ -206,10 +224,17 @@
       "title": "Tools",
       "type": "array"
     },
-    "model_profile": {
-      "default": "none",
-      "title": "Model Profile",
-      "type": "string"
+    "model_purpose": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Purpose"
     },
     "model_purposes": {
       "items": {
@@ -223,11 +248,23 @@
       "title": "Prompt Version",
       "type": "string"
     },
+    "budget": {
+      "$ref": "#/$defs/AgentBudget"
+    },
     "policies": {
       "$ref": "#/$defs/AgentPolicies"
     },
-    "budget": {
-      "$ref": "#/$defs/AgentBudget"
+    "phase": {
+      "default": "mvp",
+      "title": "Phase",
+      "type": "string"
+    },
+    "default_actions": {
+      "items": {
+        "$ref": "#/$defs/ActionTemplate"
+      },
+      "title": "Default Actions",
+      "type": "array"
     },
     "knowledge": {
       "anyOf": [
@@ -247,46 +284,22 @@
       "title": "Output Contract",
       "type": "array"
     },
-    "entry": {
+    "output": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/AgentOutput"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Entry"
-    },
-    "behaviours": {
-      "additionalProperties": {
-        "type": "string"
-      },
-      "title": "Behaviours",
-      "type": "object"
-    },
-    "certification": {
-      "default": "draft",
-      "title": "Certification",
-      "type": "string"
-    },
-    "source": {
-      "default": "builtin",
-      "title": "Source",
-      "type": "string"
-    },
-    "phase": {
-      "default": "mvp",
-      "title": "Phase",
-      "type": "string"
+      "default": null
     }
   },
   "required": [
-    "id",
-    "name",
-    "description"
+    "role",
+    "goal"
   ],
-  "title": "AgentSpec",
+  "title": "AgentBody",
   "type": "object"
 }
