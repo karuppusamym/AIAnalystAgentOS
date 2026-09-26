@@ -143,7 +143,7 @@ def _capability_items(pins: dict[str, Any], snap: Any) -> list[PinItem]:
 
 
 def _semantic_items(session: Session, workspace_id: str, semantic: dict[str, Any] | None) -> list[PinItem]:
-    from analystos.semantic.service import approved_metrics, current_model
+    from analystos.semantic.service import approved_metrics
     from analystos.services.definitions import diff
 
     items: list[PinItem] = []
@@ -167,9 +167,12 @@ def _semantic_items(session: Session, workspace_id: str, semantic: dict[str, Any
     model = semantic.get("model")
     if model and model.get("id"):
         row = session.get(SemanticModel, model["id"])
-        current = current_model(session, workspace_id)
+        # Only an *approved* newer structure is an upgrade; an agent's proposed model version is not.
+        current = session.scalar(select(SemanticModel).where(
+            SemanticModel.workspace_id == workspace_id, SemanticModel.status == "approved",
+            SemanticModel.version > (row.version if row else 0)).order_by(SemanticModel.version.desc()).limit(1))
         pinned = f"semantic_model@v{row.version}" if row else f"semantic_model:{model['id']}"
-        if current is not None and current.id != model["id"] and (row is None or current.version > row.version):
+        if current is not None and current.id != model["id"]:
             items.append(PinItem(type="semantic_model", id="semantic_model", pinned=pinned, current=f"semantic_model@v{current.version}",
                                  state="newer", diff=diff({"datasets": row.datasets, "relationships": row.relationships} if row else {},
                                                           {"datasets": current.datasets, "relationships": current.relationships}, limit=50)))

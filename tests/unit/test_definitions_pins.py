@@ -323,3 +323,25 @@ def test_changes_verdict_states_nothing_changed_only_when_true():
     novel = {**same, "new_questions": [{}]}
     assert verdict(novel)["nothing_changed"] is True and "novelty round added 1 new question" in verdict(novel)["summary"]
     assert verdict({**same, "resolved": [{}]})["nothing_changed"] is False
+
+
+def test_only_an_approved_newer_semantic_model_is_an_upgrade(world):
+    from analystos.db.models import SemanticModel
+
+    def model(version: int, status: str) -> SemanticModel:
+        return SemanticModel(id=f"smod_{version}", workspace_id=WS, name="m", version=version, status=status, datasets=[],
+                             relationships=[], custom_extensions=[], origin="user", content_hash=f"m{version}", created_by="u")
+    with session_scope() as s:
+        s.add(model(1, "approved"))
+        sch = Schedule(id="sch_sem", workspace_id=WS, name="sem", kind="reanalysis", cron="0 7 * * 1", timezone="UTC", config={},
+                       enabled=True, owner_id="usr_owner", revision=1, pin_status={},
+                       pins={"revision": 1, "manifests": {}, "methods": [], "analyses": [],
+                             "semantic": {"model": {"id": "smod_1", "version": 1, "content_hash": "m1"}, "metrics": {}}})
+        s.add(sch)
+        s.add(model(2, "proposed"))  # an agent's proposal is not a published or approved version
+        s.flush()
+        assert pins.status(s, sch).state == "current"
+        s.add(model(3, "approved"))
+        s.flush()
+        st = pins.status(s, sch)
+        assert st.state == "upgrade_available" and st.items[0].current == "semantic_model@v3"

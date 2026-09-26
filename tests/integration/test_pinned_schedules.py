@@ -122,7 +122,16 @@ def test_pinned_schedule_upgrade_available_nothing_changed_and_retired_blocks(wo
     from analystos.capabilities import registry as reg
     from analystos.contracts.capability import CapabilityManifest
     from analystos.db.base import session_scope
-    from analystos.db.models import AnalysisRun, Artifact, Hypothesis, ModelCall, Notification, RunEvent, Schedule, ScheduleRun
+    from analystos.db.models import (
+        AnalysisRun,
+        Artifact,
+        Hypothesis,
+        ModelCall,
+        Notification,
+        RunEvent,
+        Schedule,
+        ScheduleRun,
+    )
     from analystos.registries.hypotheses import TESTED, spec_hash
     from analystos.services import definitions, pins
     from analystos.services import schedules as sch_svc

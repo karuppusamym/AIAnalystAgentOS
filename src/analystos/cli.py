@@ -105,7 +105,18 @@ def list_packs() -> None:
 
 def export_contracts() -> None:
     from analystos.capabilities.agents import AgentBody
-    from analystos.contracts import analysis, bi, capability, definition, evidence, platform, policy, registry, semantic, work
+    from analystos.contracts import (
+        analysis,
+        bi,
+        capability,
+        definition,
+        evidence,
+        platform,
+        policy,
+        registry,
+        semantic,
+        work,
+    )
 
     out = REPO_ROOT / "contracts"
     out.mkdir(exist_ok=True)

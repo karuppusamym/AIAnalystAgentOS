@@ -11,7 +11,13 @@ import pytest
 from sqlalchemy import select
 
 from analystos.api import http
-from analystos.core.errors import IdempotencyConflict, IdempotencyInProgress, InvalidInput, PreconditionFailed, PreconditionRequired
+from analystos.core.errors import (
+    IdempotencyConflict,
+    IdempotencyInProgress,
+    InvalidInput,
+    PreconditionFailed,
+    PreconditionRequired,
+)
 from analystos.core.ids import utcnow
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, DispatchOutbox, IdempotencyRecord, RunEvent
