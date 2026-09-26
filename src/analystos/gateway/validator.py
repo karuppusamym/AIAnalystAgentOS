@@ -343,6 +343,8 @@ def _check_sources(root: exp.Expression) -> None:
             raise _reject("NATURAL JOIN is not supported. Use an explicit JOIN ... ON condition.")
         if isinstance(node, exp.Join):
             predicate = node.args.get("on")
+            if _single_row_cross_join(node):
+                continue
             if (node.args.get("kind") or "").upper() == "CROSS" or (
                 predicate is None and node.args.get("using") is None
             ) or (predicate is not None and not any(predicate.find_all(exp.Column))):
@@ -360,6 +362,24 @@ def _check_sources(root: exp.Expression) -> None:
                     f"Three-part names ({node.sql()}) are not allowed. Reference tables as schema.table.",
                     table=node.sql(),
                 )
+
+
+def _single_row_cross_join(join: exp.Join) -> bool:
+    """An explicit CROSS JOIN to a derived table that provably returns one row (aggregates only and no
+    GROUP BY, or LIMIT 1): the percent-of-total shape. It cannot multiply rows, so it is allowed; comma
+    joins, ON TRUE and CROSS JOIN to a table stay refused (owner decision 2026-09-26, P7-15)."""
+    if (join.args.get("kind") or "").upper() != "CROSS" or join.args.get("on") is not None or join.args.get("using"):
+        return False
+    sub = join.this
+    if not isinstance(sub, exp.Subquery) or not isinstance(sub.this, exp.Select):
+        return False
+    select = sub.this
+    limit = select.args.get("limit")
+    if limit is not None and _literal_int(limit.expression) == 1:
+        return True
+    if select.args.get("group") is not None or any(select.find_all(exp.Window)):
+        return False
+    return bool(select.expressions) and all(any(e.find_all(exp.AggFunc)) for e in select.expressions)
 
 
 _JOIN_COMPARISONS: tuple[type, ...] = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ)
@@ -388,6 +408,8 @@ def _check_join_keys(qualified: exp.Expression) -> None:
     """After qualification (USING is expanded to ON and every column names its source), each join
     must be keyed across its two sides."""
     for join in qualified.find_all(exp.Join):
+        if _single_row_cross_join(join):
+            continue
         predicate = join.args.get("on")
         joined = join.this.alias_or_name if isinstance(join.this, exp.Expression) else ""
         if predicate is None or not joined or not _join_keyed(predicate, joined):

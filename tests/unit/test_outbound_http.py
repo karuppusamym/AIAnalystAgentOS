@@ -276,3 +276,17 @@ def test_mcp_registration_refuses_a_non_public_address_literal(monkeypatch) -> N
     assert mc._validate_url("https://mcp.example.com/mcp") == "https://mcp.example.com/mcp"
     monkeypatch.setattr(mc, "_private_hosts", lambda: ["127.0.0.1"])
     assert mc._validate_url("http://127.0.0.1:9000/mcp")
+
+
+def test_mcp_default_allows_loopback_and_private_ranges_but_not_metadata_or_cgnat(monkeypatch) -> None:  # noqa: ANN001
+    """Owner decision 2026-09-26: in-cluster MCP servers work by default; metadata and CGNAT never do."""
+    from analystos.core.config import get_settings
+    from analystos.mcp import client as mc
+
+    monkeypatch.setattr(get_settings(), "outbound_private_hosts", "")
+    hosts = mc._private_hosts()
+    for ok in ("127.0.0.1", "10.4.5.6", "172.18.0.3", "192.168.1.9"):
+        assert outbound.pin("http://mcp.internal", allowlist=None, private_hosts=hosts, resolver=resolver(ok))
+    for bad in ("169.254.169.254", "100.64.0.9"):
+        with pytest.raises(OutboundRefused, match="non-public"):
+            outbound.pin("http://mcp.internal", allowlist=None, private_hosts=hosts, resolver=resolver(bad))

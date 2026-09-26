@@ -97,7 +97,8 @@ def _run_async(factory: Callable[[], Awaitable[T]]) -> T:
 def _private_hosts() -> list[str]:
     from analystos.core.config import get_settings
 
-    return outbound.split_hosts(get_settings().outbound_private_hosts)
+    s = get_settings()
+    return outbound.split_hosts(s.outbound_private_hosts) + outbound.split_hosts(s.mcp_private_hosts)
 
 
 def _bearer(server: McpServer) -> dict[str, str]:

@@ -159,6 +159,9 @@ class Settings(BaseSettings):
     # (CIDR) here -- e.g. "127.0.0.1,mcp.internal,10.20.0.0/16" for internal MCP servers.
     http_tool_allowlist: str = ""
     outbound_private_hosts: str = ""
+    # MCP servers only: loopback and RFC 1918 ranges are allowed by default (owner decision 2026-09-26) so
+    # in-cluster servers keep working; link-local/metadata and CGNAT stay refused. Set "" to require listing.
+    mcp_private_hosts: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     http_tool_timeout_seconds: float = 30.0
     http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
 

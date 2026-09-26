@@ -198,3 +198,35 @@ def test_common_postgres_builtins_pass(sql: str) -> None:
 ])
 def test_common_tsql_builtins_pass(sql: str) -> None:
     assert run_case("tsql", sql) == ("accepted", None)
+
+
+def test_cross_join_only_to_a_provably_single_row_derived_table() -> None:
+    """Owner decision 2026-09-26: percent-of-total (CROSS JOIN to an ungrouped aggregate or LIMIT 1) is
+    allowed; comma joins, ON TRUE and CROSS JOIN to a table or a grouped subquery stay refused."""
+    from analystos.contracts.policy import DataScope
+    from analystos.core.errors import SQLRejected
+    from analystos.gateway.validator import validate_sql
+
+    scope = DataScope(workspace_id="w", user_id="u", role="a", source_ids=["s"],
+                      assets=["retail.customer", "retail.account"],
+                      asset_sources={"retail.customer": "s", "retail.account": "s"},
+                      columns={"retail.customer": ["customer_id", "state_code"], "retail.account": ["account_id", "customer_id"]},
+                      source_dialects={"s": "postgres"})
+    allowed = [
+        "SELECT c.state_code, COUNT(*) * 1.0 / t.total AS share FROM retail.customer c "
+        "CROSS JOIN (SELECT COUNT(*) AS total FROM retail.customer) t GROUP BY c.state_code, t.total",
+        "SELECT c.customer_id, x.account_id FROM retail.customer c "
+        "CROSS JOIN (SELECT a.account_id FROM retail.account a ORDER BY a.account_id LIMIT 1) x",
+    ]
+    for sql in allowed:
+        assert validate_sql(scope, sql, max_rows=10).executable_sql
+    refused = [
+        "SELECT c.customer_id FROM retail.customer c CROSS JOIN retail.account a",
+        "SELECT c.customer_id FROM retail.customer c, (SELECT COUNT(*) AS n FROM retail.account) t",
+        "SELECT c.customer_id FROM retail.customer c CROSS JOIN "
+        "(SELECT a.customer_id, COUNT(*) AS n FROM retail.account a GROUP BY a.customer_id) t",
+        "SELECT c.customer_id FROM retail.customer c JOIN retail.account a ON TRUE",
+    ]
+    for sql in refused:
+        with pytest.raises(SQLRejected):
+            validate_sql(scope, sql, max_rows=10)
