@@ -30,8 +30,9 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))  # the evaluation harness lives outside the product package
 
 TIER_TEXT = {
-    "off": "**off** — no provider key: the verified-query registry and the decision rules answer; any question they "
-           "do not cover is refused (`no_model`). This is the no-model floor, not the model's accuracy.",
+    "off": "**off** — no provider key: the verified-query registry and the Ask rules (pack distributions and the "
+           "catalog-built simple shapes) answer; any question they do not cover is refused (`no_api_key`, before "
+           "2026-09-26 `no_model`). This is the no-model floor, not the model's accuracy.",
     "fake": "**fake** — a fake transport answers with the gold SQL (and the careless `probe_sql` for decline items). "
             "It checks the harness, the gateway refusals and the scoring; its accuracy is not a measurement.",
     "live": "**live** — the configured provider ({models}); decisions use their configured backends.",
@@ -47,7 +48,8 @@ SCOPE = """## How to read this
   or a needs_input / clarify / decline item that was answered. This is the costly failure; refusing is not.
 * **Refusal correctness**: precision and recall of each refusal class (needs_input, clarify, decline) against the labels.
   For decline items the report also counts a *governed* decline — refused by the gateway or policy
-  (`sql_rejected`, `policy_denied`, `no_scope`) — since a `no_model` refusal declines for the wrong reason.
+  (`sql_rejected`, `policy_denied`, `no_scope`) — since a no-model refusal (`no_api_key`, `mode_off`, ...) declines
+  for the wrong reason.
 * The question set, the registry and the gold SQL were frozen before any tier ran (evaluation/ask_questions/README.md).
   The registry stands for what analysts had promoted; `near_miss` items are worded close to a registry entry but
   need different SQL, which is where a token matcher can answer confidently and wrongly.
@@ -111,7 +113,7 @@ def render(r, args: argparse.Namespace) -> str:
     row("tokens in / out (per question)",
         lambda m: f"{m['model']['input_tokens']} / {m['model']['output_tokens']} ({_fmt(m['model']['tokens_per_question'])})")
     row("model cost USD", lambda m: f"{m['model']['cost_usd']:.4f}")
-    row("tokens avoided (registry skips)", lambda m: str(m["model"]["tokens_saved"]))
+    row("tokens avoided (registry and rules skips)", lambda m: str(m["model"]["tokens_saved"]))
     lines += ["", "Answered by: " + ", ".join(f"{k}: {v}" for k, v in o["answered_by"].items()) + ".",
               "Refusal kinds seen: " + ", ".join(f"{k}: {v}" for k, v in sorted(o["refusal_kinds"].items())) + ".", "",
               "### Answer items by kind of wording", "", "| tag | n | matched | accuracy | how they ended |", "|---|---|---|---|---|"]

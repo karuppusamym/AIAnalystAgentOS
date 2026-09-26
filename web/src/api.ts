@@ -586,7 +586,10 @@ export interface AskStage {
 
 /** The refusal kinds of services/ask.py REFUSALS: one state each, with a remedy. */
 export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "spend_cap" | "no_model"
-  | "no_scope" | "timeout" | "unavailable" | "failed";
+  | "no_scope" | "timeout" | "unavailable" | "failed"
+  // why no model could write the SQL: one kind per cause (services/ask.py MODEL_REFUSALS)
+  | "mode_off" | "no_api_key" | "provider_cooldown" | "policy_blocked" | "residency_blocked" | "approval_required"
+  | "model_budget" | "cap_reached" | "context_over_budget" | "invalid_output";
 
 export interface AskRefusal {
   kind: AskRefusalKind | string;
@@ -617,6 +620,9 @@ export interface AskProvenance {
   cache_hit?: boolean;
   result_hash?: string | null;
   repairs?: number;
+  /** Follow-up questions the Ask rules offer (e.g. the other groupings of a distribution). */
+  suggestions?: string[];
+  rules?: Dict;
 }
 
 export interface AskStaleness {

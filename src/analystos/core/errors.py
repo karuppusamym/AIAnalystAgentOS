@@ -119,6 +119,39 @@ class EgressBlocked(ModelRouteUnavailable):
     code, retryable = "egress_blocked", False
 
 
+class ModelKeyMissing(ModelRouteUnavailable):
+    """The provider needs an API key and the process environment has none (`details.env`). The key is
+    read from this process's environment only, so the API and worker processes each need it."""
+
+    code, retryable = "no_api_key", False
+
+
+class ModelPolicyBlocked(ModelRouteUnavailable):
+    """The workspace provider list or the air-gapped install excludes every model of the profile."""
+
+    code, retryable = "policy_blocked", False
+
+
+class ModelResidencyBlocked(ModelRouteUnavailable):
+    """No model of the profile has a known region matching the workspace data residency."""
+
+    code, retryable = "residency_blocked", False
+
+
+class ModelOutputInvalid(ModelRouteUnavailable):
+    """Every attempt answered, but not with the JSON the purpose needs."""
+
+    code, retryable = "invalid_output", True
+
+
+class ModelUnavailable(AnalystOSError):
+    """A step that needs a model got no usable answer. `details.reason` names the one cause (mode off,
+    no API key, provider cooldown, policy, residency, approval, budget or cap, context size, invalid
+    output), so the caller can say exactly what to fix instead of "no model route"."""
+
+    code, http_status = "model_unavailable", 503
+
+
 class ContextOverBudget(AnalystOSError):
     """The mandatory part of a prompt's context alone exceeds the purpose's budget (context
     compiler, P4-T03). Callers take the deterministic path and record the refusal; the context is

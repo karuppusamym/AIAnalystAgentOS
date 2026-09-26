@@ -295,7 +295,7 @@ def test_cap_refusal_falls_back_to_the_rules(monkeypatch):
                           call_ctx=lambda exclude_families=None: CallContext(workspace_id="ws1", run_id="run1"),
                           say=lambda text, **k: said.append((text, k.get("data"))))
     data, reason = common.llm_json(ctx, "hypothesis_generation", "hypothesis_generation.v1", {"objective": "x"})
-    assert data is None and reason == "spend_cap_reached" and t.chat_calls == []
+    assert data is None and reason == "cap_reached" and t.chat_calls == []  # code from the Ask refusal taxonomy
     assert "deterministic fallback" in said[-1][0] and said[-1][1]["remedy"] == "wait"
 
 

@@ -324,12 +324,17 @@ def _wait(run_id: str, timeout: float) -> str:
     return "TIMEOUT"
 
 
-def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None = None, timeout: float = 1200) -> ReplicateScore:
+def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None = None, timeout: float = 1200,
+                 source: str = "csv") -> ReplicateScore:
     """One benchmark dataset through the real platform: Parquet upload -> file source -> discovery ->
     staged snapshot (loader) -> run (every query through QueryGateway) -> verified insights. Needs the
     control-plane database and the analytics plane; the orchestrator is whatever ANALYSTOS_ORCHESTRATOR
     says (`local` in CI). Whether models answer is decided by the environment (no key = the rule path)
-    and the platform settings, exactly as in production."""
+    and the platform settings, exactly as in production.
+
+    `source="duckdb"` uploads the dataset as a DuckDB database file instead and registers it with
+    the pushdown opt-in (`execution_mode: pushdown`): nothing is staged, and every statement of the
+    run executes in the DuckDB engine on the file (read-only), through the same gateway (DEX-001)."""
     from sqlalchemy import select
 
     from analystos.core.config import get_settings
@@ -352,9 +357,19 @@ def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None 
         s.flush()
         folder = settings.upload_dir / ws.id
         folder.mkdir(parents=True, exist_ok=True)
-        ds.frame.to_parquet(folder / f"{ds.table}.parquet", index=False)
-        src = register_source(s, admin, ws.id, kind="csv", name=f"{domain} benchmark",
-                              config={"path": f"{ws.id}/{ds.table}.parquet"}, secret_ref=None)
+        if source == "duckdb":
+            import duckdb
+
+            con = duckdb.connect(str(folder / f"{ds.table}.duckdb"))
+            con.register("frame", ds.frame)
+            con.execute(f'CREATE TABLE "{ds.table}" AS SELECT * FROM frame')
+            con.close()
+            src = register_source(s, admin, ws.id, kind="duckdb", name=f"{domain} benchmark (DuckDB)",
+                                  config={"path": f"{ws.id}/{ds.table}.duckdb", "execution_mode": "pushdown"}, secret_ref=None)
+        else:
+            ds.frame.to_parquet(folder / f"{ds.table}.parquet", index=False)
+            src = register_source(s, admin, ws.id, kind="csv", name=f"{domain} benchmark",
+                                  config={"path": f"{ws.id}/{ds.table}.parquet"}, secret_ref=None)
         s.flush()
         ws_id, src_id = ws.id, src.id
         s.expunge(admin)

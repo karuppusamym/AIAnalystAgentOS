@@ -33,6 +33,7 @@ from analystos.core.errors import (
     Forbidden,
     InvalidInput,
     ModelRouteUnavailable,
+    ModelUnavailable,
     NotFound,
     PolicyDenied,
     QueryTimeout,
@@ -83,6 +84,42 @@ REFUSALS: dict[str, dict[str, str]] = {
                             "Meanwhile write the SQL yourself or use a verified query."},
     "no_model": {"title": "No verified answer, and no model may write SQL here",
                  "remedy": "Write the SQL yourself (Explain checks it first), or save a verified query for this question."},
+    # Why generation got no SQL: one kind per cause (the router's reason, not a generic "no model route").
+    "mode_off": {"title": "SQL writing by a model is turned off",
+                 "remedy": "An administrator set the sql_generation purpose to off (Admin > Models). Ask for it to be set to "
+                           "auto, write the SQL yourself (Explain checks it first), or save a verified query."},
+    "no_api_key": {"title": "No model provider key is set for the API",
+                   "remedy": "Set {env} for the api and worker containers (docker compose reads it from your shell or the "
+                             ".env file at `docker compose up`), then restart them: `docker compose up -d api worker`. A key "
+                             "exported after the containers started is not seen by them."},
+    "provider_cooldown": {"title": "The model provider refused for credits",
+                          "remedy": "The provider answered HTTP 402: the account's credits were exhausted. After topping up, "
+                                    "Ask retries the provider automatically in {retry_in_s} s (the cooldown after a 402); "
+                                    "ask again then. Nothing was answered from a guess."},
+    "policy_blocked": {"title": "The workspace policy does not allow this model provider",
+                       "remedy": "The workspace allowed_providers (or the air-gapped install) excludes the provider of the "
+                                 "sql_generation profile. A workspace owner can allow it, or an administrator can route the "
+                                 "purpose to an allowed provider in Admin > Models."},
+    "residency_blocked": {"title": "No model meets the workspace data residency",
+                          "remedy": "No model of the sql_generation profile has a known region matching the workspace "
+                                    "data_residency ({data_residency}); unknown regions fail closed. Add a model with that "
+                                    "region to the profile, or change the residency rule."},
+    "approval_required": {"title": "This model call needs an approval first",
+                          "remedy": "The estimated cost is above the workspace approval threshold, or the model has no "
+                                    "price yet (unpriced models fail closed). Price the model in Admin > Models, choose a "
+                                    "cheaper one, or raise expensive_model_approval_usd."},
+    "model_budget": {"title": "The model budget is used up",
+                     "remedy": "The workspace monthly (or run) model budget is spent. A workspace owner can raise it; "
+                               "verified queries and rule answers still work without a model."},
+    "cap_reached": {"title": "The per-purpose model cap is reached",
+                    "remedy": "SQL generation used its per-run cap ({cap}: {used} of {limit}). An administrator can raise "
+                              "the cap in Admin > Models."},
+    "context_over_budget": {"title": "The question's context is too large for the model budget",
+                            "remedy": "Select fewer tables for this workspace, or narrow the question to one table; an "
+                                      "administrator can raise the prompt limit in Admin > Models."},
+    "invalid_output": {"title": "The model did not return usable SQL",
+                       "remedy": "Ask again, rephrase the question around one table, or write the SQL yourself "
+                                 "(Explain checks it first)."},
     "no_scope": {"title": "Nothing in scope to answer from",
                  "remedy": "Add a source, discover it and select its tables in Sources."},
     "timeout": {"title": "The query took too long",
@@ -94,13 +131,33 @@ REFUSALS: dict[str, dict[str, str]] = {
 }
 
 
+# ModelOutcome codes (agents/common.py) -> refusal kind.
+MODEL_REFUSALS = {"mode_off": "mode_off", "no_api_key": "no_api_key", "provider_cooldown": "provider_cooldown",
+                  "policy_blocked": "policy_blocked", "residency_blocked": "residency_blocked",
+                  "approval_required": "approval_required", "budget_exceeded": "model_budget", "cap_reached": "cap_reached",
+                  "context_over_budget": "context_over_budget", "invalid_output": "invalid_output",
+                  "upstream_unavailable": "unavailable"}
+_REMEDY_DEFAULTS = {"env": "OPENROUTER_API_KEY", "retry_in_s": "about 60", "data_residency": "the workspace rule",
+                    "cap": "calls", "used": "all", "limit": "the cap"}
+
+
+class _RemedyValues(dict):
+    def __missing__(self, key: str) -> str:
+        return _REMEDY_DEFAULTS.get(key, "")
+
+
 def refusal(kind: str, message: str, **details: Any) -> dict[str, Any]:
     spec = REFUSALS[kind]
-    return {"kind": kind, "title": spec["title"], "message": message, "remedy": spec["remedy"], "details": details}
+    values = _RemedyValues({k: v for k, v in details.items() if v is not None})
+    return {"kind": kind, "title": spec["title"], "message": message, "remedy": spec["remedy"].format_map(values),
+            "details": details}
 
 
 def refusal_for(exc: AnalystOSError) -> dict[str, Any]:
     """The refusal kind of a failed Ask, from the error class (not its wording where a class exists)."""
+    if isinstance(exc, ModelUnavailable):
+        reason = str(exc.details.get("reason") or "")
+        return refusal(MODEL_REFUSALS.get(reason, "no_model"), exc.message, **{**exc.details, "code": exc.code})
     if isinstance(exc, SQLRejected):
         kind = "sql_rejected"
     elif isinstance(exc, SpendCapReached):
@@ -135,6 +192,7 @@ class AdhocContext:
     run: Any = None
     task: Any = None
     turn_id: str | None = None
+    thread_id: str | None = None  # compiled contexts are reused within a thread (CTX-005)
     on_stage: Callable[[str, str, dict[str, Any]], None] | None = None
 
     @property
@@ -256,7 +314,8 @@ def provenance(session: Session, workspace_id: str, out: dict[str, Any]) -> dict
                        "row_count": asset.row_count if asset else None})
     return {"assets": assets, "answered_by": out.get("answered_by"), "verified_query": out.get("verified_query"),
             "model": out.get("model"), "query_id": result.get("query_id"), "cache_hit": bool(result.get("cache_hit")),
-            "result_hash": result.get("result_hash"), "repairs": len(out.get("attempts") or [])}
+            "result_hash": result.get("result_hash"), "repairs": len(out.get("attempts") or []),
+            "suggestions": list(out.get("suggestions") or []), **({"rules": out["rules"]} if out.get("rules") else {})}
 
 
 def staleness(session: Session, turn: AskTurn, now: datetime | None = None) -> dict[str, Any]:
@@ -296,7 +355,8 @@ def _finish(out: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         return "needs_input", refusal("needs_input", out.get("explanation") or "", missing=out.get("missing") or [],
                                       verified_query=out.get("verified_query"), parameters=out.get("parameters") or {})
     if status == "clarify":
-        return "clarify", refusal("clarify", out.get("explanation") or "", missing=out.get("missing") or [])
+        return "clarify", refusal("clarify", out.get("explanation") or "", missing=out.get("missing") or [],
+                                  suggestions=list(out.get("suggestions") or []))
     return "refused", out.get("refusal") or refusal("failed", "The question could not be answered.")
 
 
@@ -333,7 +393,7 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
     try:
         with session_scope() as s:
             ctx = adhoc_context(s, user, workspace_id)
-        ctx.turn_id, ctx.on_stage = turn_id, stage
+        ctx.turn_id, ctx.thread_id, ctx.on_stage = turn_id, thread_id, stage
         if not ctx.scope.assets:
             out = {"status": "refused", "refusal": refusal("no_scope", "No selected, ready tables are in your scope.")}
         else:
