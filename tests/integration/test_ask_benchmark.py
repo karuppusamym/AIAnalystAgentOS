@@ -42,3 +42,7 @@ def test_off_tier_is_the_no_model_floor(control_db):
     assert unmatched and all(x.actual == "decline" and x.refusal_kind == "no_model" for x in unmatched)
     # Without a model, asking for a missing input only happens on a registry match.
     assert all(x.verified_query for x in r.outcomes if x.actual == "needs_input")
+    # A near miss (another aggregate, an extra group or filter, another value than the one hard-coded)
+    # is not served from the registry: no confident wrong answer, and the registry's own phrasings still answer.
+    assert o["confident_wrong"] == 0, [x.id for x in r.outcomes if x.confident_wrong]
+    assert o["by_tag"]["registry_exact"]["accuracy"] == 1.0 and o["by_tag"]["parameter"]["accuracy"] == 1.0

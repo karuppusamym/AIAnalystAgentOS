@@ -89,7 +89,8 @@ def feedback_classification(state: dict, facts: dict, q: Question) -> Proposal:
 @rule("ask_route")
 def ask_route(state: dict, facts: dict, q: Question) -> Proposal | None:
     """Tool-first ladder: a verified query, else a tool, else generation; decline when an input is missing.
-    facts: verified_match (score 0..1), tool_match (score 0..1), missing_inputs (list)."""
+    facts: verified_match (score 0..1), tool_match (score 0..1), missing_inputs (list), verified_rejected
+    (registry entries whose words matched but whose SQL does not answer the question, with reasons)."""
     if facts.get("missing_inputs") and "decline" in q.options:
         return Proposal(value="decline", probabilities={"decline": 1.0}, final=True, note="required input missing")
     verified, tool = float(facts.get("verified_match") or 0.0), float(facts.get("tool_match") or 0.0)
@@ -98,6 +99,11 @@ def ask_route(state: dict, facts: dict, q: Question) -> Proposal | None:
     if tool >= 0.8 and "tool" in q.options and tool - verified >= 0.1:
         return Proposal(value="tool", probabilities={"tool": 1.0}, final=True, note="tool matched")
     if max(verified, tool) < 0.5 and "generate" in q.options:
+        rejected = facts.get("verified_rejected") or []
+        if rejected:  # words matched, the SQL answers another question: record why it was not served
+            return Proposal(value="generate", probabilities={"generate": 1.0}, final=True,
+                            note=f"verified query {rejected[0]['name']} does not fit: {rejected[0]['reasons'][0]}",
+                            details={"verified_rejected": rejected})
         return Proposal(value="generate", probabilities={"generate": 1.0}, final=True, note="nothing verified matched")
     return None  # two close candidates: a tie for the next backend
 
