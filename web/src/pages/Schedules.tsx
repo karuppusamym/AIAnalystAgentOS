@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { to } from "../routes";
+import { roleAtLeast, to } from "../routes";
+import { SchedulePins } from "../components/SchedulePins";
 import { api, type Schedule, type ScheduleRun } from "../api";
 import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
 import { fmtDate } from "../lib/format";
@@ -15,13 +16,15 @@ export function SchedulesPage() {
   const [params] = useSearchParams();
   const focus = params.get("schedule");
   const list = useAsync(() => api.listSchedules(wsId), [wsId]);
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  const canEdit = roleAtLeast(ws.data?.role, "editor");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
     <div className="page">
       <PageHeader title="Schedules"
-        subtitle="Recurring re-analysis, dataset refresh, reports, monitor evaluation and metadata crawls. Runs use the owner's current permissions; publishing always needs an approval."
+        subtitle="Recurring investigations, data refreshes, reports, monitor checks and catalog crawls. Each runs with its owner's current permissions and the versions it was set up with; publishing always needs an approval."
         actions={!creating && <button type="button" className="btn btn-primary" onClick={() => { setCreating(true); setEditing(null); }}>New schedule</button>} />
       {creating && (
         <Card title="New schedule">
@@ -31,7 +34,7 @@ export function SchedulesPage() {
       <ErrorBox error={list.error} onRetry={list.reload} />
       {list.loading && !list.data && <Loading />}
       {list.data?.length === 0 && !creating && (
-        <EmptyState title="No schedules yet">Create one to re-run the analysis weekly and get a “what changed” report.</EmptyState>
+        <EmptyState title="No schedules yet">Create one to repeat an investigation weekly and get a “what changed” report.</EmptyState>
       )}
       <div className="stack">
         {list.data?.map((s) => editing === s.id ? (
@@ -39,7 +42,7 @@ export function SchedulesPage() {
             <ScheduleForm wsId={wsId} initial={s} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void list.reload(); }} />
           </Card>
         ) : (
-          <ScheduleCard key={s.id} wsId={wsId} schedule={s} highlighted={focus === s.id} onEdit={() => { setEditing(s.id); setCreating(false); }}
+          <ScheduleCard key={s.id} wsId={wsId} schedule={s} highlighted={focus === s.id} canEdit={canEdit} onEdit={() => { setEditing(s.id); setCreating(false); }}
             onChanged={() => void list.reload()}
             onPatched={(u) => list.setData((prev) => prev?.map((x) => (x.id === u.id ? { ...x, ...u, recent_runs: x.recent_runs } : x)))} />
         ))}
@@ -52,8 +55,8 @@ function kindLabel(kind: string): string {
   return SCHEDULE_KINDS.find((k) => k.id === kind)?.label ?? kind;
 }
 
-function ScheduleCard({ wsId, schedule: s, highlighted, onEdit, onChanged, onPatched }: {
-  wsId: string; schedule: Schedule; highlighted: boolean; onEdit: () => void; onChanged: () => void; onPatched: (s: Schedule) => void;
+function ScheduleCard({ wsId, schedule: s, highlighted, canEdit, onEdit, onChanged, onPatched }: {
+  wsId: string; schedule: Schedule; highlighted: boolean; canEdit: boolean; onEdit: () => void; onChanged: () => void; onPatched: (s: Schedule) => void;
 }) {
   const act = useAction();
   const [notice, setNotice] = useState<string | null>(null);
@@ -100,6 +103,7 @@ function ScheduleCard({ wsId, schedule: s, highlighted, onEdit, onChanged, onPat
           ["Last run", fmtDate(s.last_run_at)],
           ["Config", <ConfigSummary key="c" schedule={s} />],
         ]} />
+        <SchedulePins wsId={wsId} scheduleId={s.id} canEdit={canEdit} onUpgraded={onChanged} />
         <ErrorBox error={act.error} />
         {notice && <Notice tone={notice.startsWith("Run failed") ? "danger" : "success"}>{notice}</Notice>}
         <RecentRuns wsId={wsId} runs={s.recent_runs ?? []} />
@@ -118,7 +122,7 @@ function ConfigSummary({ schedule: s }: { schedule: Schedule }) {
     parts.push(c.report === null ? "no report" : `report: ${c.report?.kind ?? "weekly_summary"} (${(c.report?.formats ?? ["html", "pdf", "xlsx"]).join(", ")})`);
   } else if (s.kind === "report") {
     parts.push(`${c.kind ?? "executive"} (${(c.formats ?? ["html", "pdf"]).join(", ")})`);
-    parts.push(c.run_id ? `run ${c.run_id}` : "latest completed run");
+    parts.push(c.run_id ? "a chosen investigation" : "latest completed investigation");
   } else if (s.kind === "monitor") {
     parts.push(c.monitor_ids?.length ? `${c.monitor_ids.length} monitor(s)` : "all enabled monitors");
   } else if (s.kind === "dataset_refresh") {
