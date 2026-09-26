@@ -396,6 +396,47 @@ def clarify(ctx: Any, question: str) -> dict[str, Any]:
 
 def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
         use_registry: bool = True) -> dict[str, Any]:
+    out = _ask(ctx, question, max_repairs=max_repairs, parameters=parameters, use_registry=use_registry)
+    return {"governance": "ad_hoc", **out}
+
+
+def _semantic_answer(ctx: Any, question: str, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
+    from pydantic import ValidationError
+
+    from analystos.contracts.semantic import SemanticQuery
+    from analystos.core.ids import stable_hash
+    from analystos.semantic.compiler import compile_query, match_question
+
+    catalog = getattr(ctx, "semantic_catalog", None)
+    explicit = (parameters or {}).get("semantic_query")
+    if explicit is not None and set(parameters) != {"semantic_query"}:
+        raise InvalidInput("Put all metric query options inside semantic_query.")
+    if not catalog:
+        if explicit is not None:
+            raise InvalidInput("An approved semantic model is required for a metric query.")
+        return None
+    if parameters and explicit is None:
+        return None
+    try:
+        query = SemanticQuery.model_validate(explicit) if explicit is not None else match_question(question, catalog)
+    except ValidationError as exc:
+        raise InvalidInput("The metric query contains invalid fields or values.") from exc
+    if query is None:
+        return None
+    _stage(ctx, "semantic", "Compiling the approved metric definition (no model call)")
+    compiled = compile_query(query, catalog, ctx.scope)
+    compiled.provenance["policy_hash"] = stable_hash(ctx.policy.model_dump(mode="json"))
+    _stage(ctx, "execute", "Running the approved calculation through the query gateway")
+    result = ctx.services.gateway.execute(ctx.scope, compiled.sql, actor=ask_actor(ctx.user.id),
+                                          purpose=ASK_PURPOSE, run_id=None, task_id=getattr(ctx, "turn_id", None))
+    _record_skip(ctx, "Approved metric compiled deterministically", 500, rung="rules")
+    return {"status": "answered", "answered_by": "semantic", "governance": "governed", "semantic": compiled.provenance,
+            "sql": compiled.sql, "explanation": "Calculated from the approved metric definition: " + ", ".join(query.metrics),
+            "chart": None, "model": None, "attempts": [], "decisions": [], "route": "semantic", "result": _result(result)}
+
+
+def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
+        use_registry: bool = True) -> dict[str, Any]:
     """NL question -> governed SQL -> result. Tool-first: `ask_route` sends a registry match to the
     verified query (or declines for a missing parameter) before any model is asked; `clarify_needed`
     may stop an ambiguous question before generation. The decisions choose a path only: the SQL
@@ -404,6 +445,9 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
     _stage(ctx, "scope", "Checking what you are allowed to see")
     _authorize_ask(ctx)
     _check_budget(ctx)
+    semantic = _semantic_answer(ctx, question, parameters)
+    if semantic is not None:
+        return semantic
     hit, rejected = None, []
     if use_registry:
         _stage(ctx, "registry", "Looking for a verified answer to this question")

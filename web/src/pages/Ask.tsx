@@ -258,11 +258,49 @@ function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPr
 }
 
 // ------------------------------------------------------------------------------------ turn
-function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk }: {
+function ScheduleAnswer({ turn }: { turn: AskTurn }) {
+  const [open, setOpen] = useState(false);
+  const [cron, setCron] = useState("0 9 * * *");
+  const [approval, setApproval] = useState<string>();
+  const [expires, setExpires] = useState<string>();
+  const [created, setCreated] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const result = await api.scheduleAsk(turn.id, { name: turn.question.slice(0, 200), cron, timezone, approval_id: approval });
+      setApproval(result.approval_id ?? approval); setExpires(result.expires_at ?? expires);
+      setCreated(result.status === "created");
+    } catch (err) { setError(err); }
+    finally { setBusy(false); }
+  };
+  if (created) return <Notice tone="success">Calculation scheduled. <Link to={to.schedules(turn.workspace_id)}>View schedules</Link></Notice>;
+  return <div className="stack">
+    <button className="btn btn-sm" onClick={() => setOpen(!open)}>Schedule this calculation</button>
+    {open && <div className="stack">
+      <label>Refresh frequency <select value={cron} disabled={!!approval} onChange={(e) => setCron(e.target.value)}>
+        <option value="0 9 * * *">Daily at 9 AM</option><option value="0 9 * * 1">Mondays at 9 AM</option>
+      </select></label>
+      <p className="small">Time zone: {timezone}. Each refresh uses this saved SQL and your current access.
+        Changed metric definitions require a new analysis. Runs stop when the approval expires.</p>
+      {approval && <Notice tone="warning">Approval requested. <Link to={to.approvals(turn.workspace_id)}>Review approvals</Link>
+        {expires && <> · expires {fmtDate(expires)}</>}</Notice>}
+      <ErrorBox error={error ? errorMessage(error) : null} />
+      <button className="btn" disabled={busy} onClick={() => void submit()}>{approval ? "Activate approved schedule" : "Request schedule approval"}</button>
+    </div>}
+  </div>;
+}
+
+function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun }: {
   turn: AskTurn; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
   onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void; onAsk: (q: string) => void;
+  onRerun: (sql?: string) => void;
 }) {
   const { wsId = "" } = useParams();
+  const [editing, setEditing] = useState(false);
+  const [editedSql, setEditedSql] = useState(turn.sql ?? "");
   return (
     <article className={`ask-turn ${selected ? "ask-turn-selected" : ""}`} aria-label={`Question ${turn.seq}`}>
       <header className="ask-question">
@@ -273,10 +311,33 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
         <div className="stack">
           <Pills label="Provenance" pills={[...provenancePills(turn), stalenessPill(turn.staleness)]} />
           {turn.explanation && <p>{turn.explanation}</p>}
+          <details className="stack">
+            <summary>Why these numbers?</summary>
+            <p className="small">Every value in this result comes from query <code>{turn.result.query_id}</code>.
+              {turn.provenance.semantic ? " The calculation uses the approved definitions listed below." : " The SQL is an ad hoc calculation."}</p>
+            {turn.provenance.semantic && <KeyValue items={[
+              ["Semantic model", `Version ${turn.provenance.semantic.model_version}`],
+              ["Metric definitions", turn.provenance.semantic.metrics.map((m) => `${m.name} v${m.version}`).join(", ")],
+            ]} />}
+            {turn.evidence_status?.reasons.map((reason) => <p className="small" key={reason}>{reason}</p>)}
+            <button className="btn btn-xs" type="button" onClick={onSelect}>Inspect SQL and source evidence</button>
+          </details>
+          {turn.evidence_status?.state === "changed" && <Notice tone="warning">The evidence has changed since this answer.
+            Review the recorded definitions and ask again before using these numbers.</Notice>}
           <ResultView res={turn.result} hint={turn.chart} caption={turn.question} />
+          <div className="btn-row">
+            <button className="btn btn-sm" disabled={busy} onClick={() => onRerun()}>Refresh saved calculation</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => setEditing(!editing)}>Edit SQL and rerun</button>
+          </div>
+          {editing && <form className="stack" onSubmit={(e) => { e.preventDefault(); onRerun(editedSql); }}>
+            <label>Edited SQL<textarea className="mono" rows={6} value={editedSql} onChange={(e) => setEditedSql(e.target.value)} /></label>
+            <p className="small muted">The result will be saved as a new ad hoc analysis. The original answer stays in this conversation.</p>
+            <button className="btn btn-primary" disabled={busy || !editedSql.trim()}>Run edited SQL</button>
+          </form>}
           {turn.sql && <CodeBlock code={turn.sql} label={`SQL${turn.model ? ` · ${turn.model}` : turn.answered_by === "registry" ? " · verified query" : turn.answered_by === "rules" ? " · built from the catalog" : ""}`} />}
           <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
           {canPromote(turn) && <PromoteBar turn={turn} onRecorded={onRecorded} />}
+          {canPromote(turn) && <ScheduleAnswer turn={turn} />}
         </div>
       ) : (
         <>
@@ -310,6 +371,7 @@ function Inspector({ turn }: { turn: AskTurn }) {
             ["Query", <code key="q">{turn.result.query_id}</code>],
             ["Answered in", fmtMs(turn.latency_ms)],
             ["Answered by", turn.answered_by === "registry" ? "verified query (no model)" : turn.answered_by === "rules" ? "rule built from the catalog (no model)"
+              : turn.answered_by === "semantic" ? "approved metric calculation (no model)"
               : turn.answered_by === "model" ? "generated SQL" : "—"],
           ]} />
           : <EmptyState title="No result">This question was not answered; the refusal says why.</EmptyState>)}
@@ -473,6 +535,17 @@ export function AskPage() {
   const recordPromotion = (turnId: string, p: AskPromotion) =>
     setThread((t) => (t ? { ...t, turns: t.turns.map((x) => (x.id === turnId ? { ...x, promotions: [...x.promotions, p] } : x)) } : t));
 
+  const rerun = async (turnId: string, statement?: string) => {
+    setAsking(true);
+    setAskErr(null);
+    try {
+      const result = await api.rerunAsk(turnId, statement);
+      setThread((t) => t ? { ...t, turns: [...t.turns, result] } : t);
+      setSelected(result.id);
+    } catch (err) { setAskErr(err); }
+    finally { setAsking(false); }
+  };
+
   const openThread = (id: string | null) => {
     setParams((prev) => { const n = new URLSearchParams(prev); if (id) n.set("thread", id); else n.delete("thread"); return n; });
     if (!id) { setThread(null); setSelected(null); }
@@ -549,7 +622,8 @@ export function AskPage() {
               {thread?.turns.map((t) => (
                 <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
                   onParameters={(p) => void ask(t.question, p)} onRephrase={() => { setQuestion(t.question); questionRef.current?.focus(); }}
-                  onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)} />
+                  onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)}
+                  onRerun={(statement) => void rerun(t.id, statement)} />
               ))}
               {pending && (
                 <article className="ask-turn" aria-label="Question in progress" aria-busy="true">

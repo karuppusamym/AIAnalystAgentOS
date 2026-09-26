@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "description": "Names only. SQL comes from the approved definitions and the compiler.",
+  "properties": {
+    "metrics": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Metrics",
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "limit": {
+      "default": 500,
+      "maximum": 5000,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "metrics"
+  ],
+  "title": "SemanticQuery",
+  "type": "object"
+}
