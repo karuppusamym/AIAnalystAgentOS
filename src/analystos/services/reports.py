@@ -43,7 +43,8 @@ def build_report_data(session: Session, run_id: str, kind: str = "executive", *,
                    for q in session.scalars(select(QueryExecution).where(QueryExecution.id.in_(qids)))]
         insights.append(ReportInsight(code=ins.code, title=ins.title, finding=ins.finding, confidence=ins.confidence, verified=ins.verified,
                                       caveats=ins.caveats, business_impact=ins.business_impact, evidence_queries=queries,
-                                      change=change_of.get(ins.code) if changes else None))
+                                      change=change_of.get(ins.code) if changes else None,
+                                      validation=ins.validation, stale=ins.stale_since is not None))
     prev_values = {m["name"]: m.get("previous_value") for m in changes.get("metrics", [])}
     metrics = [ReportMetric(name=a.name, display_name=a.content.get("display_name", a.name), definition=a.content.get("definition", ""),
                             value=(a.content.get("validation") or {}).get("value"), previous_value=prev_values.get(a.name),

@@ -9,6 +9,7 @@ quoted.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -29,6 +30,25 @@ LOAD_SUFFIX = "__load"
 MAX_TABLE_NAME = 63 - len(LOAD_SUFFIX)
 
 _log = get_logger(__name__)
+
+
+class ContentFingerprint:
+    """Order-independent digest of the staged rows (P4-03 data-version manifest). A connector does not
+    promise a row order, so the rows are hashed individually and summed modulo 2^64 (a multiset hash):
+    re-staging identical data gives the same fingerprint, any changed, added or removed row changes it."""
+
+    def __init__(self, columns: list[str], types: list[str]) -> None:
+        self._acc = 0
+        self._rows = 0
+        self._head = json.dumps([columns, types])
+
+    def add(self, row: list[Any]) -> None:
+        digest = hashlib.blake2b(repr(row).encode(), digest_size=8).digest()
+        self._acc = (self._acc + int.from_bytes(digest, "big")) % (1 << 64)
+        self._rows += 1
+
+    def hexdigest(self) -> str:
+        return hashlib.sha256(f"{self._head}|{self._rows}|{self._acc:016x}".encode()).hexdigest()
 
 
 def pg_type_for(dtype: pa.DataType) -> str:
@@ -155,6 +175,7 @@ class StagingLoader:
             load_ident, sql.SQL(", ").join(sql.Identifier(n) for n in col_names)
         )
         convert = _row_converter(pg_types)
+        content = ContentFingerprint(col_names, pg_types)
 
         raw = self._engine().raw_connection()
         try:
@@ -173,7 +194,9 @@ class StagingLoader:
                             raise InvalidInput(f"Batch schema changed while loading {raw_name}")
                         cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
                         for values in zip(*cols, strict=True):
-                            copy.write_row(convert(list(values)))
+                            converted = convert(list(values))
+                            content.add(converted)
+                            copy.write_row(converted)
                         row_count += batch.num_rows
                 # Atomic swap: readers see either the old snapshot or the new one.
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(final_ident))
@@ -195,6 +218,7 @@ class StagingLoader:
             "schema": schema_name,
             "table": table_name,
             "columns": [{"name": n, "type": ty} for n, ty in zip(col_names, pg_types, strict=True)],
+            "content_fingerprint": content.hexdigest(),
         }
         record = snapshot() if snapshot is not None else None
         if record:

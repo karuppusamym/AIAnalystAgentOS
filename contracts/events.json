@@ -34,6 +34,7 @@
   "hypothesis.updated",
   "hypothesis_registry.updated",
   "insight.created",
+  "insight.stale",
   "insight.verified",
   "knowledge.imported",
   "knowledge.ingested",

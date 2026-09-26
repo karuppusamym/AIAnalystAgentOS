@@ -42,8 +42,8 @@ def draft_from_finding(session: Session, insight: Any, *, user_id: str | None) -
     from analystos.db.models import Experiment, QueryExecution
 
     def run() -> Any:
-        if insight.status != "verified":
-            return None
+        if insight.status != "verified" or getattr(insight, "stale_since", None) is not None:
+            return None  # a stale finding (P4-03: its snapshot changed) is re-verified before promotion
         exp = None
         if insight.hypothesis_id:
             exp = session.scalar(select(Experiment).where(Experiment.hypothesis_id == insight.hypothesis_id,

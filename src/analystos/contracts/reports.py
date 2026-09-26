@@ -24,6 +24,17 @@ class ReportInsight(BaseModel):
     business_impact: dict[str, Any] = Field(default_factory=dict)
     evidence_queries: list[ReportQuery] = Field(default_factory=list)
     change: Literal["new", "persisting", "changed", None] = None  # vs previous run of the same schedule
+    # Typed evidence (P4-03): validation state (exploratory | confirmed | legacy | ...) and staleness. When
+    # set, reports label the finding discovery/confirmed and call the confidence an uncalibrated review score.
+    validation: str | None = None
+    stale: bool = False
+
+    def evidence_label(self) -> str | None:
+        if self.validation is None:
+            return None
+        label = {"confirmed": "confirmed", "exploratory": "discovery (exploratory)", "replicated": "discovery (replicated)",
+                 "legacy": "legacy verification"}.get(self.validation, self.validation.replace("_", " "))
+        return label + ("; stale: data changed, needs re-verification" if self.stale else "")
 
 
 class ReportMetric(BaseModel):

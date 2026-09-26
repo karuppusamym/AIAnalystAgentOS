@@ -15,6 +15,7 @@ from analystos.agents.insight import _guard, facts_for, template_text
 from analystos.agents.investigator import validate_spec
 from analystos.contracts.analysis import AnalysisSpec, Derivation
 from analystos.contracts.policy import DataScope
+from analystos.evidence.facts import bind_finding
 from analystos.gateway.validator import validate_sql
 from analystos.services.changes import claim_key
 from analystos.skills import sqlbuild as sb
@@ -136,6 +137,7 @@ def test_derived_artefacts(duck):
     title, text = template_text(stat, sp)
     assert "cohort" in title and stat["highlights"]["top_segment"] in text
     assert _guard(title + " " + text, facts_for(stat, sp))
+    assert bind_finding(sp, stat, methods.get("cohort_retention").facts(sp, stat), title, text).ok  # P4-03 typed binding
     key = claim_key(sp, stat["highlights"])
     assert key[0] == "cohort_retention" and key[2] == "cohort:event_at:month" and key[-1] == stat["highlights"]["top_segment"]
     assert methods.get("cohort_retention").chart_intent(spec("planted")).dimension == "cohort"

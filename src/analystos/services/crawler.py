@@ -434,6 +434,10 @@ class _Crawl:
                 a.row_count, a.freshness_at, a.stats = info.get("row_count"), utcnow(), {}  # stats re-profiled below
                 a.snapshot = info["snapshot"]
                 s.get(Source, self.source.id).last_discovered_at = utcnow()  # new source version: no stale cached results
+                s.flush()
+                from analystos.evidence.manifest import mark_stale
+
+                mark_stale(s, a.workspace_id, self.source.id, f"{a.schema_name}.{a.name}")  # P4-03
             restaged.append({"asset": key, "rows": info.get("row_count"), "truncated": info["snapshot"]["truncated"],
                              "sampling_method": info["snapshot"]["sampling_method"]})
         self.stats["restaged"] = len(restaged)

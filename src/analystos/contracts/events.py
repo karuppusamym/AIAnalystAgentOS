@@ -23,6 +23,8 @@ EVENT_TYPES = {
     "knowledge.suggestion_proposed", "knowledge.suggestions_reviewed",
     # Crawler sources and facet-level failure (P4-K06)
     "crawl.facet_failed", "knowledge.ingested",
+    # Typed evidence (P4-03): a newer snapshot of an analysed asset made a finding stale
+    "insight.stale",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
