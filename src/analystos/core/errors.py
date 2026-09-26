@@ -58,6 +58,12 @@ class UnsupportedCapability(InvalidInput):
     code = "unsupported_capability"
 
 
+class ReadinessBlocked(Conflict):
+    """A readiness check the job requires failed (P4-04): correct the input, never retry as is."""
+
+    code = "readiness_blocked"
+
+
 class Unauthenticated(AnalystOSError):
     code, http_status = "unauthenticated", 401
 
