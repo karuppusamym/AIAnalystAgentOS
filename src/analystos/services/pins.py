@@ -27,7 +27,7 @@ from analystos.governance.audit import audit
 from analystos.governance.policy import get_workspace, member_role
 from analystos.services.notifications import notify
 
-PINNED_KINDS = ("reanalysis", "saved_analysis")
+PINNED_KINDS = ("reanalysis", "saved_analysis", "step")
 
 
 # ------------------------------------------------------------------------------------ capture

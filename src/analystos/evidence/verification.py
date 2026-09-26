@@ -4,8 +4,9 @@ A verdict is bound to what it depended on. Each dependency is a typed pair ``(ki
 version it had when REV decided, and the record's fingerprint is ``sha256(canonical_json(sorted(deps)))``
 (the approval-hash format, `core.ids.stable_hash`):
 
-* ``query``      ref = the step (today: the hypothesis whose `AnalysisSpec` was compiled); version = spec
-                 hash + normalized SQL hashes of its primary queries + compiler + dialect;
+* ``query``      ref = the step: a hypothesis whose `AnalysisSpec` was compiled (version = spec hash +
+                 normalized SQL hashes of its primary queries + compiler + dialect), or ``step:<id>`` for a
+                 step object (P7-04; version = its current version row, replaced by every execution);
 * ``data``       ref = ``<source_id>/<schema.table>``; version = the run's manifest entry (P4-03);
 * ``semantic``   ref = ``<workspace_id>/<metric>``; version = the approved version of that KPI (or none);
 * ``method``     ref = the method name; version = manifest id + version + digest of its code;
@@ -85,6 +86,14 @@ def _query_version(session: Session, ref: str) -> str | None:
     from analystos.knowledge.attested import sql_hash
     from analystos.registries.hypotheses import spec_hash
 
+    if ref.startswith("step:"):  # a step (P7-04): its current version, which every execution replaces
+        from analystos.db.models import AnalysisStep, AnalysisStepVersion
+
+        step = session.get(AnalysisStep, ref[len("step:"):])
+        if step is None:
+            return None
+        return session.scalar(select(AnalysisStepVersion.id).where(AnalysisStepVersion.step_id == step.id,
+                                                                   AnalysisStepVersion.version == step.current_version))
     h = session.get(Hypothesis, ref)
     if h is None:
         return None
