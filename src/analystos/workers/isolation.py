@@ -109,12 +109,22 @@ def resolve_allowed(endpoints: Iterable[str]) -> tuple[set[str], set[tuple[str, 
 
 
 def install_egress_guard(endpoints: Iterable[str] = ()) -> None:
-    """Refuse every Python-level connection except to `endpoints` (URLs or host:port). Idempotent: a
-    second call replaces the allowlist. Only ever narrows: it cannot be switched off once installed."""
+    """Refuse every Python-level connection except to `endpoints` (URLs or host:port). A second call replaces
+    the allowlist; the guard itself cannot be removed once installed. Allowed names are re-resolved (at most
+    every 5 s) before a refusal, so a store whose address was not resolvable at start-up, or moved, still works."""
+    import time
+
+    endpoints = list(endpoints)
     names, pairs = resolve_allowed(endpoints)
-    _installed["names"], _installed["pairs"] = names, pairs
+    _installed.update(names=names, pairs=pairs, endpoints=endpoints, resolved_at=time.monotonic())
     if _installed.get("patched"):
         return
+
+    def refresh() -> None:
+        if _installed["endpoints"] and time.monotonic() - _installed["resolved_at"] >= 5:
+            _installed["names"], _installed["pairs"] = resolve_allowed(_installed["endpoints"])
+            _installed["resolved_at"] = time.monotonic()
+
     real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
     real_sendto, real_getaddrinfo = socket.socket.sendto, socket.getaddrinfo
 
@@ -126,6 +136,8 @@ def install_egress_guard(endpoints: Iterable[str] = ()) -> None:
             ip = str(ipaddress.ip_address(str(host).split("%")[0]))
         except ValueError:
             ip = None
+        if ip is not None and (ip, port) not in _installed["pairs"]:
+            refresh()
         if ip is None or (ip, port) not in _installed["pairs"]:
             raise EgressRefused(f"isolated worker: egress to {host}:{port} is refused (only the artifact store)")
 
