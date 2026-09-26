@@ -136,7 +136,7 @@ def export_contracts() -> None:
               "semantic_query": semantic.SemanticQuery,
               "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact,
               "definition_ref": definition.DefinitionRef, "pin_status": definition.PinStatus, "work_order": work.WorkOrderSpec,
-              "recipe": recipe.Recipe}
+              "recipe": recipe.Recipe, "pipeline": work.PipelineSpec}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
