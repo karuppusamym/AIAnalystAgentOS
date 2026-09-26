@@ -57,6 +57,17 @@ the question using ONLY the tables and columns in the catalog (schema-qualified 
 Return JSON: {"sql": str, "explanation": str, "chart": {"type": bar|line|table|kpi|pie|scatter, "x": str|null, "y": str|null}}.
 """ + UNTRUSTED_NOTE,
 
+    "semantic_query.v1": """You choose a governed metric query. The catalog lists the APPROVED metrics of this workspace, the
+dimensions each one may be grouped or filtered by, and time dimensions. You never write SQL: you name metrics and
+fields, and the platform compiles the SQL from the approved definitions. Return JSON:
+{"semantic_query": {"metrics": [metric names], "dimensions": [dimension names], "filters": [{"field": str,
+"op": "=|!=|<|<=|>|>=|in|not_in|is_null|is_not_null", "value": any}], "time": {"dimension": str,
+"grain": "day|week|month|quarter|year"|null, "start": "YYYY-MM-DD"|null, "end": "YYYY-MM-DD"|null}|null,
+"order": [{"field": str, "direction": "asc|desc"}], "limit": int}} using ONLY names from the catalog,
+or {"semantic_query": null} when the question asks for anything the catalog cannot express exactly (another
+measure, an unlisted field, a relative period you cannot turn into dates). Never approximate.
+""" + UNTRUSTED_NOTE,
+
     "sql_repair.v1": """The gateway rejected or failed your SQL. Fix it using the error message; keep the same intent.
 Use only catalog tables/columns. Return JSON: {"sql": str, "explanation": str}.""",
 

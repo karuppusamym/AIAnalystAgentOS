@@ -362,7 +362,13 @@ def turn_out(session: Session, turn: AskTurn) -> dict[str, Any]:
     from analystos.semantic.evidence import evidence_status
 
     fresh = staleness(session, turn)
-    return {**row(turn), "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
+    prov = turn.provenance or {}
+    semantic = prov.get("semantic") or {}
+    governance = {"governance": prov.get("governance", "ad_hoc")}  # ADR-0019: on every answer
+    if governance["governance"] == "governed":
+        governance |= {"semantic_model_version": semantic.get("semantic_model_version", semantic.get("model_version")),
+                       "compiler_version": semantic.get("compiler_version")}
+    return {**row(turn), **governance, "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
 
 
 # ------------------------------------------------------------------------------ asking

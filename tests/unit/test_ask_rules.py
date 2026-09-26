@@ -202,7 +202,7 @@ def test_a_rules_shape_is_answered_through_the_gateway_with_no_model(gate):
     assert out["status"] == "answered" and out["answered_by"] == "rules" and out["route"] == "tool" and out["model"] is None
     assert ctx.services.gateway.calls == [out["sql"]] and '"category"' in out["sql"]
     assert out["decisions"][0]["purpose"] == "ask_route" and out["decisions"][0]["value"] == "tool"
-    assert out["suggestions"] and out["chart"] == {"type": "bar", "x": "category", "y": "ticket_count"}
+    assert out["suggestions"] and out["chart"] == {"type": "bar", "x": "category", "y": "ticket_count", "governance": "ad_hoc"}
     assert "no model call" in out["explanation"]
     assert ctx.router.skips and ctx.router.skips[0][0] == "sql_generation" and ctx.router.skips[0][1]["rung"] == "rules"
 
