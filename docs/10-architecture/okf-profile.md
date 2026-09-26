@@ -1,12 +1,15 @@
 # AnalystOS OKF v0.2 profile — knowledge packs, index, import/export, providers
 
-Delivered for tracker rows P4-K01, P4-K02, P4-K09 and P4-K10 (ADR-0013; amends ADR-0007).
+Delivered for tracker rows P4-K01, P4-K02, P4-K09 and P4-K10 (ADR-0013; amends ADR-0007), extended
+by P4-K05, K07 and K08 (sections at the end).
 Code: `src/analystos/knowledge/`. Tests: `tests/unit/test_knowledge_okf.py`,
-`tests/integration/test_knowledge_pack.py`. Evidence:
-[`docs/60-delivery/evidence/2026-09-25-knowledge-k01-k10.md`](../60-delivery/evidence/2026-09-25-knowledge-k01-k10.md).
+`tests/integration/test_knowledge_pack.py`, `tests/unit/test_context_k05.py`,
+`tests/integration/test_knowledge_k05_k08.py`. Evidence:
+[`docs/60-delivery/evidence/2026-09-25-knowledge-k01-k10.md`](../60-delivery/evidence/2026-09-25-knowledge-k01-k10.md),
+[`docs/60-delivery/evidence/2026-09-25-knowledge-k05-k08.md`](../60-delivery/evidence/2026-09-25-knowledge-k05-k08.md).
 P4-K04 (Attested Computations, ODCS, OpenLineage: `knowledge/attested.py`, `evidence/`) and P4-K06
 (crawler sources: `knowledge/{drafts,crawl_docs,dbt_manifest,superset_meta,documents}.py`,
-`services/{facets,knowledge_ingest}.py`) are the last three sections; evidence:
+`services/{facets,knowledge_ingest}.py`) are the three sections after them; evidence:
 [`2026-09-25-knowledge-k04-k06.md`](../60-delivery/evidence/2026-09-25-knowledge-k04-k06.md).
 
 ## The pinned specification, and what is claimed
@@ -85,9 +88,8 @@ not yet indexed.
 workspace may see (platform + its own); `pack_ids` can only narrow it. Two legs, fused by
 reciprocal rank (k = 60): a lexical leg — Postgres full text (`to_tsquery` OR over the question's
 words, `ts_rank_cd`) — and a vector leg — HNSW nearest neighbours with `hnsw.iterative_scan =
-relaxed_order` then an exact re-sort. **Deviation:** the lexical leg is Postgres full-text ranking,
-not Okapi BM25 (spec v3 §4.3/§6.1 say BM25); a true BM25 needs corpus term statistics and is left
-to P4-K05, which owns ranking.
+relaxed_order` then an exact re-sort. P4-K05 replaced the lexical leg with Okapi BM25 (below); the
+K01 `ts_rank_cd` leg stays selectable (`lexical="ts_rank_cd"`) for the benchmark.
 
 ## Import and export (K02)
 
@@ -140,11 +142,117 @@ configuration change never mixes vector spaces. `analystos knowledge reembed [--
 [--dim]` moves the index, retyping `vector(n)` and rebuilding the HNSW index when the dimension
 changes. `context_entry.embedding` stays 256-d hashing.
 
+## Context compiler over the pack (K05)
+
+`context/compiler.py` (`load_knowledge(..., query=)`, `pack_section_items`, `rank_items`) and
+`knowledge/index.py` (`retrieve(..., lexical="bm25", hop=True)`):
+
+* **BM25.** Okapi BM25 (k1 = 1.2, b = 0.75, idf = ln(1 + (N − df + 0.5)/(df + 0.5))) computed in
+  Postgres over each section's `tsvector` lexemes (english stemming; term frequency = positions;
+  document length = lexeme occurrences). Every section containing a query lexeme matches the OR
+  query, so document frequencies are counted over that match set; N and the mean length are
+  per-pack statistics written to the index state (`pack:<id>.bm25`) when a pack is indexed (computed
+  live for older states). The BM25 leg also reports each section's share of the question's
+  lexemes (`lexical_share`). Fused with the vector leg by reciprocal rank (k = 60), as before.
+* **One hop.** The first section of each document that one of the top 5 hits links to (resolved
+  internal links, same pack) gains a quarter of the linking hit's score — added to its own score,
+  or as a new hit — marked `via`; a hop never lifts a section above the hit that links to it.
+* **Section-level items.** With a query, pack candidates are the index's *section* hits (not whole
+  documents): item id `<document_id>#<anchor>`, name `Title § Heading` for non-generic headings,
+  excerpts built from the section sentences that mention the question (`focused_excerpt`). Receipts
+  carry `document_id`, `path`, `anchor`, the document `sha256`, `section_sha256`, the index rank and
+  the fused score, and `via` for a hop. Workspace `context_entry` rows are still whole entries.
+* **Ranking and gate.** Within the compiler an item's rank is the reciprocal-rank fusion of its
+  term-overlap rank (T03's `item_score`) and its index rank. It reaches a prompt when its term
+  overlap with the focus terms (generic table-name words excluded) passes `min_relevance`, or it
+  was reached by one hop from an item that passed; the index rank orders, it never admits on its
+  own (a first version admitted top-3 lexical matches and, in the token measurement, a section
+  matched only on the table word `incident` pulled a second table into the SQL prompt).
+  `NO_MATCH` otherwise, as in T03.
+* **Memory and external knowledge in their own sections.** `external` (other providers' results,
+  K09: from the run's context package, never a second provider call per prompt; untrusted and
+  marked `trusted: false`), `prior_findings`, `negative_knowledge` (rejected hypotheses and review
+  rejections) and `episodes` are *supplementary*: filled after the primary sections (glossary,
+  business rules, metrics) whatever the profile order, each capped at `supplementary_share`
+  (default 12%) of the budget, and given back first when the omitted note needs room. The
+  planning and hypothesis-generation profiles now include `external` and `episodes` (memory was
+  write-only before). Tested: episodes listed first, plentiful and maximally relevant, cannot
+  displace a glossary term (`test_episodes_cannot_crowd_out_glossary_terms`).
+* **API.** `POST /api/workspaces/{id}/knowledge/context` previews the compiled knowledge for a
+  purpose and question (no model call); `GET /api/runs/{id}/context-receipts` lists each model
+  call's receipts. The UI (P4-U02/U04) renders them.
+
+## Review queue (K07) and the learning loop (K08)
+
+`knowledge/suggestions.py`, `knowledge/learning.py`, table `knowledge_suggestion` (migration 0024).
+A draft has a `kind` (`term`, `definition`, `metric`, `rule`, `note`, `negative`,
+`attested_computation`, `table_description`), a `subject` (`asset:<id>`, `insight:<id>`,
+`metric:<name>@v<n>`, `feedback:<id>`), the workspace-pack `path` an approval writes, and
+**per-field** `{value, confidence, provenance}` (the row's `confidence` is its least confident
+field). Drafts never reach a prompt.
+
+* **Sources.** Crawler enrichment (the model's descriptions still fill placeholders as in
+  increment 3; each is also queued with the model id, purpose, prompt version and crawl run as
+  provenance, the model's own confidence clamped and capped at 0.9 — 0.5 when it gives none — and
+  the rule-derived table role at the rules' confidence). The learning loop: an accepted verified
+  finding (`POST /api/insights/{id}/outcome` accept) → a draft Attested Computation; an approved
+  semantic metric → a draft `Metric`; run feedback `add_context` → a `Note`, `redirect` /
+  `deeper_analysis` → a `Note` on the analysts' focus, `reject_finding` → a `Negative Knowledge`
+  draft. Each draft has a lineage edge `knowledge_suggestion —derived_from→ <subject>` and a
+  `knowledge.suggestion_proposed` event.
+* **Review.** `GET /api/workspaces/{id}/knowledge/suggestions` (viewer) lists the queue;
+  `POST .../suggestions/review` (editor) takes a batch of `approve`, `edit` (edit-then-approve:
+  edited fields become `provenance.source: human`, confidence 1.0) and `reject` decisions. All
+  accepted decisions land in **one** workspace-pack revision; approved documents are OKF v0.2 with
+  `verified: [{by: human:<user>}]` (human-reviewed tier) and the draft's provenance under
+  `analystos.review`. A rejection writes a `Negative Knowledge` document (what was proposed, that a
+  reviewer rejected it, why) under `negative/`, which later prompts see in `negative_knowledge`.
+* **Invariants.** A draft never replaces a document the queue did not write (owner or migrated
+  content): proposing is skipped, approving is refused (`owner_content_exists`). Identical content
+  already decided is never proposed again; a subject's rejected primary value is never proposed
+  again, and the crawler sends a table's rejected descriptions to the model as `rejected` and drops
+  a repeat. Catalog side of a table description: approving sets the description (origin `model`,
+  or `user` when edited) and marks the asset reviewed — only while it is not reviewed and not
+  owner/source text; rejecting restores the previous placeholder if the model text is still there.
+  Writes stay inside the platform (the pack), so no approval object is involved; pushing the pack
+  out is the K01 hash-bound approval.
+
+## Attested Computation (K08 minimal shape; P4-K04 extends it)
+
+`knowledge/attested.py` writes and validates:
+
+```yaml
+type: Attested Computation
+title: <finding title>
+status: draft | stable            # stable once a human approved it in the review queue
+stale_after: <ISO instant>        # §5.5; default 90 days after drafting
+verified:                         # §5.2
+  - {by: process:analystos-rev, at: ...}   # REV's deterministic checks passed
+  - {by: human:<user id>, at: ...}         # the reviewer
+analystos:
+  kind: attested_computation
+  computation:
+    query_hash: <sha256 of the primary query's SQL as executed>
+    result_hash: <the gateway's result hash of that query>
+    q_value: <BH-adjusted p-value of the primary test>
+    effect_size: {value: <number>, label: <cramers_v | hedges_g | ...>}
+    verified_by: process:analystos-rev
+    method, n, run_id, insight_id, experiment_id, queries: [{query_id, query_hash, result_hash}]
+```
+
+Required: `query_hash`, `result_hash`, `q_value`, `effect_size.value`, `verified_by` and a parseable
+`stale_after`; everything else is optional so K04 can add ODCS/OpenLineage references. A draft
+missing a required field cannot be approved (`incomplete_computation`). Nothing is executed.
+
 ## Findings as Attested Computations (K04)
 
 Code: `knowledge/attested.py` (`AttestedComputation`, `attested_from_insight`, `write_findings`,
-`check_attested`). A **verified** insight becomes `findings/<insight-id>.md`,
-`type: Attested Computation` (OKF §10). An unverified one has nothing to attest (`InvalidInput`).
+`check_attested`). A **verified** insight becomes `findings/<slug of insight id>.md` — the review
+queue's path, so the full document and an approved K08 draft of one finding are the same document
+(a human-approved one is curated and kept) — `type: Attested Computation` (OKF §10). An unverified
+one has nothing to attest (`InvalidInput`). The full document is a superset of the K08 minimal
+shape above: it also carries `analystos.kind: attested_computation` and the same
+`analystos.computation` block, so `validate` accepts it; `check_attested` is the stricter profile.
 
 | Frontmatter | Value |
 |---|---|
@@ -156,7 +264,7 @@ Code: `knowledge/attested.py` (`AttestedComputation`, `attested_from_insight`, `
 | `verified` | `process:analystos-rev` (machine-confirmed); a `human:<id>` approver makes it human-reviewed and `stable` |
 | `stale_after` (§5.5) | verification time + 90 days (`stale_days`) |
 | `sources` | one entry per governed query (`analystos://query/<id>`) and per asset read |
-| `analystos.attestation` | `method`, `params`, `spec_hash` (hypothesis registry hash), `plan_hash`, `run_id`, `query_hash` (`query_execution.fingerprint`), `result_hash`, `queries[]` (primary and verification, each with both hashes), `statistics` (`test`, `n`, `p_value`, `q_value` = BH-adjusted p, `effect_size`, `effect_label`), `q_value`, `effect_size`, `confidence`, `checks[]`, `verified_by[]`, `approved_by[]` |
+| `analystos.attestation` | `method`, `params`, `spec_hash` (hypothesis registry hash), `plan_hash`, `run_id`, `query_hash` (sha256 of the executed SQL, recomputable from the `# Computation` fence; the same value as `computation.query_hash`), `result_hash`, `queries[]` (primary and verification, each with both hashes and the gateway `fingerprint`), `statistics` (`test`, `n`, `p_value`, `q_value` = BH-adjusted p, `effect_size`, `effect_label`), `q_value`, `effect_size`, `confidence`, `checks[]`, `verified_by[]`, `approved_by[]` |
 
 The body has `# Claim`, `# Computation` (one fenced SQL block, the executed statement), `# Evidence`
 and `# Caveats`. `AttestedComputation.from_document(render())` is lossless (tested). There is no
@@ -164,7 +272,7 @@ upstream JSON Schema for OKF, so `check_attested` is this profile, self-checked.
 
 `POST /api/workspaces/{ws}/analysis/{run}/findings/attest` writes a run's verified findings into the
 workspace pack as drafts (curated documents kept, below); `GET /api/insights/{id}/attested` returns
-one without writing. Turning approved findings into drafts automatically is P4-K08.
+one without writing. The learning loop (K08) drafts accepted findings through the review queue.
 
 ## Machine-written documents: the crawler invariants (K04, K06)
 

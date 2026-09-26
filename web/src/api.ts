@@ -1405,6 +1405,187 @@ export interface CapabilityInvocation {
   [k: string]: unknown;
 }
 
+// ----------------------------------------------------------------------------------- build (P4-E04/E06, P4-U05)
+export interface BuildTarget {
+  id: string;
+  workspace_id: string;
+  engine: string;
+  schema_name: string;
+  build_role: string;
+  status: string;
+  provisioning: Dict;
+  created_by: string;
+  created_at: string;
+}
+
+export type BuildStatus = "planned" | "awaiting_approval" | "running" | "succeeded" | "failed" | "refused" | string;
+
+export interface BuildTest {
+  column: string;
+  test: string;
+}
+
+export interface BuildDryRun {
+  runner?: string;
+  command?: string[] | string;
+  ok?: boolean;
+  dbt_version?: string | null;
+  ossie_version?: string | null;
+  tests?: { candidates?: BuildTest[]; passing?: BuildTest[]; dropped?: BuildTest[] };
+  allowed_sources?: string[];
+  metrics?: { metric: string; [k: string]: unknown }[];
+  skipped_metrics?: { metric: string; reason: string }[];
+  notes?: string[];
+  [k: string]: unknown;
+}
+
+export interface BuildEstimate {
+  rows?: number | null;
+  columns?: number | null;
+  models?: number | null;
+  tests?: number | null;
+  approx_bytes?: number | null;
+  method?: string;
+  query_id?: string | null;
+}
+
+export interface BuildRollback {
+  strategy?: string;
+  statements?: string[];
+  restore?: string;
+  previous_job_id?: string | null;
+}
+
+/** GET /api/workspaces/{id}/builds: a job without its files, manifest or logs, plus its approval status. */
+export interface BuildJob {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  source_run_id: string;
+  artifact_id: string | null;
+  approval_id: string | null;
+  approval_status?: string | null;
+  engine: string;
+  runner: string;
+  target_schema: string;
+  project_name: string;
+  project_hash: string;
+  plan_hash: string | null;
+  relations: string[];
+  dry_run: BuildDryRun;
+  estimate: BuildEstimate;
+  rollback: BuildRollback;
+  status: BuildStatus;
+  run_results: { counts?: Record<string, number>; [k: string]: unknown };
+  error: string | null;
+  created_by: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface BuildApprovalState {
+  id: string;
+  status: string;
+  action: string;
+  payload_hash: string;
+  plan_hash: string | null;
+  policy_version: number;
+  risk_tier: string;
+  requested_by: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  expires_at: string | null;
+}
+
+export interface BuildJobDetail extends BuildJob {
+  project_files: Record<string, string>;
+  manifest: Dict;
+  openlineage: Dict[];
+  log_tail: string;
+  approval: BuildApprovalState | null;
+}
+
+export interface BuildFileDiff {
+  path: string;
+  status: "added" | "removed" | "modified" | "unchanged";
+  lines_added: number;
+  lines_removed: number;
+  diff: string;
+  truncated: boolean;
+}
+
+export interface BuildDiff {
+  job_id: string;
+  project_hash: string;
+  basis: "previous_job_same_target" | "requested" | "none";
+  against: { job_id: string; status: string; project_hash: string; created_at: string | null } | null;
+  identical: boolean;
+  files: BuildFileDiff[];
+  summary: { added: number; removed: number; modified: number; unchanged: number; lines_added: number; lines_removed: number };
+}
+
+// ----------------------------------------------------------------------------------- semantic layer (P4-K03)
+export type MetricProposal = Schemas["MetricProposalIn"];
+
+export interface SemanticMetric {
+  id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  status: "draft" | "proposed" | "approved" | "deprecated" | "rejected" | string;
+  definition: Dict;
+  expression: string;
+  normalized_expression: string;
+  display_name: string | null;
+  owner_id: string | null;
+  proposed_by: string;
+  proposed_via: string;
+  run_id: string | null;
+  approval_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SemanticConflictRow {
+  kind: "duplicate_expression" | "conflicting_definition";
+  names: string[];
+  metrics?: { name: string; version: number; status: string; expression: string }[];
+  detail: string;
+}
+
+export interface SemanticModelView {
+  model: Dict | null;
+  metrics: SemanticMetric[];
+  approved: string[];
+  conflicts: SemanticConflictRow[];
+  ossie_version: string;
+}
+
+export interface MetricProblem {
+  field: string;
+  message: string;
+}
+
+export interface MetricValidation {
+  ok: boolean;
+  problems: MetricProblem[];
+  conflicts: SemanticConflictRow[];
+  normalized_expression: string | null;
+  existing: { version: number; status: string } | null;
+}
+
+export interface MetricProposalResult {
+  metric: SemanticMetric;
+  created: boolean;
+  conflicts: SemanticConflictRow[];
+}
+
 // ----------------------------------------------------------------------------------- errors
 export class ApiError extends Error {
   readonly status: number;
@@ -1837,6 +2018,34 @@ export const api = {
   findingOutcome: (insightId: string, signal: "accept" | "dismiss") =>
     post("/api/insights/{insight_id}/outcome", { path: { insight_id: insightId }, body: { signal } }) as
       Promise<{ insight: string; signal: string; labelled_decisions: number }>,
+
+  // build (P4-E04/E06): targets, elt_build runs and their jobs; approval goes through the inbox
+  buildTargets: (ws: string) => get("/api/workspaces/{workspace_id}/build-targets", { path: W(ws) }) as Promise<BuildTarget[]>,
+  designateBuildTarget: (ws: string, schema: string) =>
+    post("/api/workspaces/{workspace_id}/build-targets", { path: W(ws), body: { schema_name: schema } }) as Promise<BuildTarget>,
+  startBuild: (ws: string, fromRunId: string, targetSchema: string) =>
+    post("/api/workspaces/{workspace_id}/builds", { path: W(ws), body: { from_run_id: fromRunId, target_schema: targetSchema } }) as
+      Promise<{ run_id: string; status: string; playbook: string }>,
+  listBuilds: (ws: string) => get("/api/workspaces/{workspace_id}/builds", { path: W(ws) }) as Promise<BuildJob[]>,
+  getBuild: (id: string) => get("/api/builds/{job_id}", { path: { job_id: id } }) as Promise<BuildJobDetail>,
+  buildDiff: (id: string, against?: string) =>
+    get("/api/builds/{job_id}/diff", { path: { job_id: id }, query: { against } }) as Promise<BuildDiff>,
+
+  // semantic layer (P4-K03): KPI proposals, validation and the separation-of-duties approve route
+  semanticModel: (ws: string) => get("/api/workspaces/{workspace_id}/semantic", { path: W(ws) }) as Promise<SemanticModelView>,
+  metricVersions: (ws: string, name: string) =>
+    get("/api/workspaces/{workspace_id}/semantic/metrics/{name}", { path: { workspace_id: ws, name } }) as Promise<SemanticMetric[]>,
+  validateMetric: (ws: string, body: MetricProposal) =>
+    post("/api/workspaces/{workspace_id}/semantic/metrics/validate", { path: W(ws), body }) as Promise<MetricValidation>,
+  proposeMetric: (ws: string, body: MetricProposal) =>
+    post("/api/workspaces/{workspace_id}/semantic/metrics", { path: W(ws), body }) as Promise<MetricProposalResult>,
+  decideMetric: (ws: string, name: string, approve: boolean, version?: number, reason?: string) =>
+    post(approve ? "/api/workspaces/{workspace_id}/semantic/metrics/{name}/approve" : "/api/workspaces/{workspace_id}/semantic/metrics/{name}/reject",
+      { path: { workspace_id: ws, name }, body: { version: version ?? null, reason: reason || null } }) as Promise<SemanticMetric>,
+
+  // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
+  publishDashboard: (artifactId: string) =>
+    post("/api/artifacts/{artifact_id}/publish", { path: { artifact_id: artifactId } }) as Promise<Approval>,
 
   // Ask threads (P4-U02)
   askThreads: (ws: string, q?: string) =>

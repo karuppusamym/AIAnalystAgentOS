@@ -14,6 +14,7 @@ from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import evidence as evidence_router
+from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
@@ -47,6 +48,7 @@ app.include_router(mcp_router.router)
 app.include_router(decisions_router.router)
 app.include_router(builds_router.router)
 app.include_router(ask_router.router)
+app.include_router(knowledge_router.router)
 app.include_router(evidence_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 

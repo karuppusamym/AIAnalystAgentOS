@@ -38,6 +38,8 @@
   "knowledge.ingested",
   "knowledge.pushed",
   "knowledge.revision_committed",
+  "knowledge.suggestion_proposed",
+  "knowledge.suggestions_reviewed",
   "mcp.server.refreshed",
   "mcp.tool_called",
   "metadata.collected",

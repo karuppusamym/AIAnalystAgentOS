@@ -1,8 +1,15 @@
-"""Findings as OKF v0.2 Attested Computations (P4-K04, spec v3 §6.1, OKF §10).
+"""Findings as OKF v0.2 Attested Computations (P4-K04 full profile; P4-K08 minimal shape; OKF §10).
 
-A verified finding becomes `findings/<insight-id>.md`, `type: Attested Computation`. The OKF §10.2
-contract fields say how a consumer re-runs and checks it; the `analystos.attestation` mapping (a
-producer extension, §4.1) carries the evidence the REV already holds:
+A verified finding becomes `findings/<slug of insight id>.md`, `type: Attested Computation` — the same
+path the review queue (P4-K07/K08) approves a learning-loop draft to, so one finding is one document.
+Two writers, one document family:
+
+* **Minimal shape (K08)** — `computation_from` / `render` / `validate`: the `analystos.computation`
+  block with the six fields spec v3 names (query hash, result hash, q-value, effect size,
+  verified_by, stale_after). The learning loop drafts it; the review queue approves it.
+* **Full profile (K04)** — `AttestedComputation` / `attested_from_insight` / `check_attested`: the
+  OKF §10.2 contract fields and the `analystos.attestation` evidence block below, *plus* the same
+  `analystos.computation` block, so every full document also passes `validate`.
 
 | field | from |
 |---|---|
@@ -11,7 +18,7 @@ producer extension, §4.1) carries the evidence the REV already holds:
 | `attester` | the REV reproducible re-run (identical result hash) |
 | `method`, `params`, `spec_hash` | the hypothesis's AnalysisSpec and its registry hash |
 | `plan_hash`, `run_id` | the analysis run's approved plan |
-| `query_hash`, `result_hash`, `queries` | `query_execution.fingerprint` / `.result_hash` of every query behind it |
+| `query_hash`, `result_hash`, `queries` | sha256 of the executed SQL (what the `# Computation` fence shows, so a consumer can recompute it) and `query_execution.result_hash`, per query; each receipt also carries the gateway `fingerprint` |
 | `statistics.q_value`, `effect_size` | the primary experiment (BH-adjusted p is the q-value) |
 | `verified_by` | the REV checks (`process:analystos-rev`) and any human approver (`human:<id>`) |
 | `stale_after` (OKF §5.5) | verification time + `stale_days` |
@@ -21,6 +28,7 @@ Nothing here executes anything: the document records a computation and the means
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
@@ -29,24 +37,109 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.core.errors import InvalidInput, NotFound
+from analystos.core.ids import utcnow
 from analystos.knowledge import okf
 
 TYPE = "Attested Computation"
-REV_ACTOR = "process:analystos-rev"
+KIND = "attested_computation"
+REV = REV_ACTOR = "process:analystos-rev"
+STALE_AFTER_DAYS = DEFAULT_STALE_DAYS = 90
+REQUIRED = ("query_hash", "result_hash", "q_value", "effect_size", "verified_by")
 EXECUTOR = "analystos://gateway/QueryGateway.execute"
 ATTESTER = "analystos://rev/reproducible_rerun"
 RECEIPT = ["query_id", "executed_sql", "result_hash"]
-DEFAULT_STALE_DAYS = 90
 _STAT_KEYS = ("test", "n", "p_value", "effect_size", "effect_label")
 
 
+def sql_hash(sql: str) -> str:
+    return hashlib.sha256(sql.encode()).hexdigest()
+
+
+# ------------------------------------------------------------------------------------ minimal shape (K08)
+def computation_from(insight: Any, experiment: Any | None, queries: list[Any]) -> dict[str, Any]:
+    """The computation block for a finding: its primary experiment's statistics and the queries it ran."""
+    result = (experiment.result if experiment is not None else None) or {}
+    qs = [{"query_id": q.id, "query_hash": sql_hash(q.executed_sql or q.sql), "result_hash": q.result_hash}
+          for q in queries]
+    return {"query_hash": qs[0]["query_hash"] if qs else None, "result_hash": qs[0]["result_hash"] if qs else None,
+            "q_value": result.get("p_adjusted", result.get("p_value")),
+            "effect_size": {"value": result.get("effect_size"), "label": result.get("effect_label")},
+            "verified_by": REV if getattr(insight, "verified", False) else None,
+            "method": result.get("test") or (experiment.method if experiment is not None else None), "n": result.get("n"),
+            "run_id": insight.run_id, "insight_id": insight.id,
+            "experiment_id": experiment.id if experiment is not None else None, "queries": qs}
+
+
+def missing(computation: dict[str, Any]) -> list[str]:
+    """Required fields that are absent: a draft without them cannot be approved."""
+    out = [k for k in REQUIRED if computation.get(k) in (None, "", [])]
+    if isinstance(computation.get("effect_size"), dict) and computation["effect_size"].get("value") is None:
+        out.append("effect_size")
+    return sorted(set(out))
+
+
+def stale_after(now: datetime | None = None, days: int = STALE_AFTER_DAYS) -> str:
+    return ((now or utcnow()) + timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
+def frontmatter(*, title: str, statement: str, computation: dict[str, Any], stale: str, status: str = "draft",
+                verified: list[dict[str, Any]] | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    ext = {"kind": KIND, "computation": computation, "origin": "learning:finding", "trusted": status == "stable",
+           **(extra or {})}
+    fm: dict[str, Any] = {"type": TYPE, "title": title, "status": status, "stale_after": stale, "analystos": ext,
+                          "description": okf_first_sentence(statement), "tags": ["attested-computation", "finding"]}
+    if verified:
+        fm["verified"] = verified
+    return fm
+
+
+def okf_first_sentence(text: str) -> str:
+    from analystos.knowledge.entries import first_sentence
+
+    return first_sentence(text) or text[:240]
+
+
+def body(statement: str, computation: dict[str, Any]) -> str:
+    eff = computation.get("effect_size") or {}
+    lines = ["# Finding", "", statement.strip(), "", "# Computation", "",
+             f"* method: {computation.get('method')} (n = {computation.get('n')})",
+             f"* q-value (BH-adjusted): {computation.get('q_value')}",
+             f"* effect size: {eff.get('value')} ({eff.get('label')})",
+             f"* query sha256: {computation.get('query_hash')}",
+             f"* result sha256: {computation.get('result_hash')}",
+             f"* verified by: {computation.get('verified_by')}"]
+    return "\n".join(lines)
+
+
+def render(*, title: str, statement: str, computation: dict[str, Any], stale: str, status: str = "draft",
+           verified: list[dict[str, Any]] | None = None, extra: dict[str, Any] | None = None) -> str:
+    return okf.render_document(frontmatter(title=title, statement=statement, computation=computation, stale=stale,
+                                           status=status, verified=verified, extra=extra), body(statement, computation))
+
+
+def validate(doc: okf.OkfDocument) -> list[str]:
+    """Problems with an Attested Computation document against the minimal shape (empty when it has
+    it). `check_attested` is the stricter K04 profile."""
+    if doc.type != TYPE:
+        return [f"type is {doc.type!r}, not {TYPE!r}"]
+    comp = doc.extension.get("computation")
+    if not isinstance(comp, dict):
+        return ["analystos.computation missing"]
+    out = [f"computation.{k} missing" for k in missing(comp)]
+    if okf.parse_instant(doc.frontmatter.get("stale_after")) is None:
+        out.append("stale_after missing or not an instant")
+    return out
+
+
+# ------------------------------------------------------------------------------------ full profile (K04)
 class QueryReceipt(BaseModel):
     """One governed query behind the finding: its identity, statement hash and result hash."""
 
     model_config = ConfigDict(extra="forbid")
     query_id: str
     role: Literal["primary", "verification"] = "primary"
-    query_hash: str | None = None
+    query_hash: str | None = None  # sha256 of the executed SQL
+    fingerprint: str | None = None  # the gateway's normalized-statement fingerprint
     result_hash: str | None = None
     source_id: str | None = None
     row_count: int = 0
@@ -116,6 +209,16 @@ class AttestedComputation(BaseModel):
         return finding_path(self.insight_id)
 
     # ------------------------------------------------------------------ OKF
+    def computation_block(self) -> dict[str, Any]:
+        """The K08 minimal-shape block (same values), so `validate` accepts every full document."""
+        s = self.statistics
+        return {"query_hash": self.query_hash, "result_hash": self.result_hash, "q_value": s.q_value,
+                "effect_size": {"value": s.effect_size, "label": s.effect_label},
+                "verified_by": self.verified_by[0].by if self.verified_by else None, "method": s.test or self.method,
+                "n": s.n, "run_id": self.run_id, "insight_id": self.insight_id,
+                "queries": [{"query_id": q.query_id, "query_hash": q.query_hash, "result_hash": q.result_hash}
+                            for q in self.queries]}
+
     def frontmatter(self) -> dict[str, Any]:
         attestors = [*self.verified_by, *self.approved_by]
         sources = [{"id": f"query-{q.query_id}", "resource": f"analystos://query/{q.query_id}",
@@ -132,7 +235,7 @@ class AttestedComputation(BaseModel):
         }
         fm: dict[str, Any] = {
             "type": TYPE, "title": self.title, "status": self.status,
-            "tags": sorted({"finding", f"method-{_tag(self.method)}"}),
+            "tags": sorted({"attested-computation", "finding", f"method-{_tag(self.method)}"}),
             "runtime": self.runtime, "parameters": [],
             "executor": {"resource": EXECUTOR, "receipt": list(RECEIPT)},
             "attester": {"resource": ATTESTER},
@@ -140,9 +243,10 @@ class AttestedComputation(BaseModel):
             "verified": [{"by": a.by, "at": _iso(a.at)} for a in attestors],
             "stale_after": _iso(self.stale_after),
             "sources": sources,
-            "analystos": {"kind": "finding", "origin": "rev", "trusted": self.status == "stable",
+            "analystos": {"kind": KIND, "origin": "rev", "trusted": self.status == "stable",
                           "finding": {"insight_id": self.insight_id, "code": self.code, "workspace_id": self.workspace_id,
                                       "run_id": self.run_id},
+                          "computation": self.computation_block(),
                           "caveats": list(self.caveats), "attestation": attestation},
         }
         desc = _first_sentence(self.claim)
@@ -238,7 +342,11 @@ def check_attested(meta: dict[str, Any] | None) -> list[str]:
 
 # ------------------------------------------------------------------------------------ building
 def finding_path(insight_id: str) -> str:
-    return f"findings/{insight_id}.md"
+    """The review queue's path for a finding (`suggestions.default_path`), so a full document and an
+    approved learning-loop draft of the same finding are one document (a human-approved one is kept)."""
+    from analystos.knowledge.entries import slugify
+
+    return f"findings/{slugify(insight_id, 120)}.md"
 
 
 def attested_from_insight(session: Session, insight: Any, *, approved_by: list[tuple[str, datetime]] | None = None,
@@ -271,11 +379,12 @@ def attested_from_insight(session: Session, insight: Any, *, approved_by: list[t
             roles.setdefault(qid, "verification")
     rows = {q.id: q for q in session.scalars(select(QueryExecution).where(QueryExecution.id.in_(list(roles)),
                                                                           QueryExecution.workspace_id == ins.workspace_id))}
-    queries = [QueryReceipt(query_id=qid, role=roles[qid], query_hash=rows[qid].fingerprint, result_hash=rows[qid].result_hash,
+    queries = [QueryReceipt(query_id=qid, role=roles[qid], query_hash=sql_hash(rows[qid].executed_sql or rows[qid].sql),
+                            fingerprint=rows[qid].fingerprint, result_hash=rows[qid].result_hash,
                             source_id=rows[qid].source_id, row_count=rows[qid].row_count or 0)
                for qid in roles if qid in rows]
     first = rows.get(primary.query_ids[0])
-    if first is None or not first.result_hash or not first.fingerprint:
+    if first is None or not first.result_hash or not (first.executed_sql or first.sql):
         raise InvalidInput(f"insight {ins.id}: the primary query has no recorded statement or result hash")
     src = session.get(Source, first.source_id) if first.source_id else None
     runtime = dialect_for(src.kind, src.execution_mode) if src is not None else "postgres"
@@ -292,7 +401,8 @@ def attested_from_insight(session: Session, insight: Any, *, approved_by: list[t
         insight_id=ins.id, code=ins.code, workspace_id=ins.workspace_id, run_id=ins.run_id, title=ins.title, claim=ins.finding,
         status=status or ("stable" if approvers else "draft"), runtime=runtime, computation=first.executed_sql or first.sql,
         method=str(h.spec.get("method") or primary.method), params=dict(h.spec), spec_hash=spec_hash(h.spec),
-        plan_hash=run.plan_hash if run is not None else None, query_hash=first.fingerprint, result_hash=first.result_hash,
+        plan_hash=run.plan_hash if run is not None else None, query_hash=sql_hash(first.executed_sql or first.sql),
+        result_hash=first.result_hash,
         queries=queries,
         statistics=Statistics(**{k: stat.get(k) for k in _STAT_KEYS}, q_value=stat.get("p_adjusted", stat.get("p_value"))),
         confidence=ins.confidence, checks=checks, verified_by=[Attestor(by=REV_ACTOR, at=verified_at, basis=basis)],
@@ -310,15 +420,16 @@ def write_findings(session: Session, run_id: str, *, author: str, stale_days: in
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise NotFound(f"run {run_id} not found")
-    docs = {}
+    docs, ids = {}, []
     for ins in session.scalars(select(Insight).where(Insight.run_id == run_id, Insight.status == "verified").order_by(Insight.code)):
         ac = attested_from_insight(session, ins, stale_days=stale_days)
         docs[ac.path] = ac.render()
+        ids.append(ins.id)
     report = write_drafts(session, run.workspace_id, docs, author=author, reason=f"findings of run {run_id}",
                           origin="rev", meta={"run_id": run_id})
+    by_path = {finding_path(i): i for i in ids}
     for path in report.written:
-        link(session, run.workspace_id, ("insight", path.rsplit("/", 1)[-1][:-3]), "attested_as", ("knowledge_document", path),
-             run_id=run_id)
+        link(session, run.workspace_id, ("insight", by_path[path]), "attested_as", ("knowledge_document", path), run_id=run_id)
     return {"run_id": run_id, "findings": sorted(docs), **report.as_dict()}
 
 
@@ -343,5 +454,6 @@ def _first_sentence(text: str) -> str | None:
     return first_sentence(text)
 
 
-__all__ = ["AttestedComputation", "Attestor", "QueryReceipt", "Statistics", "attested_from_insight", "check_attested",
-           "finding_path", "write_findings"]
+__all__ = ["KIND", "REV", "TYPE", "AttestedComputation", "Attestor", "QueryReceipt", "Statistics", "attested_from_insight",
+           "check_attested", "computation_from", "finding_path", "missing", "render", "sql_hash", "stale_after", "validate",
+           "write_findings"]

@@ -15,7 +15,14 @@ from analystos.evidence import odcs
 from analystos.evidence.openlineage import query_events
 from analystos.evidence.schemas import SCHEMA_DIR, facet_schema_urls, validate_odcs, validate_openlineage
 from analystos.knowledge import okf
-from analystos.knowledge.attested import AttestedComputation, Attestor, QueryReceipt, Statistics, check_attested
+from analystos.knowledge.attested import (
+    AttestedComputation,
+    Attestor,
+    QueryReceipt,
+    Statistics,
+    check_attested,
+    validate,
+)
 from analystos.knowledge.drafts import is_curated, tighten_tags
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -162,7 +169,8 @@ def test_attested_computation_is_a_conformant_okf_document_carrying_the_evidence
     ac = _attested()
     text = ac.render()
     doc = okf.parse_document(ac.path, text.encode())
-    assert doc.type == "Attested Computation" and ac.path == "findings/ins_1.md"
+    assert doc.type == "Attested Computation" and ac.path == "findings/ins-1.md"
+    assert validate(doc) == []  # the K08 minimal shape holds for every full document
     assert okf.check_conformance({ac.path: text.encode(), "index.md": b"# Index\n"}) == []
     fm = doc.frontmatter
     assert check_attested(fm) == []

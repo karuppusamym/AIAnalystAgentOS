@@ -249,3 +249,49 @@ def run_build(ctx: Any) -> dict[str, Any]:
     ctx.say(f"Built {', '.join(result['relations']) or 'nothing'} with dbt ({result['counts']}). "
             f"Rollback plan: {result['rollback'].get('strategy')}.", kind="decision")
     return result
+
+
+# ------------------------------------------------------------------------------ review (P4-U05)
+def previous_job(session: Session, job: BuildJob) -> BuildJob | None:
+    """The job this one is reviewed against: the latest earlier job of the same workspace, engine and
+    target schema, whatever its outcome (a refused plan is still what was last proposed there)."""
+    return session.scalar(select(BuildJob).where(BuildJob.workspace_id == job.workspace_id, BuildJob.engine == job.engine,
+                                                 BuildJob.target_schema == job.target_schema, BuildJob.id != job.id,
+                                                 BuildJob.created_at < job.created_at)
+                          .order_by(BuildJob.created_at.desc()))
+
+
+def job_diff(session: Session, job: BuildJob, against_id: str | None = None) -> dict[str, Any]:
+    """The generated project file by file against an earlier job (default: `previous_job`). A job of
+    another workspace is never a comparison basis: its files are not the caller's to read."""
+    from analystos.build.diff import file_diff
+
+    if against_id:
+        base = session.get(BuildJob, against_id)
+        if base is None or base.workspace_id != job.workspace_id:
+            raise NotFound(f"build job {against_id} not found in this workspace")
+        basis = "requested"
+    else:
+        base = previous_job(session, job)
+        basis = "previous_job_same_target" if base else "none"
+    out = file_diff(dict(base.project_files or {}) if base else None, dict(job.project_files or {}))
+    out.update({"job_id": job.id, "project_hash": job.project_hash, "basis": basis,
+                "against": ({"job_id": base.id, "status": base.status, "project_hash": base.project_hash,
+                             "created_at": base.created_at.isoformat() if base.created_at else None} if base else None),
+                "identical": base is not None and base.project_hash == job.project_hash})
+    return out
+
+
+def approval_summary(session: Session, job: BuildJob) -> dict[str, Any] | None:
+    """The state of the approval covering a job, for the Build view. The decision itself is made in the
+    approvals inbox, never here."""
+    from analystos.db.models import Approval
+
+    approval = session.get(Approval, job.approval_id) if job.approval_id else None
+    if approval is None:
+        return None
+    return {"id": approval.id, "status": approval.status, "action": approval.action, "payload_hash": approval.payload_hash,
+            "plan_hash": approval.plan_hash, "policy_version": approval.policy_version, "risk_tier": approval.risk_tier,
+            "requested_by": approval.requested_by, "decided_by": approval.decided_by,
+            "decided_at": approval.decided_at.isoformat() if approval.decided_at else None, "reason": approval.reason,
+            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None}

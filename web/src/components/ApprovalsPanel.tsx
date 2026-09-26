@@ -9,6 +9,8 @@ const ACTION_LABEL: Record<string, string> = {
   publish_dashboard: "Publish dashboards",
   execute_plan: "Execute analysis plan",
   mcp_tool_call: "Call an external MCP tool",
+  elt_build: "Build with dbt (write to a target schema)",
+  "semantic_metric.approve": "Approve a KPI definition",
 };
 
 function GovernanceReview({ evidence }: { evidence: Record<string, unknown> }) {

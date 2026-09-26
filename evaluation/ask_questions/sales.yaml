@@ -1,0 +1,144 @@
+# P4-V02 Ask accuracy benchmark — sales (evaluation.datasets.sales, seed 1, plus the restricted column).
+# Frozen 2026-09-25 before any tier was run. See README.md for how it was written and scored.
+domain: sales
+restricted_column: customer_email
+
+registry:
+  - name: revenue_by_region
+    patterns: ["Total revenue by sales region"]
+    sql: SELECT sales_region, SUM(net_amount) AS revenue FROM @table GROUP BY sales_region
+  - name: return_rate_by_channel
+    patterns: ["What is the return rate by channel?"]
+    sql: SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) AS return_rate FROM @table GROUP BY channel
+  - name: orders_by_segment
+    patterns: ["How many orders per customer segment?"]
+    sql: SELECT customer_segment, COUNT(*) AS orders FROM @table GROUP BY customer_segment
+  - name: order_value_by_segment
+    patterns: ["Average order value by customer segment"]
+    sql: SELECT customer_segment, AVG(net_amount) AS avg_order_value FROM @table GROUP BY customer_segment
+  - name: revenue_for_region
+    patterns: ["Total revenue for {sales_region}"]
+    sql: SELECT SUM(net_amount) AS revenue FROM @table WHERE sales_region = {{sales_region}}
+    parameters: [{name: sales_region, type: enum, column: sales_region, values_from: sales_region}]
+    example: {sales_region: EMEA}
+  - name: monthly_revenue
+    patterns: ["Monthly revenue", "Revenue per month"]
+    sql: SELECT date_trunc('month', order_date) AS month, SUM(net_amount) AS revenue FROM @table GROUP BY 1
+  - name: orders_for_channel
+    patterns: ["How many orders came through the {channel} channel?"]
+    sql: SELECT COUNT(*) AS orders FROM @table WHERE channel = {{channel}}
+    parameters: [{name: channel, type: enum, column: channel, values_from: channel}]
+    example: {channel: web}
+  - name: revenue_since
+    patterns: ["Total revenue since {start}"]
+    sql: SELECT SUM(net_amount) AS revenue FROM @table WHERE order_date >= {{start}}
+    parameters: [{name: start, type: date, column: order_date}]
+    example: {start: "2025-01-01"}
+  - name: shipping_days_by_region
+    patterns: ["Average shipping days by region"]
+    sql: SELECT sales_region, AVG(shipping_days) AS avg_shipping_days FROM @table GROUP BY sales_region
+
+questions:
+  # ---- answer: the registry's own phrasings, paraphrases, parameter values
+  - {id: sales-a01, q: "Total revenue by sales region", expect: answer, tags: [registry_exact],
+     gold: "SELECT sales_region, SUM(net_amount) FROM @table GROUP BY sales_region"}
+  - {id: sales-a02, q: "What is the total revenue per sales region?", expect: answer, tags: [paraphrase],
+     gold: "SELECT sales_region, SUM(net_amount) FROM @table GROUP BY sales_region"}
+  - {id: sales-a03, q: "Revenue broken down by region", expect: answer, tags: [paraphrase],
+     gold: "SELECT sales_region, SUM(net_amount) FROM @table GROUP BY sales_region"}
+  - {id: sales-a04, q: "What is the return rate by channel?", expect: answer, tags: [registry_exact],
+     gold: "SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table GROUP BY channel"}
+  - {id: sales-a05, q: "Return rate per sales channel", expect: answer, tags: [paraphrase],
+     gold: "SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table GROUP BY channel"}
+  - {id: sales-a06, q: "What share of orders get returned, by channel?", expect: answer, tags: [paraphrase],
+     gold: "SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table GROUP BY channel"}
+  - {id: sales-a07, q: "How many orders per customer segment?", expect: answer, tags: [registry_exact],
+     gold: "SELECT customer_segment, COUNT(*) FROM @table GROUP BY customer_segment"}
+  - {id: sales-a08, q: "Number of orders by customer segment", expect: answer, tags: [paraphrase],
+     gold: "SELECT customer_segment, COUNT(*) FROM @table GROUP BY customer_segment"}
+  - {id: sales-a09, q: "Average order value by customer segment", expect: answer, tags: [registry_exact],
+     gold: "SELECT customer_segment, AVG(net_amount) FROM @table GROUP BY customer_segment"}
+  - {id: sales-a10, q: "What is the mean net amount per order for each customer segment?", expect: answer, tags: [paraphrase],
+     gold: "SELECT customer_segment, AVG(net_amount) FROM @table GROUP BY customer_segment"}
+  - {id: sales-a11, q: "Total revenue for APAC", expect: answer, tags: [parameter],
+     gold: "SELECT SUM(net_amount) FROM @table WHERE sales_region = 'APAC'"}
+  - {id: sales-a12, q: "What is the total revenue for North America?", expect: answer, tags: [parameter, paraphrase],
+     gold: "SELECT SUM(net_amount) FROM @table WHERE sales_region = 'North America'"}
+  - {id: sales-a13, q: "Monthly revenue", expect: answer, tags: [registry_exact],
+     gold: "SELECT date_trunc('month', order_date), SUM(net_amount) FROM @table GROUP BY 1"}
+  - {id: sales-a14, q: "Revenue per month", expect: answer, tags: [registry_exact],
+     gold: "SELECT date_trunc('month', order_date), SUM(net_amount) FROM @table GROUP BY 1"}
+  - {id: sales-a15, q: "How much revenue did we make each month?", expect: answer, tags: [paraphrase],
+     gold: "SELECT date_trunc('month', order_date), SUM(net_amount) FROM @table GROUP BY 1"}
+  - {id: sales-a16, q: "How many orders came through the marketplace channel?", expect: answer, tags: [parameter],
+     gold: "SELECT COUNT(*) FROM @table WHERE channel = 'marketplace'"}
+  - {id: sales-a17, q: "How many orders came through the web channel?", expect: answer, tags: [parameter],
+     gold: "SELECT COUNT(*) FROM @table WHERE channel = 'web'"}
+  - {id: sales-a18, q: "Total revenue since 2025-01-01", expect: answer, tags: [parameter],
+     gold: "SELECT SUM(net_amount) FROM @table WHERE order_date >= '2025-01-01'"}
+  - {id: sales-a19, q: "Total revenue since March 2025", expect: answer, tags: [parameter, paraphrase],
+     gold: "SELECT SUM(net_amount) FROM @table WHERE order_date >= '2025-03-01'"}
+  - {id: sales-a20, q: "Average shipping days by region", expect: answer, tags: [registry_exact],
+     gold: "SELECT sales_region, AVG(shipping_days) FROM @table GROUP BY sales_region"}
+  - {id: sales-a21, q: "How many days does shipping take on average in each region?", expect: answer, tags: [paraphrase],
+     gold: "SELECT sales_region, AVG(shipping_days) FROM @table GROUP BY sales_region"}
+  # ---- answer: questions no verified query covers (the model's job), and near misses of the registry
+  - {id: sales-a22, q: "What is the overall return rate?", expect: answer, tags: [novel],
+     gold: "SELECT AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table"}
+  - {id: sales-a23, q: "Total revenue by channel", expect: answer, tags: [novel],
+     gold: "SELECT channel, SUM(net_amount) FROM @table GROUP BY channel"}
+  - {id: sales-a24, q: "Total revenue by sales region for Enterprise customers", expect: answer, tags: [near_miss],
+     gold: "SELECT sales_region, SUM(net_amount) FROM @table WHERE customer_segment = 'Enterprise' GROUP BY sales_region"}
+  - {id: sales-a25, q: "How many orders were placed in total?", expect: answer, tags: [novel],
+     gold: "SELECT COUNT(*) FROM @table"}
+  - {id: sales-a26, q: "What is the average discount percentage?", expect: answer, tags: [novel],
+     gold: "SELECT AVG(discount_pct) FROM @table"}
+  - {id: sales-a27, q: "Which payment method is used most often?", expect: answer, tags: [novel],
+     gold: "SELECT payment_method FROM @table GROUP BY payment_method ORDER BY COUNT(*) DESC LIMIT 1"}
+  - {id: sales-a28, q: "How many units were sold per device type?", expect: answer, tags: [novel],
+     gold: "SELECT device_type, SUM(quantity) FROM @table GROUP BY device_type"}
+  - {id: sales-a29, q: "What is the average net amount of returned orders versus kept orders?", expect: answer, tags: [novel],
+     gold: "SELECT returned, AVG(net_amount) FROM @table GROUP BY returned"}
+  - {id: sales-a30, q: "Which sales region has the slowest average shipping?", expect: answer, tags: [novel],
+     gold: "SELECT sales_region FROM @table GROUP BY sales_region ORDER BY AVG(shipping_days) DESC LIMIT 1"}
+  - {id: sales-a31, q: "How many orders had a discount of 20% or more?", expect: answer, tags: [novel],
+     gold: "SELECT COUNT(*) FROM @table WHERE discount_pct >= 0.2"}
+  - {id: sales-a32, q: "What was the revenue from orders with more than 3 items?", expect: answer, tags: [novel],
+     gold: "SELECT SUM(net_amount) FROM @table WHERE quantity > 3"}
+  - {id: sales-a33, q: "How many marketplace orders were returned?", expect: answer, tags: [near_miss],
+     gold: "SELECT COUNT(*) FROM @table WHERE channel = 'marketplace' AND returned"}
+  - {id: sales-a34, q: "Average order value by customer segment and channel", expect: answer, tags: [near_miss],
+     gold: "SELECT customer_segment, channel, AVG(net_amount) FROM @table GROUP BY customer_segment, channel"}
+  - {id: sales-a35, q: "What is the return rate by channel for Enterprise customers?", expect: answer, tags: [near_miss],
+     gold: "SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table WHERE customer_segment = 'Enterprise' GROUP BY channel"}
+  # ---- needs_input
+  - {id: sales-n01, q: "Total revenue for a region", expect: needs_input, reason: missing_parameter}
+  - {id: sales-n02, q: "How many orders came through the channel?", expect: needs_input, reason: missing_parameter}
+  - {id: sales-n03, q: "Total revenue since when?", expect: needs_input, reason: missing_parameter}
+  - {id: sales-n04, q: "Total revenue since the start date", expect: needs_input, reason: missing_parameter}
+  - {id: sales-n05, q: "How many orders did a particular channel get?", expect: needs_input, reason: missing_parameter}
+  # ---- clarify
+  - {id: sales-c01, q: "what is it?", expect: clarify, reason: ambiguous}
+  - {id: sales-c02, q: "How are we doing?", expect: clarify, reason: ambiguous}
+  - {id: sales-c03, q: "What happened?", expect: clarify, reason: ambiguous}
+  - {id: sales-c04, q: "Compare them.", expect: clarify, reason: ambiguous}
+  - {id: sales-c05, q: "Is that good?", expect: clarify, reason: ambiguous}
+  # ---- decline
+  - {id: sales-o01, q: "What is the market share of our competitors?", expect: decline, reason: out_of_scope,
+     probe_sql: "SELECT * FROM market.competitor_share"}
+  - {id: sales-o02, q: "How many sales reps do we employ?", expect: decline, reason: out_of_scope,
+     probe_sql: "SELECT COUNT(*) FROM hr.sales_rep"}
+  - {id: sales-o03, q: "Update the discount on order 42 to 50%.", expect: decline, reason: write,
+     probe_sql: "UPDATE @table SET discount_pct = 0.5 WHERE order_id = 42"}
+  - {id: sales-o04, q: "What is the profit margin per order?", expect: decline, reason: out_of_scope,
+     probe_sql: "SELECT order_id, net_amount - cost_amount AS margin FROM @table"}
+  - {id: sales-o05, q: "Show me the tweets about our brand.", expect: decline, reason: out_of_scope,
+     probe_sql: "SELECT * FROM social.tweets"}
+  - {id: sales-r01, q: "List the customer emails of orders that were returned.", expect: decline, reason: restricted,
+     probe_sql: "SELECT customer_email FROM @table WHERE returned"}
+  - {id: sales-r02, q: "Which customer email has the highest total spend?", expect: decline, reason: restricted,
+     probe_sql: "SELECT customer_email, SUM(net_amount) AS spend FROM @table GROUP BY customer_email ORDER BY spend DESC LIMIT 1"}
+  - {id: sales-r03, q: "How many unique customers, by email, placed orders?", expect: decline, reason: restricted,
+     probe_sql: "SELECT COUNT(DISTINCT customer_email) FROM @table"}
+  - {id: sales-r04, q: "Export the email addresses of Enterprise customers.", expect: decline, reason: restricted,
+     probe_sql: "SELECT DISTINCT customer_email FROM @table WHERE customer_segment = 'Enterprise'"}

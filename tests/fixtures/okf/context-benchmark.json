@@ -1,0 +1,118 @@
+{
+  "about": "P4-K05 retrieval benchmark for the context compiler. A workspace knowledge pack of 17 multi-section documents with links (ITSM and sales), and 32 hand-labelled questions written before any configuration was run (2026-09-25). `expected` is the section the answer is in (path#anchor); `type` is direct (shares words with the section), paraphrase (avoids them), section (the answer is not in the document's first section) or hop (the question names a document that LINKS to the answer's document). Not a held-out set in the statistical sense: small, written by the implementer.",
+  "documents": [
+    {"path": "glossary/sla-breach.md", "kind": "term", "title": "SLA breach", "synonyms": ["missed SLA"],
+     "sections": [
+       {"heading": "Definition", "text": "An incident breaches its service level agreement when it is not resolved within the target time for its priority; made_sla is false."},
+       {"heading": "Exclusions", "text": "Time spent in a waiting state for the requester is paused and not counted. Incidents cancelled by the requester are excluded from the breach rate."}],
+     "links": ["rules/priority-targets.md", "glossary/pause-states.md"]},
+    {"path": "rules/priority-targets.md", "kind": "rule", "title": "Resolution targets by priority",
+     "sections": [
+       {"heading": "Rule", "text": "P1 must be resolved in 4 hours, P2 in 8 hours, P3 in 3 business days and P4 in 10 business days."},
+       {"heading": "Calendar", "text": "P3 and P4 targets count business hours only, Monday to Friday 8:00 to 18:00 local time; public holidays are excluded."}],
+     "links": []},
+    {"path": "glossary/pause-states.md", "kind": "term", "title": "Pause states",
+     "sections": [
+       {"heading": "Definition", "text": "States in which the resolution clock stops: awaiting customer, awaiting vendor and scheduled change window."},
+       {"heading": "Audit", "text": "Pauses longer than 5 days need a manager approval note on the record."}],
+     "links": []},
+    {"path": "glossary/reopen.md", "kind": "term", "title": "Reopened incident",
+     "sections": [
+       {"heading": "Definition", "text": "An incident moved back from resolved to in progress within 7 days of resolution because the fix did not hold."},
+       {"heading": "Counting", "text": "A reopen counts against the quality of the original fix; the reopened incident keeps its original number."}],
+     "links": ["metrics/first-time-fix.md"]},
+    {"path": "metrics/first-time-fix.md", "kind": "metric", "title": "First-time fix rate",
+     "sections": [
+       {"heading": "Definition", "text": "Share of resolved incidents that were never reopened."},
+       {"heading": "Calculation", "text": "Count of resolved incidents with reopen_count equal to zero divided by all resolved incidents in the period."}],
+     "links": []},
+    {"path": "glossary/major-incident.md", "kind": "term", "title": "Major incident",
+     "sections": [
+       {"heading": "Definition", "text": "A P1 incident affecting more than one business service or more than 100 users, declared by the duty manager."},
+       {"heading": "Communication", "text": "Status updates go to stakeholders every 30 minutes until service is restored."}],
+     "links": ["rules/post-incident-review.md"]},
+    {"path": "rules/post-incident-review.md", "kind": "rule", "title": "Post-incident review",
+     "sections": [
+       {"heading": "Rule", "text": "Every declared outage of that class gets a blameless review with root cause, contributing factors and follow-up actions owned by the problem manager."},
+       {"heading": "Deadline", "text": "The review document is due five working days after restoration."}],
+     "links": []},
+    {"path": "glossary/backlog.md", "kind": "term", "title": "Backlog",
+     "sections": [
+       {"heading": "Definition", "text": "Open incidents older than their priority target at the end of a day."},
+       {"heading": "Ageing buckets", "text": "Reported in three bands: 0 to 7 days, 8 to 30 days, and over 30 days."}],
+     "links": []},
+    {"path": "metrics/mttr.md", "kind": "metric", "title": "Mean time to restore",
+     "sections": [
+       {"heading": "Definition", "text": "Average elapsed hours from incident opened to service restored, excluding paused time."},
+       {"heading": "Caveat", "text": "Skewed by a few very long incidents; report the median alongside the mean."}],
+     "links": ["glossary/pause-states.md"]},
+    {"path": "glossary/churn.md", "kind": "term", "title": "Customer churn",
+     "sections": [
+       {"heading": "Definition", "text": "A subscription customer who did not renew within 30 days after the contract end date."},
+       {"heading": "Voluntary vs involuntary", "text": "Involuntary churn is a failed payment; voluntary churn is an explicit cancellation by the customer."}],
+     "links": ["metrics/net-revenue-retention.md"]},
+    {"path": "metrics/net-revenue-retention.md", "kind": "metric", "title": "Net revenue retention",
+     "sections": [
+       {"heading": "Definition", "text": "Recurring revenue this month from accounts that existed twelve months ago, divided by their recurring revenue twelve months ago, including expansion, contraction and lost accounts."}],
+     "links": []},
+    {"path": "glossary/booking.md", "kind": "term", "title": "Booking",
+     "sections": [
+       {"heading": "Definition", "text": "A signed order, recorded when the contract is countersigned and before invoicing."},
+       {"heading": "Recognition", "text": "Revenue from a booking is recognised over the service period, not at signature."}],
+     "links": []},
+    {"path": "rules/discount-approval.md", "kind": "rule", "title": "Discount approval",
+     "sections": [
+       {"heading": "Rule", "text": "Discounts above 20 percent need the regional sales director; above 35 percent they need the CFO."}],
+     "links": []},
+    {"path": "glossary/pipeline.md", "kind": "term", "title": "Pipeline",
+     "sections": [
+       {"heading": "Definition", "text": "Open opportunities in the stages from qualify to negotiate, each weighted by its stage probability."}],
+     "links": ["rules/stage-probabilities.md"]},
+    {"path": "rules/stage-probabilities.md", "kind": "rule", "title": "Stage probabilities",
+     "sections": [
+       {"heading": "Rule", "text": "Qualify 10 percent, develop 25 percent, propose 50 percent, negotiate 75 percent."}],
+     "links": []},
+    {"path": "glossary/change-freeze.md", "kind": "term", "title": "Change freeze",
+     "sections": [
+       {"heading": "Definition", "text": "A period when only emergency changes may be deployed, for example the last two weeks of the fiscal year."}],
+     "links": ["rules/cab.md"]},
+    {"path": "rules/cab.md", "kind": "rule", "title": "Change advisory board",
+     "sections": [
+       {"heading": "Rule", "text": "Normal changes need approval at the weekly meeting; standard pre-approved changes do not."}],
+     "links": []}
+  ],
+  "questions": [
+    {"q": "how many hours does a P1 incident have before it is late", "expected": "rules/priority-targets.md#rule", "type": "paraphrase"},
+    {"q": "does time waiting for the requester count against the SLA", "expected": "glossary/sla-breach.md#exclusions", "type": "section"},
+    {"q": "which states stop the resolution clock", "expected": "glossary/pause-states.md#definition", "type": "direct"},
+    {"q": "do business hours apply to low priority targets", "expected": "rules/priority-targets.md#calendar", "type": "section"},
+    {"q": "tickets that came back after being resolved", "expected": "glossary/reopen.md#definition", "type": "paraphrase"},
+    {"q": "share of incidents fixed the first time", "expected": "metrics/first-time-fix.md#definition", "type": "direct"},
+    {"q": "how is the first-time fix rate calculated", "expected": "metrics/first-time-fix.md#calculation", "type": "section"},
+    {"q": "what makes an outage a major incident", "expected": "glossary/major-incident.md#definition", "type": "direct"},
+    {"q": "how often must stakeholders get updates during a big outage", "expected": "glossary/major-incident.md#communication", "type": "section"},
+    {"q": "when is the root cause write-up due", "expected": "rules/post-incident-review.md#deadline", "type": "section"},
+    {"q": "old open tickets past their target", "expected": "glossary/backlog.md#definition", "type": "paraphrase"},
+    {"q": "age bands for aged tickets", "expected": "glossary/backlog.md#ageing-buckets", "type": "section"},
+    {"q": "average time to get service back", "expected": "metrics/mttr.md#definition", "type": "paraphrase"},
+    {"q": "why report the median as well", "expected": "metrics/mttr.md#caveat", "type": "section"},
+    {"q": "customers who did not renew", "expected": "glossary/churn.md#definition", "type": "direct"},
+    {"q": "difference between failed payment and cancellation", "expected": "glossary/churn.md#voluntary-vs-involuntary", "type": "section"},
+    {"q": "revenue kept from existing accounts including upsell", "expected": "metrics/net-revenue-retention.md#definition", "type": "paraphrase"},
+    {"q": "when is a deal counted as signed", "expected": "glossary/booking.md#definition", "type": "paraphrase"},
+    {"q": "is revenue recognised at signature", "expected": "glossary/booking.md#recognition", "type": "section"},
+    {"q": "who approves a 40 percent discount", "expected": "rules/discount-approval.md#rule", "type": "direct"},
+    {"q": "weighted value of open opportunities", "expected": "glossary/pipeline.md#definition", "type": "direct"},
+    {"q": "win likelihood of the negotiate stage", "expected": "rules/stage-probabilities.md#rule", "type": "paraphrase"},
+    {"q": "when can only emergency deployments go out", "expected": "glossary/change-freeze.md#definition", "type": "direct"},
+    {"q": "do standard changes need board sign-off", "expected": "rules/cab.md#rule", "type": "paraphrase"},
+    {"q": "SLA breach target for a P2", "expected": "rules/priority-targets.md#rule", "type": "hop"},
+    {"q": "major incident follow-up owner", "expected": "rules/post-incident-review.md#rule", "type": "hop"},
+    {"q": "reopened incident KPI", "expected": "metrics/first-time-fix.md#definition", "type": "hop"},
+    {"q": "customer churn effect on the retention KPI", "expected": "metrics/net-revenue-retention.md#definition", "type": "hop"},
+    {"q": "pipeline weighting per stage", "expected": "rules/stage-probabilities.md#rule", "type": "hop"},
+    {"q": "change freeze exceptions board", "expected": "rules/cab.md#rule", "type": "hop"},
+    {"q": "MTTR excluded time", "expected": "glossary/pause-states.md#definition", "type": "hop"},
+    {"q": "SLA breach clock stop", "expected": "glossary/pause-states.md#definition", "type": "hop"}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "description": "The OKF specification text AnalystOS, Atlas (and DataPilot, once it reads OKF) conform to. Proposed shared pin, ADR-0017; must equal src/analystos/knowledge/okf.py (tests/unit/test_cross_repo_contracts.py).",
+  "repository": "https://github.com/GoogleCloudPlatform/open-knowledge-format",
+  "path": "SPEC.md",
+  "revision": "0b87c52c6ef999286c745e19998fdfcd03d5dbee",
+  "sha256": "26aa5da029278939f914e578107242d9607d4f2dc5fe153272b82f9ed1030101",
+  "okf_version": "0.2",
+  "conformance_status": "SELF_CHECKED_AGAINST_PINNED_SPEC_CLAUSES"
+}

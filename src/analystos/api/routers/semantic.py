@@ -75,6 +75,14 @@ def propose(workspace_id: str, body: MetricProposalIn, user: User = Depends(curr
             "conflicts": [c.model_dump() for c in svc.conflicts(session, workspace_id) if body.name in c.names]}
 
 
+@router.post("/metrics/validate")
+def validate(workspace_id: str, body: MetricProposalIn, user: User = Depends(current_user), session: Session = Depends(db)):
+    """Check a proposal without recording it (the KPI editor's live validation): field problems and the
+    conflicts it would create. Proposing still re-checks everything."""
+    require_role(session, user, workspace_id, "viewer")
+    return svc.validate_proposal(session, workspace_id, body)
+
+
 @router.post("/metrics/{name}/approve")
 def approve(workspace_id: str, name: str, body: Decision | None = None, user: User = Depends(current_user),
             session: Session = Depends(db)):

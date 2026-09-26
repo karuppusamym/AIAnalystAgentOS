@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:context2ai:contracts:decision_purpose:1",
+  "title": "DecisionPurpose",
+  "description": "A decision purpose: one kind of choice a model may help make, the authority class that bounds what any answer can change, and the ordered backends that may answer it (ADR-0015, proposed as a shared contract in ADR-0017). `rules` is always a backend: the deterministic path that off/auto modes and outages fall back to. Source of truth in AnalystOS: src/analystos/decisions/{types,config,authority}.py and the `decisions:` section of config/models.yaml; tests/unit/test_cross_repo_contracts.py keeps this file in step with them.",
+  "type": "object",
+  "required": ["name", "kind", "authority", "backends"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Stable purpose id (e.g. ask_route, clarify_needed, alert_triage)."},
+    "kind": {"$ref": "#/$defs/kind"},
+    "authority": {"$ref": "#/$defs/authority_class"},
+    "backends": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/backend"},
+      "contains": {"const": "rules"},
+      "description": "Tried in order; the first answer the authority class accepts decides. Must include `rules`."
+    },
+    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 3.0, "description": "Across the purpose's model backends; rules always run inline."},
+    "breaker_failures": {"type": "integer", "minimum": 1, "default": 3},
+    "breaker_reset_seconds": {"type": "number", "minimum": 0, "default": 30.0},
+    "default": {"description": "The value when no backend answers (choice purposes)."},
+    "min_rounds": {"type": "integer", "minimum": 0, "default": 1, "description": "bounded_stop: nobody may stop before this many rounds."},
+    "min_supported": {"type": "integer", "minimum": 0, "default": 0, "description": "bounded_stop: a model may not stop with fewer supported findings."},
+    "stop_at": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.85}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"authority": {"enum": ["escalate_only", "bounded_stop"]}}, "required": ["authority"]},
+      "then": {"properties": {"backends": {"prefixItems": [{"const": "rules"}]}}},
+      "description": "Rules-first classes: the rule sets the baseline (or the minimum work) before any model is asked."
+    }
+  ],
+  "$defs": {
+    "kind": {"enum": ["choice", "probability", "scores"]},
+    "backend": {"enum": ["jev", "rules", "local_classifier", "llm_structured"]},
+    "authority_class": {
+      "description": "What an answer is allowed to change. A proposal outside it is refused and the next backend is tried; no class can grant access, lower a risk, skip a gate or suppress an alert.",
+      "oneOf": [
+        {"const": "rank", "description": "Reorder valid options. A dropped option keeps its rule score; an unknown option is ignored."},
+        {"const": "choose_presentation", "description": "Pick one of the rule-valid presentations; anything else is refused."},
+        {"const": "route", "description": "Pick one of the valid processing paths; anything else is refused. Needs calibration."},
+        {"const": "escalate_only", "description": "Final level = max(baseline, proposal) on an ordered scale. Nothing can lower the baseline."},
+        {"const": "bounded_stop", "description": "A stop before min_rounds (or, from a model, before min_supported findings) is refused. Needs calibration."}
+      ]
+    },
+    "decision_record": {
+      "title": "DecisionRecord",
+      "description": "What is persisted for every decision (AnalystOS table `decision_record`). `value` is always the enforced answer, never the raw proposal.",
+      "type": "object",
+      "required": ["purpose", "authority", "backend", "value", "inputs_hash"],
+      "properties": {
+        "id": {"type": "string"},
+        "purpose": {"type": "string"},
+        "authority": {"$ref": "#/$defs/authority_class"},
+        "backend": {"enum": ["jev", "rules", "local_classifier", "llm_structured", "default"]},
+        "value": {"description": "The enforced answer."},
+        "proposal": {"description": "The deciding backend's raw answer, before enforcement."},
+        "p": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "probabilities": {"type": "object", "additionalProperties": {"type": "number"}},
+        "confidence": {"type": ["number", "null"]},
+        "model": {"type": ["string", "null"]},
+        "fallback_reason": {"type": ["string", "null"]},
+        "enforced": {"type": "array", "items": {"type": "string"}, "description": "What the authority class changed or refused."},
+        "inputs_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 over the canonical JSON (contracts/approval_hash.md) of {purpose, state, facts, question{kind, instructions, options, hint, levels, baseline}}."},
+        "subject": {"type": ["string", "null"], "description": "What the decision is about, e.g. ask:<turn id>, insight:<id>, alert:<key>."},
+        "latency_ms": {"type": "integer", "minimum": 0},
+        "cost_usd": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

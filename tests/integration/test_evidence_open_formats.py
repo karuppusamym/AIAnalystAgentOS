@@ -91,7 +91,7 @@ def test_run_evidence_in_open_formats(control_db, servicenow_url, monkeypatch):
         from analystos.evidence.schemas import validate_odcs, validate_openlineage
         from analystos.governance.approvals import decide
         from analystos.knowledge import okf, store
-        from analystos.knowledge.attested import check_attested
+        from analystos.knowledge.attested import check_attested, finding_path, sql_hash, validate
         from analystos.services.runs import create_run
         from analystos.services.sources import discover_source, register_source, select_assets
         from analystos.services.workspaces import add_member, create_workspace
@@ -142,7 +142,8 @@ def test_run_evidence_in_open_formats(control_db, servicenow_url, monkeypatch):
                     exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == ins.hypothesis_id,
                                                             Experiment.role == "primary"))
                     q = s.get(QueryExecution, exp.query_ids[0])
-                    assert att["query_hash"] == q.fingerprint and att["result_hash"] == q.result_hash
+                    assert att["query_hash"] == sql_hash(q.executed_sql or q.sql) and att["result_hash"] == q.result_hash
+                    assert att["queries"][0]["fingerprint"] == q.fingerprint and validate(doc) == []
                     assert att["q_value"] == exp.result.get("p_adjusted", exp.result.get("p_value"))
                     assert att["effect_size"] == exp.result.get("effect_size") and att["run_id"] == run.id
                     assert att["plan_hash"] and len(att["spec_hash"]) == 64
@@ -155,7 +156,7 @@ def test_run_evidence_in_open_formats(control_db, servicenow_url, monkeypatch):
 
             r = api.post(f"/api/workspaces/{ws_id}/analysis/{run.id}/findings/attest", headers=auth)
             assert r.status_code == 200, r.text
-            assert sorted(r.json()["written"]) == sorted(f"findings/{i}.md" for i in verified)
+            assert sorted(r.json()["written"]) == sorted(finding_path(i) for i in verified)
             with session_scope() as s:
                 pack = store.workspace_pack(s, ws_id)
                 files = store.revision_files(s, pack)
