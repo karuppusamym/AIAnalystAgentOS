@@ -156,6 +156,20 @@ def calibrate(*, dry_run: bool) -> int:
     return 0
 
 
+def bi_sync(workspace_ids: list[str] | None = None) -> dict:
+    """Superset roles per workspace and users from workspace membership (P4-02)."""
+    from analystos.db.base import session_scope
+    from analystos.publishing.superset import SupersetPublisher
+    from analystos.services.bi_access import sync_bi_access
+
+    publisher = SupersetPublisher()
+    try:
+        with session_scope() as session:
+            return sync_bi_access(session, publisher, workspace_ids)
+    finally:
+        publisher.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["knowledge"]:
@@ -164,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
         return knowledge_main(argv[1:])
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
-                                            "export-contracts", "replay-run", "packs", "calibrate", "knowledge"],
+                                            "export-contracts", "replay-run", "packs", "calibrate", "knowledge", "bi-sync",
+                                            "sandbox-status"],
                         help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...)")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
@@ -172,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--queues", help="worker: comma-separated workloads to serve (analysis, compute, publish, crawl, elt; "
                                          "default ANALYSTOS_WORKER_QUEUES or all)")
     parser.add_argument("--dry-run", action="store_true", help="calibrate: report without downgrading or restoring")
+    parser.add_argument("--workspace", action="append", help="bi-sync: only members of this workspace (repeatable)")
     args = parser.parse_args(argv)
     if args.command == "calibrate":
         return calibrate(dry_run=args.dry_run)
@@ -201,6 +217,14 @@ def main(argv: list[str] | None = None) -> int:
         export_contracts()
     elif args.command == "packs":
         list_packs()
+    elif args.command == "bi-sync":
+        print(json.dumps(bi_sync(args.workspace), indent=2))
+    elif args.command == "sandbox-status":
+        from analystos.sandbox.isolation import status
+
+        st = status(refresh=True)
+        print(st.model_dump_json(indent=2))
+        return 0 if st.available else 3
     return 0
 
 

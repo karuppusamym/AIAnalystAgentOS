@@ -154,6 +154,8 @@ class ToolRuntime:
                 reasons.append(f"tool_not_bound_to_agent_{self.agent.id}")
             elif tool_id == "python.execute" and not _platform().features.python_sandbox:
                 reasons.append("python_sandbox_disabled_by_admin")
+            elif tool_id == "python.execute" and not _sandbox_available():
+                reasons.append("sandbox_isolation_unavailable")
             elif not _tool_enabled_here(session, self.identity.workspace_id, tool_id):
                 reasons.append("capability_disabled_for_workspace")
             decision = None
@@ -239,6 +241,13 @@ def _platform():
     from analystos.services.platform_settings import get
 
     return get()
+
+
+def _sandbox_available() -> bool:
+    """P4-02: the sandbox gate refuses without isolation; deny the tool up front, with the reason audited."""
+    from analystos.sandbox.isolation import status
+
+    return status().available
 
 
 def _tool_enabled_here(session: Session, workspace_id: str | None, tool_id: str) -> bool:

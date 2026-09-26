@@ -15,7 +15,7 @@ airGapped:
     - 10.0.0.0/8
 
 config:
-  sandboxNetwork: isolate
+  sandboxIsolation: process
 
 oidc:
   # An on-prem IdP (Keycloak, ADFS, Entra ID via private link) works unchanged; its JWKS is fetched from

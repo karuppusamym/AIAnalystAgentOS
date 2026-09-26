@@ -27,6 +27,7 @@ _HOSTPORT = TEST_DB.split("@", 1)[1].rsplit("/", 1)[0]
 os.environ["ANALYSTOS_ANALYTICS_LOADER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}loader:loader@{_HOSTPORT}/{ANALYTICS_DB}"
 os.environ["ANALYSTOS_ANALYTICS_READER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}reader:reader@{_HOSTPORT}/{ANALYTICS_DB}"
 os.environ["ANALYSTOS_ANALYTICS_WORKSPACE_ROLE_PREFIX"] = f"{ROLE_PREFIX}r_"
+os.environ["ANALYSTOS_ANALYTICS_BI_ROLE_PREFIX"] = f"{ROLE_PREFIX}bi_"  # per-workspace Superset logins (P4-02)
 # The BuildGateway's write login and per-workspace build roles (P4-E06), in the same namespace.
 os.environ["ANALYSTOS_ANALYTICS_BUILDER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}builder:builder@{_HOSTPORT}/{ANALYTICS_DB}"
 os.environ["ANALYSTOS_ANALYTICS_BUILD_ROLE_PREFIX"] = f"{ROLE_PREFIX}b_"
