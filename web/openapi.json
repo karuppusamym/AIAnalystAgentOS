@@ -11039,6 +11039,79 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/inventory": {
+      "get": {
+        "description": "Read-only inventory of retained records and registered resource identifiers; owner only.",
+        "operationId": "get_inventory_api_workspaces__workspace_id__inventory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inventory",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/knowledge/context": {
       "post": {
         "description": "What the context compiler would send for `purpose` about `question` from this workspace's\nknowledge (the catalog section is left out: it depends on a run's scope). No model is called.",

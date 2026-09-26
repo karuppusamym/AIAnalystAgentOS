@@ -1583,6 +1583,19 @@ export interface CapabilitySummary {
   };
 }
 
+export interface WorkspaceInventory {
+  workspace_id: string;
+  status: string;
+  archived: boolean;
+  control_rows: Record<string, number>;
+  control_tables_checked: number;
+  staged_schemas: string[];
+  build_targets: { engine: string; schema: string; role: string; status: string }[];
+  local_paths: { path: string; exists: boolean }[];
+  publications: { id: string; destination: string; status: string; external_ids: Dict }[];
+  verification: string;
+}
+
 export interface CapabilityList {
   digest: string;
   capabilities: CapabilitySummary[];
@@ -2069,6 +2082,8 @@ export const api = {
   createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
   getWorkspace: (ws: string) =>
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  workspaceInventory: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
     patch("/api/workspaces/{workspace_id}", { path: W(ws), body }) as Promise<Workspace>,
   setWorkspaceStatus: (ws: string, status: "active" | "disabled") =>

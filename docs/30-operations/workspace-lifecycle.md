@@ -31,6 +31,13 @@ settings.
 normal lists and access, but **does not erase data**. Do not present this route as a complete
 deletion or rely on it for a retention or erasure requirement.
 
+An owner can open **Workspaces → Data inventory** or call
+`GET /api/workspaces/{id}/inventory` to inspect retained control rows, registered staged schemas,
+build targets, local paths and publication identifiers. The endpoint remains available to owners
+after disable or archive. Counts follow declared foreign keys from child tables to the workspace;
+records without a declared ownership route and unverified external resources are outside its count.
+It reads registry records and checks whether local paths exist; it does not inspect remote storage.
+
 A complete purge is not implemented. It needs an inventory and verified cleanup across:
 
 | Store | Workspace data to account for |
