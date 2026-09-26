@@ -3014,6 +3014,80 @@
         ]
       }
     },
+    "/api/admin/models/health": {
+      "get": {
+        "description": "Per provider: key present in this process (never the key), last success, cooldown, today's spend vs\nthe daily cap. `?probe=1` sends one tiny billable request per provider to verify credits.",
+        "operationId": "models_health_api_admin_models_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "probe",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Probe",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Models Health",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/admin/prompts": {
       "get": {
         "operationId": "prompts_api_admin_prompts_get",

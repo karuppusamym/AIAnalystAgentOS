@@ -36,6 +36,7 @@ from analystos.core.errors import (
     NotFound,
     PolicyDenied,
     QueryTimeout,
+    SpendCapReached,
     SQLRejected,
     UpstreamUnavailable,
 )
@@ -75,6 +76,11 @@ REFUSALS: dict[str, dict[str, str]] = {
                       "remedy": "Ask a workspace owner for access to this data or to the SQL tool."},
     "budget_exceeded": {"title": "The Ask budget is used up",
                         "remedy": "Wait for the hourly budget to reset, or ask a workspace owner to raise it."},
+    "spend_cap": {"title": "The model spend cap is reached",
+                  "remedy": "No model was called. Model use resumes when the cap period resets (00:00 UTC for the daily "
+                            "platform cap, the 1st of the month for the workspace cap), or a platform administrator raises "
+                            "it (Admin > Settings: llm.daily_spend_cap_usd; workspace policy: workspace_monthly_cost_budget_usd). "
+                            "Meanwhile write the SQL yourself or use a verified query."},
     "no_model": {"title": "No verified answer, and no model may write SQL here",
                  "remedy": "Write the SQL yourself (Explain checks it first), or save a verified query for this question."},
     "no_scope": {"title": "Nothing in scope to answer from",
@@ -97,6 +103,8 @@ def refusal_for(exc: AnalystOSError) -> dict[str, Any]:
     """The refusal kind of a failed Ask, from the error class (not its wording where a class exists)."""
     if isinstance(exc, SQLRejected):
         kind = "sql_rejected"
+    elif isinstance(exc, SpendCapReached):
+        kind = "spend_cap"
     elif isinstance(exc, BudgetExceeded):
         kind = "budget_exceeded"
     elif isinstance(exc, (PolicyDenied, Forbidden)):
@@ -109,7 +117,7 @@ def refusal_for(exc: AnalystOSError) -> dict[str, Any]:
         kind = "no_model"
     else:
         kind = "failed"
-    return refusal(kind, exc.message, code=exc.code, **({k: v for k, v in exc.details.items() if k in ("scope", "used", "limit")}))
+    return refusal(kind, exc.message, code=exc.code, **({k: v for k, v in exc.details.items() if k in ("scope", "used", "limit", "cap", "spent_usd", "limit_usd", "resets_at")}))
 
 
 # ------------------------------------------------------------------------------ ad hoc context

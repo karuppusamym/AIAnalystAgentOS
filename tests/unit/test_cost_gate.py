@@ -63,3 +63,46 @@ def test_within_tolerance_passes_and_fewer_calls_pass(baseline):
     assert cost_gate.compare({"novel_question": {"calls": 0, "tokens": 0}}, baseline) == []
     assert cost_gate.compare({"unknown_run": {"calls": 1, "tokens": 1}}, baseline) == [
         "unknown_run: no baseline (run with --update-baseline and commit it)"]
+
+
+# ------------------------------------------------------------------ cheap first, escalate
+def test_escalation_happens_only_on_a_failed_check(runs, baseline):
+    """The escalation fixture: 4 model points, 2 answers fail their check (not JSON; empty hypotheses)."""
+    run = next(r for r in runs if r["name"] == "escalation")
+    got = cost_gate.replay_run(run)
+    assert got["calls"] == 6 and [e["point"] for e in got["escalations"]] == [2, 3]
+    assert got["by_model"]["anthropic/claude-sonnet-5"] == 2  # only the two escalations reach the large tier
+    assert {e["reason"].split(":")[0] for e in got["escalations"]} == {"invalid_json", "validation"}
+    # Every small answer valid: no call reaches the large tier.
+    valid = copy.deepcopy(run)
+    for p in valid["points"]:
+        if p.get("escalation_response"):
+            p["response"] = {**p["escalation_response"], "model": p["response"]["model"]}
+            del p["escalation_response"]
+    fine = cost_gate.replay_run(valid)
+    assert fine["calls"] == 4 and fine["escalations"] == [] and "anthropic/claude-sonnet-5" not in fine["by_model"]
+    assert cost_gate.compare({"escalation": got}, baseline) == []
+
+
+def test_escalating_every_answer_or_large_first_routing_fails_the_gate(runs, baseline):
+    """Escalation on success (an always-failing check) adds calls; Sonnet first (the routing that spent
+    the owner's credit in a day) keeps the call count but fails on dollars."""
+    run = copy.deepcopy(next(r for r in runs if r["name"] == "escalation"))
+    for p in run["points"]:
+        p["escalation_response"] = p.get("escalation_response") or p["response"]
+        p["response"] = {**p["response"], "text": "not json"}
+    failures = cost_gate.compare({"escalation": cost_gate.replay_run(run)}, baseline)
+    assert any(f.startswith("escalation: calls") for f in failures), failures
+    large_first = PlatformSettings(llm=LLMSettings(escalation={p: "always_large" for p in load_models_config().routing}))
+    measured = cost_gate.measure(runs, settings=large_first)
+    failures = cost_gate.compare(measured, baseline)
+    assert any(f.startswith("novel_question: usd") for f in failures), failures
+    assert measured["novel_question"]["calls"] == baseline["runs"]["novel_question"]["calls"]
+
+
+def test_usd_report_compares_cheap_first_with_large_first(runs):
+    report = cost_gate.usd_report(runs)
+    novel = report["novel_question"]
+    assert novel["cheap_first"]["usd"] * 4 < novel["large_first"]["usd"]
+    std = report["standard_run"]
+    assert std["cheap_first_model_first_ladders"]["usd"] * 4 < std["large_first_model_first_ladders"]["usd"]

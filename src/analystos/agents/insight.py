@@ -69,6 +69,20 @@ def _language_ok(text: str, facts: dict[str, Any]) -> bool:
     return latin / len(letters) >= 0.9
 
 
+def narrative_check(facts: dict[str, Any]) -> Any:
+    """Escalation check for a model narrative: the numbers guard and the language check it must pass."""
+    def check(data: Any) -> str | None:
+        if not isinstance(data, dict) or not isinstance(data.get("finding"), str):
+            return "no finding text"
+        text = f"{data.get('finding')} {data.get('title', '')} {data.get('recommended_action') or ''}"
+        if not _guard(text, facts):
+            return "numbers guard: quoted numbers not present in the evidence"
+        if not _language_ok(text, facts):
+            return "not written in English"
+        return None
+    return check
+
+
 def _guard(text: str, facts: dict[str, Any]) -> bool:
     allowed: set[float] = set()
     for v in _flatten(facts):
@@ -150,7 +164,7 @@ def build_insights(ctx: RunContext) -> dict:
         title, finding = template_text(stat, spec)
         source, action = "template", None
         payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
-        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload) \
+        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload, validate=narrative_check(facts)) \
             if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
         text = (str(data.get("finding")) + " " + str(data.get("title", "")) + " " + str(data.get("recommended_action") or "")) \
             if isinstance(data, dict) else ""

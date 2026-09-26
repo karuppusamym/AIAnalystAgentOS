@@ -12,11 +12,16 @@ from analystos.artifacts.registry import link, save_artifact
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
 from analystos.contracts.bi import DatasetDef
-from analystos.core.errors import AnalystOSError, InvalidInput, SQLRejected
+from analystos.core.errors import AnalystOSError, InvalidInput, SpendCapReached, SQLRejected
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
 from analystos.runtime.context import RunContext
+
+
+def has_sql(data: Any) -> str | None:
+    """Escalation check for SQL generation/repair: the answer must carry a statement."""
+    return None if isinstance(data, dict) and str(data.get("sql") or "").strip() else "no SQL statement in the answer"
 
 
 def slug(text: str, n: int = 40) -> str:
@@ -397,15 +402,20 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
     catalog = catalog_for_prompt(ctx, objective=question, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     _stage(ctx, "generate", "Writing the SQL")
-    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1",
-                           compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
-                                       catalog=catalog, reference_text=question),
-                           prompt_vars={"dialect": dialect})
-    if not isinstance(data, dict) or not data.get("sql"):
+    generation = compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
+                             catalog=catalog, reference_text=question)
+    data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", generation, prompt_vars={"dialect": dialect},
+                           validate=has_sql)
+    if model in ("spend_cap_reached", "spend_counters_unavailable"):
+        raise SpendCapReached("SQL generation was not sent to a model: the model spend cap is reached "
+                              "(or the spend counters are unavailable)", details={"code": model})
+    if has_sql(data):
         raise InvalidInput("SQL generation unavailable (no model route) — write SQL directly in the query console")
     attempts = []
     sql = str(data["sql"])
-    for attempt in range(max_repairs + 1):
+    escalated = False
+    attempt = 0
+    while True:
         if attempt:
             _check_budget(ctx)  # every attempt counts; over budget ends the loop (no repair)
         try:
@@ -417,17 +427,32 @@ def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dic
                     "route": chosen["value"], "decisions": decisions}
         except (SQLRejected, AnalystOSError) as exc:
             attempts.append({"sql": sql, "error": exc.message})
-            if attempt == max_repairs:
-                raise
+            if attempt >= max_repairs:
+                if escalated or not isinstance(exc, SQLRejected):
+                    raise
+                # Cheap first, escalate: the gateway still rejects the small tier's SQL after its repairs,
+                # so the large tier writes it once more. The gateway validates that answer like any other.
+                escalated = True
+                better, better_model = llm_json(ctx, "sql_generation", "sql_generation.v1", generation,
+                                                prompt_vars={"dialect": dialect}, validate=has_sql,
+                                                escalate=f"sql_rejected after {attempt} repairs: {exc.message}"[:200],
+                                                escalated_from=model)
+                if has_sql(better):
+                    raise
+                _stage(ctx, "escalate", f"The gateway still refused the SQL ({exc.message[:120]}); a stronger model rewrites it",
+                       model=better_model)
+                data, model, sql = better, better_model, str(better["sql"])
+                attempt += 1
+                continue
             _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
                               compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
                                                               "error": exc.message}, objective=question, catalog=catalog,
-                                          reference_text=f"{sql}\n{exc.message}"))
-            if not isinstance(fix, dict) or not fix.get("sql"):
+                                          reference_text=f"{sql}\n{exc.message}"), validate=has_sql)
+            if has_sql(fix):
                 raise
             sql = str(fix["sql"])
-    raise InvalidInput("unreachable")
+            attempt += 1
 
 
 def dataset_def(run_id: str) -> tuple[DatasetDef, dict]:

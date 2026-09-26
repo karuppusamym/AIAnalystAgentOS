@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.platform import PRESET_PATCHES, PRESETS, PlatformSettings
+from analystos.contracts.platform import PRESET_ESCALATION, PRESET_PATCHES, PRESETS, PlatformSettings
 from analystos.core.errors import Forbidden, InvalidInput, NotFound
 from analystos.db.base import session_scope
 from analystos.db.models import PlatformSetting, User
@@ -28,7 +28,8 @@ def _deep_merge(base: dict, patch: dict) -> dict:
     out = dict(base)
     for k, v in patch.items():
         out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) and k not in (
-            "purpose_modes", "ladders", "purpose_run_caps", "routing_overrides", "profile_models") else v
+            "purpose_modes", "ladders", "purpose_run_caps", "routing_overrides", "profile_models", "profile_escalation_models",
+            "escalation") else v
     return out
 
 
@@ -89,7 +90,8 @@ def _latest(session: Session) -> tuple[int, PlatformSettings]:
 
 def update(session: Session, user: User, patch: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     """Deep-merge `patch` into the latest version. The maps purpose_modes, ladders, purpose_run_caps,
-    routing_overrides and profile_models are replaced wholesale (the only way to remove a key)."""
+    routing_overrides, profile_models, profile_escalation_models and escalation are replaced wholesale
+    (the only way to remove a key)."""
     _require_admin(user)
     version, before = _latest(session)
     merged = _deep_merge(before.model_dump(), patch)
@@ -114,7 +116,8 @@ def apply_preset(session: Session, user: User, preset: str) -> dict[str, Any]:
     if preset not in PRESETS:
         raise InvalidInput(f"preset must be one of {sorted(PRESETS)}")
     # A preset is expressed as modes; per-purpose ladder overrides would shadow it, so it clears them.
-    patch = _deep_merge(PRESET_PATCHES.get(preset, {}), {"llm": {"purpose_modes": PRESETS[preset], "ladders": {}}})
+    patch = _deep_merge(PRESET_PATCHES.get(preset, {}), {"llm": {"purpose_modes": PRESETS[preset], "ladders": {},
+                                                                 "escalation": PRESET_ESCALATION.get(preset, {})}})
     return update(session, user, patch, note=f"preset {preset}")
 
 
@@ -151,13 +154,13 @@ def _validate_references(settings: PlatformSettings) -> None:
     for purpose, profile in settings.llm.routing_overrides.items():
         if profile not in cfg.profiles:
             raise InvalidInput(f"routing override {purpose} -> unknown profile {profile}")
-    for profile, models in settings.llm.profile_models.items():
+    for profile, models in [*settings.llm.profile_models.items(), *settings.llm.profile_escalation_models.items()]:
         if profile not in cfg.profiles:
             raise InvalidInput(f"unknown profile {profile}")
         unknown = [m for m in models if m not in cfg.allowlist]
         if unknown:
             raise InvalidInput(f"models not on the platform allowlist: {', '.join(unknown)} (edit config/models.yaml to extend it)")
-    for purpose in [*settings.llm.purpose_modes, *settings.llm.ladders, *settings.llm.purpose_run_caps]:
+    for purpose in [*settings.llm.purpose_modes, *settings.llm.ladders, *settings.llm.purpose_run_caps, *settings.llm.escalation]:
         if purpose not in cfg.routing:
             raise InvalidInput(f"unknown model purpose {purpose}")
     for purpose, rungs in settings.llm.ladders.items():

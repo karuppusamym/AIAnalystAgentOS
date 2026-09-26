@@ -211,7 +211,7 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
                            request_hash=None, error=exc.message[:500])
         return {**out, "refused": exc.message}
     try:
-        resp = router.complete("feedback_interpretation", messages, ctx=ctx, json_output=True)
+        resp = router.complete("feedback_interpretation", messages, ctx=ctx, json_output=True, validate=_valid_feedback)
     except Exception:
         return out
     data = resp.data if isinstance(resp.data, dict) else {}
@@ -229,6 +229,24 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
             valid.append({"asset": asset, "column": flt.column, "op": flt.op, "value": flt.value})
     return {"filters": valid, "focus": [str(x) for x in data.get("focus") or []] or [text],
             "summary": data.get("summary") or text, "interpreted_by": resp.model}
+
+
+def _valid_feedback(resp: Any) -> str | None:
+    """Escalation check (schema): an object whose filters, when present, validate as filters."""
+    data = resp.data
+    if not isinstance(data, dict):
+        return "answer is not an object"
+    filters = data.get("filters") or []
+    if not isinstance(filters, list):
+        return "filters is not a list"
+    ok = 0
+    for f in filters:
+        try:
+            Filter.model_validate({**f, "origin": "user_redirect"})
+            ok += 1
+        except Exception:
+            continue
+    return None if ok or not filters else f"none of {len(filters)} filters passed schema validation"
 
 
 def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = None, target_type: str | None = None,

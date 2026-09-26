@@ -18,11 +18,20 @@ cache, adds retries, or ships a recording with an extra call is caught. New call
 are caught when the recording is refreshed (`record`), and in CI by the live deterministic run
 (`tests/integration/test_token_default.py`), which compares itself to the same baseline.
 
+Dollars too: each replayed call is priced from the versioned price table (config/models.yaml) at the
+model the CURRENT routing asks for, so moving a purpose back to a large model first (the $10-in-a-day
+failure: Sonnet first for planning, hypotheses and SQL) fails the gate on `usd` even at equal calls.
+
+Cheap first, escalate: a point may name a deterministic check (`validate`: sql | hypotheses) and carry
+an `escalation_response`; the replay passes the check to the router, so a small-tier answer that fails
+it is re-asked of the large tier - and only then (tests/fixtures/cost_baseline/escalation.json).
+
 No network, no database, no API key: the transport never leaves the process.
 
 Usage:
   python scripts/cost_gate.py                       # gate: exit 1 on a >10% rise
   python scripts/cost_gate.py --update-baseline     # accept the current counts (review the diff!)
+  python scripts/cost_gate.py usd                   # expected $ per run: current routing vs large-model-first
   python scripts/cost_gate.py record --run-id RUN --name NAME   # needs the control-plane database
 """
 from __future__ import annotations
@@ -55,13 +64,30 @@ class CountingTransport:
         self.hints: dict[str, int] = {}  # synthetic request id -> tokens the skip row estimated
         self.calls = 0
         self.tokens = 0
+        self.usd = 0.0
+        self.unpriced_calls = 0
         self.by_purpose: Counter[str] = Counter()
+        self.by_model: Counter[str] = Counter()
         self.purpose = ""
 
-    def _count(self, tokens: int) -> None:
+    def _count(self, tokens: int, model: str, usd: float | None) -> None:
         self.calls += 1
         self.tokens += tokens
         self.by_purpose[self.purpose] += 1
+        self.by_model[model] += 1
+        if usd is None:
+            self.unpriced_calls += 1
+        else:
+            self.usd += usd
+
+    @staticmethod
+    def _price(model: str, input_tokens: int, output_tokens: int, reported: Any) -> float | None:
+        from analystos.llm.config import load_models_config
+
+        priced = load_models_config().estimate_cost(model, input_tokens, output_tokens)
+        if priced is not None:
+            return priced
+        return float(reported) if reported is not None else None
 
     def chat(self, *, base_url: str, api_key: str, payload: dict, timeout: float) -> dict:
         from analystos.core.errors import ModelRouteUnavailable
@@ -72,8 +98,11 @@ class CountingTransport:
             hint = self.hints.get(payload["messages"][-1]["content"], 1000)
             body = {"model": payload["model"], "choices": [{"message": {"content": "{}"}}],
                     "usage": {"prompt_tokens": max(hint - 100, 1), "completion_tokens": 100}}
-        usage = body.get("usage") or {}
-        self._count(int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0))
+        body = {**body, "model": payload["model"]}  # the model the current routing asked for answers
+        usage = {k: v for k, v in (body.get("usage") or {}).items() if k != "cost"}  # price table, not the recording
+        body["usage"] = usage
+        prompt, completion = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        self._count(prompt + completion, payload["model"], self._price(payload["model"], prompt, completion, None))
         return body
 
     def decide(self, *, base_url: str, api_key: str, payload: dict, timeout: float) -> dict:
@@ -85,17 +114,40 @@ class CountingTransport:
             hint = self.hints.get(str(payload.get("state", {}).get("cost_gate_point")), 400)
             body = {"model": payload["model"], "answers": {}, "usage": {"input_tokens": max(hint - 5, 1), "output_tokens": 5}}
         usage = body.get("usage") or {}
-        self._count(int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0))
+        prompt, completion = int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+        self._count(prompt + completion, payload["model"], self._price(payload["model"], prompt, completion, usage.get("cost")))
         return body
 
 
 def _recorded(points: list[dict]) -> list[Any]:
+    """Recorded answers in call order; a point's `escalation_response` answers the same request second."""
     from analystos.llm.replay import RecordedCall
 
-    return [RecordedCall(id=i, purpose=p["purpose"], status="ok", model=(p.get("response") or {}).get("model") or "-",
-                         provider="typesafe" if p["kind"] == "decision" else "openrouter", prompt_version=None,
-                         request=p.get("request"), response=p.get("response"))
-            for i, p in enumerate(points) if p.get("request") and p.get("response")]
+    out = []
+    for p in points:
+        if not (p.get("request") and p.get("response")):
+            continue
+        for response in (p["response"], p.get("escalation_response")):
+            if response is not None:
+                out.append(RecordedCall(id=len(out), purpose=p["purpose"], status="ok", model=response.get("model") or "-",
+                                        provider="typesafe" if p["kind"] == "decision" else "openrouter", prompt_version=None,
+                                        request=p["request"], response=response))
+    return out
+
+
+def _has_hypotheses(response: Any) -> str | None:
+    data = response.data
+    props = [h for h in data.get("hypotheses") or [] if isinstance(h, dict) and h.get("spec")] if isinstance(data, dict) else []
+    return None if props else "empty hypothesis list"
+
+
+def _validator(name: str | None) -> Any:
+    """The deterministic checks a point may name (structural versions of the agents' checks)."""
+    if not name:
+        return None
+    from analystos.agents.sql_agent import has_sql
+
+    return {"sql": lambda r: has_sql(r.data), "hypotheses": _has_hypotheses}[name]
 
 
 def replay_run(run: dict, *, settings: Any = None) -> dict[str, Any]:
@@ -114,6 +166,7 @@ def replay_run(run: dict, *, settings: Any = None) -> dict[str, Any]:
     call = CallContext(workspace_id="cost-gate", run_id=run["name"])
     gate_ctx = SimpleNamespace(router=router, call_ctx=lambda **_: call)
     jev = JevDecisions(router)
+    escalations: list[dict] = []
     for i, point in enumerate(run["points"]):
         purpose, gate = point["purpose"], point["gate"]
         transport.purpose = purpose
@@ -142,10 +195,16 @@ def replay_run(run: dict, *, settings: Any = None) -> dict[str, Any]:
                 transport.hints[marker] = hint
                 messages = [{"role": "system", "content": f"cost gate: {purpose}"}, {"role": "user", "content": marker}]
                 json_output, max_tokens = True, None
-            router.complete(purpose, messages, ctx=call, json_output=json_output, max_tokens=max_tokens)
+            response = router.complete(purpose, messages, ctx=call, json_output=json_output, max_tokens=max_tokens,
+                                       validate=_validator(point.get("validate")))
+            if response.escalated_from:
+                escalations.append({"point": i, "purpose": purpose, "from": response.escalated_from, "to": response.model,
+                                    "reason": response.escalation_reason})
         except AnalystOSError:
             continue  # the platform degrades to its deterministic path; the attempt was already counted
-    return {"calls": transport.calls, "tokens": transport.tokens, "by_purpose": dict(sorted(transport.by_purpose.items()))}
+    return {"calls": transport.calls, "tokens": transport.tokens, "usd": round(transport.usd, 6),
+            "unpriced_calls": transport.unpriced_calls, "by_purpose": dict(sorted(transport.by_purpose.items())),
+            "by_model": dict(sorted(transport.by_model.items())), "escalations": escalations}
 
 
 def load_runs(fixtures: Path = FIXTURES) -> list[dict]:
@@ -165,11 +224,35 @@ def compare(measured: dict[str, dict], baseline: dict, tolerance: float | None =
         if base is None:
             failures.append(f"{name}: no baseline (run with --update-baseline and commit it)")
             continue
-        for metric in ("calls", "tokens"):
+        for metric in ("calls", "tokens", "usd"):
+            if metric not in base or metric not in got:
+                continue  # a baseline (or a caller) from before the metric existed
             limit = base[metric] * (1 + tol)
-            if got[metric] > limit:
-                failures.append(f"{name}: {metric} {got[metric]} > baseline {base[metric]} + {tol:.0%} ({limit:g})")
+            if got[metric] > limit + 1e-9:
+                failures.append(f"{name}: {metric} {got[metric]:g} > baseline {base[metric]:g} + {tol:.0%} ({limit:g})")
     return failures
+
+
+def usd_report(runs: list[dict]) -> dict[str, dict]:
+    """Expected $ per recorded run (price table, fake transport): the current default routing (cheap
+    first, escalate on failure) against the large tier first for every purpose (the routing before
+    2026-09-26, what max_quality still does), each with the ladders as shipped and with every
+    rule-answered point sent to a model (the worst case: rules insufficient everywhere)."""
+    from analystos.contracts.platform import PRESET_ESCALATION, PRESETS, LLMSettings, PlatformSettings
+
+    large_first = PRESET_ESCALATION["max_quality"]
+    model_first = PRESETS["max_quality"]
+    scenarios = {
+        "cheap_first": PlatformSettings(),
+        "large_first": PlatformSettings(llm=LLMSettings(escalation=large_first)),
+        "cheap_first_model_first_ladders": PlatformSettings(llm=LLMSettings(purpose_modes=model_first)),
+        "large_first_model_first_ladders": PlatformSettings(llm=LLMSettings(purpose_modes=model_first, escalation=large_first)),
+    }
+    out: dict[str, dict] = {}
+    for label, settings in scenarios.items():
+        for name, got in measure(runs, settings=settings).items():
+            out.setdefault(name, {})[label] = {k: got[k] for k in ("calls", "tokens", "usd", "unpriced_calls", "by_model")}
+    return out
 
 
 # ---------------------------------------------------------------------------------------- record
@@ -213,7 +296,7 @@ def write_fixture(name: str, points: list[dict], *, description: str, fixtures: 
 # ---------------------------------------------------------------------------------------- CLI
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", nargs="?", default="check", choices=["check", "record"])
+    parser.add_argument("command", nargs="?", default="check", choices=["check", "record", "usd"])
     parser.add_argument("--fixtures", type=Path, default=FIXTURES)
     parser.add_argument("--baseline", type=Path, default=None)
     parser.add_argument("--update-baseline", action="store_true")
@@ -227,18 +310,22 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("record needs --run-id and --name")
         print(write_fixture(args.name, points_from_run(args.run_id), description=args.description, fixtures=args.fixtures))
         return 0
+    if args.command == "usd":
+        print(json.dumps(usd_report(load_runs(args.fixtures)), indent=2, sort_keys=True))
+        return 0
     measured = measure(load_runs(args.fixtures))
     if args.update_baseline:
-        baseline_path.write_text(json.dumps({"tolerance": TOLERANCE, "runs": {k: {"calls": v["calls"], "tokens": v["tokens"]}
-                                                                               for k, v in measured.items()}},
-                                            indent=2, sort_keys=True) + "\n")
+        baseline_path.write_text(json.dumps({"tolerance": TOLERANCE, "runs": {
+            k: {"calls": v["calls"], "tokens": v["tokens"], "usd": v["usd"]} for k, v in measured.items()}},
+            indent=2, sort_keys=True) + "\n")
         print(f"baseline written: {baseline_path}")
         return 0
     baseline = json.loads(baseline_path.read_text())
     for name, got in measured.items():
         base = baseline.get("runs", {}).get(name, {})
         print(f"{name}: calls {got['calls']} (baseline {base.get('calls')}), tokens {got['tokens']} "
-              f"(baseline {base.get('tokens')}) {got['by_purpose']}")
+              f"(baseline {base.get('tokens')}), ${got['usd']:.6f} (baseline {base.get('usd')}) "
+              f"{got['by_purpose']} escalations {len(got['escalations'])}")
     failures = compare(measured, baseline)
     for f in failures:
         print(f"COST GATE FAILED: {f}", file=sys.stderr)
