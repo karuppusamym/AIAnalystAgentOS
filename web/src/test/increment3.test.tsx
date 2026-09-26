@@ -534,7 +534,7 @@ describe("TokenSavingsView", () => {
       },
     })]]);
     render(<TokenSavingsView />);
-    expect(await screen.findByText("25.0% of all tokens")).toBeTruthy();
+    expect(await screen.findByText("25.0% of actual plus estimated tokens")).toBeTruthy();
     const rows = screen.getAllByRole("row");
     expect(rows[1].textContent).toMatch(/planning/); // sorted by tokens saved
     expect(within(rows[1]).getByText("28.6%")).toBeTruthy(); // 800 / 2800
@@ -545,6 +545,16 @@ describe("TokenSavingsView", () => {
 });
 
 describe("Admin page gating", () => {
+  it("loads a linked Skills tab when a seeded skill omits tools", async () => {
+    session.set("tok", ADMIN);
+    mockApi([["GET", /\/api\/skills$/, [{ id: "anova", category: "statistical", description: "One-way ANOVA",
+      function: "analystos.skills.stats.one_way_anova", runtime: "in_process", deterministic: true, enabled: true }]]]);
+    render(<AuthProvider><MemoryRouter initialEntries={["/operate/registry?tab=skills"]}><AdminPage section="registry" /></MemoryRouter></AuthProvider>);
+    expect(screen.getByRole("tab", { name: "Skills", selected: true })).toBeTruthy();
+    expect(await screen.findByText("One-way ANOVA")).toBeTruthy();
+    expect(screen.getByText("analystos.skills.stats.one_way_anova")).toBeTruthy();
+  });
+
   it("shows admin-only tabs as a notice to non-admins without calling their endpoints", async () => {
     const fetchMock = mockApi([["GET", /\/api\/auth\/me$/, USER], ["GET", /\/api\/agents$/, []]]);
     const settings = render(<AuthProvider><MemoryRouter><AdminPage section="settings" /></MemoryRouter></AuthProvider>);

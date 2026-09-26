@@ -5,6 +5,7 @@ import { ChartView } from "../components/Chart";
 import { Card, CodeBlock, DataTable, ErrorBox, Field, KeyValue, Notice, PageHeader } from "../components/ui";
 import { guessChart } from "../lib/charts";
 import { fmtMs } from "../lib/format";
+import { useAsync } from "../lib/hooks";
 
 /** Reorder a result so the hinted x / y columns come first (chart builders read columns 0 and 1). */
 export function projectForChart(res: QueryResult, x?: string | null, y?: string | null) {
@@ -76,6 +77,7 @@ export function ExplainView({ ex }: { ex: SqlExplanation }) {
 
 export function AskPage() {
   const { wsId = "" } = useParams();
+  const assets = useAsync(() => api.listAssets(wsId), [wsId]);
   const [question, setQuestion] = useState("");
   const [ask, setAsk] = useState<AskResponse | null>(null);
   const [askErr, setAskErr] = useState<unknown>(null);
@@ -87,6 +89,13 @@ export function AskPage() {
   const [running, setRunning] = useState(false);
   const [explain, setExplain] = useState<SqlExplanation | null>(null);
   const [explaining, setExplaining] = useState(false);
+  const incident = assets.data?.find((a) => a.selected && a.name.toLowerCase() === "incident");
+  const incidentColumns = new Set(incident?.columns.map((c) => c.name) ?? []);
+  const sqlExamples = incident ? [
+    { label: "Count incidents", sql: `SELECT COUNT(*) AS incident_count FROM ${incident.fq}` },
+    ...(incidentColumns.has("priority") ? [{ label: "Incidents by priority", sql: `SELECT priority, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY priority ORDER BY incident_count DESC` }] : []),
+    ...(incidentColumns.has("made_sla") ? [{ label: "SLA outcome", sql: `SELECT made_sla, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY made_sla ORDER BY incident_count DESC` }] : []),
+  ] : [];
 
   const submitAsk = async (e: FormEvent) => {
     e.preventDefault();
@@ -162,6 +171,11 @@ export function AskPage() {
       </Card>
 
       <Card title="SQL console">
+        {assets.error && <ErrorBox error={assets.error} onRetry={assets.reload} />}
+        {sqlExamples.length > 0 && <div className="chip-row" aria-label="Example queries">
+          {sqlExamples.map((example) => <button key={example.label} type="button" className="btn btn-sm"
+            onClick={() => { setSql(example.sql); setExplain(null); setQres(null); setQErr(null); }}>{example.label}</button>)}
+        </div>}
         <form className="form" onSubmit={submitSql}>
           <Field label="SQL (read-only)" htmlFor="sql" hint="Same gateway, scope and audit as the agents: no bypass.">
             <textarea id="sql" className="mono" rows={6} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} required

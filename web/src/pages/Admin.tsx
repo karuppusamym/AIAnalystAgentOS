@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type AgentSpec, type ToolSpec } from "../api";
 import { useAuth } from "../auth";
 import { Card, EmptyState, EnabledToggle, ErrorBox, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
@@ -37,7 +38,14 @@ const SECTIONS: Record<AdminSection, { title: string; subtitle: string; tabs: { 
 export function AdminPage({ section = "registry" }: { section?: AdminSection }) {
   const { user } = useAuth();
   const spec = SECTIONS[section];
-  const [tab, setTab] = useState<Tab>(spec.tabs[0].id);
+  const [params, setParams] = useSearchParams();
+  const requestedTab = params.get("tab");
+  const tab = spec.tabs.find((item) => item.id === requestedTab)?.id ?? spec.tabs[0].id;
+  const setTab = (next: Tab) => setParams((current) => {
+    const updated = new URLSearchParams(current);
+    updated.set("tab", next);
+    return updated;
+  });
   const tabbed = spec.tabs.length > 1;
   return (
     <div className="page">
@@ -143,13 +151,13 @@ function Skills() {
     <Card>
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Skill</th><th>Category</th><th>Tools</th><th>Deterministic</th><th>Status</th></tr></thead>
+          <thead><tr><th>Skill</th><th>Category</th><th>Implementation</th><th>Deterministic</th><th>Status</th></tr></thead>
           <tbody>
             {list.data.map((s) => (
               <tr key={s.id}>
                 <td><code>{s.id}</code><div className="muted small">{s.description}</div></td>
                 <td>{s.category}</td>
-                <td className="small">{s.tools.join(", ") || "—"}</td>
+                <td className="small"><code>{s.function ?? ((s.tools ?? []).join(", ") || "—")}</code>{s.runtime && <div className="muted">{s.runtime}</div>}</td>
                 <td>{s.deterministic ? "yes" : "no"}</td>
                 <td><StatusBadge status={s.enabled ? "ok" : "skipped"} label={s.enabled ? "enabled" : "disabled"} /></td>
               </tr>

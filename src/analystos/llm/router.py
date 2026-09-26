@@ -395,17 +395,22 @@ class ModelRouter:
                      *, input_tokens: int, output_tokens: int, request_hash: str, request: dict) -> list[str]:
         """Drop models whose pre-call estimate exceeds the workspace approval threshold. When none
         remain the call needs an approval: raise ApprovalRequired instead of calling silently.
-        Models without price metadata cannot be estimated and are not held back."""
+        Models without price metadata cannot be proven below the limit and require approval."""
         limit = ctx.expensive_model_approval_usd
         if limit is None:
             return models
         estimates = {m: self.config.estimate_cost(m, input_tokens, output_tokens) for m in models}
-        within = [m for m in models if estimates[m] is None or estimates[m] <= limit]
+        within = [m for m in models if estimates[m] is not None and estimates[m] <= limit]
         if within:
             return within
-        cheapest = min(models, key=lambda m: estimates[m] or 0.0)
-        message = (f"'{purpose}' is estimated at ${estimates[cheapest]:.4f} on {cheapest}, above the workspace "
-                   f"approval threshold ${limit:.4f} (expensive_model_approval_usd)")
+        priced = [m for m in models if estimates[m] is not None]
+        cheapest = min(priced, key=lambda m: estimates[m]) if priced else models[0]
+        if estimates[cheapest] is None:
+            message = (f"'{purpose}' has no price estimate for {cheapest}; cannot verify the workspace "
+                       f"approval threshold ${limit:.4f} (expensive_model_approval_usd)")
+        else:
+            message = (f"'{purpose}' is estimated at ${estimates[cheapest]:.4f} on {cheapest}, above the workspace "
+                       f"approval threshold ${limit:.4f} (expensive_model_approval_usd)")
         self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=cheapest,
                          status="approval_required", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                          request_hash=request_hash, error=message[:500], request=request, answered_by="rules",

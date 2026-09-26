@@ -625,7 +625,10 @@ export interface SkillSpec {
   id: string;
   category: string;
   description: string;
-  tools: string[];
+  function?: string;
+  runtime?: string;
+  /** Legacy seeded skill records may omit this; the API fills it with []. */
+  tools?: string[];
   deterministic: boolean;
   enabled: boolean;
   [k: string]: unknown;
@@ -1166,6 +1169,9 @@ export interface TokenSavings {
   /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
   by_rung?: Record<string, RungSpend> | null;
   by_model?: Record<string, RungSpend> | null;
+  missing_price?: { model: string; calls: number; tokens: number }[];
+  prices_version?: string;
+  cost_complete?: boolean;
 }
 
 // ----------------------------------------------------------------------------------- capabilities
