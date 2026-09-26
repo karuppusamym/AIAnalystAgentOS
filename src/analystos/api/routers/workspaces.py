@@ -131,8 +131,9 @@ def patch(workspace_id: str, body: WorkspacePatch, user: User = Depends(current_
 
 @router.delete("/workspaces/{workspace_id}")
 def delete(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Archive and disable. This route does not erase stored or published data."""
     ws_svc.delete_workspace(session, user, workspace_id)
-    return {"deleted": True}
+    return {"deleted": True, "archived": True, "purged": False}
 
 
 @router.put("/workspaces/{workspace_id}/policy")
