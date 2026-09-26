@@ -46,7 +46,7 @@ export function SourcesPage() {
       }))} onClose={() => setActiveAsset(null)} />}
       <Card title="Relationships">
         <ErrorBox error={rels.error} />
-        {rels.data?.length === 0 && <EmptyState title="No relationships discovered yet">They are found by metadata discovery and profiling runs.</EmptyState>}
+        {rels.data?.length === 0 && <EmptyState title="No relationships discovered yet">They are found by metadata discovery and profiling.</EmptyState>}
         {!!rels.data?.length && (
           <div className="table-wrap">
             <table className="table">

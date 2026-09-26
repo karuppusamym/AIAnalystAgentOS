@@ -315,9 +315,9 @@ export function ScheduleForm({ wsId, initial, onSaved, onCancel }: {
 
       {f.kind === "report" && (
         <div className="form-row">
-          <Field label="Run" htmlFor={`${id}-run`}>
+          <Field label="Investigation" htmlFor={`${id}-run`}>
             <select id={`${id}-run`} value={f.runId} onChange={(e) => set({ runId: e.target.value })}>
-              <option value="">Latest completed run (at fire time)</option>
+              <option value="">Latest completed investigation (at fire time)</option>
               {(runs.data ?? []).filter((r) => r.status === "COMPLETED").map((r) => (
                 <option key={r.id} value={r.id}>{fmtDate(r.finished_at ?? r.created_at)} — {r.objective.slice(0, 60)}</option>
               ))}

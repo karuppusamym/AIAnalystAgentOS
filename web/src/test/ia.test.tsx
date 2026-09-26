@@ -10,7 +10,7 @@ import { ThemeToggle } from "../components/Layout";
 import { ConfidenceBar, Stat, StateView, Value } from "../components/ui";
 import { fmtMs, fmtUsd, formatKnown } from "../lib/format";
 import { getThemePref, nextThemePref, resolveTheme, setThemePref } from "../lib/theme";
-import { fillPath, JOURNEYS, LEGACY_REDIRECTS, SCREEN_BUDGET, SCREENS, to } from "../routes";
+import { AREAS, fillPath, LEGACY_REDIRECTS, legacyTarget, SCREEN_BUDGET, SCREENS, to } from "../routes";
 import { INSIGHT, mockBackend, RUN, USER, WS } from "./mockBackend";
 
 function mockFetch() {
@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 // ------------------------------------------------------------------------------------ information architecture
-describe("route manifest (spec v3 §9)", () => {
+describe("route manifest (spec v4 §15)", () => {
   it(`has at most ${SCREEN_BUDGET} screens, each with a unique id and path`, () => {
     expect(SCREEN_BUDGET).toBe(20);
     expect(SCREENS.length).toBeLessThanOrEqual(SCREEN_BUDGET);
@@ -53,42 +53,61 @@ describe("route manifest (spec v3 §9)", () => {
     expect(new Set(SCREENS.map((s) => s.path)).size).toBe(SCREENS.length);
   });
 
-  it("gives every journey at least one navigable screen, in the spec's order", () => {
-    expect(JOURNEYS.map((j) => j.label)).toEqual(["Home", "Ask", "Investigate", "Knowledge", "Build", "Operate"]);
-    for (const j of JOURNEYS) expect(SCREENS.some((s) => s.journey === j.id && s.nav)).toBe(true);
+  it("has five areas and the gear, each with at least one navigable screen, in the spec's order", () => {
+    expect(AREAS.map((a) => a.label)).toEqual(["Overview", "Data", "Work", "Outputs", "Operate", "Settings"]);
+    for (const a of AREAS) expect(SCREENS.some((s) => s.area === a.id && s.nav)).toBe(true);
   });
 
-  it("places the increment-3 catalog/crawl panels in Knowledge and settings/token savings/usage in Operate", () => {
-    const journeyOf = (id: string) => SCREENS.find((s) => s.id === id)?.journey;
-    expect(journeyOf("catalog")).toBe("knowledge");
-    expect(journeyOf("sources")).toBe("knowledge");
-    expect(journeyOf("settings")).toBe("operate");
-    expect(journeyOf("usage")).toBe("operate");
-    expect(journeyOf("schedules")).toBe("operate");
-    expect(journeyOf("monitoring")).toBe("operate");
-    expect(journeyOf("reports")).toBe("build");
+  it("puts each concept in its area: metrics in Data, dashboards in Outputs, model configuration in Settings", () => {
+    const home = (c: string) => SCREENS.find((s) => s.owns.includes(c as never));
+    expect(home("metric")?.area).toBe("data");
+    expect(home("relationship")?.area).toBe("data");
+    expect(home("definition")?.area).toBe("data");
+    expect(home("dashboard")?.area).toBe("outputs");
+    expect(home("report")?.area).toBe("outputs");
+    expect(home("recipe")?.area).toBe("work");
+    expect(home("model-config")?.area).toBe("settings");
+    expect(home("autonomy")?.id).toBe("policy");
+    expect(home("audit")?.id).toBe("policy");
+    expect(home("schedule")?.area).toBe("operate");
   });
 
-  it("maps every legacy route onto a screen in the manifest", () => {
+  it("maps every legacy route (and every legacy tab) onto a screen in the manifest", () => {
     for (const r of LEGACY_REDIRECTS) {
-      const target = fillPath(r.to, { wsId: "ws", runId: "r", insightId: "i" });
-      expect(SCREENS.some((s) => matchPath(s.path, target)), `${r.from} -> ${r.to}`).toBe(true);
+      for (const target of [r.to, ...Object.values(r.tabs ?? {})]) {
+        const filled = fillPath(target.split("?")[0], { wsId: "ws", runId: "r", insightId: "i" });
+        expect(SCREENS.some((s) => matchPath(s.path, filled)), `${r.from} -> ${target}`).toBe(true);
+      }
     }
   });
 
   it.each([
-    ["/admin", "/operate/registry"],
-    ["/w/ws_1/sources", "/w/ws_1/knowledge/sources"],
-    ["/w/ws_1/catalog", "/w/ws_1/knowledge/catalog"],
-    ["/w/ws_1/runs", "/w/ws_1/investigate"],
-    ["/w/ws_1/runs/run_9", "/w/ws_1/investigate/run_9"],
-    ["/w/ws_1/runs/run_9/console", "/w/ws_1/investigate/run_9/console"],
-    ["/w/ws_1/insights/ins_2", "/w/ws_1/investigate/findings/ins_2"],
-    ["/w/ws_1/studio?artifact=art_1", "/w/ws_1/build/studio?artifact=art_1"],
-    ["/w/ws_1/reports?artifact=art_2", "/w/ws_1/build/reports?artifact=art_2"],
+    ["/admin", "/settings/registry"],
+    ["/operate/registry", "/settings/registry"],
+    ["/operate/settings", "/settings/platform"],
+    ["/operate/usage?tab=savings", "/settings/usage?tab=savings"],
+    ["/w/ws_1/sources", "/w/ws_1/data/sources"],
+    ["/w/ws_1/knowledge/sources", "/w/ws_1/data/sources"],
+    ["/w/ws_1/catalog", "/w/ws_1/data/catalog"],
+    ["/w/ws_1/knowledge/catalog?tab=review", "/w/ws_1/data/catalog?tab=review"],
+    ["/w/ws_1/knowledge/catalog?tab=graph", "/w/ws_1/data/catalog?tab=definitions"],
+    ["/w/ws_1/runs", "/w/ws_1/work"],
+    ["/w/ws_1/ask", "/w/ws_1/work/ask"],
+    ["/w/ws_1/investigate", "/w/ws_1/work"],
+    ["/w/ws_1/runs/run_9", "/w/ws_1/work/investigations/run_9"],
+    ["/w/ws_1/investigate/run_9/console", "/w/ws_1/work/investigations/run_9/console"],
+    ["/w/ws_1/insights/ins_2", "/w/ws_1/outputs/findings/ins_2"],
+    ["/w/ws_1/investigate/findings/ins_2", "/w/ws_1/outputs/findings/ins_2"],
+    ["/w/ws_1/studio?artifact=art_1", "/w/ws_1/outputs?artifact=art_1"],
+    ["/w/ws_1/build/studio?tab=builds&job=bj_1", "/w/ws_1/work?tab=builds&job=bj_1"],
+    ["/w/ws_1/build/studio?tab=kpis&kpi=mttr", "/w/ws_1/data/catalog?tab=metrics&kpi=mttr"],
+    ["/w/ws_1/build/studio?tab=dashboards&dashboard=art_d", "/w/ws_1/outputs?type=dashboard&dashboard=art_d"],
+    ["/w/ws_1/reports?artifact=art_2", "/w/ws_1/outputs?type=report&artifact=art_2"],
+    ["/w/ws_1/build/reports?artifact=art_2", "/w/ws_1/outputs?type=report&artifact=art_2"],
     ["/w/ws_1/schedules?schedule=sch_1", "/w/ws_1/operate/schedules?schedule=sch_1"],
     ["/w/ws_1/monitoring?tab=alerts&alert=alr_1", "/w/ws_1/operate/monitoring?tab=alerts&alert=alr_1"],
-    ["/w/ws_1/governance", "/w/ws_1/operate/governance"],
+    ["/w/ws_1/governance", "/w/ws_1/settings/policy"],
+    ["/w/ws_1/operate/governance", "/w/ws_1/settings/policy"],
   ])("redirects %s to %s, keeping the query", async (from, expected) => {
     mockFetch();
     renderAt(from);
@@ -96,21 +115,24 @@ describe("route manifest (spec v3 §9)", () => {
   });
 
   it("builds links with encoded parameters and optional segments", () => {
-    expect(to.findings("ws 1")).toBe("/w/ws%201/investigate/findings");
-    expect(to.findings("ws", "ins_1")).toBe("/w/ws/investigate/findings/ins_1");
+    expect(to.findings("ws 1")).toBe("/w/ws%201/outputs/findings");
+    expect(to.findings("ws", "ins_1")).toBe("/w/ws/outputs/findings/ins_1");
     expect(to.monitoring("ws", { tab: "alerts" })).toBe("/w/ws/operate/monitoring?tab=alerts");
-    expect(to.settings()).toBe("/operate/settings");
+    expect(to.settings()).toBe("/settings/platform");
+    expect(to.outputs("ws", { type: "dashboard" })).toBe("/w/ws/outputs?type=dashboard");
+    expect(to.work("ws", "prepare")).toBe("/w/ws/work?tab=prepare");
+    expect(legacyTarget({ from: "/x", to: "/y?type=report" }, {}, "?type=chart&artifact=a")).toBe("/y?type=report&artifact=a");
   });
 
-  it("groups the side nav by journey", async () => {
+  it("groups the side nav by area, with the gear last", async () => {
     mockFetch();
     renderAt(`/w/${WS}`);
     const nav = screen.getByRole("navigation", { name: "Main" });
-    for (const label of ["Home", "Ask", "Investigate", "Knowledge", "Build", "Operate"]) {
-      expect(within(nav).getByRole("group", { name: label })).toBeTruthy();
-    }
-    expect(within(within(nav).getByRole("group", { name: "Knowledge" })).getByRole("link", { name: "Knowledge studio" }).getAttribute("href"))
-      .toBe(`/w/${WS}/knowledge/catalog`);
+    await waitFor(() => expect(within(nav).getByRole("group", { name: /Settings/ })).toBeTruthy());
+    const groups = within(nav).getAllByRole("group").map((g) => g.getAttribute("aria-labelledby"));
+    expect(groups).toEqual(["nav-a-overview", "nav-a-data", "nav-a-work", "nav-a-outputs", "nav-a-operate", "nav-a-settings"]);
+    expect(within(within(nav).getByRole("group", { name: "Data" })).getByRole("link", { name: "Catalog & definitions" }).getAttribute("href"))
+      .toBe(`/w/${WS}/data/catalog`);
     await screen.findByRole("heading", { name: "IT Service Management", level: 1 });
   });
 });
@@ -154,14 +176,14 @@ describe("unknown is never shown as 0", () => {
     expect(screen.queryByText("0%")).toBeNull();
   });
 
-  it("marks home KPIs unknown when their request fails, instead of 0", async () => {
+  it("marks Overview needs unknown when their request fails, instead of 0 or hiding them", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       if (String(input).includes("/alerts")) return new Response("{}", { status: 500 });
       const r = mockBackend(init?.method ?? "GET", String(input));
       return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
     });
     renderAt(`/w/${WS}`);
-    const card = (await screen.findByRole("heading", { name: "What changed" })).closest("section")!;
+    const card = (await screen.findByRole("heading", { name: "What needs you" })).closest("section")!;
     await waitFor(() => expect(within(card).getByText("Pending approvals").previousElementSibling?.textContent).toBe("1"));
     expect(within(card).getByText("Open alerts").previousElementSibling?.textContent).toMatch(/unknown/);
   });
@@ -177,11 +199,19 @@ describe("unknown is never shown as 0", () => {
 describe("Ctrl/Cmd-K command palette", () => {
   it("lists every navigable screen for the current workspace and filters by terms", () => {
     const items = screenItems(WS, "ITSM");
-    expect(items.map((i) => i.label)).toContain("Knowledge studio");
-    expect(items.find((i) => i.label === "Platform settings")?.href).toBe("/operate/settings");
+    expect(items.map((i) => i.label)).toContain("Catalog & definitions");
+    expect(items.find((i) => i.label === "Platform settings")?.href).toBe("/settings/platform");
     expect(screenItems(undefined).some((i) => i.href.includes(":wsId"))).toBe(false);
     expect(filterItems(items, "token").map((i) => i.label)).toEqual(["Usage & cost"]);
-    expect(filterItems(items, "know cat").map((i) => i.label)).toEqual(["Knowledge studio"]);
+    expect(filterItems(items, "data cat").map((i) => i.label)).toEqual(["Catalog & definitions"]);
+    // the gear's admin screens are not offered to analysts or viewers
+    for (const role of ["analyst", "viewer"]) {
+      const labels = screenItems(WS, "ITSM", { isAdmin: false, role }).map((i) => i.label);
+      expect(labels).not.toContain("Platform settings");
+      expect(labels).not.toContain("Capability registry");
+      expect(labels).not.toContain("Usage & cost");
+      expect(labels).not.toContain("Members & policy");
+    }
   });
 
   it("opens with Ctrl-K as a modal dialog, navigates with the keyboard and closes with Esc", async () => {
@@ -200,7 +230,7 @@ describe("Ctrl/Cmd-K command palette", () => {
     fireEvent.change(input, { target: { value: "catalog" } });
     expect(within(dialog).getAllByRole("option")).toHaveLength(1);
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/knowledge/catalog`));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/data/catalog`));
     expect(screen.queryByRole("dialog")).toBeNull();
 
     fireEvent.keyDown(window, { key: "K", metaKey: true });
@@ -253,16 +283,20 @@ describe("theme tokens", () => {
 });
 
 // ------------------------------------------------------------------------------------ accessibility (axe)
-/** The main screen of each journey, rendered in the full shell with the mock backend. */
+/** The main screen of each area, rendered in the full shell with the mock backend. */
 const JOURNEY_SCREENS: [string, string, RegExp][] = [
-  ["Home", `/w/${WS}`, /What changed/],
-  ["Ask", `/w/${WS}/ask`, /SQL console/],
-  ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
-  ["Investigate · findings", `/w/${WS}/investigate/findings/${INSIGHT}`, /Network group drives P1 breaches/],
-  ["Knowledge", `/w/${WS}/knowledge/catalog`, /Incidents/],
-  ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
+  ["Overview", `/w/${WS}`, /What needs you/],
+  ["Work · Ask", `/w/${WS}/work/ask`, /SQL console/],
+  ["Work · investigation", `/w/${WS}/work/investigations/${RUN}`, /Why are P1 resolution times rising/],
+  ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
+  ["Outputs · finding", `/w/${WS}/outputs/findings/${INSIGHT}`, /Network group drives P1 breaches/],
+  ["Data", `/w/${WS}/data/catalog`, /Incidents/],
+  ["Data · definitions", `/w/${WS}/data/catalog?tab=definitions`, /Joins to confirm/],
+  ["Outputs", `/w/${WS}/outputs`, /P1 resolution/],
   ["Operate", `/w/${WS}/operate/approvals`, /Publish dashboards/],
-  ["Operate · settings", "/operate/settings", /Platform settings/],
+  ["Operate · schedules", `/w/${WS}/operate/schedules`, /upgrade available/],
+  ["Settings · platform", "/settings/platform", /Platform settings/],
+  ["Settings · policy", `/w/${WS}/settings/policy`, /Effective policy/],
 ];
 
 describe("accessibility (axe-core, jsdom)", () => {

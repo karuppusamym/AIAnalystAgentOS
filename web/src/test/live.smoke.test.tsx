@@ -53,7 +53,7 @@ describe.skipIf(!LIVE)("live API smoke", () => {
       errors.push(...await visit(to.monitoring(ws.id, { tab: "alerts" }), /Alerts/));
       errors.push(...await visit(to.reports(ws.id), /Generate report/));
       const scheduled = runs.find((r) => r.origin?.type === "schedule" && r.status === "COMPLETED");
-      if (scheduled) errors.push(...await visit(to.run(ws.id, scheduled.id), /What changed since the previous run/));
+      if (scheduled) errors.push(...await visit(to.run(ws.id, scheduled.id), /What changed since the previous investigation/));
       const insights = await api.listInsights(ws.id);
       if (insights[0]) errors.push(...await visit(to.findings(ws.id, insights[0].id), /REV verification/));
       const dash = await api.listArtifacts(ws.id, { type: "dashboard" });
@@ -63,6 +63,6 @@ describe.skipIf(!LIVE)("live API smoke", () => {
       }
     }
     // A failed run legitimately shows its own error banner.
-    expect(errors.filter((e) => !e.includes("Run error"))).toEqual([]);
+    expect(errors.filter((e) => !e.includes("Investigation error"))).toEqual([]);
   }, 180000);
 });

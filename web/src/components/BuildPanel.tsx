@@ -142,7 +142,7 @@ function PlanBuildForm({ wsId, targets, onStarted }: { wsId: string; targets: st
   return (
     <form className="form" onSubmit={submit} aria-label="Plan a build">
       <div className="form-row">
-        <Field label="From run" htmlFor={`${id}-run`} hint={runs.data && !sources.length ? "No completed investigation yet." : "Its dataset and KPIs are built."}>
+        <Field label="From investigation" htmlFor={`${id}-run`} hint={runs.data && !sources.length ? "No completed investigation yet." : "Its dataset and KPIs are built."}>
           <select id={`${id}-run`} value={chosenRun} onChange={(e) => setRunId(e.target.value)}>
             {sources.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.finished_at ?? r.created_at)} — {r.objective.slice(0, 70)}</option>)}
           </select>

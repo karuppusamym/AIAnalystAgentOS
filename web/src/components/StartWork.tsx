@@ -76,7 +76,7 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
     }
     if (k.action === "monitor") {
       onClose();
-      nav(to.monitoring(wsId, { tab: "monitors", new: "1" } as { tab: string }));
+      nav(`${to.monitoring(wsId, { tab: "monitors" })}&new=1`);
       return;
     }
     update({ kind: k.id, objective: draft.objective || k.objectivePrefix || ws.data?.objective || "" });
