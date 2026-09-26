@@ -127,6 +127,11 @@ def save_policy(session: Session, workspace: Workspace, doc: WorkspacePolicyDoc,
                               .order_by(WorkspacePolicy.version.desc()).limit(1)) or 0) + 1
     session.add(WorkspacePolicy(workspace_id=workspace.id, version=version, document=doc.model_dump(), created_by=user_id))
     workspace.policy_version = version
+    session.flush()
+    from analystos.evidence.verification import dependency_changed
+
+    # P7-01: a verdict whose scope, masking or alpha came from the old policy is void if those changed.
+    dependency_changed(session, "policy", workspace.id, f"workspace policy v{version} saved", event="policy.changed")
     return version
 
 

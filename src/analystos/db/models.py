@@ -650,6 +650,62 @@ class Insight(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class VerificationRecord(Base):
+    """One verdict bound to its dependency fingerprint (P7-01, ADR-0020). The state is the only thing that
+    changes after creation: PENDING -> ACTIVE -> VOID (a dependency changed) | SUPERSEDED (a newer verdict
+    on the same subject). LEGACY marks findings verified before fingerprints whose dependencies could not be
+    rebuilt. Re-verification writes a new record; a voided one stays readable."""
+
+    __tablename__ = "verification_record"
+    __table_args__ = (Index("ix_verification_record_subject", "subject_type", "subject_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    subject_type: Mapped[str] = mapped_column(String(30))  # insight | chart | kpi_tile | report_section
+    subject_id: Mapped[str] = mapped_column(String(80))
+    question_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # the AnalysisSpec identity
+    verdict: Mapped[str] = mapped_column(String(30))  # verified | failed_verification
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    verifier: Mapped[str] = mapped_column(String(80))  # rev.v<version> | user:<id>
+    evidence_bundle_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    dependencies: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(20), index=True)  # PENDING | ACTIVE | VOID | SUPERSEDED | LEGACY
+    void_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)  # the dependency kind that changed
+    void_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    void_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    flags: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # "wrong" flags, each with its reason
+    created_at: Mapped[datetime] = _ts()
+
+
+class VerificationDependency(Base):
+    """The lookup side of a record's fingerprint: events find dependents by (kind, ref)."""
+
+    __tablename__ = "verification_dependency"
+    __table_args__ = (Index("ix_verification_dependency_kind_ref", "kind", "ref"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    record_id: Mapped[str] = mapped_column(ForeignKey("verification_record.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # query | data | semantic | method | context | model_call | policy
+    ref: Mapped[str] = mapped_column(String(300))
+    version_hash: Mapped[str] = mapped_column(String(128))
+
+
+class VerificationSweep(Base):
+    """One nightly sweep: how many ACTIVE records it re-checked and how many voids the events had missed
+    (`late_voids` is a defect metric: each is a change path without its event hook)."""
+
+    __tablename__ = "verification_sweep"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    actor: Mapped[str] = mapped_column(String(80))
+    checked: Mapped[int] = mapped_column(Integer, default=0)
+    late_voids: Mapped[int] = mapped_column(Integer, default=0)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = _ts()
+
+
 class Artifact(Base):
     __tablename__ = "artifact"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

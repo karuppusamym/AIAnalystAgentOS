@@ -314,6 +314,9 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
             ins = s.get(Insight, target_id)
             if ins is None or ins.run_id != run.id:
                 raise NotFound("insight not found in this run")
+            from analystos.evidence.verification import flag_wrong
+
+            flag_wrong(s, ins, user_id=user.id, reason=text)  # P7-01: a rejection needs its reason, kept on the record
             ins.status = "rejected"
             from analystos.decisions.calibration import record_signal
 

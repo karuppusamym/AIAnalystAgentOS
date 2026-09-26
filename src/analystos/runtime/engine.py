@@ -424,6 +424,10 @@ def apply_replan(session, run: AnalysisRun, reason: str, *, full: bool = True) -
         session.execute(update(Hypothesis).where(Hypothesis.run_id == run.id, Hypothesis.status != "superseded")
                         .values(status="superseded"))
         session.execute(update(Insight).where(Insight.run_id == run.id).values(status="superseded"))
+        from analystos.evidence.verification import supersede_subjects
+
+        supersede_subjects(session, "insight", session.scalars(select(Insight.id).where(Insight.run_id == run.id)),
+                           f"replanned: {reason}")
     invalidated = invalidate_run_approvals(session, run.id, f"replanned: {reason}")
     run.plan_hash = run_hash(run)
     if run.status in ("WAITING_USER", "COMPLETED", "PAUSED"):

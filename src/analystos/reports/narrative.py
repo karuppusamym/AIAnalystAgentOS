@@ -76,7 +76,7 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def _md_insight(i: ReportInsight, kind: str, with_evidence: bool) -> list[str]:
-    status = "verified" if i.verified else "unverified"
+    status = i.status_label()
     tag = f" [{i.change.upper()}]" if i.change else ""
     evidence = i.evidence_label()
     line = (f"_{status}, {evidence}, review score {C.confidence_pct(i.confidence)} (uncalibrated)_" if evidence
@@ -109,7 +109,7 @@ def _md_section(key: str, d: ReportData) -> list[str]:
                          f"{ch.arrow} {ch.text}".strip(), m.definition])
         return out + _md_table(["Metric", "Value", "Previous", "Change", "Definition"], rows)
     if key == "findings":
-        items = C.top_verified(d.insights) if kind == "executive" else d.insights
+        items = C.shown_findings(d)
         if not items:
             return out + ["No verified findings in this run." if kind == "executive" else "No findings in this run.", ""]
         for i in items:
@@ -237,10 +237,10 @@ def _badge(text: str, cls: str) -> str:
 
 
 def _html_insight(i: ReportInsight, kind: str, with_evidence: bool) -> str:
-    badges = _badge("verified" if i.verified else "unverified", "ok" if i.verified else "muted")
+    badges = _badge(i.status_label(), "ok" if i.verified else "muted")
     evidence = i.evidence_label()
     if evidence:
-        badges += " " + _badge(evidence, "muted" if i.validation != "confirmed" or i.stale else "ok")
+        badges += " " + _badge(evidence, "muted" if i.validation != "confirmed" or i.stale or i.void_reason else "ok")
         badges += " " + _badge(f"review score {C.confidence_pct(i.confidence)} (uncalibrated)", "muted")
     else:
         badges += " " + _badge(f"confidence {C.confidence_pct(i.confidence)}", "muted")
@@ -280,7 +280,7 @@ def _html_section(key: str, d: ReportData) -> str:
                              f'<span class="chg {cls}">{esc(ch.arrow)} {esc(ch.text)}</span>', f'<span class="small">{esc(m.definition)}</span>'])
             body = _html_table(["Metric", "Value", "Previous", "Change", "Definition"], rows, "kpi")
     elif key == "findings":
-        items = C.top_verified(d.insights) if kind == "executive" else d.insights
+        items = C.shown_findings(d)
         if not items:
             body = "<p>No verified findings in this run.</p>" if kind == "executive" else "<p>No findings in this run.</p>"
         else:

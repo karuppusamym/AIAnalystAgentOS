@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.api.deps import StreamAuth, current_user, db, stream_guard, streaming_auth
-from analystos.api.serialize import row, rows
+from analystos.api.serialize import row, rows, with_verification
 from analystos.core.errors import InvalidInput
 from analystos.db.base import session_scope
 from analystos.db.models import (
@@ -88,7 +88,7 @@ def _run_detail(session: Session, run: AnalysisRun) -> dict:
             "hypotheses": [{**row(h), "result": {k: (exps[h.id].result or {}).get(k) for k in (
                 "test", "n", "p_value", "p_adjusted", "effect_size", "effect_label", "highlights", "groups", "warnings")}
                 if h.id in exps else None, "experiment_id": exps[h.id].id if h.id in exps else None} for h in hyps],
-            "insights": rows(insights), "approvals": rows(approvals, exclude={"payload"})}
+            "insights": with_verification(session, insights), "approvals": rows(approvals, exclude={"payload"})}
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}")

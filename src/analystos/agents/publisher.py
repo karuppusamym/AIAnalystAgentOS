@@ -49,9 +49,12 @@ def build_bundle(ctx: RunContext, destination: str) -> PublishBundle:
                            charts=charts, dashboards=parts["dashboards"])
     # P4-K03: KPIs are published as their approved semantic-layer definitions; with the workspace policy
     # require_approved_metrics an unapproved KPI refuses the bundle, here and again right before publishing.
+    from analystos.evidence.verification import gate_publish
     from analystos.semantic.service import gate_bundle
 
     with session_scope() as s:
+        # P7-01: a chart presenting a finding whose verdict is VOID is refused, here and right before publishing.
+        gate_publish(s, ctx.run.id, [code for c in bundle.charts for code in c.insight_codes])
         return gate_bundle(s, ctx.workspace.id, ctx.policy, bundle)
 
 

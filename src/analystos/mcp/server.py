@@ -123,7 +123,16 @@ def _tool_finding_evidence(principal: G.ClientPrincipal, ws: str, args: dict[str
                 "population_size": ins.population_size, "caveats": ins.caveats, "evidence": ins.evidence,
                 "verification": ins.verification, "queries": queries,
                 # P4-03: discovery/confirmed state, staleness and the typed evidence bundle
-                "validation": ins.validation, "stale": ins.stale_since is not None, "evidence_bundle": ins.evidence_bundle}
+                "validation": ins.validation, "stale": ins.stale_since is not None, "evidence_bundle": ins.evidence_bundle,
+                # P7-01: the verdict's record state; a VOID one carries its cause
+                "verification_state": _verification_state(s, ins)}
+
+
+def _verification_state(session: Any, ins: Any) -> dict[str, Any]:
+    from analystos.evidence.verification import insight_states
+
+    state = insight_states(session, [ins.id])[ins.id]
+    return {k: state.get(k) for k in ("state", "badge", "record_id", "fingerprint", "void")}
 
 
 def _tool_validate_sql(principal: G.ClientPrincipal, ws: str, args: dict[str, Any]) -> dict[str, Any]:

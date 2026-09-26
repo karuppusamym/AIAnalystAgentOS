@@ -22,7 +22,8 @@ def load_context(ctx: RunContext) -> dict:
     for term in package["glossary"]:
         cols = [c for c in term.get("mapped_columns") or [] if any(fq.endswith(c) for fq in in_scope) or c in in_scope]
         if cols and term["score"] > 0.15:
-            resolved.append({"term": term["name"], "columns": cols, "definition": term["body"][:300]})
+            # the id is what a finding's verification record cites (P7-01: editing the term voids the verdict)
+            resolved.append({"id": term.get("id"), "term": term["name"], "columns": cols, "definition": term["body"][:300]})
     objective_words = {w for w in ctx.run.objective.lower().replace(",", " ").split() if len(w) > 4}
     ambiguous = sorted(w for w in objective_words if w not in " ".join(package["known_terms"]) and
                        not any(w in t["name"].lower() or w in t["body"].lower() for t in package["glossary"]))[:8]

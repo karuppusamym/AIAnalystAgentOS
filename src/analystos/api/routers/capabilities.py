@@ -116,6 +116,14 @@ def reload_capabilities(admin: User = Depends(admin_user), session: Session = De
     from analystos.tools.registry import sync_agent_definitions
 
     sync_agent_definitions(session)  # agent_definition rows cache the manifest-derived contract (FND-006)
+    from analystos import methods
+    from analystos.evidence.verification import recheck
+
+    methods.reset()  # the method vocabulary is read from Method manifests: pick up new versions now
+    # P7-01: verdicts computed by a method whose version or code changed are void (method.version_changed).
+    voided = recheck(session, kinds=("method",), reason="capability registry reloaded", event="method.version_changed")
     audit(f"user:{admin.id}", "capabilities.reloaded", details={"before": before, "after": snap.digest,
-                                                               "count": len(snap.manifests)}, session=session)
-    return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems)}
+                                                               "count": len(snap.manifests),
+                                                               "verifications_voided": len(voided["voided"])}, session=session)
+    return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems),
+            "verifications_voided": len(voided["voided"])}

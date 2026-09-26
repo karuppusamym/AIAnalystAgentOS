@@ -31,6 +31,27 @@ def attested(insight_id: str, user: User = Depends(current_user), session: Sessi
     return {"path": ac.path, "frontmatter": ac.frontmatter(), "document": ac.render()}
 
 
+@router.get("/insights/{insight_id}/why")
+def why_number(insight_id: str, number: str | None = None, fact_id: str | None = None, user: User = Depends(current_user),
+               session: Session = Depends(db, scope="function")):
+    """"Why this number?" (P7-08): each displayed number of the finding (or the one given as `number` text
+    or `fact_id`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
+    every link with its current state; broken and voided links are returned, never dropped."""
+    from analystos.evidence.why import explain_insight
+
+    ins = load_in_workspace(session, Insight, insight_id, user=user, label="insight")
+    return explain_insight(session, ins, number=number, fact_id=fact_id)
+
+
+@router.get("/workspaces/{workspace_id}/analysis/{run_id}/why")
+def why_run(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Every number of the run's reported findings resolved as in `/insights/{id}/why`, with counts by state."""
+    from analystos.evidence.why import explain_run
+
+    _run(session, user, workspace_id, run_id)
+    return explain_run(session, run_id)
+
+
 @router.post("/workspaces/{workspace_id}/analysis/{run_id}/findings/attest")
 def attest_run_findings(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Write the run's verified findings into the workspace pack as draft Attested Computations."""

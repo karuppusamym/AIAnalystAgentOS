@@ -155,7 +155,8 @@ def _table(pdf: _ReportPDF, headers: list[str], rows: list[list[str]], widths: t
 def _insight(pdf: _ReportPDF, i: ReportInsight, with_evidence: bool) -> None:
     tag = f" [{i.change.upper()}]" if i.change else ""
     _h3(pdf, f"{i.code}  {i.title}{tag}")
-    _p(pdf, f"{'Verified' if i.verified else 'Unverified'} - confidence {C.confidence_pct(i.confidence)}", size=8, color=MUTED)
+    _p(pdf, f"{i.status_label().capitalize()} - confidence {C.confidence_pct(i.confidence)}"
+       + (f" - VOID: {i.void_reason}; needs re-verification" if i.void_reason else ""), size=8, color=MUTED)
     _p(pdf, i.finding)
     if i.caveats:
         _p(pdf, "Caveats:", size=8.5, style="B")
@@ -195,7 +196,7 @@ def _section(pdf: _ReportPDF, key: str, d: ReportData) -> None:
                          f"{ch.arrow} {ch.text}".strip(), m.definition])
         _table(pdf, ["Metric", "Value", "Previous", "Change", "Definition"], rows, (30, 18, 18, 26, 58))
     elif key == "findings":
-        items = C.top_verified(d.insights) if kind == "executive" else d.insights
+        items = C.shown_findings(d)
         if not items:
             _p(pdf, "No verified findings in this run." if kind == "executive" else "No findings in this run.")
         for i in items:

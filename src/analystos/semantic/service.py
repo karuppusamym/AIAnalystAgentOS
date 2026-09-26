@@ -357,6 +357,11 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
         old.status, old.reason = "deprecated", f"superseded by v{row.version}"
     row.status, row.decided_by, row.decided_at = "approved", approval.decided_by, utcnow()
     approval.status = "executed"
+    from analystos.evidence.verification import dependency_changed
+
+    # P7-01: verdicts that measured this KPI under another definition are void from this transaction on.
+    dependency_changed(session, "semantic", f"{row.workspace_id}/{row.name}", f"metric {row.name} v{row.version} approved",
+                       event="semantic.metric.approved")
     emit(row.workspace_id, "semantic.metric.approved", {"metric": row.name, "version": row.version, "approval_id": approval.id},
          actor=f"user:{approval.decided_by}", session=session)
     audit(f"user:{approval.decided_by}", "semantic.metric.approved", workspace_id=row.workspace_id, target=row.id,
@@ -380,6 +385,10 @@ def deprecate_metric(session: Session, workspace_id: str, name: str, user: User,
             if approval is not None and approval.status in ("pending", "approved"):
                 approval.status, approval.reason = "invalidated", "metric deprecated"
         r.status, r.reason, r.decided_by, r.decided_at = "deprecated", reason or "deprecated", user.id, utcnow()
+    from analystos.evidence.verification import dependency_changed
+
+    dependency_changed(session, "semantic", f"{workspace_id}/{name}", f"metric {name} deprecated",
+                       event="semantic.metric.deprecated")
     emit(workspace_id, "semantic.metric.deprecated", {"metric": name, "versions": [r.version for r in rows]},
          actor=f"user:{user.id}", session=session)
     audit(f"user:{user.id}", "semantic.metric.deprecated", workspace_id=workspace_id, target=name, decision="allow",

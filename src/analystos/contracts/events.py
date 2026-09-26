@@ -25,6 +25,9 @@ EVENT_TYPES = {
     "crawl.facet_failed", "knowledge.ingested",
     # Typed evidence (P4-03): a newer snapshot of an analysed asset made a finding stale
     "insight.stale",
+    # Verification records (P7-01, ADR-0020): a verdict bound to its dependency fingerprint; voided when a
+    # dependency changes (with its cause), swept nightly; a finding flagged wrong carries its reason
+    "verification.recorded", "verification.voided", "verification.sweep_completed", "insight.flagged_wrong",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

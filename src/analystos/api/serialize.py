@@ -23,3 +23,12 @@ def row(obj: Any, exclude: set[str] | None = None) -> dict[str, Any]:
 
 def rows(objs, exclude: set[str] | None = None) -> list[dict[str, Any]]:
     return [row(o, exclude) for o in objs]
+
+
+def with_verification(session: Any, insights: Any) -> list[dict[str, Any]]:
+    """Insight rows with their verification record's state (P7-01): a VOID one carries its cause."""
+    from analystos.evidence.verification import insight_states
+
+    found = list(insights)
+    states = insight_states(session, [i.id for i in found])
+    return [{**row(i), "verification_state": states[i.id]} for i in found]

@@ -1,6 +1,6 @@
 # ADR-0020 — Verdicts carry a dependency fingerprint and void themselves when it changes
 
-**Status:** proposed (2026-09-26, spec v4 §6; tracker P7-01). Extends ADR-0008 (what "verified"
+**Status:** accepted (2026-09-26, spec v4 §6; tracker P7-01; implemented in `evidence/verification.py`, see [evidence model §7](../03-evidence-model.md#7-verification-records-that-void-themselves-p7-01-adr-0020)). Extends ADR-0008 (what "verified"
 means) and P4-03 (evidence bundle, data-version manifest). Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §11.
 

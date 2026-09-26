@@ -348,6 +348,17 @@ def nightly_calibration() -> None:
         log.exception("decision calibration failed")
 
 
+def nightly_verification_sweep() -> None:
+    """P7-01 sweep once a day: re-check every live verdict's dependencies; late voids are logged defects."""
+    from analystos.evidence.verification import maybe_sweep_nightly
+
+    try:
+        with session_scope() as s:
+            maybe_sweep_nightly(s)
+    except Exception:
+        log.exception("verification sweep failed")
+
+
 def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
     from analystos.core.logging import configure_logging
 
@@ -360,6 +371,7 @@ def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
         except Exception:
             log.exception("scheduler iteration failed")
         nightly_calibration()
+        nightly_verification_sweep()
         if once:
             return
         time.sleep(poll_seconds)

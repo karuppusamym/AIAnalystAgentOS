@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
-from analystos.api.serialize import row, rows
+from analystos.api.serialize import row, rows, with_verification
 from analystos.artifacts.registry import lineage_for
 from analystos.core.errors import InvalidInput
 from analystos.db.models import (
@@ -66,8 +66,9 @@ def get_query(query_id: str, user: User = Depends(current_user), session: Sessio
 @router.get("/workspaces/{workspace_id}/insights")
 def insights(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
-    return rows(session.scalars(select(Insight).where(Insight.workspace_id == workspace_id, Insight.status != "superseded")
-                                .order_by(Insight.created_at.desc())))
+    return with_verification(session, session.scalars(select(Insight).where(Insight.workspace_id == workspace_id,
+                                                                             Insight.status != "superseded")
+                                                       .order_by(Insight.created_at.desc())))
 
 
 @router.get("/insights/{insight_id}")
@@ -76,8 +77,10 @@ def get_insight(insight_id: str, user: User = Depends(current_user), session: Se
     ins = load_in_workspace(session, Insight, insight_id, user=user, label="insight")
     q_ids = [e["id"] for e in ins.evidence if e.get("type") == "query"]
     from analystos.db.models import Experiment
+    from analystos.evidence.verification import insight_view
 
-    return {**row(ins), "queries": rows(session.scalars(select(QueryExecution).where(
+    return {**row(ins), "verification_state": insight_view(session, ins),
+            "queries": rows(session.scalars(select(QueryExecution).where(
                 QueryExecution.id.in_(q_ids), QueryExecution.workspace_id == ins.workspace_id))),
             "experiments": rows(session.scalars(select(Experiment).where(Experiment.hypothesis_id == ins.hypothesis_id))),
             "lineage": lineage_for(session, ins.workspace_id, ("insight", ins.id), depth=3)}

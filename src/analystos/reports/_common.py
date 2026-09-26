@@ -155,6 +155,14 @@ def top_verified(insights: list[ReportInsight], n: int = EXEC_TOP_FINDINGS) -> l
     return sorted(ver, key=lambda i: (-(to_number(i.confidence) or 0.0), i.code))[:n]
 
 
+def shown_findings(data: ReportData) -> list[ReportInsight]:
+    """The findings a report lists. Executive: the top verified ones plus every VOID one, labelled with its
+    cause (P7-01: a void is shown, never hidden, and never counted as verified)."""
+    if data.kind != "executive":
+        return list(data.insights)
+    return top_verified(data.insights) + [i for i in data.insights if i.void_reason]
+
+
 def sorted_alerts(data: ReportData) -> list:
     return sorted(data.alerts, key=lambda a: SEVERITY_RANK.get(a.severity, 3))
 

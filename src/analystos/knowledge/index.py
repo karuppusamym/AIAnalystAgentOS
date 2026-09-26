@@ -191,6 +191,12 @@ def index_pack(session: Session, pack: KnowledgePack, provider: emb.EmbeddingPro
               "links": len(links), "dangling_links": sum(1 for x in links if x.kind == "internal" and not x.resolved),
               "problems": problems[:200], "embedding": emb.provider_id(provider), "bm25": _bm25_stats(session, pack.id)}
     _set_state(session, f"pack:{pack.id}", report)
+    from analystos.evidence.verification import recheck
+
+    # P7-01: a verdict that cited a section of this pack is void when that document changed or went away
+    # (the platform pack is seen by every workspace).
+    recheck(session, kinds=("context",), workspace_id=pack.workspace_id,
+            reason=f"knowledge pack {pack.slug} revision {rev.number if rev else 0}", event="knowledge.section_changed")
     return report
 
 
