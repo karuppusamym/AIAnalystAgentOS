@@ -87,6 +87,18 @@ def executor_reason(job: JobKind) -> dict[str, str] | None:
     return None
 
 
+def _method_reason(m: Any) -> str | None:
+    """Analysis methods are the closed vocabulary every `AnalysisSpec` is validated against (methods/registry);
+    runs use them without a per-workspace switch, so only installation and deprecation decide here."""
+    from analystos.capabilities.registry import install_reason
+
+    if missing := install_reason(m):
+        return f"method {m.ref} is unavailable on this installation: {missing}"
+    if m.certification.status == "deprecated":
+        return f"method {m.ref} is deprecated"
+    return None
+
+
 def capability_state(job: JobKind, snapshot: Any, explicit: dict[str, bool]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """The candidate capabilities with their usability, and the reasons when none is usable."""
     from analystos.capabilities.enablement import usable
@@ -99,7 +111,7 @@ def capability_state(job: JobKind, snapshot: Any, explicit: dict[str, bool]) -> 
                             "Install or enable a pack that provides it; an administrator reloads the capability registry.")]
     caps, reasons = [], []
     for m in found:
-        why = usable(m, snapshot, explicit, autonomous_run=False)
+        why = usable(m, snapshot, explicit, autonomous_run=False) if m.kind != "Method" else _method_reason(m)
         caps.append({"id": m.id, "ref": m.ref, "kind": m.kind, "usable": why is None, "reason": why,
                      "certification": m.certification.status})
         if why is not None:

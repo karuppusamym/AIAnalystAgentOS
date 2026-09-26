@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
+from tests.unit.step_fixtures import WS, FakeRuntime, world  # noqa: F401
 
 from analystos.contracts.step import ForkIn, MergeIn, NotebookIn, PinIn, StepEdit, StepIn
 from analystos.core.errors import InvalidInput, PolicyDenied, PreconditionFailed
@@ -13,7 +14,6 @@ from analystos.db.models import AnalysisStep, Artifact, LineageEdge, Relationshi
 from analystos.evidence import verification
 from analystos.services import branches, notebooks, step_pins
 from analystos.services import steps as steps_svc
-from tests.unit.step_fixtures import WS, FakeRuntime, world  # noqa: F401
 
 ORDERS = ("FROM sales.orders", ["state", "n"], [["Closed", 60], ["Open", 40]])
 
@@ -172,9 +172,8 @@ def test_pinning_needs_an_approval_and_the_tile_replays_the_frozen_query(thread,
     replay = step_pins.replay(owner, WS, pinned["id"], runtime=rt)
     assert rt.ran == [pinned["frozen"]["sql"]]  # the frozen v1 query, not the edited step
     assert replay["pin_state"] == "upgrade_available" and replay["step_current_version"] == 2
-    with session_scope() as s:  # a flagged or void version cannot be pinned
-        with pytest.raises(PolicyDenied):
-            step_pins.pin(s, s.merge(owner), s.get(AnalysisStep, a["id"]), PinIn(target="tile", version=1))
+    with session_scope() as s, pytest.raises(PolicyDenied):  # a void version cannot be pinned
+        step_pins.pin(s, s.merge(owner), s.get(AnalysisStep, a["id"]), PinIn(target="tile", version=1))
 
 
 def test_fork_compare_and_merge_keep_both_branches_lineage(thread):

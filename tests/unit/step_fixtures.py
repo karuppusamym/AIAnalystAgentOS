@@ -71,8 +71,7 @@ def world(sqlite_db):
     engine = sqlite_db.kw["bind"]
     models.Base.metadata.create_all(engine, tables=[models.Base.metadata.tables[t] for t in EXTRA_TABLES])
     with session_scope() as s:
-        for uid, role in (("usr_owner", "owner"), ("usr_analyst", "analyst"), ("usr_approver", "approver"),
-                          ("usr_viewer", "viewer")):
+        for uid in ("usr_owner", "usr_analyst", "usr_approver", "usr_viewer"):
             s.add(User(id=uid, email=f"{uid}@x", name=uid, password_hash="x", is_admin=False, active=True, attributes={}))
         s.flush()
         s.add(Workspace(id=WS, name="steps", description="", objective="Why are orders late?", autonomy_level=3,

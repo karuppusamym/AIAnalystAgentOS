@@ -72,9 +72,8 @@ def update(session: Session, user: User, wo: WorkOrder, spec: WorkOrderSpec, exp
 def start(user: User, workspace_id: str, work_order_id: str, *, expected_revision: int | None,
           idempotency: Any = None) -> tuple[AnalysisRun, bool]:
     from analystos.registries.hypotheses import spec_hash as analysis_hash
-    from analystos.services.runs import start_run_request
-
     from analystos.services.readiness import assess_work_order
+    from analystos.services.runs import start_run_request
 
     with session_scope() as s:
         wo = load_in_workspace(s, WorkOrder, work_order_id, workspace_id, user=user, minimum="analyst", label="work order")
