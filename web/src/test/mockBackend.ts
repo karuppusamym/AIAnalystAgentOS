@@ -741,6 +741,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/source-kinds", KINDS],
     ["GET", "/notifications", []],
     ["POST", `${W}/ask`, ASK],
+    ["POST", `${W}/analysis`, RUN_ROW],
     ["GET", "/agents", AGENTS],
     ["GET", "/tools", TOOLS],
     ["GET", "/skills", SKILLS],

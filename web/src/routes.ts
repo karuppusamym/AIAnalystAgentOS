@@ -25,11 +25,13 @@ export const AREAS: { id: Exclude<Area, "access">; label: string; description: s
  * one home screen: the build-right study found metrics, dashboards, model configuration, audit and
  * autonomy each editable in two or three places.
  */
-export type Concept =
-  | "workspace" | "brief" | "source" | "selection" | "catalog" | "knowledge-document" | "knowledge-review" | "metric"
-  | "relationship" | "semantic-model" | "definition" | "question" | "investigation" | "recipe" | "file-ingest" | "dbt-build"
-  | "finding" | "dashboard" | "report" | "dataset" | "chart" | "approval" | "monitor" | "alert" | "schedule" | "policy"
-  | "member" | "autonomy" | "audit" | "capability" | "platform-settings" | "model-config" | "usage";
+export const CONCEPTS = [
+  "workspace", "brief", "source", "selection", "catalog", "knowledge-document", "knowledge-review", "metric",
+  "relationship", "semantic-model", "definition", "question", "investigation", "recipe", "file-ingest", "dbt-build",
+  "finding", "dashboard", "report", "dataset", "chart", "approval", "monitor", "alert", "schedule", "policy",
+  "member", "autonomy", "audit", "capability", "platform-settings", "model-config", "usage",
+] as const;
+export type Concept = (typeof CONCEPTS)[number];
 
 /**
  * Who sees a screen: everyone, workspace owners (and platform admins), or platform admins only.

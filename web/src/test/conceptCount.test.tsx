@@ -2,7 +2,12 @@
  * First-login weight (P7-18): how many distinct things a person sees on first login to a fresh
  * workspace. Method (the build-right study §3): count the distinct nav entries, headings and
  * controls rendered in the shell, excluding anything inside a closed <details> (Technical details,
- * Advanced) and anything aria-hidden. Measured ≈35+ before the light IA; the test pins the ceiling.
+ * Advanced) and anything aria-hidden or screen-reader-only.
+ *
+ * Measured with this method on 2026-09-26: 44 for every role before the light IA (b82a69c: 16 nav
+ * entries, the counters, Start analysis with an autonomy picker, members & policy, empty lists);
+ * after it, 20 for an analyst and 24 for an admin (the gear adds its three platform screens and
+ * Members & policy). The ceilings below keep it from creeping back.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -13,6 +18,8 @@ import { AuthProvider } from "../auth";
 import { mockBackend, USER, WORKSPACE } from "./mockBackend";
 
 const FRESH = "ws_fresh";
+export const CEILING = { analyst: 22, admin: 26 } as const;
+
 const ANALYST: User = { ...USER, id: "usr_analyst", email: "analyst@analystos.local", name: "Ana Analyst", is_admin: false };
 const FRESH_WS: WorkspaceDetail = {
   ...WORKSPACE, id: FRESH, name: "New workspace", description: "", objective: "", role: "owner",
@@ -78,6 +85,9 @@ describe("first-login concept count (P7-18)", () => {
     const concepts = await measure(user);
     // Printed so the number can be reported (build-right study §3 measured ≈35 before the light IA).
     console.info(`first-login concepts (${role}): ${concepts.length}\n  ${concepts.join("\n  ")}`);
-    expect(concepts.length).toBeGreaterThan(0);
+    expect(concepts.length).toBeLessThanOrEqual(CEILING[role]);
+    // only the next step of the checklist offers an action; no counters, cost or autonomy on first login
+    expect(concepts.filter((c) => /^control:(Connect data|Choose tables|Review the catalog|Save goal|Start work)$/.test(c))).toEqual(["control:Connect data"]);
+    expect(concepts.some((c) => /Autonomy|Tokens|Cost|Verified|Runs/.test(c))).toBe(false);
   });
 });
