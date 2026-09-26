@@ -34,9 +34,21 @@ def test_a_human_edit_turns_a_queue_draft_into_owner_content():
     out = _checked_frontmatter({**PREV}, PREV, "u1", False)
     assert "review" not in out["analystos"] and out["analystos"]["reviewed_draft"]["suggestion_id"] == "ksug_1"
     forged = _checked_frontmatter({"type": "Note", "analystos": {"review": {"suggestion_id": "x"}}}, None, "u1", False)
-    assert "analystos" not in forged  # a person cannot mark a document as replaceable by the queue
+    assert forged["analystos"] == {"origin": "user"}  # a person cannot mark a document as replaceable by the queue
     kept = _checked_frontmatter({**out}, out, "u1", False)
     assert kept["analystos"]["reviewed_draft"]["suggestion_id"] == "ksug_1"
+
+
+def test_a_human_edit_of_a_crawler_document_is_curated_so_no_crawler_replaces_it():
+    from analystos.knowledge.drafts import is_curated
+
+    crawled = {"type": "Table", "title": "sn.incident", "status": "draft", "analystos": {"kind": "table", "origin": "crawler:crl_1"}}
+    assert not is_curated(crawled)
+    edited = _checked_frontmatter({**crawled, "description": "One row per incident."}, crawled, "u1", False)
+    assert is_curated(edited) and edited["analystos"]["origin"] == "user"
+    assert edited["analystos"]["origin_before_edit"] == "crawler:crl_1"
+    again = _checked_frontmatter({**edited}, edited, "u1", False)
+    assert again["analystos"]["origin_before_edit"] == "crawler:crl_1"  # the machine origin is not lost on a second edit
 
 
 def test_type_and_staleness_are_checked():

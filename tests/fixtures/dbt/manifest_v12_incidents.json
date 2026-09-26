@@ -1,0 +1,1067 @@
+{
+ "child_map": {
+  "model.incidents.fct_incident_sla": [
+   "test.incidents.not_null_fct_incident_sla_incidents.f333163185"
+  ],
+  "model.incidents.stg_incident": [
+   "model.incidents.fct_incident_sla",
+   "test.incidents.accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low.68d9cc593b",
+   "test.incidents.not_null_stg_incident_number.d60ab48aad",
+   "test.incidents.unique_stg_incident_number.4fe13b7d4d"
+  ],
+  "source.incidents.servicenow.incident": [
+   "model.incidents.stg_incident",
+   "test.incidents.source_not_null_servicenow_incident_number.fe0280250e",
+   "test.incidents.source_unique_servicenow_incident_number.e57655fcca"
+  ],
+  "test.incidents.accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low.68d9cc593b": [],
+  "test.incidents.not_null_fct_incident_sla_incidents.f333163185": [],
+  "test.incidents.not_null_stg_incident_number.d60ab48aad": [],
+  "test.incidents.source_not_null_servicenow_incident_number.fe0280250e": [],
+  "test.incidents.source_unique_servicenow_incident_number.e57655fcca": [],
+  "test.incidents.unique_stg_incident_number.4fe13b7d4d": []
+ },
+ "disabled": {},
+ "docs": {},
+ "exposures": {},
+ "functions": {},
+ "group_map": {},
+ "groups": {},
+ "macros": {},
+ "metadata": {
+  "adapter_type": "postgres",
+  "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+  "dbt_version": "1.12.5",
+  "env": {},
+  "generated_at": "2026-09-25T23:23:02.467513Z",
+  "invocation_id": "c98c99fb-e349-4670-a751-de43f1debb93",
+  "invocation_started_at": "2026-09-25T23:23:02.152248Z",
+  "project_id": "347171b02bf61394ae614eb8db9e056c",
+  "project_name": "incidents",
+  "quoting": {
+   "column": null,
+   "database": true,
+   "identifier": true,
+   "schema": true
+  },
+  "run_started_at": "2026-09-25T23:23:02.152965+00:00",
+  "send_anonymous_usage_stats": true,
+  "user_id": "7b2ca37f-1718-481b-adb3-2c37cc40b0b4"
+ },
+ "metrics": {},
+ "nodes": {
+  "model.incidents.fct_incident_sla": {
+   "access": "protected",
+   "alias": "fct_incident_sla",
+   "build_path": null,
+   "checksum": {
+    "checksum": "43f1f3082f92816327bdd6ea584d9a9d62fd6add997790ffe9b573583f6a062c",
+    "name": "sha256"
+   },
+   "columns": {
+    "incidents": {
+     "config": {
+      "meta": {},
+      "tags": []
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Number of incidents.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "incidents",
+     "quote": null,
+     "tags": []
+    },
+    "sla_rate": {
+     "config": {
+      "meta": {},
+      "tags": []
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Share of incidents resolved within SLA.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "sla_rate",
+     "quote": null,
+     "tags": []
+    }
+   },
+   "compiled_path": null,
+   "config": {
+    "access": "protected",
+    "alias": null,
+    "batch_size": null,
+    "begin": null,
+    "column_types": {},
+    "concurrent_batches": null,
+    "contract": {
+     "alias_types": true,
+     "enforced": false
+    },
+    "database": null,
+    "docs": {
+     "node_color": null,
+     "show": true
+    },
+    "enabled": true,
+    "event_time": null,
+    "freshness": null,
+    "full_refresh": null,
+    "grants": {},
+    "group": null,
+    "incremental_strategy": null,
+    "latest_version_pointer": {
+     "alias": null,
+     "enabled": null
+    },
+    "lookback": 1,
+    "materialized": "view",
+    "meta": {},
+    "on_configuration_change": "apply",
+    "on_error": null,
+    "on_schema_change": "ignore",
+    "packages": [],
+    "persist_docs": {},
+    "post-hook": [],
+    "pre-hook": [],
+    "quoting": {},
+    "schema": null,
+    "static_analysis": null,
+    "tags": [],
+    "unique_key": null
+   },
+   "constraints": [],
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.5606413,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "model.incidents.stg_incident"
+    ]
+   },
+   "deprecation_date": null,
+   "description": "SLA attainment by priority and assignment group.",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "fqn": [
+    "incidents",
+    "fct_incident_sla"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "latest_version": null,
+   "meta": {},
+   "metrics": [],
+   "name": "fct_incident_sla",
+   "original_file_path": "models/fct_incident_sla.sql",
+   "package_name": "incidents",
+   "patch_path": "incidents://models/schema.yml",
+   "path": "fct_incident_sla.sql",
+   "primary_key": [],
+   "raw_code": "select priority, assignment_group, count(*) as incidents, avg(case when made_sla then 1.0 else 0 end) as sla_rate\nfrom {{ ref('stg_incident') }}\ngroup by 1, 2",
+   "refs": [
+    {
+     "name": "stg_incident",
+     "package": null,
+     "version": null
+    }
+   ],
+   "relation_name": "\"analytics\".\"mart\".\"fct_incident_sla\"",
+   "resource_type": "model",
+   "schema": "mart",
+   "sources": [],
+   "tags": [],
+   "time_spine": null,
+   "unique_id": "model.incidents.fct_incident_sla",
+   "unrendered_config": {},
+   "version": null
+  },
+  "model.incidents.stg_incident": {
+   "access": "protected",
+   "alias": "stg_incident",
+   "build_path": null,
+   "checksum": {
+    "checksum": "503b2d94d1fff2962c972d38de10ba5bd68b3485d2c6713117fc7bd3fae74c5a",
+    "name": "sha256"
+   },
+   "columns": {
+    "caller_email": {
+     "config": {
+      "meta": {},
+      "tags": [
+       "pii"
+      ]
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Caller email address.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "caller_email",
+     "quote": null,
+     "tags": [
+      "pii"
+     ]
+    },
+    "number": {
+     "config": {
+      "meta": {},
+      "tags": []
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Incident number.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "number",
+     "quote": null,
+     "tags": []
+    },
+    "priority": {
+     "config": {
+      "meta": {},
+      "tags": []
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Priority label, 1 - Critical to 4 - Low.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "priority",
+     "quote": null,
+     "tags": []
+    }
+   },
+   "compiled_path": null,
+   "config": {
+    "access": "protected",
+    "alias": null,
+    "batch_size": null,
+    "begin": null,
+    "column_types": {},
+    "concurrent_batches": null,
+    "contract": {
+     "alias_types": true,
+     "enforced": false
+    },
+    "database": null,
+    "docs": {
+     "node_color": null,
+     "show": true
+    },
+    "enabled": true,
+    "event_time": null,
+    "freshness": null,
+    "full_refresh": null,
+    "grants": {},
+    "group": null,
+    "incremental_strategy": null,
+    "latest_version_pointer": {
+     "alias": null,
+     "enabled": null
+    },
+    "lookback": 1,
+    "materialized": "view",
+    "meta": {},
+    "on_configuration_change": "apply",
+    "on_error": null,
+    "on_schema_change": "ignore",
+    "packages": [],
+    "persist_docs": {},
+    "post-hook": [],
+    "pre-hook": [],
+    "quoting": {},
+    "schema": null,
+    "static_analysis": null,
+    "tags": [],
+    "unique_key": null
+   },
+   "constraints": [],
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.5593295,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [],
+    "nodes": [
+     "source.incidents.servicenow.incident"
+    ]
+   },
+   "deprecation_date": null,
+   "description": "Cleaned incidents, one row per incident.",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "fqn": [
+    "incidents",
+    "stg_incident"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "latest_version": null,
+   "meta": {},
+   "metrics": [],
+   "name": "stg_incident",
+   "original_file_path": "models/stg_incident.sql",
+   "package_name": "incidents",
+   "patch_path": "incidents://models/schema.yml",
+   "path": "stg_incident.sql",
+   "primary_key": [
+    "number"
+   ],
+   "raw_code": "select number, priority, assignment_group, opened_at, resolved_at, made_sla, caller_email\nfrom {{ source('servicenow', 'incident') }}",
+   "refs": [],
+   "relation_name": "\"analytics\".\"mart\".\"stg_incident\"",
+   "resource_type": "model",
+   "schema": "mart",
+   "sources": [
+    [
+     "servicenow",
+     "incident"
+    ]
+   ],
+   "tags": [],
+   "time_spine": null,
+   "unique_id": "model.incidents.stg_incident",
+   "unrendered_config": {},
+   "version": null
+  },
+  "test.incidents.accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low.68d9cc593b": {
+   "alias": "accepted_values_stg_incident_096edb135b1bae6b61f518f3dfe225c7",
+   "attached_node": "model.incidents.stg_incident",
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "priority",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": "accepted_values_stg_incident_096edb135b1bae6b61f518f3dfe225c7",
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.661099,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_accepted_values",
+     "macro.dbt.get_where_subquery"
+    ],
+    "nodes": [
+     "model.incidents.stg_incident"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "models.stg_incident",
+   "fqn": [
+    "incidents",
+    "accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low",
+   "original_file_path": "models/schema.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "accepted_values_stg_incident_096edb135b1bae6b61f518f3dfe225c7.sql",
+   "raw_code": "{{ test_accepted_values(**_dbt_generic_test_kwargs) }}{{ config(alias=\"accepted_values_stg_incident_096edb135b1bae6b61f518f3dfe225c7\") }}",
+   "refs": [
+    {
+     "name": "stg_incident",
+     "package": null,
+     "version": null
+    }
+   ],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "priority",
+     "model": "{{ get_where_subquery(ref('stg_incident')) }}",
+     "values": [
+      "1 - Critical",
+      "2 - High",
+      "3 - Moderate",
+      "4 - Low"
+     ]
+    },
+    "name": "accepted_values",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low.68d9cc593b",
+   "unrendered_config": {
+    "alias": "accepted_values_stg_incident_096edb135b1bae6b61f518f3dfe225c7"
+   }
+  },
+  "test.incidents.not_null_fct_incident_sla_incidents.f333163185": {
+   "alias": "not_null_fct_incident_sla_incidents",
+   "attached_node": "model.incidents.fct_incident_sla",
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "incidents",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": null,
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.6814022,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_not_null"
+    ],
+    "nodes": [
+     "model.incidents.fct_incident_sla"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "models.fct_incident_sla",
+   "fqn": [
+    "incidents",
+    "not_null_fct_incident_sla_incidents"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "not_null_fct_incident_sla_incidents",
+   "original_file_path": "models/schema.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "not_null_fct_incident_sla_incidents.sql",
+   "raw_code": "{{ test_not_null(**_dbt_generic_test_kwargs) }}",
+   "refs": [
+    {
+     "name": "fct_incident_sla",
+     "package": null,
+     "version": null
+    }
+   ],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "incidents",
+     "model": "{{ get_where_subquery(ref('fct_incident_sla')) }}"
+    },
+    "name": "not_null",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.not_null_fct_incident_sla_incidents.f333163185",
+   "unrendered_config": {}
+  },
+  "test.incidents.not_null_stg_incident_number.d60ab48aad": {
+   "alias": "not_null_stg_incident_number",
+   "attached_node": "model.incidents.stg_incident",
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "number",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": null,
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.6590347,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_not_null"
+    ],
+    "nodes": [
+     "model.incidents.stg_incident"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "models.stg_incident",
+   "fqn": [
+    "incidents",
+    "not_null_stg_incident_number"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "not_null_stg_incident_number",
+   "original_file_path": "models/schema.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "not_null_stg_incident_number.sql",
+   "raw_code": "{{ test_not_null(**_dbt_generic_test_kwargs) }}",
+   "refs": [
+    {
+     "name": "stg_incident",
+     "package": null,
+     "version": null
+    }
+   ],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "number",
+     "model": "{{ get_where_subquery(ref('stg_incident')) }}"
+    },
+    "name": "not_null",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.not_null_stg_incident_number.d60ab48aad",
+   "unrendered_config": {}
+  },
+  "test.incidents.source_not_null_servicenow_incident_number.fe0280250e": {
+   "alias": "source_not_null_servicenow_incident_number",
+   "attached_node": null,
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "number",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": null,
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.687316,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_not_null"
+    ],
+    "nodes": [
+     "source.incidents.servicenow.incident"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "sources.servicenow",
+   "fqn": [
+    "incidents",
+    "source_not_null_servicenow_incident_number"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "source_not_null_servicenow_incident_number",
+   "original_file_path": "models/sources.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "source_not_null_servicenow_incident_number.sql",
+   "raw_code": "{{ test_not_null(**_dbt_generic_test_kwargs) }}",
+   "refs": [],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [
+    [
+     "servicenow",
+     "incident"
+    ]
+   ],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "number",
+     "model": "{{ get_where_subquery(source('servicenow', 'incident')) }}"
+    },
+    "name": "not_null",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.source_not_null_servicenow_incident_number.fe0280250e",
+   "unrendered_config": {}
+  },
+  "test.incidents.source_unique_servicenow_incident_number.e57655fcca": {
+   "alias": "source_unique_servicenow_incident_number",
+   "attached_node": null,
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "number",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": null,
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.6852946,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_unique"
+    ],
+    "nodes": [
+     "source.incidents.servicenow.incident"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "sources.servicenow",
+   "fqn": [
+    "incidents",
+    "source_unique_servicenow_incident_number"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "source_unique_servicenow_incident_number",
+   "original_file_path": "models/sources.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "source_unique_servicenow_incident_number.sql",
+   "raw_code": "{{ test_unique(**_dbt_generic_test_kwargs) }}",
+   "refs": [],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [
+    [
+     "servicenow",
+     "incident"
+    ]
+   ],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "number",
+     "model": "{{ get_where_subquery(source('servicenow', 'incident')) }}"
+    },
+    "name": "unique",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.source_unique_servicenow_incident_number.e57655fcca",
+   "unrendered_config": {}
+  },
+  "test.incidents.unique_stg_incident_number.4fe13b7d4d": {
+   "alias": "unique_stg_incident_number",
+   "attached_node": "model.incidents.stg_incident",
+   "build_path": null,
+   "checksum": {
+    "checksum": "",
+    "name": "none"
+   },
+   "column_name": "number",
+   "columns": {},
+   "compiled_path": null,
+   "config": {
+    "alias": null,
+    "database": null,
+    "enabled": true,
+    "error_if": "!= 0",
+    "fail_calc": "count(*)",
+    "group": null,
+    "limit": null,
+    "materialized": "test",
+    "meta": {},
+    "schema": "dbt_test__audit",
+    "severity": "ERROR",
+    "sql_header": null,
+    "static_analysis": null,
+    "store_failures": null,
+    "store_failures_as": null,
+    "tags": [],
+    "warn_if": "!= 0",
+    "where": null
+   },
+   "contract": {
+    "alias_types": true,
+    "checksum": null,
+    "enforced": false
+   },
+   "created_at": 1790378583.6562831,
+   "database": "analytics",
+   "depends_on": {
+    "macros": [
+     "macro.dbt.test_unique"
+    ],
+    "nodes": [
+     "model.incidents.stg_incident"
+    ]
+   },
+   "description": "",
+   "doc_blocks": [],
+   "docs": {
+    "node_color": null,
+    "show": true
+   },
+   "file_key_name": "models.stg_incident",
+   "fqn": [
+    "incidents",
+    "unique_stg_incident_number"
+   ],
+   "functions": [],
+   "group": null,
+   "language": "sql",
+   "meta": {},
+   "metrics": [],
+   "name": "unique_stg_incident_number",
+   "original_file_path": "models/schema.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "unique_stg_incident_number.sql",
+   "raw_code": "{{ test_unique(**_dbt_generic_test_kwargs) }}",
+   "refs": [
+    {
+     "name": "stg_incident",
+     "package": null,
+     "version": null
+    }
+   ],
+   "relation_name": null,
+   "resource_type": "test",
+   "schema": "mart_dbt_test__audit",
+   "sources": [],
+   "tags": [],
+   "test_metadata": {
+    "kwargs": {
+     "column_name": "number",
+     "model": "{{ get_where_subquery(ref('stg_incident')) }}"
+    },
+    "name": "unique",
+    "namespace": null
+   },
+   "unique_id": "test.incidents.unique_stg_incident_number.4fe13b7d4d",
+   "unrendered_config": {}
+  }
+ },
+ "parent_map": {
+  "model.incidents.fct_incident_sla": [
+   "model.incidents.stg_incident"
+  ],
+  "model.incidents.stg_incident": [
+   "source.incidents.servicenow.incident"
+  ],
+  "source.incidents.servicenow.incident": [],
+  "test.incidents.accepted_values_stg_incident_priority__1_Critical__2_High__3_Moderate__4_Low.68d9cc593b": [
+   "model.incidents.stg_incident"
+  ],
+  "test.incidents.not_null_fct_incident_sla_incidents.f333163185": [
+   "model.incidents.fct_incident_sla"
+  ],
+  "test.incidents.not_null_stg_incident_number.d60ab48aad": [
+   "model.incidents.stg_incident"
+  ],
+  "test.incidents.source_not_null_servicenow_incident_number.fe0280250e": [
+   "source.incidents.servicenow.incident"
+  ],
+  "test.incidents.source_unique_servicenow_incident_number.e57655fcca": [
+   "source.incidents.servicenow.incident"
+  ],
+  "test.incidents.unique_stg_incident_number.4fe13b7d4d": [
+   "model.incidents.stg_incident"
+  ]
+ },
+ "saved_queries": {},
+ "selectors": {},
+ "semantic_models": {},
+ "sources": {
+  "source.incidents.servicenow.incident": {
+   "columns": {
+    "caller_email": {
+     "config": {
+      "meta": {
+       "contains_pii": true
+      },
+      "tags": [
+       "pii"
+      ]
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Email of the person who raised the incident.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {
+      "contains_pii": true
+     },
+     "name": "caller_email",
+     "quote": null,
+     "tags": [
+      "pii"
+     ]
+    },
+    "number": {
+     "config": {
+      "meta": {},
+      "tags": []
+     },
+     "constraints": [],
+     "data_type": null,
+     "description": "Incident number, unique per incident.",
+     "dimension": null,
+     "doc_blocks": [],
+     "entity": null,
+     "granularity": null,
+     "meta": {},
+     "name": "number",
+     "quote": null,
+     "tags": []
+    }
+   },
+   "config": {
+    "enabled": true,
+    "event_time": null,
+    "freshness": {
+     "error_after": {
+      "count": null,
+      "period": null
+     },
+     "filter": null,
+     "warn_after": {
+      "count": null,
+      "period": null
+     }
+    },
+    "loaded_at_field": null,
+    "loaded_at_query": null,
+    "meta": {},
+    "static_analysis": null,
+    "tags": []
+   },
+   "created_at": 1790378583.7085617,
+   "database": "analytics",
+   "description": "One row per ServiceNow incident.",
+   "doc_blocks": [],
+   "external": null,
+   "fqn": [
+    "incidents",
+    "servicenow",
+    "incident"
+   ],
+   "freshness": {
+    "error_after": {
+     "count": null,
+     "period": null
+    },
+    "filter": null,
+    "warn_after": {
+     "count": null,
+     "period": null
+    }
+   },
+   "identifier": "incident",
+   "loaded_at_field": null,
+   "loaded_at_query": null,
+   "loader": "",
+   "meta": {},
+   "name": "incident",
+   "original_file_path": "models/sources.yml",
+   "package_name": "incidents",
+   "patch_path": null,
+   "path": "models/sources.yml",
+   "quoting": {
+    "column": null,
+    "database": null,
+    "identifier": null,
+    "schema": null
+   },
+   "relation_name": "\"analytics\".\"src_sn\".\"incident\"",
+   "resource_type": "source",
+   "schema": "src_sn",
+   "source_description": "Incidents staged from ServiceNow.",
+   "source_meta": {},
+   "source_name": "servicenow",
+   "tags": [],
+   "unique_id": "source.incidents.servicenow.incident",
+   "unrendered_config": {
+    "loaded_at_field": null,
+    "loaded_at_query": null,
+    "meta": {},
+    "tags": []
+   },
+   "unrendered_database": null,
+   "unrendered_schema": "src_sn"
+  }
+ },
+ "unit_tests": {}
+}

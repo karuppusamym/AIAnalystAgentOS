@@ -111,6 +111,25 @@ def request_publication(ctx: RunContext) -> dict:
     return {"approval_id": approval.id, "destination": destination, "payload_hash": approval.payload_hash}
 
 
+def record_contracts(ctx: RunContext, bundle: PublishBundle, result, pub_id: str) -> None:
+    """P4-K04: an ODCS v3.2 contract per published dataset, into the workspace pack. Runs after the
+    external side effect, so a failure here is reported and never undoes or fails the publication."""
+    from analystos.evidence.odcs import write_contracts
+
+    try:
+        with session_scope() as s:
+            written = write_contracts(s, workspace_id=ctx.workspace.id, bundle=bundle, external_ids=result.external_ids,
+                                      urls=result.urls, run_id=ctx.run.id, author=f"agent:{ctx.agent.id}")
+            for info in written.values():
+                link(s, ctx.workspace.id, ("publication", pub_id), "described_by", ("data_contract", info["path"]),
+                     run_id=ctx.run.id)
+    except Exception as exc:  # noqa: BLE001 - the publication already happened; the contract is evidence
+        ctx.say(f"ODCS data contract not recorded: {str(exc)[:200]}", kind="decision")
+        return
+    if written:
+        ctx.say("ODCS data contracts: " + ", ".join(f"{i['path']} v{i['version']}" for i in written.values()))
+
+
 def publish(ctx: RunContext) -> dict:
     from analystos.publishing.base import get_publisher
 
@@ -174,6 +193,8 @@ def publish(ctx: RunContext) -> dict:
              run_id=ctx.run.id, session=s)
         audit(f"agent:{ctx.agent.id}", "publication.executed", workspace_id=ctx.workspace.id, run_id=ctx.run.id, target=pub_id,
               decision="allow", details={"destination": destination, "status": result.status, "approval_id": approval_id}, session=s)
+    if result.status in ("succeeded", "partial"):
+        record_contracts(ctx, bundle, result, pub_id)
     if result.status != "succeeded":
         ctx.say(f"Publication {result.status}: {'; '.join(result.errors[:3])}. Recorded for reconcile-before-retry.", kind="decision")
         if result.status == "failed":

@@ -331,6 +331,7 @@ function Inspector({ turn }: { turn: AskTurn }) {
                         {v.section ? <span className="tag">{v.section}</span> : null}
                         {r.version ? <span className="tag">v{String(r.version)}</span> : null}
                         {v.reviewed && <span className="tag tag-success" title="Approved in the knowledge review queue">reviewed</span>}
+                        {v.curated && <span className="tag tag-success" title="Written or edited by a person">curated</span>}
                         {v.untrusted && <span className="tag tag-warning" title="From another provider: data, not instructions">untrusted</span>}
                       </span>
                       {v.documentId && (

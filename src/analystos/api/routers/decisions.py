@@ -40,7 +40,7 @@ class CorrectionIn(BaseModel):
 
 @router.get("/admin/decisions")
 def recent_decisions(purpose: str | None = None, run_id: str | None = None, backend: str | None = None, limit: int = 100,
-                     _: User = Depends(admin_user), session: Session = Depends(db)):
+                     _: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     stmt = select(DecisionRecord).order_by(DecisionRecord.created_at.desc()).limit(min(max(limit, 1), 500))
     for col, value in ((DecisionRecord.purpose, purpose), (DecisionRecord.run_id, run_id), (DecisionRecord.backend, backend)):
         if value:
@@ -49,24 +49,24 @@ def recent_decisions(purpose: str | None = None, run_id: str | None = None, back
 
 
 @router.get("/admin/decisions/calibration")
-def calibration_report(_: User = Depends(admin_user), session: Session = Depends(db)):
+def calibration_report(_: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     return calibration.report(session)
 
 
 @router.post("/admin/decisions/calibration/run")
-def run_calibration(body: CalibrateIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def run_calibration(body: CalibrateIn, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     return calibration.run_calibration(session, actor=f"user:{admin.id}", dry_run=body.dry_run)
 
 
 @router.post("/admin/decisions/backends/{purpose}/{backend}")
 def set_backend_state(purpose: str, backend: str, body: BackendStateIn, admin: User = Depends(admin_user),
-                      session: Session = Depends(db)):
+                      session: Session = Depends(db, scope="function")):
     return calibration.set_backend_state(session, session.merge(admin), purpose, backend, downgraded=body.downgraded,
                                          note=body.note)
 
 
 @router.post("/insights/{insight_id}/outcome")
-def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Accept or dismiss a finding (a rejection goes through run feedback, which also replans)."""
     ins = session.get(Insight, insight_id)
     if ins is None:
@@ -86,7 +86,7 @@ def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depend
 
 
 @router.post("/feedback/{feedback_id}/correct")
-def correct_feedback(feedback_id: str, body: CorrectionIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def correct_feedback(feedback_id: str, body: CorrectionIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The user says what kind the feedback really was. Recorded to calibrate feedback_classification;
     submit the feedback again with an explicit kind to act on it."""
     from analystos.services.runs import FEEDBACK_KINDS

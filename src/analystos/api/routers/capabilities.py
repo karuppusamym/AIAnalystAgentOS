@@ -45,7 +45,7 @@ def _out(m: CapabilityManifest, enabled: bool | None) -> dict:
 
 @router.get("/capabilities")
 def list_capabilities(kind: str | None = Query(None), workspace_id: str | None = Query(None),
-                      user: User = Depends(current_user), session: Session = Depends(db)):
+                      user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Every registered capability, filtered by kind; with `workspace_id`, its enablement there."""
     enabled: dict[str, bool] = {}
     if workspace_id is not None:
@@ -63,7 +63,7 @@ def get_capability(capability_id: str, _: User = Depends(current_user)):
 
 @router.put("/workspaces/{workspace_id}/capabilities/{capability_id}")
 def set_capability_enabled(workspace_id: str, capability_id: str, body: EnableIn, user: User = Depends(current_user),
-                           session: Session = Depends(db)):
+                           session: Session = Depends(db, scope="function")):
     return enablement.set_enabled(session, user, workspace_id, capability_id, body.enabled, _snapshot(session, workspace_id))
 
 
@@ -79,7 +79,7 @@ def invoke_capability(workspace_id: str, capability_id: str, body: CapabilityInv
 
 
 @router.post("/admin/capabilities/reload")
-def reload_capabilities(admin: User = Depends(admin_user), session: Session = Depends(db)):
+def reload_capabilities(admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     """Rebuild the registry from every source and swap it in. A load that fails leaves the current
     registry in place (the error lists every problem). Runs in flight keep the versions they bound.
     Reloads this process; other processes (worker, scheduler) reload on their own call."""

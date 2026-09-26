@@ -67,7 +67,7 @@ def start(workspace_id: str, body: RunIn, user: User = Depends(current_user)):
 
 
 @router.get("/workspaces/{workspace_id}/analysis")
-def list_runs(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_runs(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return rows(session.scalars(select(AnalysisRun).where(AnalysisRun.workspace_id == workspace_id)
                                 .order_by(AnalysisRun.created_at.desc()).limit(50)), exclude={"scope", "plan"})
@@ -90,7 +90,7 @@ def _run_detail(session: Session, run: AnalysisRun) -> dict:
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}")
-def get_run(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_run(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     run = run_svc.get_run_for(session, user, run_id)
     if run.workspace_id != workspace_id:
         raise NotFound("run not in workspace")
@@ -98,7 +98,7 @@ def get_run(workspace_id: str, run_id: str, user: User = Depends(current_user), 
 
 
 @router.get("/agent-runs/{task_id}")
-def agent_run(task_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def agent_run(task_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     task = session.get(RunTask, task_id)
     if task is None:
         raise NotFound("agent run not found")
@@ -134,7 +134,7 @@ def feedback(workspace_id: str, run_id: str, body: FeedbackIn, user: User = Depe
 
 
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/console")
-def console(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def console(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Agent console (§52.7): messages, tool calls, model calls, queries, cost."""
     run = run_svc.get_run_for(session, user, run_id)
     calls = list(session.scalars(select(ModelCall).where(ModelCall.run_id == run_id).order_by(ModelCall.id)))
@@ -186,7 +186,7 @@ def _authorize_stream(user: User, workspace_id: str, run_id: str) -> None:
 
 
 @router.patch("/hypotheses/{hypothesis_id}")
-def edit_hypothesis(hypothesis_id: str, body: HypothesisPatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def edit_hypothesis(hypothesis_id: str, body: HypothesisPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     h = session.get(Hypothesis, hypothesis_id)
     if h is None:
         raise NotFound("hypothesis not found")
@@ -212,14 +212,14 @@ def _adhoc(session: Session, user: User, workspace_id: str) -> AdhocContext:
 
 
 @router.post("/workspaces/{workspace_id}/ask")
-def ask(workspace_id: str, body: AskIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def ask(workspace_id: str, body: AskIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     from analystos.agents.sql_agent import ask as sql_ask
 
     return sql_ask(_adhoc(session, user, workspace_id), body.question, parameters=body.parameters, use_registry=body.use_registry)
 
 
 @router.post("/workspaces/{workspace_id}/query")
-def query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Manual SQL console: same gateway, same scope and audit as agents (no bypass)."""
     from analystos.runtime.context import default_gateway
 
@@ -229,7 +229,7 @@ def query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), se
 
 
 @router.post("/workspaces/{workspace_id}/query/explain")
-def explain_query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def explain_query(workspace_id: str, body: SqlIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Deterministic explanation (no model, no execution), the gateway validator's verdict for this
     caller and, when accepted, the source's plan through the gateway (EXPLAIN only)."""
     return explain_sql(session, user, workspace_id, body.sql, body.max_rows)

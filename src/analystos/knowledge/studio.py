@@ -10,7 +10,9 @@ editable within limits the server enforces rather than trusts:
   or a process's verification;
 * `analystos.review` marks a document the review queue wrote and may replace. A human edit turns
   it into owner content: the marker moves to `analystos.reviewed_draft`, so no later draft can
-  overwrite what a person edited (the K07 invariant, `suggestions.protected`);
+  overwrite what a person edited (the K07 invariant, `suggestions.protected`), and `analystos.origin`
+  becomes `user` (the previous machine origin kept as `origin_before_edit`), so no crawler or
+  ingester replaces it either (K04/K06, `drafts.is_curated`);
 * every save names the revision it was based on (`base_sha256` of the document, or none for a new
   path), so two editors cannot silently overwrite each other.
 
@@ -42,6 +44,7 @@ from analystos.knowledge import okf, store
 
 REVIEW_KEY = "review"
 REVIEWED_DRAFT_KEY = "reviewed_draft"
+ORIGIN_BEFORE_KEY = "origin_before_edit"
 MAX_GRAPH_NODES = 400
 
 
@@ -169,10 +172,16 @@ def _checked_frontmatter(frontmatter: dict[str, Any], previous: dict[str, Any] |
         ext[REVIEWED_DRAFT_KEY] = _ext(prev)[REVIEWED_DRAFT_KEY]
     else:
         ext.pop(REVIEWED_DRAFT_KEY, None)
-    if ext:
-        fm["analystos"] = ext
-    else:
-        fm.pop("analystos", None)
+    # `origin: user` is what the crawler invariants read as curated (`drafts.is_curated`): a machine
+    # writer never replaces what a person edited. The machine origin it replaces is kept.
+    before = _ext(prev).get("origin")
+    if before in (None, "", "user"):
+        before = _ext(prev).get(ORIGIN_BEFORE_KEY)
+    ext.pop(ORIGIN_BEFORE_KEY, None)
+    if before and before != "user":
+        ext[ORIGIN_BEFORE_KEY] = before
+    ext["origin"] = "user"
+    fm["analystos"] = ext
     if "stale_after" in fm and fm["stale_after"] not in (None, "") and okf.parse_instant(fm["stale_after"]) is None:
         raise InvalidInput("`stale_after` must be an ISO 8601 instant (OKF §5.5)")
     if fm.get("stale_after") in (None, ""):

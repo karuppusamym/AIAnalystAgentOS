@@ -53,14 +53,14 @@ class ContextPreviewIn(BaseModel):
 
 @router.get("/workspaces/{workspace_id}/knowledge/suggestions")
 def list_suggestions(workspace_id: str, status: str | None = "pending", kind: str | None = None, origin: str | None = None,
-                     limit: int = 100, user: User = Depends(current_user), session: Session = Depends(db)):
+                     limit: int = 100, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The review queue: drafts with per-field value, confidence and provenance."""
     require_role(session, user, workspace_id, "viewer")
     return suggestions.queue(session, workspace_id, status=status or None, kind=kind, origin=origin, limit=limit)
 
 
 @router.post("/workspaces/{workspace_id}/knowledge/suggestions/review")
-def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Approve, edit-then-approve or reject drafts in one batch: one workspace-pack revision."""
     require_role(session, user, workspace_id, "editor")
     return suggestions.review(session, workspace_id, user, [d.model_dump() for d in body.decisions])
@@ -68,7 +68,7 @@ def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(c
 
 @router.post("/workspaces/{workspace_id}/knowledge/context")
 def preview_context(workspace_id: str, body: ContextPreviewIn, user: User = Depends(current_user),
-                    session: Session = Depends(db)):
+                    session: Session = Depends(db, scope="function")):
     """What the context compiler would send for `purpose` about `question` from this workspace's
     knowledge (the catalog section is left out: it depends on a run's scope). No model is called."""
     from analystos.context.compiler import KNOWLEDGE_SECTIONS, compile_context, load_knowledge
@@ -87,7 +87,7 @@ def preview_context(workspace_id: str, body: ContextPreviewIn, user: User = Depe
 
 
 @router.get("/runs/{run_id}/context-receipts")
-def run_context_receipts(run_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def run_context_receipts(run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Per model call of a run: the purpose and the receipts of the context it carried."""
     from analystos.services.runs import get_run_for
 
@@ -111,27 +111,27 @@ def _pack(session: Session, user: User, workspace_id: str, pack_id: str, minimum
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs")
-def list_packs(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_packs(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The packs this workspace sees; `writable` is true only for its own pack and an editor."""
     return studio.packs(session, workspace_id, can_edit=_can_edit(session, user, workspace_id))
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/documents")
 def list_documents(workspace_id: str, pack_id: str, revision: int | None = None, user: User = Depends(current_user),
-                   session: Session = Depends(db)):
+                   session: Session = Depends(db, scope="function")):
     return studio.documents(session, _pack(session, user, workspace_id, pack_id), revision)
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document")
 def read_document(workspace_id: str, pack_id: str, path: str, revision: int | None = None,
-                  user: User = Depends(current_user), session: Session = Depends(db)):
+                  user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """One file: text, parsed frontmatter and body, trust fields (tier, verified, status, staleness)."""
     return studio.read(session, _pack(session, user, workspace_id, pack_id), path, revision)
 
 
 @router.put("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document")
 def save_document(workspace_id: str, pack_id: str, body: DocumentSaveIn, user: User = Depends(current_user),
-                  session: Session = Depends(db)):
+                  session: Session = Depends(db, scope="function")):
     """A human edit (editor role, workspace pack only): one new revision, based on `base_sha256`."""
     pack = _pack(session, user, workspace_id, pack_id, "editor")
     return studio.save(session, pack, user, path=body.path, frontmatter=body.frontmatter, body=body.body,
@@ -140,20 +140,20 @@ def save_document(workspace_id: str, pack_id: str, body: DocumentSaveIn, user: U
 
 @router.delete("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document")
 def delete_document(workspace_id: str, pack_id: str, path: str, base_sha256: str, reason: str | None = None,
-                    user: User = Depends(current_user), session: Session = Depends(db)):
+                    user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     pack = _pack(session, user, workspace_id, pack_id, "editor")
     return studio.delete(session, pack, user, path=path, base_sha256=base_sha256, reason=reason)
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/revisions")
 def list_revisions(workspace_id: str, pack_id: str, path: str | None = None, limit: int = 50,
-                   user: User = Depends(current_user), session: Session = Depends(db)):
+                   user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Revision history, newest first, with the paths each revision added, changed and removed."""
     return studio.revisions(session, _pack(session, user, workspace_id, pack_id), path=path, limit=limit)
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/locate")
-def locate_document(workspace_id: str, document_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def locate_document(workspace_id: str, document_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """A context receipt's `document_id` -> pack and path, so a receipt opens its document."""
     require_role(session, user, workspace_id, "viewer")
     return studio.locate(session, workspace_id, document_id)
@@ -161,7 +161,7 @@ def locate_document(workspace_id: str, document_id: str, user: User = Depends(cu
 
 @router.get("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/export")
 def export_pack(workspace_id: str, pack_id: str, revision: int | None = None, user: User = Depends(current_user),
-                session: Session = Depends(db)):
+                session: Session = Depends(db, scope="function")):
     """The pack as a deterministic OKF zip, returned to the caller (the publish policy must pass).
     A download to the requesting user's browser is not a write outside the platform; pushing to a
     git remote is, and goes through `push/request` -> approval -> `push`."""
@@ -178,7 +178,7 @@ def export_pack(workspace_id: str, pack_id: str, revision: int | None = None, us
 
 @router.post("/workspaces/{workspace_id}/knowledge/import")
 async def import_pack(workspace_id: str, file: UploadFile = File(...), slug: str = Form(...),
-                      user: User = Depends(current_user), session: Session = Depends(db)):
+                      user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """An OKF or Atlas bundle (zip) into a read-only `imported` pack; hostile archives are refused."""
     require_role(session, user, workspace_id, "editor")
     data = await file.read(bundle.ARCHIVE_LIMITS.max_archive_bytes + 1)
@@ -189,7 +189,7 @@ async def import_pack(workspace_id: str, file: UploadFile = File(...), slug: str
 
 
 @router.post("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push/request")
-def request_push(workspace_id: str, pack_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def request_push(workspace_id: str, pack_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Ask for the hash-bound approval a push to the pack's git remote needs (K01)."""
     from analystos.api.serialize import row
 
@@ -198,14 +198,14 @@ def request_push(workspace_id: str, pack_id: str, user: User = Depends(current_u
 
 
 @router.post("/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push")
-def push_pack(workspace_id: str, pack_id: str, body: PushIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def push_pack(workspace_id: str, pack_id: str, body: PushIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Push the head revision under an approved, single-use approval (verified immediately before)."""
     pack = _pack(session, user, workspace_id, pack_id, "editor")
     return remote.push(session, pack, user, body.approval_id)
 
 
 @router.get("/workspaces/{workspace_id}/knowledge/graph")
-def semantic_graph(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def semantic_graph(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Tables, datasets, metrics, documents and pending suggestions; each edge governed or inferred."""
     require_role(session, user, workspace_id, "viewer")
     return studio.graph(session, workspace_id)

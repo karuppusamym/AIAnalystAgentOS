@@ -257,7 +257,10 @@ function save(pack: MockPack, body: Dict): [number, unknown] {
   const prevReview = current ? ext(current.frontmatter).review : undefined;
   delete x.review;
   if (prevReview) x.reviewed_draft = prevReview;
-  if (Object.keys(x).length) fm.analystos = x;
+  const prevOrigin = current ? ext(current.frontmatter).origin : undefined;
+  if (prevOrigin && prevOrigin !== "user") x.origin_before_edit = prevOrigin;
+  x.origin = "user"; // what the crawler invariants read as curated
+  fm.analystos = x;
   const doc: MockDoc = { frontmatter: fm, body: String(body.body ?? "") };
   if (current && sha(current) === sha(doc)) return [200, { changed: false, revision: head!.number, document: full(pack.info.id, path, doc, head!.number) }];
   const rev = commit(pack, { [path]: doc }, String(body.reason || `${current ? "edit" : "create"} ${path}`), "studio");

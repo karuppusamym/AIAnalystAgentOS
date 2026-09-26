@@ -1,0 +1,57 @@
+# Pinned standard artifacts for evidence in open formats (P4-K04, ADR-0013 §5: every standard sits
+# behind a version-pinned adapter). tests/unit/test_evidence_formats.py checks every sha256 below, so a
+# silent edit of a pinned file fails. All files are byte-for-byte copies (modifications: none).
+odcs-json-schema-v3.2.0.json:
+  standard: Open Data Contract Standard (ODCS), Bitol / LF AI & Data
+  version: v3.2.0
+  upstream_repo: https://github.com/bitol-io/open-data-contract-standard
+  upstream_ref: tag v3.2.0
+  upstream_commit: f0bdad95346905d500be5ef4b2c2d9b1d95223b7
+  upstream_path: schema/odcs-json-schema-v3.2.0.json
+  json_schema_draft: 2019-09
+  retrieved: 2026-09-25 (raw.githubusercontent.com through the session proxy)
+  sha256: edb41f33ec46e84780e99872ab2bd67f074959d2bf3e9c9fc54e61f8982b0d93
+  license: Apache-2.0
+  modifications: none
+openlineage/OpenLineage-2-0-2.json:
+  standard: OpenLineage core spec (RunEvent, JobEvent, DatasetEvent)
+  version: 2-0-2 ($id https://openlineage.io/spec/2-0-2/OpenLineage.json)
+  upstream_repo: https://github.com/OpenLineage/OpenLineage
+  upstream_ref: tag 1.53.0
+  upstream_commit: 48302e12018aea164bd903283b6841a939d8ef1f
+  upstream_path: spec/OpenLineage.json
+  retrieved: 2026-09-25; identical bytes also served at https://openlineage.io/spec/2-0-2/OpenLineage.json
+  sha256: 69f68bee00b9beac88a87059c0102410e7bb05f3f43c46d02a0409831eceb0d2
+  license: Apache-2.0
+  modifications: none (renamed on disk to carry its version)
+openlineage/facets/SQLJobFacet.json:
+  version: 1-1-0
+  upstream_path: spec/facets/SQLJobFacet.json @ OpenLineage tag 1.53.0 (48302e12)
+  sha256: 674e44564cd48134f19ba202fbd48c09185d4d49e209bc5a5b11e63e9ac91a60
+  license: Apache-2.0
+openlineage/facets/JobTypeJobFacet.json:
+  version: 2-0-4
+  upstream_path: spec/facets/JobTypeJobFacet.json @ OpenLineage tag 1.53.0 (48302e12)
+  sha256: 11c12cab95a411ca31066c80d2bb4aefd37bbcadbda5e4d343d2069853b907d5
+  license: Apache-2.0
+openlineage/facets/SchemaDatasetFacet.json:
+  version: 1-2-0
+  upstream_path: spec/facets/SchemaDatasetFacet.json @ OpenLineage tag 1.53.0 (48302e12)
+  sha256: 50236a779aa64baa0bad0055391838bd22fcb36ce667c41d60ada80915e899b6
+  license: Apache-2.0
+openlineage/facets/ParentRunFacet.json:
+  version: 1-2-0
+  upstream_path: spec/facets/ParentRunFacet.json @ OpenLineage tag 1.53.0 (48302e12)
+  sha256: efdd06ef87537849f1ec7984cc2e36cbdcea40083635c20fd9af1934ba601d57
+  license: Apache-2.0
+openlineage/facets/ErrorMessageRunFacet.json:
+  version: 1-0-1
+  upstream_path: spec/facets/ErrorMessageRunFacet.json @ OpenLineage tag 1.53.0 (48302e12)
+  sha256: b11b4ee8b0f99f6846264f87cad48390255c7ef142ce623216660c7097be0ea6
+  license: Apache-2.0
+notes: >
+  Validation is offline: every $ref between these files resolves through a local `referencing` registry
+  keyed by each file's $id, so nothing is fetched at runtime. The OpenLineage core schema leaves facet
+  bodies open (additionalProperties), so each facet an event carries is also validated against its own
+  pinned facet schema, looked up by the facet's `_schemaURL`; a facet whose schema is not pinned here is
+  reported, never silently accepted. Re-check these pins when ODCS or OpenLineage publish a new version.

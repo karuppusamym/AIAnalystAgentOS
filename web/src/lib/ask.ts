@@ -127,6 +127,7 @@ export function receiptView(r: ContextReceipt) {
     title: String(r.title ?? r.name ?? r.id ?? r.kind ?? "context item"),
     where: r.path ? `${r.path}${r.anchor ? `#${r.anchor}` : ""}` : null,
     reviewed: typeof r.source === "string" && r.source.startsWith("review:"),
+    curated: r.source === "user",
     untrusted: r.trusted === false,
     section: r.section ?? r.kind ?? null,
     documentId: typeof r.document_id === "string" ? r.document_id : null,

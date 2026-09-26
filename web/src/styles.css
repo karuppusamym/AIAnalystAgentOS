@@ -728,7 +728,8 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .suggestion-head > input[type="checkbox"] { margin-top: 0.3rem; width: auto; }
 .suggestion-title { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .suggestion-confidence { flex: 0 0 140px; }
-.suggestion-fields th[scope="row"] { white-space: nowrap; }
+.suggestion-fields th[scope="row"] { white-space: nowrap; text-transform: none; letter-spacing: 0; vertical-align: top; }
+.suggestion-fields td { vertical-align: top; }
 .graph-controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1rem; }
 .graph-legend { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem; color: var(--text-2); }
 .graph-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }

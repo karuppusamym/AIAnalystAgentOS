@@ -53,22 +53,22 @@ class AskPromoteIn(BaseModel):
 
 @router.get("/workspaces/{workspace_id}/ask/threads")
 def list_threads(workspace_id: str, q: str | None = None, archived: bool = False, user: User = Depends(current_user),
-                 session: Session = Depends(db)):
+                 session: Session = Depends(db, scope="function")):
     return ask_svc.list_threads(session, user, workspace_id, q, archived=archived)
 
 
 @router.post("/workspaces/{workspace_id}/ask/threads")
-def create_thread(workspace_id: str, body: AskThreadIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def create_thread(workspace_id: str, body: AskThreadIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.create_thread(session, user, workspace_id, body.title)
 
 
 @router.get("/ask/threads/{thread_id}")
-def get_thread(thread_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_thread(thread_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.thread_detail(session, user, thread_id)
 
 
 @router.patch("/ask/threads/{thread_id}")
-def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.update_thread(session, user, thread_id, title=body.title, archived=body.archived)
 
 
@@ -92,7 +92,7 @@ async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, user: User
 
 
 @router.get("/ask/turns/{turn_id}/inspector")
-def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.inspector(session, user, turn_id)
 
 

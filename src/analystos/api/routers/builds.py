@@ -34,7 +34,7 @@ class BuildIn(BaseModel):
 
 
 @router.get("/workspaces/{workspace_id}/build-targets")
-def list_build_targets(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_build_targets(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return rows(session.scalars(select(BuildTarget).where(BuildTarget.workspace_id == workspace_id)
                                 .order_by(BuildTarget.created_at)))
@@ -42,7 +42,7 @@ def list_build_targets(workspace_id: str, user: User = Depends(current_user), se
 
 @router.post("/workspaces/{workspace_id}/build-targets")
 def designate_build_target(workspace_id: str, body: BuildTargetIn, user: User = Depends(current_user),
-                           session: Session = Depends(db)):
+                           session: Session = Depends(db, scope="function")):
     return row(build_svc.designate_target(session, session.merge(user), workspace_id, body.schema_name, engine=body.engine))
 
 
@@ -54,7 +54,7 @@ def start_build(workspace_id: str, body: BuildIn, user: User = Depends(current_u
 
 
 @router.get("/workspaces/{workspace_id}/builds")
-def list_builds(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_builds(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     jobs = session.scalars(select(BuildJob).where(BuildJob.workspace_id == workspace_id).order_by(BuildJob.created_at.desc()))
     out = rows(jobs, exclude=_SUMMARY_EXCLUDE)
@@ -74,13 +74,13 @@ def _job(session: Session, user: User, job_id: str) -> BuildJob:
 
 
 @router.get("/builds/{job_id}")
-def get_build(job_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_build(job_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     job = _job(session, user, job_id)
     return {**row(job), "approval": build_svc.approval_summary(session, job)}
 
 
 @router.get("/builds/{job_id}/diff")
-def build_diff(job_id: str, against: str | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def build_diff(job_id: str, against: str | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """The generated dbt project file by file against the previous job for the same target (or `against`,
     another job of the same workspace). Read-only: what the approver reviews, not what they approve —
     the approval binds the whole project hash."""
