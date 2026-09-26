@@ -75,6 +75,8 @@ class Method(Protocol):
     def claim_key(self, spec: Mapping[str, Any], highlights: Mapping[str, Any] | None) -> ClaimKey: ...
     def identity_keys(self, spec: AnalysisSpec) -> list[Any]: ...
     def template_text(self, spec: Mapping[str, Any], stat: Mapping[str, Any]) -> tuple[str, str] | None: ...
+    def facts(self, spec: Mapping[str, Any], stat: Mapping[str, Any], *, extra: Mapping[str, Any] | None = None,
+              query_ids: tuple[str, ...] = (), result_hashes: tuple[str, ...] = ()) -> list[Any]: ...
     def chart_intent(self, spec: AnalysisSpec, stat: Mapping[str, Any] | None = None) -> ChartIntent | None: ...
 
 
@@ -89,6 +91,8 @@ class AnalysisMethod:
     segment_matrix: ClassVar[bool] = False
     outcome_types: ClassVar[frozenset[str] | None] = None  # ColumnTypes accepted as outcome (None: no outcome)
     segment_types: ClassVar[frozenset[str] | None] = None  # ColumnTypes accepted as segment (None: no segment)
+    # Evidence dimensions this method cannot supply and does not need (P4-03 `evidence.bundle`), e.g. "uncertainty".
+    evidence_optional: ClassVar[frozenset[str]] = frozenset()
 
     def applicable(self, outcome: ColumnType | None, segment: ColumnType | None) -> bool:
         ok_out = (outcome is None) if self.outcome_types is None else (outcome in self.outcome_types)
@@ -125,6 +129,14 @@ class AnalysisMethod:
 
     def template_text(self, spec: Mapping[str, Any], stat: Mapping[str, Any]) -> tuple[str, str] | None:
         return None
+
+    def facts(self, spec: Mapping[str, Any], stat: Mapping[str, Any], *, extra: Mapping[str, Any] | None = None,
+              query_ids: tuple[str, ...] = (), result_hashes: tuple[str, ...] = ()) -> list[Any]:
+        """Typed facts a finding may quote (P4-03). The shared highlight vocabulary covers the built-in
+        methods; override only to give a new statistic its unit, group and direction."""
+        from analystos.evidence.facts import facts_from
+
+        return facts_from(spec, stat, extra=extra, query_ids=query_ids, result_hashes=result_hashes)
 
     def chart_intent(self, spec: AnalysisSpec, stat: Mapping[str, Any] | None = None) -> ChartIntent | None:
         return None

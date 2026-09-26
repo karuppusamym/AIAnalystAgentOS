@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "Check": {
+      "additionalProperties": true,
+      "properties": {
+        "check": {
+          "title": "Check",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_applicable"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "check",
+        "outcome"
+      ],
+      "title": "Check",
+      "type": "object"
+    },
+    "Confirmation": {
+      "additionalProperties": false,
+      "description": "Result of evaluating the confirmation rules for one finding.",
+      "properties": {
+        "rule": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule"
+        },
+        "passed": {
+          "default": false,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "evaluated": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Evaluated",
+          "type": "array"
+        }
+      },
+      "title": "Confirmation",
+      "type": "object"
+    },
+    "Freshness": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "default": "current",
+          "enum": [
+            "current",
+            "stale",
+            "unknown"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Since"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "assets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assets",
+          "type": "array"
+        }
+      },
+      "title": "Freshness",
+      "type": "object"
+    },
+    "ReviewScore": {
+      "additionalProperties": false,
+      "description": "The REV confidence number. Hand-built, not calibrated: never a probability of truth.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "calibrated": {
+          "const": false,
+          "default": false,
+          "title": "Calibrated",
+          "type": "boolean"
+        },
+        "note": {
+          "default": "heuristic review score from deterministic checks; not a calibrated probability",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "title": "ReviewScore",
+      "type": "object"
+    },
+    "Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "enum": [
+            "exploratory",
+            "replicated",
+            "confirmed",
+            "inconclusive",
+            "invalid",
+            "insufficient_evidence",
+            "legacy"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "label": {
+          "enum": [
+            "discovery",
+            "confirmation",
+            "legacy"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/Confirmation"
+        },
+        "missing_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Evidence",
+          "type": "array"
+        },
+        "reproducible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reproducible"
+        },
+        "predictive_evaluated": {
+          "default": false,
+          "title": "Predictive Evaluated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "label"
+      ],
+      "title": "Validation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "default": "evidence.v1",
+      "title": "Version",
+      "type": "string"
+    },
+    "verifier_version": {
+      "default": "rev.v2",
+      "title": "Verifier Version",
+      "type": "string"
+    },
+    "data": {
+      "additionalProperties": true,
+      "title": "Data",
+      "type": "object"
+    },
+    "claim": {
+      "additionalProperties": true,
+      "title": "Claim",
+      "type": "object"
+    },
+    "method": {
+      "additionalProperties": true,
+      "title": "Method",
+      "type": "object"
+    },
+    "validation": {
+      "$ref": "#/$defs/Validation"
+    },
+    "limits": {
+      "additionalProperties": true,
+      "title": "Limits",
+      "type": "object"
+    },
+    "freshness": {
+      "$ref": "#/$defs/Freshness"
+    },
+    "review_score": {
+      "$ref": "#/$defs/ReviewScore"
+    },
+    "legacy": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Legacy"
+    }
+  },
+  "required": [
+    "validation"
+  ],
+  "title": "EvidenceBundle",
+  "type": "object"
+}

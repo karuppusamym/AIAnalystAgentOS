@@ -105,6 +105,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
     """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load)."""
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
+    from analystos.evidence.manifest import mark_stale
     from analystos.staging.loader import StagingLoader
     from analystos.staging.snapshots import stage_asset
 
@@ -139,6 +140,9 @@ def select_assets(user: User, source_id: str, asset_names: list[str]) -> dict:
             with session_scope() as s:
                 a = s.get(SourceAsset, asset_id)
                 a.row_count, a.freshness_at, a.snapshot = info.get("row_count"), utcnow(), info["snapshot"]
+                s.flush()
+                # P4-03: findings bound to an older version of this snapshot now need re-verification
+                mark_stale(s, a.workspace_id, source_id, f"{schema}.{name}")
     with session_scope() as s:
         row = s.get(Source, source_id)
         row.status = "ready"

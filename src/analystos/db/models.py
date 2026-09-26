@@ -439,6 +439,8 @@ class AnalysisRun(Base):
     # "manifests": {id: manifest}, "skipped": {step: reason}}. Bound when the plan materializes; the run
     # keeps these versions after a registry reload, and the refs are part of the plan hash.
     capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    # Data-version manifest (P4-03): the version of every analysed asset the run read (evidence.manifest).
+    data_manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -628,6 +630,13 @@ class Insight(Base):
     verification: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # REV record
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft|verified|failed_verification|rejected
     narrative_source: Mapped[str] = mapped_column(String(160), default="template")  # llm | template
+    # Typed evidence (P4-03): the versioned EvidenceBundle (facts, data, method, validation, limits), its
+    # validation state (exploratory | replicated | confirmed | inconclusive | invalid | insufficient_evidence
+    # | legacy), the data-manifest version it was computed on, and when a newer snapshot made it stale.
+    evidence_bundle: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    validation: Mapped[str] = mapped_column(String(30), default="exploratory", server_default="legacy")
+    data_version: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 

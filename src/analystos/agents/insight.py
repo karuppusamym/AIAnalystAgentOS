@@ -1,7 +1,9 @@
 """Insight Analyst Agent (§13.13, §25): supported + multiple-testing-adjusted results -> findings.
 
-Narratives are guarded: every number in model-written text must be one of the computed facts
-(after rounding), otherwise the deterministic template text is used and the fallback is recorded."""
+Narratives are bound to typed facts (P4-03, `evidence.facts`): every number in model-written text must
+be a computed fact used with its own group, unit and direction, otherwise the deterministic template
+text is used and the fallback is recorded. The draft finding carries its facts, the binding and the
+run's data-version manifest; REV (`agents.critic`) completes the evidence bundle."""
 from __future__ import annotations
 
 import re
@@ -14,7 +16,7 @@ from analystos.agents.common import llm_json, model_gate
 from analystos.artifacts.registry import link
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
-from analystos.db.models import Experiment, Hypothesis, Insight
+from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
 from analystos.events.bus import emit
 from analystos.methods.base import cap, fmt_pct, text_parts
 from analystos.runtime.context import RunContext
@@ -70,6 +72,8 @@ def _language_ok(text: str, facts: dict[str, Any]) -> bool:
 
 
 def _guard(text: str, facts: dict[str, Any]) -> bool:
+    """Legacy flat numbers guard (pre-P4-03): any evidence number anywhere. Superseded by
+    `evidence.facts.bind`, which also binds group, unit and direction; kept for its callers."""
     allowed: set[float] = set()
     for v in _flatten(facts):
         for n in _NUM.findall(str(v)):
@@ -96,6 +100,12 @@ def _flatten(value):
         yield value
 
 
+def _generic_facts(spec, stat, **kw):
+    from analystos.evidence.facts import facts_from
+
+    return facts_from(spec, stat, **kw)
+
+
 def benjamini_hochberg(pvals: list[float]) -> list[float]:
     from analystos.skills.stats import benjamini_hochberg as bh
 
@@ -116,7 +126,7 @@ def build_insights(ctx: RunContext) -> dict:
         pvals = [(eid, exps[eid].result.get("p_value")) for _, eid in tested if exps[eid].result.get("p_value") is not None]
         adjusted = dict(zip([e for e, _ in pvals], benjamini_hochberg([p for _, p in pvals]), strict=False)) if pvals else {}
         for eid, adj in adjusted.items():
-            exps[eid].result = {**exps[eid].result, "p_adjusted": float(adj)}
+            exps[eid].result = {**exps[eid].result, "p_adjusted": float(adj), "bh_family_size": len(pvals)}
         candidates = []
         for hid, eid in tested:
             h = s.get(Hypothesis, hid)
@@ -145,21 +155,12 @@ def build_insights(ctx: RunContext) -> dict:
         unique.append(c)
     candidates = sorted(unique, key=lambda c: (-(c[7] or 0), c[4].get("p_adjusted") or 1))
     created = []
+    from analystos.evidence.facts import bind_finding
+    from analystos.evidence.manifest import ensure_run_manifest
+
+    manifest = ensure_run_manifest(ctx.run.id, ctx.scope.asset_sources, {c[3].get("asset") for c in candidates if c[3].get("asset")}) \
+        if candidates else None
     for hid, code, statement, spec, stat, eid, qids, _ in candidates:
-        facts = facts_for(stat, spec)
-        title, finding = template_text(stat, spec)
-        source, action = "template", None
-        payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
-        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload) \
-            if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
-        text = (str(data.get("finding")) + " " + str(data.get("title", "")) + " " + str(data.get("recommended_action") or "")) \
-            if isinstance(data, dict) else ""
-        if isinstance(data, dict) and isinstance(data.get("finding"), str) and _guard(text, facts) and _language_ok(text, facts):
-            title, finding, source = str(data.get("title") or title)[:200], data["finding"], f"llm:{model}"
-            action = data.get("recommended_action")
-        elif data is not None:
-            why = "quoted numbers not present in the evidence" if not _guard(text, facts) else "was not written in English"
-            ctx.say(f"Narrative for {code} {why}; using the deterministic template.", kind="decision")
         hl = stat.get("highlights") or {}
         impact = {k: hl[k] for k in ("affected_records", "excess_events", "top_segment_n", "top_n") if k in hl}
         if "excess_events" not in impact and isinstance(hl.get("top_rate"), (int, float)) and isinstance(hl.get("baseline_rate"), (int, float)):
@@ -167,6 +168,33 @@ def build_insights(ctx: RunContext) -> dict:
             if n_top:
                 impact["affected_records"] = int(n_top)
                 impact["excess_events"] = int(round((hl["top_rate"] - hl["baseline_rate"]) * n_top))
+        with session_scope() as s:
+            receipts = {q.id: q.result_hash for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(qids)))}
+        method = methods.get(spec["method"]) if spec.get("method") in methods.names() else None
+        typed = (method.facts if method is not None else _generic_facts)(
+            spec, stat, extra={k: impact[k] for k in ("affected_records", "excess_events") if k in impact},
+            query_ids=tuple(qids), result_hashes=tuple(h for h in receipts.values() if h))
+        facts = {**facts_for(stat, spec), **{k: impact[k] for k in ("affected_records", "excess_events") if k in impact}}
+        title, finding = template_text(stat, spec)
+        source, action = "template", None
+        payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
+        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload) \
+            if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
+        if isinstance(data, dict) and isinstance(data.get("finding"), str):
+            texts = (str(data.get("title") or ""), str(data["finding"]), str(data.get("recommended_action") or ""))
+            bound = bind_finding(spec, stat, typed, *texts)
+            fluent = _language_ok(" ".join(texts), facts)
+            if bound.ok and fluent:
+                title, finding, source = str(data.get("title") or title)[:200], data["finding"], f"llm:{model}"
+                action = data.get("recommended_action")
+            else:
+                why = ("does not bind to the computed facts (" + "; ".join(bound.problems[:3]) + ")") if not bound.ok \
+                    else "was not written in English"
+                ctx.say(f"Narrative for {code} {why}; using the deterministic template.", kind="decision")
+        binding = bind_finding(spec, stat, typed, title, finding, str(action or ""))
+        draft = {"claim": {"facts": [f.model_dump(mode="json") for f in typed], "binding": binding.model_dump(mode="json"),
+                           "rendered_from": source},
+                 "data": {"manifest": {"version": manifest.version if manifest else None}}}
         caveats = ["Association in historical data; not proof of causation."] + list(stat.get("warnings") or [])[:3]
         if spec.get("filters"):
             caveats.append("Scoped to: " + ", ".join(f"{f['column']} {f['op']} {f.get('value')}" for f in spec["filters"]))
@@ -181,7 +209,8 @@ def build_insights(ctx: RunContext) -> dict:
                           business_impact={**impact, **({"recommended_action": action} if action else {})}, caveats=caveats,
                           evidence=[{"type": "hypothesis", "id": hid, "label": code}, {"type": "experiment", "id": eid, "label": stat.get("test")}]
                           + [{"type": "query", "id": q, "label": "evidence query"} for q in qids],
-                          status="draft", narrative_source=source)
+                          status="draft", narrative_source=source, evidence_bundle=draft, validation="exploratory",
+                          data_version=manifest.version if manifest else None)
             s.add(ins)
             link(s, ctx.workspace.id, ("insight", ins.id), "supported_by", ("experiment", eid), run_id=ctx.run.id)
             link(s, ctx.workspace.id, ("hypothesis", hid), "concluded_as", ("insight", ins.id), run_id=ctx.run.id)

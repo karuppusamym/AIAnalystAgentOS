@@ -1,0 +1,128 @@
+{
+ "reps": 200,
+ "seconds": 169.3,
+ "methods": [
+  {
+   "method": "rate_by_segment",
+   "threshold": "rate ratio >= 1.2 (and Cram\u00e9r's V >= 0.05)",
+   "design": "4 groups x 2000, baseline rate 0.20, one group at 0.20 x (1 + 0.20 k)",
+   "power": {
+    "0x": 0.0,
+    "0.5x": 0.01,
+    "1x": 0.375,
+    "1.5x": 0.895,
+    "2x": 0.995,
+    "3x": 1.0
+   },
+   "null_supported": 0.0,
+   "null_raw_p": 0.04
+  },
+  {
+   "method": "numeric_by_segment",
+   "threshold": "|rank-biserial| >= 0.1",
+   "design": "2 groups x 1500, normal(0,1) vs normal(shift,1), shift for rank-biserial 0.1 k",
+   "power": {
+    "0x": 0.0,
+    "0.5x": 0.015,
+    "1x": 0.505,
+    "1.5x": 0.995,
+    "2x": 1.0,
+    "3x": 1.0
+   },
+   "null_supported": 0.0,
+   "null_raw_p": 0.065
+  },
+  {
+   "method": "correlation",
+   "threshold": "|Spearman rho| >= 0.1",
+   "design": "1500 pairs, bivariate normal with Spearman rho 0.1 k",
+   "power": {
+    "0x": 0.0,
+    "0.5x": 0.045,
+    "1x": 0.505,
+    "1.5x": 0.96,
+    "2x": 1.0,
+    "3x": 1.0
+   },
+   "null_supported": 0.0,
+   "null_raw_p": 0.05
+  },
+  {
+   "method": "trend",
+   "threshold": "|fitted change| >= 10% first to last period",
+   "design": "26 periods, level 100 + noise sd 5, fitted change 10% k",
+   "power": {
+    "0x": 0.0,
+    "0.5x": 0.065,
+    "1x": 0.495,
+    "1.5x": 0.935,
+    "2x": 1.0,
+    "3x": 1.0
+   },
+   "null_supported": 0.0,
+   "null_raw_p": 0.02
+  }
+ ],
+ "selection": {
+  "design": "8 groups x 1000 rows, rate 0.20 (null) / one group at 0.30 (planted); 400 datasets",
+  "null_quoted_rate_ratio_mean": 1.199,
+  "null_quoted_rate_ratio_p95": 1.307,
+  "planted_true_rate_ratio": 1.5,
+  "planted_quoted_rate_ratio_mean_when_supported": 1.639,
+  "planted_supported_rate": 0.998,
+  "same_data_fpr": 0.225,
+  "held_out_fpr": 0.052
+ },
+ "by_method_v01": {
+  "driver_model": {
+   "tested": 30,
+   "verified": 20,
+   "true_positive": 20,
+   "false_positive": 0,
+   "precision": 1.0,
+   "null_tests": 10,
+   "null_raw_rate": 0.0,
+   "null_fdr": 0.0
+  },
+  "numeric_by_segment": {
+   "tested": 450,
+   "verified": 60,
+   "true_positive": 60,
+   "false_positive": 0,
+   "precision": 1.0,
+   "null_tests": 390,
+   "null_raw_rate": 0.0615,
+   "null_fdr": 0.0
+  },
+  "pareto": {
+   "tested": 15,
+   "verified": 10,
+   "true_positive": 10,
+   "false_positive": 0,
+   "precision": 1.0,
+   "null_tests": 5,
+   "null_raw_rate": 0.0,
+   "null_fdr": 0.0
+  },
+  "rate_by_segment": {
+   "tested": 285,
+   "verified": 30,
+   "true_positive": 30,
+   "false_positive": 0,
+   "precision": 1.0,
+   "null_tests": 255,
+   "null_raw_rate": 0.0431,
+   "null_fdr": 0.0
+  },
+  "trend": {
+   "tested": 45,
+   "verified": 0,
+   "true_positive": 0,
+   "false_positive": 0,
+   "precision": null,
+   "null_tests": 45,
+   "null_raw_rate": 0.0,
+   "null_fdr": 0.0
+  }
+ }
+}

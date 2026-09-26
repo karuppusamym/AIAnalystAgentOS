@@ -23,6 +23,7 @@ from analystos.methods.base import (
     Semantic,
     cap,
     finish,
+    fmt_pct,
     json_value,
     nothing_to_verify,
     text_parts,
@@ -126,8 +127,14 @@ class Trend(AnalysisMethod):
         hl = stat.get("highlights") or {}
         _, out, scope = text_parts(spec)
         title = f"{cap(out) if out != 'volume' else 'Volume'} shows a significant trend"
-        text = (f"Weekly {out} changed by {hl.get('pct_change', 0):.1f}% from first to last period"
-                if isinstance(hl.get("pct_change"), (int, float)) else f"A significant trend was detected in {out}") + f"{scope}."
+        # pct_change is a fraction: render it as a percent with its direction (P4-03 found this template
+        # quoting -0.4416 as "-0.4%" instead of a 44.2% fall).
+        pct = hl.get("pct_change")
+        grain = {"day": "Daily", "week": "Weekly", "month": "Monthly", "quarter": "Quarterly"}.get(
+            (spec.get("time") or {}).get("grain") or "", "Per-period")
+        text = (f"{grain} {out} {'rose' if pct > 0 else 'fell'} by {fmt_pct(abs(pct))} over the fitted trend from first to "
+                "last period" if isinstance(pct, (int, float)) and pct != 0
+                else f"A significant trend was detected in {out}") + f"{scope}."
         return title, text
 
     def chart_intent(self, spec: AnalysisSpec, stat: Mapping[str, Any] | None = None) -> ChartIntent:
