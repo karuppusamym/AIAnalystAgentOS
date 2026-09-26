@@ -17,7 +17,10 @@ export function WorkspacesPage() {
   const changeStatus = async (id: string, name: string, status: "active" | "disabled") => {
     if (status === "disabled" && !window.confirm(`Disable ${name}? New work, scheduled runs and workspace access will stop. Data is retained.`)) return;
     const result = await statusAction.run(() => api.setWorkspaceStatus(id, status));
-    if (result) await list.reload();
+    if (result) {
+      await list.reload();
+      if (inspectId === id) await inventory.reload();
+    }
   };
   return (
     <div className="page">
