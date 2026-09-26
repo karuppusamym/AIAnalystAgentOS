@@ -2445,6 +2445,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/lineage/sql": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sql Lineage
+         * @description Column lineage of a statement (view, INSERT ... SELECT, query) resolved against the columns of the
+         *     assets this caller may read (P6-07). Nothing runs and nothing is stored; the SQL comes back redacted.
+         */
+        post: operations["sql_lineage_api_workspaces__workspace_id__lineage_sql_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/mcp/capabilities": {
         parameters: {
             query?: never;
@@ -2652,6 +2673,189 @@ export interface paths {
          *     caller and, when accepted, the source's plan through the gateway (EXPLAIN only).
          */
         post: operations["explain_query_api_workspaces__workspace_id__query_explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipe-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Runs */
+        get: operations["list_runs_api_workspaces__workspace_id__recipe_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipe-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_api_workspaces__workspace_id__recipe_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipe-runs/{run_id}/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lineage
+         * @description Executed column lineage from the IR and the run's OpenLineage events (SQL literals redacted).
+         */
+        get: operations["lineage_api_workspaces__workspace_id__recipe_runs__run_id__lineage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipe-runs/{run_id}/quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quarantine
+         * @description The rows a run quarantined for `output`, read through the query gateway.
+         */
+        get: operations["quarantine_api_workspaces__workspace_id__recipe_runs__run_id__quarantine_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Recipes */
+        get: operations["list_recipes_api_workspaces__workspace_id__recipes_get"];
+        put?: never;
+        /** Save */
+        post: operations["save_api_workspaces__workspace_id__recipes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate
+         * @description The IR validator's verdict and the schema of every node; nothing is stored.
+         */
+        post: operations["validate_api_workspaces__workspace_id__recipes_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes/{recipe_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recipe */
+        get: operations["get_recipe_api_workspaces__workspace_id__recipes__recipe_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes/{recipe_id}/compiled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compiled */
+        get: operations["compiled_api_workspaces__workspace_id__recipes__recipe_id__compiled_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes/{recipe_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish */
+        post: operations["publish_api_workspaces__workspace_id__recipes__recipe_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/recipes/{recipe_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run
+         * @description Preview (rows and gate results, nothing written) or materialize (outputs, quarantine, lineage).
+         */
+        post: operations["run_api_workspaces__workspace_id__recipes__recipe_id__runs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3048,6 +3252,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/sources/{source_id}/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest
+         * @description Map and load an uploaded file (CSV, JSON, Excel, Parquet) into a file source: replace, append or merge (P6-06).
+         */
+        post: operations["ingest_api_workspaces__workspace_id__sources__source_id__ingest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/sources/{source_id}/selection": {
         parameters: {
             query?: never;
@@ -3429,6 +3653,15 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** ColumnMapping */
+        ColumnMapping: {
+            /** Source */
+            source: string;
+            /** Target */
+            target?: string | null;
+            /** Type */
+            type?: string | null;
+        };
         /** ContextIn */
         ContextIn: {
             /** Body */
@@ -3669,6 +3902,29 @@ export interface components {
             /** Status */
             status?: string | null;
         };
+        /** IngestSpec */
+        IngestSpec: {
+            /** Delimiter */
+            delimiter?: string | null;
+            /** Format */
+            format?: ("csv" | "json" | "excel" | "parquet") | null;
+            /** Keys */
+            keys?: string[];
+            /** Mapping */
+            mapping?: components["schemas"]["ColumnMapping"][] | null;
+            /**
+             * Mode
+             * @default replace
+             * @enum {string}
+             */
+            mode?: "replace" | "append" | "merge";
+            /** Path */
+            path: string;
+            /** Sheet */
+            sheet?: string | null;
+            /** Table */
+            table: string;
+        };
         /** InputRef */
         InputRef: {
             /** Asset */
@@ -3879,6 +4135,29 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** RecipeIn */
+        RecipeIn: {
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+        };
+        /** RecipeRunIn */
+        RecipeRunIn: {
+            /** Engine */
+            engine?: ("auto" | "sql" | "duckdb") | null;
+            /**
+             * Limit
+             * @default 50
+             */
+            limit?: number;
+            /**
+             * Mode
+             * @default materialize
+             * @enum {string}
+             */
+            mode?: "preview" | "materialize";
+        };
         /** RegisteredHypothesisPatch */
         RegisteredHypothesisPatch: {
             /** Status */
@@ -4047,6 +4326,16 @@ export interface components {
         SqlIn: {
             /** Max Rows */
             max_rows?: number | null;
+            /** Sql */
+            sql: string;
+        };
+        /** SqlLineageIn */
+        SqlLineageIn: {
+            /**
+             * Dialect
+             * @default postgres
+             */
+            dialect?: string;
             /** Sql */
             sql: string;
         };
@@ -9571,6 +9860,44 @@ export interface operations {
             };
         };
     };
+    sql_lineage_api_workspaces__workspace_id__lineage_sql_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SqlLineageIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     workspace_capabilities_api_workspaces__workspace_id__mcp_capabilities_get: {
         parameters: {
             query?: never;
@@ -10069,6 +10396,407 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SqlIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_workspaces__workspace_id__recipe_runs_get: {
+        parameters: {
+            query?: {
+                recipe?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_workspaces__workspace_id__recipe_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lineage_api_workspaces__workspace_id__recipe_runs__run_id__lineage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quarantine_api_workspaces__workspace_id__recipe_runs__run_id__quarantine_get: {
+        parameters: {
+            query: {
+                output: string;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_recipes_api_workspaces__workspace_id__recipes_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_api_workspaces__workspace_id__recipes_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_api_workspaces__workspace_id__recipes_validate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recipe_api_workspaces__workspace_id__recipes__recipe_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                recipe_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compiled_api_workspaces__workspace_id__recipes__recipe_id__compiled_get: {
+        parameters: {
+            query?: {
+                target?: "sql" | "duckdb" | "dbt";
+                dialect?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                recipe_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_api_workspaces__workspace_id__recipes__recipe_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                recipe_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_api_workspaces__workspace_id__recipes__recipe_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                recipe_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeRunIn"];
             };
         };
         responses: {
@@ -10955,6 +11683,45 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_api_workspaces__workspace_id__sources__source_id__ingest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IngestSpec"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

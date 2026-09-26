@@ -247,8 +247,9 @@ def _refresh(owner: User, workspace_id: str, schedule_id: str, srun_id: str, con
     from analystos.services.sources import select_assets
 
     with session_scope() as s:
+        # recipe outputs (kind `recipe`) are written by recipe runs, not extracted
         sources = list(s.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.execution_mode == "staged",
-                                                      Source.status == "ready")))
+                                                      Source.status == "ready", Source.kind != "recipe")))
         if config.get("source_ids"):
             sources = [x for x in sources if x.id in config["source_ids"]]
         plan = {x.id: [a.name for a in s.scalars(select(SourceAsset).where(SourceAsset.source_id == x.id, SourceAsset.selected.is_(True)))]
@@ -265,7 +266,8 @@ def _crawl(owner: User, workspace_id: str, schedule_id: str, srun_id: str, confi
     from analystos.services.crawler import crawl_source
 
     with session_scope() as s:
-        stmt = select(Source.id).where(Source.workspace_id == workspace_id, Source.status.in_(("discovered", "ready")))
+        stmt = select(Source.id).where(Source.workspace_id == workspace_id, Source.status.in_(("discovered", "ready")),
+                                       Source.kind != "recipe")
         if config.get("source_ids"):
             stmt = stmt.where(Source.id.in_(config["source_ids"]))
         ids = list(s.scalars(stmt))

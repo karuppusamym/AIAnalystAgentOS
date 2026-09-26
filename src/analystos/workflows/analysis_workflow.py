@@ -93,6 +93,18 @@ class AnalysisWorkflow:
             await self._wait(300 if state.get("control") == "pause" or state.get("waiting_user") else 15)
 
 
+@workflow.defn(name="RecipeComputeWorkflow")
+class RecipeComputeWorkflow:
+    """One recipe statement over its snapshots, run on the `compute` pool (ADR-0023, P6-04). Hosted by the
+    analysis worker; the job is pure (snapshot files in, a result snapshot out), so a retry is safe."""
+
+    @workflow.run
+    async def run(self, job: dict[str, Any], opts: dict[str, Any] | None = None) -> dict:
+        opts = opts or fallback_options(workflow.info().task_queue.removesuffix("-analysis"))
+        return await workflow.execute_activity("run_recipe_snapshot", args=[job], retry_policy=TASK_RETRY,
+                                               **_queue_kwargs(opts, "compute"))
+
+
 @workflow.defn(name="CrawlWorkflow")
 class CrawlWorkflow:
     """One metadata crawl on the `crawl` pool. `run_crawl` records failure on the crawl_run row

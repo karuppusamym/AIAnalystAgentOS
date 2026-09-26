@@ -111,6 +111,32 @@ def start_crawl_job(crawl_id: str, user_id: str) -> str | None:
     return f"crawl-{crawl_id}"
 
 
+def run_recipe_compute(job: dict) -> dict:
+    """A recipe's snapshot statement on the Temporal `compute` pool (ADR-0023); in-process when the
+    orchestrator is local or Temporal cannot take it (the job only reads snapshot files, so both paths
+    give the same result)."""
+    from analystos.recipes.execute import run_snapshot_job
+
+    settings = get_settings()
+    if settings.orchestrator != "temporal":
+        return run_snapshot_job(job)
+
+    async def go():
+        from analystos.core.ids import new_id
+        from analystos.workflows.queues import queue_name, workflow_options
+
+        client = await _temporal_client()
+        return await client.execute_workflow("RecipeComputeWorkflow", args=[job, workflow_options()],
+                                             id=new_id("recipe-compute"),
+                                             task_queue=queue_name(settings.temporal_queue_prefix, "analysis"))
+    try:
+        fut: Future = asyncio.run_coroutine_threadsafe(go(), _event_loop())
+        return fut.result(timeout=900)
+    except Exception as exc:
+        log.warning("recipe compute not handed to Temporal (%s); running it in-process", exc)
+        return run_snapshot_job(job)
+
+
 def run_local(run_id: str, *, poll: float = 0.3, max_seconds: float = 3600) -> str:
     """Same control loop as the Temporal workflow, synchronous."""
     started = time.time()

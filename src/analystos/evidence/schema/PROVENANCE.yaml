@@ -49,6 +49,13 @@ openlineage/facets/ErrorMessageRunFacet.json:
   upstream_path: spec/facets/ErrorMessageRunFacet.json @ OpenLineage tag 1.53.0 (48302e12)
   sha256: b11b4ee8b0f99f6846264f87cad48390255c7ef142ce623216660c7097be0ea6
   license: Apache-2.0
+openlineage/facets/ColumnLineageDatasetFacet.json:
+  version: 1-2-0
+  upstream_path: spec/facets/ColumnLineageDatasetFacet.json @ OpenLineage tag 1.53.0
+  retrieved: 2026-09-26 (raw.githubusercontent.com through the session proxy; P6-07 recipe column lineage)
+  sha256: 04d96b4985ca32470c7f9d73163da76678fb160bc8d80cbbc5abf312e9537466
+  license: Apache-2.0
+  modifications: none
 notes: >
   Validation is offline: every $ref between these files resolves through a local `referencing` registry
   keyed by each file's $id, so nothing is fetched at runtime. The OpenLineage core schema leaves facet

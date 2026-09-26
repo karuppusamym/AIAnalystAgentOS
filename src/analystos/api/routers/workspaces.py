@@ -23,13 +23,14 @@ from analystos.db.models import (
 )
 from analystos.events.bus import list_events
 from analystos.governance.policy import get_workspace, load_policy, require_role
+from analystos.services import file_ingest, workspace_inventory
 from analystos.services import sources as source_svc
-from analystos.services import workspace_inventory
 from analystos.services import workspaces as ws_svc
 
 router = APIRouter(prefix="/api", tags=["workspaces"])
 # Files and file databases (sqlite/duckdb kinds read them in place, inside the upload directory only).
-UPLOAD_EXTENSIONS = (".csv", ".parquet", ".xlsx", ".db", ".sqlite", ".sqlite3", ".duckdb")
+UPLOAD_EXTENSIONS = (".csv", ".tsv", ".json", ".ndjson", ".jsonl", ".parquet", ".xlsx", ".db", ".sqlite", ".sqlite3",
+                     ".duckdb")
 
 
 class WorkspaceIn(BaseModel):
@@ -183,6 +184,12 @@ def discover(workspace_id: str, source_id: str, user: User = Depends(current_use
 @router.put("/workspaces/{workspace_id}/sources/{source_id}/selection")
 def select_assets(workspace_id: str, source_id: str, body: Selection, user: User = Depends(current_user)):
     return source_svc.select_assets(user, source_id, body.assets, workspace_id)
+
+
+@router.post("/workspaces/{workspace_id}/sources/{source_id}/ingest")
+def ingest(workspace_id: str, source_id: str, body: file_ingest.IngestSpec, user: User = Depends(current_user)):
+    """Map and load an uploaded file (CSV, JSON, Excel, Parquet) into a file source: replace, append or merge (P6-06)."""
+    return file_ingest.ingest_file(user, source_id, body, workspace_id)
 
 
 @router.post("/workspaces/{workspace_id}/uploads")

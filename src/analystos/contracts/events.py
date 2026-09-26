@@ -33,6 +33,9 @@ EVENT_TYPES = {
     "schedule.upgrade_available", "schedule.upgraded", "schedule.pin_warning", "schedule.blocked", "narrative.stale",
     # Typed work orders and the dispatch outbox (P4-06)
     "work_order.created", "work_order.updated", "run.dispatched", "run.dispatch_failed",
+    # Transformation recipes (P6-04..07) and file ingestion (P6-06)
+    "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
+    "recipe.run.refused", "recipe.run.failed", "file.ingested",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

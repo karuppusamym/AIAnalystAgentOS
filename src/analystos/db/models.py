@@ -1415,3 +1415,54 @@ class WorkOrder(Base):
     created_by: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ------------------------------------------------------------------------------ transformation recipes (P6-04..07)
+class RecipeVersion(Base):
+    """One version of a transformation recipe (ADR-0023): the validated IR with every node's schema
+    stamped, and its hash. Drafts until published (ADR-0021); a new save of changed content is a new version."""
+
+    __tablename__ = "recipe"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | superseded
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class RecipeRun(Base):
+    """One execution of a recipe version: where it ran and why (pushdown or snapshot fallback), the join
+    pre-flight, the input snapshots, gate results, schema-policy changes, what was materialized or
+    quarantined, the column lineage from the IR and its OpenLineage events. Provenance: recipe ->
+    recipe_run -> table (output, quarantine); source table -> transformed_into -> output table."""
+
+    __tablename__ = "recipe_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    recipe_id: Mapped[str] = mapped_column(ForeignKey("recipe.id", ondelete="CASCADE"), index=True)
+    recipe_name: Mapped[str] = mapped_column(String(60))
+    recipe_version: Mapped[int] = mapped_column(Integer)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(20), default="materialize")  # preview | materialize
+    engine: Mapped[str | None] = mapped_column(String(20), nullable=True)  # sql | duckdb
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|blocked|refused|failed
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    preflight: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    snapshots: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    gates: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> gate summary
+    schema_changes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> policy verdict
+    outputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # output name -> table, rows, fingerprint...
+    lineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    openlineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

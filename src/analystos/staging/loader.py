@@ -27,6 +27,7 @@ from analystos.gateway.engines import get_engine
 from analystos.staging.roles import ensure_workspace_role, grant_schema, reader_login, role_for
 
 LOAD_SUFFIX = "__load"
+LOAD_MODES = ("replace", "append", "merge")
 MAX_TABLE_NAME = 63 - len(LOAD_SUFFIX)
 
 _log = get_logger(__name__)
@@ -137,11 +138,24 @@ class StagingLoader:
         return get_engine(self.loader_url, plane="loader")
 
     def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch], *,
-             workspace_id: str, snapshot: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+             workspace_id: str, snapshot: Callable[[], dict[str, Any] | None] | None = None, mode: str = "replace",
+             keys: list[str] | None = None, fingerprint: str = "stream") -> dict[str, Any]:
         """Load ``batches`` as ``src_<source_id>.<asset name>`` readable only by ``workspace_id``'s
         reader role and return ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``, plus
         ``snapshot`` and ``truncated`` when ``snapshot`` (read after the batches are exhausted) describes
-        the population."""
+        the population.
+
+        ``mode`` (P6-06): ``replace`` swaps the table atomically (the default); ``append`` inserts the rows;
+        ``merge`` replaces the rows whose ``keys`` match and inserts the rest, so re-applying the same batch
+        (a retry) leaves the same table. Append and merge refuse a batch whose columns or types differ from
+        the table's, a null key and a key repeated in the batch, naming the column; nothing is written then.
+        ``fingerprint="table"`` (always for append/merge) hashes the resulting table in the database, so
+        the fingerprint is a function of the table's content whatever mode produced it."""
+        if mode not in LOAD_MODES:
+            raise InvalidInput(f"load mode must be one of {', '.join(LOAD_MODES)}")
+        keys = list(keys or [])
+        if mode == "merge" and not keys:
+            raise InvalidInput("merge needs key columns")
         schema_name = staging_schema_for(source_id)
         ws_role = role_for(self.settings, workspace_id)
         raw_name = asset.name if isinstance(asset, DiscoveredAsset) else str(asset)
@@ -176,8 +190,14 @@ class StagingLoader:
         )
         convert = _row_converter(pg_types)
         content = ContentFingerprint(col_names, pg_types)
+        missing_keys = [k for k in keys if k not in col_names]
+        if missing_keys:
+            raise InvalidInput(f"key column {', '.join(missing_keys)} is not a column of {raw_name} "
+                               f"(columns: {', '.join(col_names)})")
+        key_idx = [(col_names.index(k), k) for k in keys] if mode == "merge" else []
 
         raw = self._engine().raw_connection()
+        merge_info: dict[str, Any] = {}
         try:
             conn = raw.driver_connection
             row_count = 0
@@ -195,13 +215,39 @@ class StagingLoader:
                         cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
                         for values in zip(*cols, strict=True):
                             converted = convert(list(values))
+                            for i, name in key_idx:
+                                if converted[i] is None:
+                                    raise InvalidInput(f"merge key column {name} is null in row {row_count + 1} of "
+                                                       f"{raw_name}; a merge needs every key", details={"column": name})
                             content.add(converted)
                             copy.write_row(converted)
-                        row_count += batch.num_rows
-                # Atomic swap: readers see either the old snapshot or the new one.
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(final_ident))
-                cur.execute(sql.SQL("ALTER TABLE {} RENAME TO {}").format(load_ident, sql.Identifier(table_name)))
+                            row_count += 1
+                cur.execute("SELECT to_regclass(%s)", (f'"{schema_name}"."{table_name}"',))
+                exists = cur.fetchone()[0] is not None
+                if mode == "merge":
+                    merge_info["duplicate_keys"] = _duplicate_keys(cur, load_ident, keys)
+                    if merge_info["duplicate_keys"]:
+                        raise InvalidInput(f"merge key ({', '.join(keys)}) repeats in {merge_info['duplicate_keys']} key "
+                                           f"value(s) of {raw_name}; a merge needs one row per key",
+                                           details={"columns": keys})
+                if mode != "replace" and exists:
+                    _check_same_columns(cur, final_ident, load_ident, raw_name)
+                    if mode == "merge":
+                        on = sql.SQL(" AND ").join(sql.SQL("f.{k} = l.{k}").format(k=sql.Identifier(k)) for k in keys)
+                        cur.execute(sql.SQL("DELETE FROM {} AS f USING {} AS l WHERE {}").format(final_ident, load_ident, on))
+                        merge_info["replaced_rows"] = max(cur.rowcount or 0, 0)
+                    names = sql.SQL(", ").join(sql.Identifier(n) for n in col_names)
+                    cur.execute(sql.SQL("INSERT INTO {} ({}) SELECT {} FROM {}").format(final_ident, names, names,
+                                                                                       load_ident))
+                    cur.execute(sql.SQL("DROP TABLE {}").format(load_ident))
+                else:
+                    # Atomic swap: readers see either the old snapshot or the new one.
+                    cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(final_ident))
+                    cur.execute(sql.SQL("ALTER TABLE {} RENAME TO {}").format(load_ident, sql.Identifier(table_name)))
                 cur.execute(sql.SQL("ANALYZE {}").format(final_ident))
+                if mode != "replace" or fingerprint == "table":
+                    merge_info["fingerprint"], merge_info["table_rows"] = _table_fingerprint(cur, final_ident, col_names,
+                                                                                             pg_types)
                 ensure_workspace_role(cur, ws_role, self.reader_role)
                 grant_schema(cur, schema_name, ws_role, self.reader_role)
             conn.commit()
@@ -214,12 +260,15 @@ class StagingLoader:
         raw.close()
         _log.info("staged %s rows into %s.%s", row_count, schema_name, table_name)
         info: dict[str, Any] = {
-            "row_count": row_count,
+            "row_count": merge_info.get("table_rows", row_count),
             "schema": schema_name,
             "table": table_name,
             "columns": [{"name": n, "type": ty} for n, ty in zip(col_names, pg_types, strict=True)],
-            "content_fingerprint": content.hexdigest(),
+            "content_fingerprint": merge_info.get("fingerprint") or content.hexdigest(),
         }
+        if mode != "replace" or fingerprint == "table":
+            info.update(mode=mode, rows_loaded=row_count, keys=keys, replaced_rows=merge_info.get("replaced_rows", 0),
+                        fingerprint_basis="table")
         record = snapshot() if snapshot is not None else None
         if record:
             info["snapshot"] = {**record, "rows_staged": row_count}
@@ -241,6 +290,42 @@ class StagingLoader:
             raise
         finally:
             raw.close()
+
+
+def _columns_of(cur: Any, ident: sql.Composable) -> list[tuple[str, str]]:
+    cur.execute(sql.SQL("SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = {}::regclass "
+                        "AND attnum > 0 AND NOT attisdropped ORDER BY attnum").format(sql.Literal(ident.as_string(cur))))
+    return [(r[0], r[1]) for r in cur.fetchall()]
+
+
+def _check_same_columns(cur: Any, final_ident: sql.Composable, load_ident: sql.Composable, what: str) -> None:
+    """Append and merge write into the existing table: same columns, same types, or nothing is written."""
+    old, new = dict(_columns_of(cur, final_ident)), dict(_columns_of(cur, load_ident))
+    problems = [f"column {c} ({t}) of the staged table is missing from {what}" for c, t in old.items() if c not in new]
+    problems += [f"column {c} ({t}) of {what} is not in the staged table" for c, t in new.items() if c not in old]
+    problems += [f"column {c} is {old[c]} in the staged table but {t} in {what}"
+                 for c, t in new.items() if c in old and old[c] != t]
+    if problems:
+        raise InvalidInput("; ".join(problems) + " (load with mode replace to change the table's shape)",
+                           details={"columns": sorted({p.split()[1] for p in problems})})
+
+
+def _duplicate_keys(cur: Any, ident: sql.Composable, keys: list[str]) -> int:
+    cols = sql.SQL(", ").join(sql.Identifier(k) for k in keys)
+    cur.execute(sql.SQL("SELECT count(*) FROM (SELECT {} FROM {} GROUP BY {} HAVING count(*) > 1) d").format(cols, ident, cols))
+    return int(cur.fetchone()[0])
+
+
+def _table_fingerprint(cur: Any, ident: sql.Composable, columns: list[str], types: list[str]) -> tuple[str, int]:
+    """Order-independent digest of a table's rows computed in the database (a multiset hash of each
+    row's text form), so a table reached by replace, append or merge hashes by content alone."""
+    row = sql.Identifier("aos row")  # a space: never a sanitized column name, so it is the whole row
+    cur.execute(sql.SQL("SELECT count(*), coalesce(sum(hashtextextended({}::text, 0)::numeric), 0) FROM {} AS {}")
+                .format(row, ident, row))
+    n, acc = cur.fetchone()
+    head = json.dumps([columns, types])
+    digest = hashlib.sha256(f"table|{head}|{int(n)}|{int(acc) % (1 << 64):016x}".encode()).hexdigest()
+    return digest, int(n)
 
 
 def _chain(first: list[pa.RecordBatch], rest: Iterable[pa.RecordBatch]):  # noqa: ANN202
