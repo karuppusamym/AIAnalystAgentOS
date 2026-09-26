@@ -400,6 +400,8 @@ export function AskPage() {
     { label: "Count incidents", sql: `SELECT COUNT(*) AS incident_count FROM ${incident.fq}` },
     ...(incidentColumns.has("priority") ? [{ label: "Incidents by priority", sql: `SELECT priority, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY priority ORDER BY incident_count DESC` }] : []),
     ...(incidentColumns.has("made_sla") ? [{ label: "SLA outcome", sql: `SELECT made_sla, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY made_sla ORDER BY incident_count DESC` }] : []),
+    ...(incidentColumns.has("assignment_group_name") ? [{ label: "Top assignment groups", sql: `SELECT assignment_group_name, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY assignment_group_name ORDER BY incident_count DESC LIMIT 10` }] : []),
+    ...(incidentColumns.has("reopen_count") ? [{ label: "Reopened incidents", sql: `SELECT COUNT(*) AS reopened_incidents FROM ${incident.fq} WHERE reopen_count > 0` }] : []),
   ] : [];
 
   useEffect(() => {

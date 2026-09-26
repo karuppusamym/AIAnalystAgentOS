@@ -218,7 +218,7 @@ every finding at `59e85da` (review §0.1).
 | P4-K06 | Extend the increment-3 crawler (P3-02, `services/crawler.py`; it already has fingerprints, drift, rename candidates, deprecation, curation precedence and scheduled incremental crawls). Add: a value-free query-history miner, dbt manifest, Superset metadata, document upload, facet-level failure; write the results as OKF documents into the pack | P1 | Each new source has an integration test; a refused permission costs one facet, not the crawl; crawl output is valid OKF | Done — facet-level crawl failure (`services/facets.py`, savepoints, `crawl.facet_failed`), crawl output as OKF `tables/` and `sources/` documents via `knowledge/drafts.py` (curated documents kept, tags only tighten; replaces crawler `context_entry` rows), value-free query-history miner over the gateway audit, dbt manifest v12+ ingestion, read-only Superset metadata, document upload (md/txt/pdf ≤ 10 MiB, redaction and instruction stripping); one integration test per source incl. live Superset and a real `dbt parse` manifest (`test_crawler_sources.py`). Open: a table description approved in the K07 review queue lands in `catalog/<asset>.md` while the crawler writes `tables/<schema.table>.md` (a reviewed table can appear twice in retrieval); source-side query logs not mined |
 | P4-K07 | AI-suggested knowledge, extending the increment-3 enrichment (placeholders only, confidence below 0.6, screened batches): add per-field provenance and confidence, and a batch review queue where a rejection becomes negative knowledge | P1 | Tests; review-queue API | Done — `knowledge/suggestions.py` (migration 0024): per-field value/confidence/provenance, review queue API (list; batch approve, edit-then-approve, reject), one pack revision per batch, rejection → Negative Knowledge document seen by later prompts and never re-proposed, owner content never overwritten; crawler enrichment queues drafts with model/prompt provenance (`test_knowledge_k05_k08.py`). Crawler still fills empty placeholders before review (as in increment 3) |
 | P4-K08 | Learning loop: approved findings, approved KPIs, user corrections and redirects become knowledge drafts | P2 | An approved finding appears as a draft Attested Computation | Done — `knowledge/learning.py`: an accepted verified finding becomes a draft Attested Computation (query hash, result hash, q-value, effect size, verified_by, stale_after — `knowledge/attested.py`), approved KPIs become Metric drafts, corrections/redirects become Notes, `reject_finding` becomes Negative Knowledge; lineage `derived_from` + events (`test_knowledge_k05_k08.py`) |
-| P4-K09 | Context2AI interop: `ContextProvider` implementations `local`, `okf_import` and `mcp` (Atlas `get_knowledge_context`); retire the speculative REST adapter; answers spec v2 §18 open question 1 (CTX-001) | P1 | Live test against an Atlas instance (or recorded MCP fixture, labelled as a mock) | Partial — `local`, `okf_import`, `mcp` providers per workspace (`context_providers` policy), `mcp` calls Atlas `atlas__get_knowledge_context` through the governed MCP client with receipts; REST adapter (`Context2AIClient`) removed. Tested against a real MCP SDK server serving a fixture labelled MOCK (built with Atlas's selection code) — no live Atlas yet; external results not yet in prompts (K05) |
+| P4-K09 | Context2AI interop: `ContextProvider` implementations `local`, `okf_import` and `mcp` (Atlas `get_knowledge_context`); retire the speculative REST adapter; answers spec v2 §18 open question 1 (CTX-001) | P1 | Live test against an Atlas instance (or recorded MCP fixture, labelled as a mock) | Partial — `local`, `okf_import`, `mcp` providers per workspace (`context_providers` policy), `mcp` calls Atlas `atlas__get_knowledge_context` through the governed MCP client with receipts; REST adapter (`Context2AIClient`) removed. Tested against a real MCP SDK server serving a fixture labelled MOCK (built with Atlas's selection code); external results now reach prompts through P4-K05. Missing: live Atlas certification |
 | P4-K10 | Embedding provider option: a local sentence-transformer by default for air-gapped installs; configurable dimension; re-embed job; hashing kept as the fallback (amends ADR-0007) | P2 | Paraphrase-retrieval benchmark improves over hashing; re-embed test | Done — providers `auto`/`hashing`/`sentence_transformers`, configurable dimension, `analystos knowledge reembed` (dimension change + HNSW rebuild), optional `embeddings` extra, downloads off by default. Paraphrase benchmark (36 labelled questions, 18 docs): hashing MRR 0.858 → bge-small-en-v1.5 0.958 (default chosen on the same small set; all-MiniLM-L6-v2 is worse than hashing) (`scripts/benchmark_embeddings.py`, evidence file). Shared venv runs on hashing |
 
 #### Wave 4 — engines, federation and minimal ELT (ADR-0014)
@@ -275,7 +275,7 @@ Both stay Not started and are scheduled after wave 3.
 | FND-003 | CI pipeline | Done | `.github/workflows/ci.yml` (lint, unit, integration with services, web build) |
 | FND-004 | CD skeleton | Partial | Images build from compose; no deploy target defined |
 | FND-005 | Workspace schema | Done | migration 0001 |
-| FND-006 | Agent contract | Partial | `AgentSpec`, `config/agents/*.yaml`, `contracts/agent.schema.json`. Only `id`, `tools` and `prompt_version` are read at runtime; `skills`, `model_profile`, `policies` and `verification_required` are not enforced, and YAML skill names are not validated (review C1) → P4-X01, P4-X03 |
+| FND-006 | Agent contract | Partial | Declarative manifests now validate skills and enforce purposes, policies, budgets and tool gates (P4-X01, P4-X03). The legacy `AgentSpec` summary still needs reconciliation with the manifest; `knowledge` and `output_contract` remain unenforced |
 | FND-007 | Skill contract | Done | `SkillSpec`, `skills/registry.py` |
 | FND-008 | Tool contract | Done | `ToolSpec`, `tools/registry.py` |
 | FND-009 | Artifact model | Done | `artifact`, `artifact_version`, `lineage_edge` |
@@ -293,14 +293,14 @@ Both stay Not started and are scheduled after wave 3.
 | WSP-001..002 | Workspace create/update API | Done | |
 | WSP-003 | Member model | Done | roles owner/editor/analyst/approver/viewer |
 | WSP-004 | Source registration | Done | |
-| WSP-005 | Policy settings | Partial | stored, versioned, enforced (scope, gateway, approvals, budgets). `send_data_samples_to_models`, `allowed_providers`, `expensive_model_approval_usd` and `data_residency` are never read (review C3) → P4-C01 |
+| WSP-005 | Policy settings | Done | Stored, versioned and enforced for scope, gateway, approvals and budgets; the four model-policy fields are enforced and tested in P4-C01 |
 | WSP-006..007 | Artifact view, activity feed | Done | |
 | WSP-008 | Workspace UI | Done | `web/` |
 | CTX-001 | Context2AI client | Partial | Speculative REST adapter retired (P4-K09); Atlas reached through the `mcp` ContextProvider (`atlas__get_knowledge_context`), tested against a labelled MOCK fixture only |
 | CTX-002 | Semantic search | Done | pgvector + deterministic embeddings (ADR-0007) |
 | CTX-003 | Neo4j relationship adapter | Done | projection + neighborhood query |
 | CTX-004 | Business-term resolver | Done | glossary `mapped_columns` → scope columns |
-| CTX-005 | Context caching | Partial | LLM response cache added in increment 3; the Redis cache for Context2AI calls comes with the live adapter. Remaining: knowledge-version-aware keys (P4-T06) and compiled-context reuse (P4-K05) |
+| CTX-005 | Context caching | Partial | LLM response cache has knowledge-version-aware keys (P4-T06). Compiled-context reuse is still absent; the retired REST adapter is no longer a dependency (P4-K09) |
 | META-001 | PostgreSQL connector | Done | pushdown; integration-tested against compose Postgres |
 | META-002 | SQL Server connector | Partial | metadata + dialect + validator tested; never run against a live SQL Server (other databases: see P3-01) |
 | META-003 | CSV connector | Done | CSV/Parquet; Excel skipped when no engine installed |
@@ -308,12 +308,12 @@ Both stay Not started and are scheduled after wave 3.
 | META-005 | Metadata normalization | Done | `DiscoveredAsset/Column` |
 | META-006 | Source statistics | Done | row counts, freshness, profile stats |
 | TLR-001, TLR-003 | Tool registry, audit | Done | |
-| TLR-002 | Tool permission checks | Partial | Enforced in `ToolRuntime.invoke`, but skill SQL (`runtime/context.py:123`) and artifact writes bypass the tool gate; gateway scope checks still apply (review C6) → P4-C11 |
+| TLR-002 | Tool permission checks | Done | ToolRuntime, skill SQL and agent artifact writes pass the tool gate; workspace denylist coverage is tested in P4-C11 |
 | SKL-001 | Skill registry | Done | |
 | MOD-001 | Model router | Done | live OpenRouter verified |
 | MOD-002 | Provider fallback | Done | model fallback within profile; fail closed when none allowed |
 | MOD-003 | Token/cost accounting | Done | `model_call`, run totals, budgets |
-| MOD-004 | Prompt version registry | Partial | `agents/prompts.py`. The logged version is `<agent>.v1`, not the prompt actually sent (e.g. `semantic_modeling.v2` logged as `semantic.v1`) → P4-C06 |
+| MOD-004 | Prompt version registry | Done | Sent prompt name and text hash are logged and tested in P4-C06 |
 | QRY-001..005 | Gateway, read-only validation, timeout, row limit, audit | Done | 109-case validator security suite + live tests |
 | QRY-006 | Query cache | Done | Redis, key includes scope hash + source version |
 | QRY-007 | Dialect abstraction | Done | pushdown in postgres + tsql; every other kind staged and validated as postgres (ADR-0010) |
