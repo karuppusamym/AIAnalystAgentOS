@@ -1,0 +1,903 @@
+{
+  "run_id": "run_5ca93ef60bab",
+  "verified_findings": 6,
+  "attested_document": "---\nanalystos:\n  attestation:\n    approved_by: []\n    checks:\n    - check: method_fit\n      passed: true\n    - check: sample_size\n      passed: true\n    - check: significance_after_bh\n      passed: true\n    - check: effect_size\n      passed: true\n    - check: representative_population\n      passed: true\n    - check: no_overreach\n      passed: true\n    - check: reproducible_rerun\n      passed: true\n    - check: second_method\n      passed: true\n    confidence: 0.85\n    effect_size: 0.0735419095\n    method: rate_by_segment\n    params:\n      asset: src_src_2ade5ce430e0.incident\n      drivers: []\n      filters: []\n      method: rate_by_segment\n      min_group_size: 30\n      outcome:\n        column: made_sla\n        edges: null\n        end_column: null\n        end_hour: 18\n        grain: null\n        label: missed SLA\n        start_hour: 8\n        type: equals\n        value: false\n      segment:\n        column: category\n        edges: null\n        end_column: null\n        end_hour: 18\n        grain: null\n        label: category\n        start_hour: 8\n        type: column\n        value: null\n      time: null\n      top_k: 12\n    plan_hash: 1cedf431afdc3f847eeac2645986f76c396acb94905c7bf750bb4e0c9a58f28f\n    q_value: 0.0\n    queries:\n    - fingerprint: 9e89804e63f8b821a4601ea262527e92ca7c136d0d32ffe03107d7ebf6d3e2a1\n      query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n      query_id: qry_d640b2c2180e\n      result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n      role: primary\n      row_count: 5\n      source_id: src_2ade5ce430e0\n    - fingerprint: 9e89804e63f8b821a4601ea262527e92ca7c136d0d32ffe03107d7ebf6d3e2a1\n      query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n      query_id: qry_11e1b18698ec\n      result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n      role: verification\n      row_count: 5\n      source_id: src_2ade5ce430e0\n    query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n    result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n    run_id: run_5ca93ef60bab\n    spec_hash: 465e478fe560711cbd5984da9ee44396a1aa9dd350fc09e24ed35623fe3f07f0\n    statistics:\n      effect_label: cramers_v\n      effect_size: 0.0735419095\n      n: 20000\n      p_value: 0.0\n      q_value: 0.0\n      test: chi_square_independence\n    verified_by:\n    - at: '2026-09-26T00:16:08.015856Z'\n      basis: method_fit, sample_size, significance_after_bh, effect_size, representative_population, no_overreach, reproducible_rerun, second_method\n      by: process:analystos-rev\n  caveats:\n  - Association in historical data; not proof of causation.\n  computation:\n    effect_size:\n      label: cramers_v\n      value: 0.0735419095\n    insight_id: ins_f3d724298394\n    method: chi_square_independence\n    n: 20000\n    q_value: 0.0\n    queries:\n    - query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n      query_id: qry_d640b2c2180e\n      result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n    - query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n      query_id: qry_11e1b18698ec\n      result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n    query_hash: 6850afe363e644926f30ce80c09e1105d165466a24a5f2247d12e0d19ec85356\n    result_hash: 822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5\n    run_id: run_5ca93ef60bab\n    verified_by: process:analystos-rev\n  finding:\n    code: I-6\n    insight_id: ins_f3d724298394\n    run_id: run_5ca93ef60bab\n    workspace_id: ws_fad3e1ea9a0e\n  kind: attested_computation\n  origin: rev\n  trusted: false\nattester:\n  resource: analystos://rev/reproducible_rerun\ndescription: Records with category = network have a missed SLA rate of 19.3% versus 12.0% for category = hardware (1.6x).\nexecutor:\n  receipt:\n  - query_id\n  - executed_sql\n  - result_hash\n  resource: analystos://gateway/QueryGateway.execute\ngenerated:\n  at: '2026-09-26T00:16:08.015856Z'\n  by: process:analystos-rev\nparameters: []\nruntime: postgres\nsources:\n- id: query-qry_d640b2c2180e\n  resource: analystos://query/qry_d640b2c2180e\n  title: Governed query qry_d640b2c2180e (primary)\n- id: query-qry_11e1b18698ec\n  resource: analystos://query/qry_11e1b18698ec\n  title: Governed query qry_11e1b18698ec (verification)\n- id: asset-1\n  resource: analystos://asset/src_src_2ade5ce430e0.incident\n  title: src_src_2ade5ce430e0.incident\nstale_after: '2026-12-25T00:16:08.015856Z'\nstatus: draft\ntags:\n- attested-computation\n- finding\n- method-rate-by-segment\ntitle: Missed SLA concentrates in category = network\ntype: Attested Computation\nverified:\n- at: '2026-09-26T00:16:08.015856Z'\n  by: process:analystos-rev\n---\n\n# Claim\n\nRecords with category = network have a missed SLA rate of 19.3% versus 12.0% for category = hardware (1.6x).\n\n# Computation\n\nExecuted through the governed gateway (postgres); receipt: query `qry_d640b2c2180e`, result hash `822dd9cf4e29bd29c3c24409a926dbad2e626fa12981bcc7a76643ba247323f5`.\n\n```sql\nSELECT \"d\".\"segment\" AS \"segment\", COUNT(*) AS \"n_rows\", COUNT(\"d\".\"outcome\") AS \"n\", SUM(\"d\".\"outcome\") AS \"positives\" FROM (SELECT \"incident\".\"category\" AS \"segment\", CASE WHEN \"incident\".\"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"incident\".\"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"incident\".\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"outcome\" FROM \"src_src_2ade5ce430e0\".\"incident\" AS \"incident\") AS \"d\" GROUP BY \"d\".\"segment\" ORDER BY \"n_rows\" DESC NULLS LAST, \"segment\" LIMIT 1000\n```\n\n# Evidence\n\n- method: `rate_by_segment`, spec hash `465e478fe560711cbd5984da9ee44396a1aa9dd350fc09e24ed35623fe3f07f0`, plan hash `1cedf431afdc3f847eeac2645986f76c396acb94905c7bf750bb4e0c9a58f28f`\n- chi_square_independence: n=20000, p=0.0, q=0.0, cramers_v=0.0735419095\n- verified by: process:analystos-rev\n\n| check | passed |\n|---|---|\n| method_fit | True |\n| sample_size | True |\n| significance_after_bh | True |\n| effect_size | True |\n| representative_population | True |\n| no_overreach | True |\n| reproducible_rerun | True |\n| second_method | True |\n\n# Caveats\n\n- Association in historical data; not proof of causation.\n",
+  "contracts": [
+    {
+      "path": "contracts/aos-find-the-drivers-of-sla-breach-f60bab.odcs.yaml",
+      "version": "1.0.0"
+    }
+  ],
+  "contract": {
+    "apiVersion": "v3.2.0",
+    "kind": "DataContract",
+    "id": "bbcbc214-883e-5a87-9458-081543e3c290",
+    "version": "1.0.0",
+    "name": "aos_find_the_drivers_of_sla_breach_f60bab",
+    "status": "active",
+    "domain": "ws_fad3e1ea9a0e",
+    "tags": [
+      "analystos",
+      "preview"
+    ],
+    "description": {
+      "purpose": "Analytical dataset for: Find the drivers of SLA breaches in IT incidents",
+      "usage": "Read-only virtual dataset over one governed SELECT; its KPIs are the published measures.",
+      "limitations": "Values derive from the source assets listed in customProperties.sourceAssets at the time of the approved analysis run; restricted columns are excluded by governance review."
+    },
+    "schema": [
+      {
+        "id": "aos_find_the_drivers_of_sla_breach_f60bab",
+        "name": "aos_find_the_drivers_of_sla_breach_f60bab",
+        "physicalName": "aos_find_the_drivers_of_sla_breach_f60bab",
+        "physicalType": "view",
+        "logicalType": "object",
+        "properties": [
+          {
+            "id": "col_sys_id",
+            "name": "sys_id",
+            "physicalName": "sys_id",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_number",
+            "name": "number",
+            "physicalName": "number",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at",
+            "name": "opened_at",
+            "physicalName": "opened_at",
+            "logicalType": "timestamp",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "datetime",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_resolved_at",
+            "name": "resolved_at",
+            "physicalName": "resolved_at",
+            "logicalType": "timestamp",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "datetime",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_closed_at",
+            "name": "closed_at",
+            "physicalName": "closed_at",
+            "logicalType": "timestamp",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "datetime",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_priority",
+            "name": "priority",
+            "physicalName": "priority",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_impact",
+            "name": "impact",
+            "physicalName": "impact",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_urgency",
+            "name": "urgency",
+            "physicalName": "urgency",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_state",
+            "name": "state",
+            "physicalName": "state",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_category",
+            "name": "category",
+            "physicalName": "category",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_assignment_group",
+            "name": "assignment_group",
+            "physicalName": "assignment_group",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_assignment_group_name",
+            "name": "assignment_group_name",
+            "physicalName": "assignment_group_name",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_cmdb_ci",
+            "name": "cmdb_ci",
+            "physicalName": "cmdb_ci",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_cmdb_ci_name",
+            "name": "cmdb_ci_name",
+            "physicalName": "cmdb_ci_name",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_caused_by",
+            "name": "caused_by",
+            "physicalName": "caused_by",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_caused_by_name",
+            "name": "caused_by_name",
+            "physicalName": "caused_by_name",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "text",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_reassignment_count",
+            "name": "reassignment_count",
+            "physicalName": "reassignment_count",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_reopen_count",
+            "name": "reopen_count",
+            "physicalName": "reopen_count",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_made_sla",
+            "name": "made_sla",
+            "physicalName": "made_sla",
+            "logicalType": "boolean",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "boolean",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_contact_type",
+            "name": "contact_type",
+            "physicalName": "contact_type",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_short_description",
+            "name": "short_description",
+            "physicalName": "short_description",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_caller_id",
+            "name": "caller_id",
+            "physicalName": "caller_id",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "id",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_sys_updated_on",
+            "name": "sys_updated_on",
+            "physicalName": "sys_updated_on",
+            "logicalType": "timestamp",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "datetime",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at_to_resolved_at_hours",
+            "name": "opened_at_to_resolved_at_hours",
+            "physicalName": "opened_at_to_resolved_at_hours",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at_after_hours",
+            "name": "opened_at_after_hours",
+            "physicalName": "opened_at_after_hours",
+            "logicalType": "boolean",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "boolean",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_made_sla_is_false",
+            "name": "made_sla_is_false",
+            "physicalName": "made_sla_is_false",
+            "logicalType": "boolean",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "boolean",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_reassignment_count_bucket",
+            "name": "reassignment_count_bucket",
+            "physicalName": "reassignment_count_bucket",
+            "logicalType": "string",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "categorical",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at_month",
+            "name": "opened_at_month",
+            "physicalName": "opened_at_month",
+            "logicalType": "timestamp",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "datetime",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at_dow",
+            "name": "opened_at_dow",
+            "physicalName": "opened_at_dow",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "col_opened_at_hour",
+            "name": "opened_at_hour",
+            "physicalName": "opened_at_hour",
+            "logicalType": "number",
+            "semanticType": "column",
+            "customProperties": [
+              {
+                "property": "semanticType",
+                "value": "numeric",
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_median_opened_at_to_resolved_at_hours",
+            "name": "median_opened_at_to_resolved_at_hours",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Median resolution hours",
+            "transformLogic": "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"opened_at_to_resolved_at_hours\")",
+            "description": "Median resolution hours.",
+            "transformDescription": "Median resolution hours.",
+            "transformSourceObjects": [
+              "opened_at_to_resolved_at_hours"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "hours",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_avg_opened_at_after_hours",
+            "name": "avg_opened_at_after_hours",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Mean opened after hours",
+            "transformLogic": "AVG(\"opened_at_after_hours\")",
+            "description": "Average opened after hours (e.g. MTTR).",
+            "transformDescription": "Average opened after hours (e.g. MTTR).",
+            "transformSourceObjects": [
+              "opened_at_after_hours"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "hours",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_median_opened_at_after_hours",
+            "name": "median_opened_at_after_hours",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Median opened after hours",
+            "transformLogic": "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"opened_at_after_hours\")",
+            "description": "Median opened after hours.",
+            "transformDescription": "Median opened after hours.",
+            "transformSourceObjects": [
+              "opened_at_after_hours"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "hours",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_record_count",
+            "name": "record_count",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Record volume",
+            "transformLogic": "COUNT(*)",
+            "description": "Number of records in the analytical dataset.",
+            "transformDescription": "Number of records in the analytical dataset.",
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "number",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_avg_reassignment_count",
+            "name": "avg_reassignment_count",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Average reassignment count",
+            "transformLogic": "AVG(\"reassignment_count\")",
+            "description": "Average reassignment count per record.",
+            "transformDescription": "Average reassignment count per record.",
+            "transformSourceObjects": [
+              "reassignment_count"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "number",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_avg_reopen_count",
+            "name": "avg_reopen_count",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Average reopen count",
+            "transformLogic": "AVG(\"reopen_count\")",
+            "description": "Average reopen count per record.",
+            "transformDescription": "Average reopen count per record.",
+            "transformSourceObjects": [
+              "reopen_count"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "number",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          },
+          {
+            "id": "metric_avg_opened_at_to_resolved_at_hours",
+            "name": "avg_opened_at_to_resolved_at_hours",
+            "logicalType": "number",
+            "semanticType": "measure",
+            "businessName": "Mean resolution hours",
+            "transformLogic": "AVG(\"opened_at_to_resolved_at_hours\")",
+            "description": "Average resolution hours (e.g. MTTR).",
+            "transformDescription": "Average resolution hours (e.g. MTTR).",
+            "transformSourceObjects": [
+              "opened_at_to_resolved_at_hours"
+            ],
+            "customProperties": [
+              {
+                "property": "metricStatus",
+                "value": "validated",
+                "vendor": "analystos"
+              },
+              {
+                "property": "format",
+                "value": "hours",
+                "vendor": "analystos"
+              },
+              {
+                "property": "grain",
+                "value": "record",
+                "vendor": "analystos"
+              },
+              {
+                "property": "dimensions",
+                "value": [
+                  "category",
+                  "assignment_group_name",
+                  "cmdb_ci_name",
+                  "contact_type",
+                  "short_description",
+                  "reassignment_count_bucket"
+                ],
+                "vendor": "analystos"
+              }
+            ]
+          }
+        ],
+        "description": "Analytical dataset for: Find the drivers of SLA breaches in IT incidents",
+        "dataGranularityDescription": "One row per record of the governed query; time column opened_at_month",
+        "customProperties": [
+          {
+            "property": "sourceAssets",
+            "value": [
+              "src_src_2ade5ce430e0.change_request",
+              "src_src_2ade5ce430e0.incident"
+            ],
+            "vendor": "analystos"
+          },
+          {
+            "property": "querySql",
+            "value": "SELECT t.\"sys_id\", t.\"number\", t.\"opened_at\", t.\"resolved_at\", t.\"closed_at\", t.\"priority\", t.\"impact\", t.\"urgency\", t.\"state\", t.\"category\", t.\"assignment_group\", t.\"assignment_group_name\", t.\"cmdb_ci\", t.\"cmdb_ci_name\", t.\"caused_by\", t.\"caused_by_name\", t.\"reassignment_count\", t.\"reopen_count\", t.\"made_sla\", t.\"contact_type\", t.\"short_description\", t.\"caller_id\", t.\"sys_updated_on\", CAST((EXTRACT(EPOCH FROM CAST(\"t\".\"resolved_at\" AS TIMESTAMP)) - EXTRACT(EPOCH FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP))) AS DOUBLE PRECISION) / 3600.0 AS \"opened_at_to_resolved_at_hours\", CASE WHEN \"t\".\"opened_at\" IS NULL THEN NULL WHEN EXTRACT(HOUR FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP)) < 8 OR EXTRACT(HOUR FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP)) >= 18 OR EXTRACT(DOW FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP)) IN (0, 6) THEN 1 ELSE 0 END AS \"opened_at_after_hours\", CASE WHEN \"t\".\"made_sla\" IS NULL THEN NULL WHEN CASE WHEN \"t\".\"made_sla\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"t\".\"made_sla\" AS VARCHAR))) IN ('true', 't', '1', 'yes', 'y') THEN 1 ELSE 0 END = 0 THEN 1 ELSE 0 END AS \"made_sla_is_false\", CASE WHEN \"t\".\"reassignment_count\" IS NULL THEN NULL WHEN \"t\".\"reassignment_count\" < 0.0 THEN '(<0)' WHEN \"t\".\"reassignment_count\" < 1.0 THEN '0' WHEN \"t\".\"reassignment_count\" < 2.0 THEN '1' WHEN \"t\".\"reassignment_count\" < 3.0 THEN '2' ELSE '3+' END AS \"reassignment_count_bucket\", DATE_TRUNC('MONTH', CAST(\"t\".\"opened_at\" AS TIMESTAMP)) AS \"opened_at_month\", EXTRACT(DOW FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP)) AS \"opened_at_dow\", EXTRACT(HOUR FROM CAST(\"t\".\"opened_at\" AS TIMESTAMP)) AS \"opened_at_hour\" FROM src_src_2ade5ce430e0.incident AS t",
+            "vendor": "analystos"
+          },
+          {
+            "property": "timeColumn",
+            "value": "opened_at_month",
+            "vendor": "analystos"
+          }
+        ]
+      }
+    ],
+    "customProperties": [
+      {
+        "property": "workspaceId",
+        "value": "ws_fad3e1ea9a0e",
+        "vendor": "analystos"
+      },
+      {
+        "property": "runId",
+        "value": "run_5ca93ef60bab",
+        "vendor": "analystos"
+      },
+      {
+        "property": "publishedTo",
+        "value": "preview",
+        "vendor": "analystos"
+      },
+      {
+        "property": "externalId",
+        "value": "preview:ws_fad3e1ea9a0e:dataset:aos_find_the_drivers_of_sla_breach_f60bab",
+        "vendor": "analystos"
+      },
+      {
+        "property": "bundleHash",
+        "value": "388e82bb439c764720ed66361d54834007da21d20884075b5877447d2eb45fee",
+        "vendor": "analystos"
+      }
+    ],
+    "contractCreatedTs": "2026-09-26T00:16:11.097339+00:00"
+  },
+  "queries": 86,
+  "openlineage_events": 172,
+  "openlineage_sample": [
+    {
+      "eventType": "START",
+      "eventTime": "2026-09-26T00:15:58.082873+00:00",
+      "producer": "https://github.com/context2ai/analystos",
+      "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+      "run": {
+        "runId": "f178bc9f-339f-53b7-afc8-91caa2d87b81",
+        "facets": {
+          "parent": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-2-0/ParentRunFacet.json#/$defs/ParentRunFacet",
+            "run": {
+              "runId": "38f1bba8-184a-51cb-b98b-d2a99b8f98fe"
+            },
+            "job": {
+              "namespace": "analystos:ws_fad3e1ea9a0e",
+              "name": "analysis_run.run_5ca93ef60bab"
+            }
+          }
+        }
+      },
+      "job": {
+        "namespace": "analystos:ws_fad3e1ea9a0e",
+        "name": "query.5ad21ddb82a50994",
+        "facets": {
+          "jobType": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/2-0-4/JobTypeJobFacet.json#/$defs/JobTypeJobFacet",
+            "processingType": "BATCH",
+            "integration": "ANALYSTOS",
+            "jobType": "QUERY"
+          },
+          "sql": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-1-0/SQLJobFacet.json#/$defs/SQLJobFacet",
+            "query": "SELECT COUNT(*) AS \"n\" FROM \"src_src_2ade5ce430e0\".\"change_request\" AS \"change_request\" LIMIT 50001",
+            "dialect": "postgres"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "analystos://source/src_2ade5ce430e0",
+          "name": "src_src_2ade5ce430e0.change_request",
+          "facets": {}
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "eventType": "COMPLETE",
+      "eventTime": "2026-09-26T00:15:58.115873+00:00",
+      "producer": "https://github.com/context2ai/analystos",
+      "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent",
+      "run": {
+        "runId": "f178bc9f-339f-53b7-afc8-91caa2d87b81",
+        "facets": {
+          "parent": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-2-0/ParentRunFacet.json#/$defs/ParentRunFacet",
+            "run": {
+              "runId": "38f1bba8-184a-51cb-b98b-d2a99b8f98fe"
+            },
+            "job": {
+              "namespace": "analystos:ws_fad3e1ea9a0e",
+              "name": "analysis_run.run_5ca93ef60bab"
+            }
+          }
+        }
+      },
+      "job": {
+        "namespace": "analystos:ws_fad3e1ea9a0e",
+        "name": "query.5ad21ddb82a50994",
+        "facets": {
+          "jobType": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/2-0-4/JobTypeJobFacet.json#/$defs/JobTypeJobFacet",
+            "processingType": "BATCH",
+            "integration": "ANALYSTOS",
+            "jobType": "QUERY"
+          },
+          "sql": {
+            "_producer": "https://github.com/context2ai/analystos",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-1-0/SQLJobFacet.json#/$defs/SQLJobFacet",
+            "query": "SELECT COUNT(*) AS \"n\" FROM \"src_src_2ade5ce430e0\".\"change_request\" AS \"change_request\" LIMIT 50001",
+            "dialect": "postgres"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "namespace": "analystos://source/src_2ade5ce430e0",
+          "name": "src_src_2ade5ce430e0.change_request",
+          "facets": {}
+        }
+      ],
+      "outputs": []
+    }
+  ]
+}

@@ -21,6 +21,8 @@ EVENT_TYPES = {
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
     # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches
     "knowledge.suggestion_proposed", "knowledge.suggestions_reviewed",
+    # Crawler sources and facet-level failure (P4-K06)
+    "crawl.facet_failed", "knowledge.ingested",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

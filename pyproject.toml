@@ -55,6 +55,8 @@ mcp = ["mcp>=2.2"]
 dbt = ["dbt-core>=1.12,<1.13", "dbt-postgres>=1.9"]
 # Local sentence-transformer embeddings for the knowledge index (P4-K10). Optional: hashing is the fallback.
 embeddings = ["sentence-transformers>=3.0"]
+# PDF text for knowledge document uploads (P4-K06). Optional: a built-in extractor reads simple-font PDFs.
+documents = ["pypdf>=5.0"]
 # Source drivers (config/source_kinds.yaml names the extra each kind needs).
 mysql = ["pymysql>=1.1"]
 oracle = ["oracledb>=2.0"]

@@ -16,8 +16,11 @@ Stages, each recorded on the crawl_run so the UI can show progress and a failed 
 9. enrich       optional: the model fills descriptions only where rules were not confident, in
                 screened, compact batches (crawl.llm_enrichment + purpose mode). Every avoided call
                 is accounted as tokens saved.
-10. publish     context-store entries (vector search) and the optional Neo4j projection
+10. publish     OKF documents in the workspace pack (tables, the source; P4-K06), value-free query-history
+                patterns (skills/query_history), and the optional Neo4j projection
 
+Stages 5b-10 are facets (services/facets.py): one failing (a refused permission, an unreachable
+endpoint) is recorded in stats.facets and the crawl goes on; only connect/discover/diff/apply are fatal.
 Everything that touches data goes through QueryGateway with the caller's resolved scope; the
 crawler never opens a source connection except the connector's metadata/discovery calls.
 """
@@ -255,16 +258,24 @@ class _Crawl:
         # 3b. staged sources: the gateway queries the snapshot, so a structural change in the origin
         # must reach the snapshot before anything (profiling, analyses) reads the new column list.
         self._restage(connector, by_key, ids, [c.key for c in diff.changed])
+        # From here on every stage is a facet (P4-K06): a refused permission or an unreachable
+        # endpoint costs that facet, recorded in stats.facets, never the crawl.
+        from analystos.services.facets import Facets
+
+        facets = Facets(on_failure=self._facet_failed)
         # 5b. value-sampled PII + 6. profile, both through the gateway, selected assets only
-        self._governed_passes(ids, touched)
+        facets.run("profile", self._governed_passes, ids, touched)
         # 7. declared relationships
-        self._relationships(by_key, ids)
+        facets.run("relationships", self._relationships, by_key, ids)
         # 8. glossary
-        self._glossary(ids)
+        facets.run("glossary", self._glossary, ids)
         # 9. optional model enrichment
-        self._enrich(ids, touched)
-        # 10. context store + graph
-        self._publish(ids, touched)
+        facets.run("enrich", self._enrich, ids, touched)
+        # 10. knowledge pack documents (tables, source), value-free query history, graph projection
+        facets.run("knowledge", self._knowledge, ids)
+        facets.run("query_history", self._query_history)
+        facets.run("graph", self._graph)
+        self.stats.update(facets=facets.as_dict(), failed_facets=facets.failed)
         changes = {"new": diff.new, "changed": [c.model_dump() for c in diff.changed], "missing": diff.missing,
                    "deprecated": diff.deprecated, "rename_candidates": [r.model_dump() for r in diff.rename_candidates]}
         with session_scope() as s:
@@ -285,8 +296,17 @@ class _Crawl:
                                                           "renamed": [r.model_dump() for r in diff.rename_candidates]},
                      actor=self.run.started_by, session=s)
                 self._notify_selected_changes(s, diff, rows_by_key)
-        self.log.stage("publish", "crawl completed", stats=self.stats)
+        self.log.stage("publish", "crawl completed" + (f"; failed facets: {', '.join(facets.failed)}" if facets.failed else ""),
+                       stats=self.stats)
         return {"stats": self.stats, "changes": changes}
+
+    def _facet_failed(self, name: str, entry: dict[str, Any]) -> None:
+        self.log.stage(name, f"facet {name} failed ({entry['code']}): {entry['error'][:300]}; the crawl continues",
+                       facet=name, failure=entry)
+        with session_scope() as s:
+            emit(self.source.workspace_id, "crawl.facet_failed",
+                 {"crawl_id": self.run.id, "source_id": self.source.id, "facet": name, "code": entry["code"],
+                  "error": entry["error"][:300]}, actor=self.run.started_by, session=s)
 
     # -------------------------------------------------------------- 2. previous state
     def _previous(self, assets: list[DiscoveredAsset]) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -682,30 +702,64 @@ class _Crawl:
                 n += 1
         return n
 
-    # -------------------------------------------------------------- 10. publish
-    def _publish(self, ids: dict[str, str], touched: set[str]) -> None:
-        from analystos.context.service import add_entry
-        from analystos.graph.projection import project_workspace
+    # -------------------------------------------------------------- 10. knowledge pack, query history, graph
+    def _knowledge(self, ids: dict[str, str]) -> dict[str, Any]:
+        """Tables and the source as OKF documents in the workspace pack (spec v3 §6.1/§6.3). They replace
+        the crawler's old `context_entry` table rows; curated documents are kept, tags only tighten."""
+        from analystos.knowledge import crawl_docs
+        from analystos.knowledge.drafts import write_drafts
 
         ws = self.source.workspace_id
-        n = 0
+        docs: dict[str, str] = {}
+        fqs = []
         with session_scope() as s:
-            for key in touched:
-                a = s.get(SourceAsset, ids[key])
+            for asset_id in ids.values():
+                a = s.get(SourceAsset, asset_id)
                 fq = f"{a.schema_name}.{a.name}"
-                s.execute(delete(ContextEntry).where(ContextEntry.workspace_id == ws, ContextEntry.kind == "table",
-                                                     ContextEntry.name == fq))
-                cols = list(s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal)))
-                sem = a.semantics or {}
-                body = (f"{a.business_name or a.name}: {a.description or ''} Role {sem.get('role')}, domain {sem.get('domain')}, "
-                        f"grain {sem.get('grain')}. Columns: " + ", ".join(c.business_name or c.name for c in cols[:40]))
-                add_entry(s, workspace_id=ws, kind="table", name=fq, body=body[:4000], synonyms=[a.business_name] if a.business_name else [],
-                          mapped_columns=[f"{fq}.{c.name}" for c in cols[:40]], origin="crawler",
-                          trusted=a.reviewed or a.description_origin in ("user", "rule"))
-                n += 1
-            graph = project_workspace(s, ws)
-        self.stats.update(context_entries=n, graph=graph.get("ok"))
-        self.log.stage("publish", f"{n} context entries refreshed; graph projection {'ok' if graph.get('ok') else 'skipped'}")
+                fqs.append(fq)
+                cols = [{"name": c.name, "data_type": c.data_type, "business_name": c.business_name, "description": c.description,
+                         "tags": list(c.tags or [])}
+                        for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))]
+                docs.update(crawl_docs.table_documents(
+                    {"id": a.id, "schema_name": a.schema_name, "name": a.name, "business_name": a.business_name,
+                     "description": a.description, "reviewed": a.reviewed, "description_origin": a.description_origin,
+                     "semantics": a.semantics, "lifecycle": a.lifecycle, "kind": a.kind, "fingerprint": a.fingerprint},
+                    cols, source_id=self.source.id, source_name=self.source.name))
+            deprecated = [f"{a.schema_name}.{a.name}" for a in s.scalars(select(SourceAsset).where(
+                SourceAsset.source_id == self.source.id, SourceAsset.lifecycle == "deprecated"))]
+            docs[crawl_docs.source_path(self.source.id)] = crawl_docs.source_document(
+                {"id": self.source.id, "name": self.source.name, "kind": self.source.kind,
+                 "execution_mode": self.source.execution_mode}, fqs, deprecated=deprecated)
+            report = write_drafts(s, ws, docs, author=crawl_docs.CRAWLER_ACTOR, reason=f"crawl {self.run.id}",
+                                  origin="crawler", meta={"crawl_id": self.run.id, "source_id": self.source.id})
+            # The pack is now the system of record for crawled tables (the index serves retrieval).
+            s.execute(delete(ContextEntry).where(ContextEntry.workspace_id == ws, ContextEntry.kind == "table",
+                                                 ContextEntry.origin == "crawler", ContextEntry.name.in_(fqs)))
+        self.stats.update(knowledge_documents=len(report.written), knowledge_kept_curated=len(report.kept_curated),
+                          knowledge_revision=report.revision)
+        self.log.stage("publish", f"{len(report.written)} knowledge documents written ({len(report.unchanged)} unchanged, "
+                       f"{len(report.kept_curated)} curated kept)", revision=report.revision)
+        return {"count": len(report.written)}
+
+    def _query_history(self) -> dict[str, Any]:
+        """Value-free patterns mined from this source's governed query audit (P4-K06)."""
+        from analystos.knowledge.crawl_docs import CRAWLER_ACTOR
+        from analystos.services.knowledge_ingest import mine_query_history
+
+        with session_scope() as s:
+            out = mine_query_history(s, self.source.workspace_id, source_ids=[self.source.id], author=CRAWLER_ACTOR)
+        self.stats["query_history_statements"] = out["statements"]
+        self.log.stage("publish", f"query history: {out['statements']} audited statements mined (structure only)")
+        return {"count": out["statements"]}
+
+    def _graph(self) -> dict[str, Any]:
+        from analystos.graph.projection import project_workspace
+
+        with session_scope() as s:
+            graph = project_workspace(s, self.source.workspace_id)
+        self.stats["graph"] = graph.get("ok")
+        self.log.stage("publish", f"graph projection {'ok' if graph.get('ok') else 'skipped'}")
+        return {}
 
     def _notify_selected_changes(self, s: Session, diff: cat.CrawlDiff, rows_by_key: dict[str, str]) -> None:
         from analystos.services.notifications import notify

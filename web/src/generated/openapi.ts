@@ -954,6 +954,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/insights/{insight_id}/attested": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Attested
+         * @description The verified finding as an OKF v0.2 Attested Computation (document text and frontmatter).
+         */
+        get: operations["attested_api_insights__insight_id__attested_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/insights/{insight_id}/outcome": {
         parameters: {
             query?: never;
@@ -1438,6 +1458,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/analysis/{run_id}/findings/attest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attest Run Findings
+         * @description Write the run's verified findings into the workspace pack as draft Attested Computations.
+         */
+        post: operations["attest_run_findings_api_workspaces__workspace_id__analysis__run_id__findings_attest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/analysis/{run_id}/openlineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Openlineage
+         * @description OpenLineage RunEvents (START and COMPLETE/FAIL) for every governed query of the run.
+         */
+        get: operations["run_openlineage_api_workspaces__workspace_id__analysis__run_id__openlineage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/analysis/{run_id}/pause": {
         parameters: {
             query?: never;
@@ -1688,6 +1748,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Data Contracts
+         * @description The ODCS v3.2 contracts of the workspace's published datasets (from its knowledge pack).
+         */
+        get: operations["data_contracts_api_workspaces__workspace_id__contracts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/crawls": {
         parameters: {
             query?: never;
@@ -1774,6 +1854,87 @@ export interface paths {
          *     knowledge (the catalog section is left out: it depends on a run's scope). No model is called.
          */
         post: operations["preview_context_api_workspaces__workspace_id__knowledge_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/crawl/dbt-manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Crawl Dbt Manifest
+         * @description Ingest a dbt manifest.json (v12+): model and source documents, tests, lineage, catalog descriptions.
+         */
+        post: operations["crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/crawl/query-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Crawl Query History
+         * @description Mine the workspace's governed query audit for join paths, columns, filters and groupings
+         *     (structure only, never values) into the knowledge pack.
+         */
+        post: operations["crawl_query_history_api_workspaces__workspace_id__knowledge_crawl_query_history_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/crawl/superset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Crawl Superset
+         * @description Read Superset datasets, charts and dashboards (GET only) into the knowledge pack.
+         */
+        post: operations["crawl_superset_api_workspaces__workspace_id__knowledge_crawl_superset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Knowledge Document
+         * @description Upload a Markdown, text or PDF document; it becomes draft knowledge sections for review.
+         */
+        post: operations["upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2560,6 +2721,11 @@ export interface components {
              */
             note?: string;
         };
+        /** Body_crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post */
+        Body_crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post: {
+            /** File */
+            file: string;
+        };
         /** Body_import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post */
         Body_import_ossie_api_workspaces__workspace_id__semantic_import_ossie_post: {
             /** Document */
@@ -2567,6 +2733,11 @@ export interface components {
         };
         /** Body_upload_api_workspaces__workspace_id__uploads_post */
         Body_upload_api_workspaces__workspace_id__uploads_post: {
+            /** File */
+            file: string;
+        };
+        /** Body_upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post */
+        Body_upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post: {
             /** File */
             file: string;
         };
@@ -2866,6 +3037,11 @@ export interface components {
             /** Question */
             question?: string | null;
         };
+        /** QueryHistoryIn */
+        QueryHistoryIn: {
+            /** Source Ids */
+            source_ids?: string[] | null;
+        };
         /** ReadIn */
         ReadIn: {
             /** Ids */
@@ -3037,6 +3213,11 @@ export interface components {
             max_rows?: number | null;
             /** Sql */
             sql: string;
+        };
+        /** SupersetCrawlIn */
+        SupersetCrawlIn: {
+            /** Include */
+            include?: string[] | null;
         };
         /** TagsIn */
         TagsIn: {
@@ -5101,6 +5282,40 @@ export interface operations {
             };
         };
     };
+    attested_api_insights__insight_id__attested_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                insight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     finding_outcome_api_insights__insight_id__outcome_post: {
         parameters: {
             query?: never;
@@ -6301,6 +6516,76 @@ export interface operations {
             };
         };
     };
+    attest_run_findings_api_workspaces__workspace_id__analysis__run_id__findings_attest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_openlineage_api_workspaces__workspace_id__analysis__run_id__openlineage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     pause_api_workspaces__workspace_id__analysis__run_id__pause_post: {
         parameters: {
             query?: never;
@@ -6960,6 +7245,40 @@ export interface operations {
             };
         };
     };
+    data_contracts_api_workspaces__workspace_id__contracts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_crawls_api_workspaces__workspace_id__crawls_get: {
         parameters: {
             query?: {
@@ -7122,6 +7441,158 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ContextPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crawl_query_history_api_workspaces__workspace_id__knowledge_crawl_query_history_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryHistoryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crawl_superset_api_workspaces__workspace_id__knowledge_crawl_superset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupersetCrawlIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_knowledge_document_api_workspaces__workspace_id__knowledge_documents_post"];
             };
         };
         responses: {

@@ -1,0 +1,13 @@
+# `dbt parse` only: no connection is opened, the credentials are placeholders.
+incidents:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: parse_only
+      password: parse_only
+      dbname: analytics
+      schema: mart
+      threads: 1

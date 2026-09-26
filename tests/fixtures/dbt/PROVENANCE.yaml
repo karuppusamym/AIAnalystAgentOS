@@ -1,0 +1,10 @@
+# dbt manifest fixture for the crawler's dbt ingestion (P4-K06). Not hand-written.
+manifest_v12_incidents.json:
+  produced_by: dbt-core 1.12.5 + dbt-postgres 1.11.0, `dbt parse --no-partial-parse`, 2026-09-25
+  inputs: k06_project/ (regenerate with `DBT_PROFILES_DIR=. dbt parse --no-partial-parse` inside a copy of it;
+    parse opens no connection, the profile's credentials are placeholders)
+  schema: https://schemas.getdbt.com/dbt/manifest/v12.json
+  modifications: >
+    `macros` and `docs` emptied (dbt's built-in macro bodies, 527 KB, carry nothing the crawler reads) and the
+    JSON re-serialized with sorted keys and indent 1. Every node, source, test, parent_map and child_map entry
+    is dbt's own output.
