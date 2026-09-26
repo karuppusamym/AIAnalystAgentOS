@@ -153,6 +153,15 @@ class Settings(BaseSettings):
     servicenow_mock_url: str = "http://localhost:8090"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    # Outbound HTTP (P7-11, tools/http.py). HTTP tool capabilities may call only these hostnames
+    # (comma-separated; empty = none). Every outbound call (HTTP tools and MCP servers) is refused when
+    # the host resolves to a non-public address, unless the operator lists that hostname or network
+    # (CIDR) here -- e.g. "127.0.0.1,mcp.internal,10.20.0.0/16" for internal MCP servers.
+    http_tool_allowlist: str = ""
+    outbound_private_hosts: str = ""
+    http_tool_timeout_seconds: float = 30.0
+    http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

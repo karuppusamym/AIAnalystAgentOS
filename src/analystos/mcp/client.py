@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import ipaddress
 import re
 import threading
 import time
@@ -53,6 +54,7 @@ from analystos.governance.approvals import consume, request_approval, verify_for
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate, get_workspace, load_policy, member_role, require_role
 from analystos.skills.catalog import has_injection, screen_text
+from analystos.tools import http as outbound
 
 SERVER_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 SIDE_EFFECTS = tuple(SIDE_EFFECT_ORDER)
@@ -92,6 +94,12 @@ def _run_async(factory: Callable[[], Awaitable[T]]) -> T:
     return box["value"]
 
 
+def _private_hosts() -> list[str]:
+    from analystos.core.config import get_settings
+
+    return outbound.split_hosts(get_settings().outbound_private_hosts)
+
+
 def _bearer(server: McpServer) -> dict[str, str]:
     from analystos.connectors.secrets import resolve_secret
 
@@ -105,8 +113,12 @@ async def _with_client(server: McpServer, fn: Callable[[Any], Awaitable[T]]) -> 
     from mcp.client.streamable_http import streamable_http_client
 
     timeout = float((server.config or {}).get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
-    async with (httpx2.AsyncClient(headers=_bearer(server), timeout=httpx2.Timeout(timeout),
-                                   follow_redirects=False) as http,
+    # P7-11: the owner's `allowed` flag is this server's allowlist; the address must still be public
+    # (or listed by the operator), and every request goes to the address vetted here (no rebinding,
+    # no redirects, no environment proxies).
+    target = outbound.pin(server.url, allowlist=None, private_hosts=_private_hosts())
+    async with (httpx2.AsyncClient(headers=_bearer(server), timeout=httpx2.Timeout(timeout), follow_redirects=False,
+                                   trust_env=False, transport=outbound.pinned_async_transport(target, httpx2)) as http,
                 Client(streamable_http_client(server.url, http_client=http), read_timeout_seconds=timeout,
                        cache=None) as client):
         return await fn(client)
@@ -263,6 +275,14 @@ def _validate_url(url: str) -> str:
         raise InvalidInput("MCP server url must be an http(s) URL")
     if parts.username or parts.password:
         raise InvalidInput("put credentials in secret_ref (env:NAME or file:/path), never in the url")
+    try:  # an address literal is checked now; a hostname is resolved and checked on every call
+        literal = ipaddress.ip_address(parts.hostname.strip("[]"))
+    except ValueError:
+        literal = None
+    if literal is not None and not outbound.address_is_public(literal) and \
+            not outbound.private_allowed(parts.hostname, literal, _private_hosts()):
+        raise InvalidInput(f"MCP server address {literal} is not public; an operator must list it in "
+                           "outbound_private_hosts to allow it")
     return url.strip()
 
 
