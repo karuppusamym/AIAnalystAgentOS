@@ -43,7 +43,7 @@ JOB_KINDS: tuple[JobKind, ...] = (
             ("playbook.investigate",), "analyst", COMMON + ("grain", "key_uniqueness", "join_fanout", "missingness"),
             ("freshness", "coverage")),
     JobKind("compare", "Compare", "compare", {"type": "work_order", "payload_type": "analysis"},
-            ("method.rate_by_segment", "method.numeric_by_segment"), "analyst",
+            ("Method[segment]",), "analyst",
             COMMON + ("grain", "join_fanout", "missingness"), ("freshness", "key_uniqueness", "coverage")),
     JobKind("forecast", "Forecast", "forecast", {"type": "work_order", "payload_type": "ml"},
             ("playbook.forecast*", "method.forecast*"), "analyst",
@@ -87,6 +87,15 @@ def executor_reason(job: JobKind) -> dict[str, str] | None:
     return None
 
 
+def _matching(snapshot: Any, pattern: str) -> list[Any]:
+    """`Kind[tag]` selects every manifest of that kind carrying the tag (so a new segment method counts
+    without a change here); anything else is an id glob."""
+    if pattern.endswith("]") and "[" in pattern:
+        kind, _, tag = pattern[:-1].partition("[")
+        return [m for m in snapshot.list(kind) if tag in (m.tags or [])]
+    return [m for m in snapshot.list() if fnmatch.fnmatchcase(m.id, pattern)]
+
+
 def _method_reason(m: Any) -> str | None:
     """Analysis methods are the closed vocabulary every `AnalysisSpec` is validated against (methods/registry);
     runs use them without a per-workspace switch, so only installation and deprecation decide here."""
@@ -105,7 +114,7 @@ def capability_state(job: JobKind, snapshot: Any, explicit: dict[str, bool]) -> 
 
     if not job.capabilities:
         return [], []
-    found = [m for pattern in job.capabilities for m in snapshot.list() if fnmatch.fnmatchcase(m.id, pattern)]
+    found = [m for pattern in job.capabilities for m in _matching(snapshot, pattern)]
     if not found:
         return [], [_reason("not_registered", f"no capability for {job.label} is registered ({', '.join(job.capabilities)})",
                             "Install or enable a pack that provides it; an administrator reloads the capability registry.")]
