@@ -124,6 +124,12 @@ def test_dag_shape_is_checked():
     assert any("only row gates" in p for p in _problems(spec))
 
 
+def test_column_names_may_not_use_the_reserved_aos_namespace():
+    spec = recipe()
+    _node(spec, "renamed_customers")["mapping"]["region"] = "aos_gate_0"  # would collide with a gate flag
+    assert any("'aos_gate_0' is not a valid column name" in p for p in _problems(spec))
+
+
 def test_a_declared_intermediate_schema_is_checked():
     spec = recipe()
     _node(spec, "renamed_customers")["schema"] = [{"name": "customer_id", "type": "integer"}]

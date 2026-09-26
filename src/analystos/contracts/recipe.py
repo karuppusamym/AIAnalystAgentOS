@@ -33,7 +33,8 @@ from analystos.core.errors import InvalidInput
 from analystos.core.ids import stable_hash
 
 IR_DIALECT = ""  # sqlglot's own dialect: typed division, standard CAST; compilers transpile from it
-_IDENT = re.compile(r"^[a-z][a-z0-9_]{0,55}$")
+_IDENT = re.compile(r"^[a-z][a-z0-9_]{0,55}$")  # recipe names and node ids
+_COLUMN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _ASSET = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
 RESERVED_PREFIXES = ("aos_", "__")  # compiler-internal columns (row numbers, gate flags)
 
@@ -481,7 +482,7 @@ def check_expr(tree: exp.Expression, cols: dict[str, str], where: str) -> list[s
 
 
 def _ident(name: str, where: str, problems: list[str]) -> None:
-    if not isinstance(name, str) or not _IDENT.match(name) or name.startswith(RESERVED_PREFIXES):
+    if not isinstance(name, str) or not _COLUMN.match(name) or name.startswith(RESERVED_PREFIXES):
         problems.append(f"{where}: {name!r} is not a valid column name ([a-z][a-z0-9_]*, not aos_*)")
 
 
@@ -756,6 +757,8 @@ def _derive(node: Any, schemas: dict[str, list[Column]], exprs: dict, where: str
             problems.append(f"{where}: an output declares its schema")
             return list(schemas[node.input])
         declared = {c.name: c.type for c in node.output_schema}
+        for name in declared:  # gate flags and quarantine bookkeeping use the aos_ namespace
+            _ident(name, f"{where} column", problems)
         for name, t in declared.items():
             if name not in cols:
                 problems.append(f"{where}: declared column {name} does not exist in {node.input}")
