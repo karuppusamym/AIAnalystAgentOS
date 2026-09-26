@@ -22,10 +22,14 @@ def api(control_db):
 
 
 def _statements(fn) -> int:
+    """Statements about workspaces while `fn` runs. The listener is process-wide, so work other tests
+    left running (pumps, executors, settings reads) is excluded by only counting statements that
+    touch a workspace; the regression this guards (a count query per workspace) always does."""
     n = {"count": 0}
 
-    def listen(*_a, **_k):
-        n["count"] += 1
+    def listen(_conn, _cursor, statement, *_a, **_k):
+        if "workspace" in statement.lower():
+            n["count"] += 1
     event.listen(Engine, "before_cursor_execute", listen)
     try:
         fn()
