@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}
+POOL_ENV = ("ANALYSTOS_DB_", "ANALYSTOS_ANALYTICS_POOL_", "ANALYSTOS_ANALYTICS_MAX_OVERFLOW", "ANALYSTOS_LOADER_")
 OBJECTIVE = "Find the drivers of SLA breaches in IT incidents"
 
 
@@ -82,7 +83,14 @@ def follow(run_ids: list[str], deadline: float, on_tick=None) -> tuple[dict, int
     peak, timeline = 0, []
     t0 = time.time()
     while True:
-        st = statuses(run_ids)
+        try:
+            st = statuses(run_ids)
+        except Exception as exc:  # the observer shares the pooler: a refused poll is a sample lost, not the end
+            print(f"  status poll failed: {type(exc).__name__}", flush=True)
+            if time.time() > deadline:
+                raise
+            time.sleep(2.0)
+            continue
         running = sum(1 for v in st.values() if v[0] == "RUNNING")
         done = sum(1 for v in st.values() if v[0] in TERMINAL)
         waiting = sum(1 for v in st.values() if v[0] == "WAITING_USER")
@@ -117,6 +125,10 @@ def main() -> int:
 
     plane = harness.configure(args.suffix)
     import os
+    import signal
+
+    # A SIGTERM (e.g. `timeout`) unwinds through `finally`: workers and their pools stopped, plane dropped.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
     os.environ["ANALYSTOS_ORCHESTRATOR"] = "temporal"
     plane.env["ANALYSTOS_ORCHESTRATOR"] = "temporal"
@@ -125,15 +137,17 @@ def main() -> int:
     snow, snow_url = harness.start_mock_servicenow()
     workers: list[subprocess.Popen] = []
     result: dict = {"started_at": started_at.isoformat(), "target": "50 concurrent runs on a four-node worker deployment",
-                    "runs": args.runs, "workers": args.workers, "deadline_s": args.deadline, "task_queue_prefix": plane.queue_prefix}
+                    "runs": args.runs, "workers": args.workers, "deadline_s": args.deadline, "task_queue_prefix": plane.queue_prefix,
+                    "pooling": {"app_hostport": harness.APP_HOSTPORT, "direct_hostport": harness.PG_HOSTPORT,
+                                "settings": {k: v for k, v in sorted(os.environ.items()) if k.startswith(POOL_ENV)}}}
     try:
         admin, ws_id, staging_s = setup_world(snow_url)
         result["staging_seconds"] = staging_s
         logs = []
         for i in range(args.workers):
             logs.append(tempfile.NamedTemporaryFile(prefix=f"aosload-worker{i}-", suffix=".log", delete=False))  # noqa: SIM115 (the worker writes it)
-            workers.append(subprocess.Popen([sys.executable, "-m", "analystos.cli", "worker"], env=plane.env, cwd=harness.ROOT,
-                                            stdout=logs[-1], stderr=subprocess.STDOUT))
+            workers.append(harness.spawn([sys.executable, "-m", "analystos.cli", "worker"], plane,
+                                         stdout=logs[-1], stderr=subprocess.STDOUT))
         result["worker_logs"] = [f.name for f in logs]
         time.sleep(5)
         if any(w.poll() is not None for w in workers):

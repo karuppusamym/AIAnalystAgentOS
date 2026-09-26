@@ -16,6 +16,20 @@ data:
   ANALYSTOS_GRAPH_ENABLED: {{ .Values.config.graphEnabled | quote }}
   ANALYSTOS_SANDBOX_NETWORK: {{ .Values.config.sandboxNetwork | quote }}
   ANALYSTOS_AIR_GAPPED: {{ .Values.airGapped.enabled | quote }}
+  {{- with .Values.database.pools }}
+  ANALYSTOS_DB_POOL_MODE: {{ .mode | quote }}
+  ANALYSTOS_DB_POOL_RECYCLE: {{ .recycleSeconds | quote }}
+  ANALYSTOS_DB_POOL_SIZE: {{ .control.size | quote }}
+  ANALYSTOS_DB_MAX_OVERFLOW: {{ .control.maxOverflow | quote }}
+  ANALYSTOS_DB_POOL_TIMEOUT: {{ .control.timeoutSeconds | quote }}
+  ANALYSTOS_ANALYTICS_POOL_SIZE: {{ .analytics.size | quote }}
+  ANALYSTOS_ANALYTICS_MAX_OVERFLOW: {{ .analytics.maxOverflow | quote }}
+  ANALYSTOS_ANALYTICS_POOL_TIMEOUT: {{ .analytics.timeoutSeconds | quote }}
+  ANALYSTOS_LOADER_POOL_SIZE: {{ .loader.size | quote }}
+  ANALYSTOS_LOADER_MAX_OVERFLOW: {{ .loader.maxOverflow | quote }}
+  ANALYSTOS_LOADER_POOL_TIMEOUT: {{ .loader.timeoutSeconds | quote }}
+  {{- end }}
+  ANALYSTOS_DB_TRANSACTION_POOLER: {{ or .Values.database.transactionPooler .Values.pgbouncer.enabled | quote }}
   {{- if .Values.models.customConfig }}
   ANALYSTOS_MODELS_CONFIG: /etc/analystos/models.yaml
   {{- else if .Values.models.modelsConfig }}

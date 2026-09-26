@@ -22,7 +22,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "docs" / "60-delivery" / "evidence"
-PG_HOSTPORT = os.environ.get("ANALYSTOS_LOAD_PG", "localhost:5432")
+PG_HOSTPORT = os.environ.get("ANALYSTOS_LOAD_PG", "localhost:5432")  # direct: admin, provisioning, the builder
+# Where the platform's control/loader/reader URLs point: a transaction-mode PgBouncer (compose
+# `--profile pooled`, localhost:6432) or Postgres itself. The builder stays direct (db/pools.py).
+APP_HOSTPORT = os.environ.get("ANALYSTOS_LOAD_PG_APP", PG_HOSTPORT)
 PG_USER = os.environ.get("ANALYSTOS_LOAD_PG_USER", "analystos:analystos")
 
 
@@ -37,7 +40,7 @@ class Plane:
 
     @property
     def control_url(self) -> str:
-        return f"postgresql+psycopg://{PG_USER}@{PG_HOSTPORT}/{self.control_db}"
+        return f"postgresql+psycopg://{PG_USER}@{APP_HOSTPORT}/{self.control_db}"
 
 
 def configure(suffix: str) -> Plane:
@@ -49,8 +52,8 @@ def configure(suffix: str) -> Plane:
                   role_prefix=prefix, queue_prefix=f"aosload-{suffix}")
     env = {
         "ANALYSTOS_DATABASE_URL": plane.control_url,
-        "ANALYSTOS_ANALYTICS_LOADER_URL": f"postgresql+psycopg://{prefix}loader:loader@{PG_HOSTPORT}/{plane.analytics_db}",
-        "ANALYSTOS_ANALYTICS_READER_URL": f"postgresql+psycopg://{prefix}reader:reader@{PG_HOSTPORT}/{plane.analytics_db}",
+        "ANALYSTOS_ANALYTICS_LOADER_URL": f"postgresql+psycopg://{prefix}loader:loader@{APP_HOSTPORT}/{plane.analytics_db}",
+        "ANALYSTOS_ANALYTICS_READER_URL": f"postgresql+psycopg://{prefix}reader:reader@{APP_HOSTPORT}/{plane.analytics_db}",
         "ANALYSTOS_ANALYTICS_BUILDER_URL": f"postgresql+psycopg://{prefix}builder:builder@{PG_HOSTPORT}/{plane.analytics_db}",
         "ANALYSTOS_ANALYTICS_WORKSPACE_ROLE_PREFIX": f"{prefix}r_",
         "ANALYSTOS_ANALYTICS_BUILD_ROLE_PREFIX": f"{prefix}b_",
@@ -107,8 +110,15 @@ def provision(plane: Plane) -> None:
         c.execute(text(f'GRANT CONNECT ON DATABASE "{plane.analytics_db}" TO {p}loader, {p}reader, {p}builder'))
     admin.dispose()
     engine = create_engine(plane.control_url)
-    with engine.begin() as c:
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    for attempt in range(10):  # a pooler that saw the previous plane's database dropped backs off a while
+        try:
+            with engine.begin() as c:
+                c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            break
+        except Exception:
+            if attempt == 9:
+                raise
+            time.sleep(5)
     from analystos.db import models  # noqa: F401
     from analystos.db.base import Base
 
@@ -131,8 +141,8 @@ def start_api(plane: Plane, *, workers: int = 1) -> tuple[subprocess.Popen, str]
     import httpx
 
     port = free_port()
-    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "analystos.api.app:app", "--host", "127.0.0.1", "--port", str(port),
-                             "--log-level", "warning", "--workers", str(workers)], env=plane.env, cwd=ROOT)
+    proc = spawn([sys.executable, "-m", "uvicorn", "analystos.api.app:app", "--host", "127.0.0.1", "--port", str(port),
+                  "--log-level", "warning", "--workers", str(workers)], plane)
     base = f"http://127.0.0.1:{port}"
     for _ in range(300):
         try:
@@ -162,15 +172,32 @@ def start_mock_servicenow() -> tuple[object, str]:
     return server, f"http://127.0.0.1:{port}"
 
 
+def spawn(args: list[str], plane: Plane, **kwargs) -> subprocess.Popen:
+    """A child in its own process group, so `stop` also reaches its process-pool children (a worker's
+    compute pool outlived its parent before, and the orphans held gigabytes on the next run)."""
+    return subprocess.Popen(args, env=plane.env, cwd=ROOT, start_new_session=True, **kwargs)
+
+
+def _signal_group(p: subprocess.Popen, sig: int) -> None:
+    import contextlib
+
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(p.pid, sig)
+
+
 def stop(procs: list[subprocess.Popen]) -> None:
+    import signal
+
     for p in procs:
-        if p.poll() is None:
-            p.terminate()
+        _signal_group(p, signal.SIGTERM)
     for p in procs:
         try:
             p.wait(timeout=15)
         except subprocess.TimeoutExpired:
             p.kill()
+    time.sleep(1)
+    for p in procs:
+        _signal_group(p, signal.SIGKILL)  # whatever of the group is still there (pool children)
 
 
 # ---------------------------------------------------------------------------------------- measuring
@@ -221,19 +248,21 @@ class Sampler:
         kids = [int(x) for x in out]
         return kids + [g for k in kids for g in self._children(k)]
 
-    def _pg_connections(self) -> int | None:
+    def _pg_connections(self) -> tuple[int | None, int | None]:
+        """(server connections to this plane's databases, all client backends on the server), read directly."""
         if not self.database:
-            return None
+            return None, None
         from sqlalchemy import text
 
         try:
             if not hasattr(self, "_engine"):
                 self._engine = _admin()
             with self._engine.connect() as c:
-                return int(c.execute(text("SELECT count(*) FROM pg_stat_activity WHERE datname LIKE :d"),
-                                     {"d": f"{self.database}%"}).scalar())
+                row = c.execute(text("SELECT count(*) FILTER (WHERE datname LIKE :d), count(*) FROM pg_stat_activity "
+                                     "WHERE backend_type = 'client backend'"), {"d": f"{self.database}%"}).one()
+                return int(row[0]), int(row[1])
         except Exception:
-            return None
+            return None, None
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -251,8 +280,12 @@ class Sampler:
                     if last:
                         cpu_pct += 100 * (cpu_s - last[1]) / max(1e-6, now - last[0])
                     self._last_cpu[pid] = (now, cpu_s)
+            plane_conns, server_conns = self._pg_connections()
+            mem_kb = next((int(ln.split()[1]) for ln in Path("/proc/meminfo").read_text().splitlines()
+                           if ln.startswith("MemAvailable")), 0)
             self.samples.append({"t": now, "load1": load1, "rss_mb": round(rss, 1), "cpu_pct": round(cpu_pct, 1),
-                                 "pg_connections": self._pg_connections()})
+                                 "pg_connections": plane_conns, "pg_connections_server": server_conns,
+                                 "mem_available_mb": mem_kb // 1024})
             self._stop.wait(self.every)
 
     def __enter__(self):
@@ -270,9 +303,12 @@ class Sampler:
         if not s:
             return {}
         conns = [x["pg_connections"] for x in s if x["pg_connections"] is not None]
+        server = [x["pg_connections_server"] for x in s if x.get("pg_connections_server") is not None]
         return {"samples": len(s), "load1_max": max(x["load1"] for x in s), "load1_mean": round(sum(x["load1"] for x in s) / len(s), 2),
                 "platform_rss_mb_max": max(x["rss_mb"] for x in s), "platform_cpu_pct_mean": round(sum(x["cpu_pct"] for x in s) / len(s), 1),
                 "platform_cpu_pct_max": max(x["cpu_pct"] for x in s), "pg_connections_max": max(conns) if conns else None,
+                "pg_server_connections_max": max(server) if server else None,
+                "mem_available_mb_min": min(x.get("mem_available_mb", 0) for x in s),
                 "cores": os.cpu_count()}
 
 

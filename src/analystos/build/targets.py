@@ -145,7 +145,7 @@ def provision_target(settings: Any, workspace_id: str, schema: str, *, source_sc
         conn.commit()
     # As the build role itself: what it creates in the target is readable by the workspace reader role.
     with psycopg.connect(_pg(settings.analytics_builder_url), connect_timeout=5) as conn, conn.cursor() as cur:
-        cur.execute(sql.SQL("SET ROLE {}").format(b))
+        cur.execute(sql.SQL("SET LOCAL ROLE {}").format(b))  # this transaction only
         cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA {} GRANT SELECT ON TABLES TO {}").format(s, r))
         conn.commit()
     return {"schema": schema, "build_role": build_role, "reader_role": reader_role, "builder_login": builder,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,25 @@ class Settings(BaseSettings):
     dbt_executable: str = "dbt"
     build_dir: Path = REPO_ROOT / "var" / "builds"
     build_timeout_seconds: int = 1800
+    # Connection pools per plane (P4-S05; db/pools.py). Per process: control <= size + overflow;
+    # analytics and loader the same per URL. `none` = no client-side pool (behind PgBouncer).
+    # analytics_/loader_pool_mode inherit db_pool_mode when unset.
+    db_pool_mode: Literal["queue", "none"] = "queue"
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=20, ge=0)
+    db_pool_timeout: float = Field(default=30.0, gt=0)
+    db_pool_recycle: int = -1  # seconds; -1 = never (set below the pooler's/firewall's idle cut-off)
+    analytics_pool_mode: Literal["queue", "none"] | None = None
+    analytics_pool_size: int = Field(default=5, ge=1)
+    analytics_max_overflow: int = Field(default=5, ge=0)
+    analytics_pool_timeout: float = Field(default=30.0, gt=0)
+    loader_pool_mode: Literal["queue", "none"] | None = None
+    loader_pool_size: int = Field(default=2, ge=1)
+    loader_max_overflow: int = Field(default=3, ge=0)
+    loader_pool_timeout: float = Field(default=30.0, gt=0)
+    # The control/analytics/loader URLs go through a transaction-mode pooler (PgBouncer): no
+    # server-side prepared statements. The builder URL must stay direct or session-pooled.
+    db_transaction_pooler: bool = False
     redis_url: str = "redis://localhost:6379/0"
     # Neo4j is an optional projection of the Postgres lineage/relationship tables (spec v3 §8), off
     # by default: lineage and table neighbourhood are served from Postgres unless this is on.

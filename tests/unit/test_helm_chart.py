@@ -125,3 +125,38 @@ def test_defaults_keep_governance_boundaries():
 def test_default_render_requires_sandbox_isolation():
     config = _kind(_render(), "ConfigMap")["t-analystos-config"]["data"]
     assert config["ANALYSTOS_SANDBOX_NETWORK"] == "require"
+
+
+def test_pool_values_match_the_settings_defaults_and_pgbouncer_is_off():
+    """P4-S05: the chart's pool defaults are the application's, and the pooler is opt-in."""
+    from analystos.core.config import Settings
+
+    s, values = Settings(_env_file=None), _values()
+    pools = values["database"]["pools"]
+    assert pools["mode"] == s.db_pool_mode and pools["recycleSeconds"] == s.db_pool_recycle
+    for plane, prefix in (("control", "db"), ("analytics", "analytics"), ("loader", "loader")):
+        assert (pools[plane]["size"], pools[plane]["maxOverflow"], pools[plane]["timeoutSeconds"]) == (
+            getattr(s, f"{prefix}_pool_size"), getattr(s, f"{prefix}_max_overflow"), getattr(s, f"{prefix}_pool_timeout"))
+    assert values["pgbouncer"]["enabled"] is False and values["pgbouncer"]["poolMode"] == "transaction"
+
+
+@needs_helm
+def test_pool_settings_render_and_pgbouncer_is_opt_in():
+    docs = _render()
+    config = _kind(docs, "ConfigMap")["t-analystos-config"]["data"]
+    assert (config["ANALYSTOS_DB_POOL_SIZE"], config["ANALYSTOS_DB_MAX_OVERFLOW"]) == ("10", "20")
+    assert config["ANALYSTOS_DB_TRANSACTION_POOLER"] == "false"
+    assert "t-analystos-pgbouncer" not in _kind(docs, "Deployment")
+
+    docs = _render(sets=("pgbouncer.enabled=true", "pgbouncer.postgresHost=pg.db.svc", "pgbouncer.existingSecret=pgb",
+                         "database.pools.mode=none"))
+    config = _kind(docs, "ConfigMap")["t-analystos-config"]["data"]
+    assert config["ANALYSTOS_DB_TRANSACTION_POOLER"] == "true" and config["ANALYSTOS_DB_POOL_MODE"] == "none"
+    pod = _kind(docs, "Deployment")["t-analystos-pgbouncer"]["spec"]["template"]["spec"]
+    env = {e["name"]: e["value"] for e in pod["containers"][0]["env"]}
+    assert env["POOL_MODE"] == "transaction" and env["DB_HOST"] == "pg.db.svc" and env["MAX_PREPARED_STATEMENTS"] == "0"
+    assert pod["containers"][0]["envFrom"] == [{"secretRef": {"name": "pgb"}}]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert "t-analystos-pgbouncer" in _kind(docs, "Service")
+    r = subprocess.run([HELM, "template", "t", str(CHART), "--set", "pgbouncer.enabled=true"], capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "is required when pgbouncer.enabled" in r.stderr

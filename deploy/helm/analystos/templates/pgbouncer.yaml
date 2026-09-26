@@ -1,0 +1,76 @@
+{{- if .Values.pgbouncer.enabled }}
+{{- $pgb := dict "root" . "component" "pgbouncer" "podSecurityContext" (dict "runAsNonRoot" true "runAsUser" 70 "runAsGroup" 70 "seccompProfile" (dict "type" "RuntimeDefault")) }}
+# Transaction-mode PgBouncer (P4-S05): the control plane and the analytics loader/reader connect here;
+# the builder does not (dbt keeps a session-level role). See docs/30-runbooks/02-operations.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analystos.fullname" . }}-pgbouncer
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  replicas: {{ .Values.pgbouncer.replicas }}
+  selector:
+    matchLabels:
+      {{- include "analystos.selector" $pgb | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analystos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: pgbouncer
+    spec:
+      {{- include "analystos.podCommon" $pgb | nindent 6 }}
+      containers:
+        - name: pgbouncer
+          image: {{ printf "%s:%s" .Values.pgbouncer.image.repository .Values.pgbouncer.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ required "pgbouncer.existingSecret (DB_USER, DB_PASSWORD) is required when pgbouncer.enabled" .Values.pgbouncer.existingSecret }}
+          env:
+            - {name: DB_HOST, value: {{ required "pgbouncer.postgresHost is required when pgbouncer.enabled" .Values.pgbouncer.postgresHost | quote }}}
+            - {name: DB_PORT, value: {{ .Values.pgbouncer.postgresPort | quote }}}
+            - {name: AUTH_TYPE, value: scram-sha-256}
+            - {name: AUTH_DBNAME, value: {{ .Values.pgbouncer.authDbname | quote }}}
+            - {name: AUTH_QUERY, value: "SELECT usename, passwd FROM pg_shadow WHERE usename=$1"}
+            - {name: POOL_MODE, value: {{ .Values.pgbouncer.poolMode | quote }}}
+            - {name: MAX_CLIENT_CONN, value: {{ .Values.pgbouncer.maxClientConn | quote }}}
+            - {name: DEFAULT_POOL_SIZE, value: {{ .Values.pgbouncer.defaultPoolSize | quote }}}
+            - {name: MAX_DB_CONNECTIONS, value: {{ .Values.pgbouncer.maxDbConnections | quote }}}
+            - {name: MAX_PREPARED_STATEMENTS, value: "0"}
+            - {name: QUERY_WAIT_TIMEOUT, value: {{ .Values.pgbouncer.queryWaitTimeoutSeconds | quote }}}
+            - {name: IGNORE_STARTUP_PARAMETERS, value: "extra_float_digits,options"}
+            - {name: LISTEN_PORT, value: "5432"}
+          ports:
+            - {name: pg, containerPort: 5432}
+          readinessProbe:
+            tcpSocket: {port: pg}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: pg}
+            periodSeconds: 20
+          volumeMounts:
+            - {name: config, mountPath: /etc/pgbouncer}   # the entrypoint writes pgbouncer.ini and userlist.txt
+            - {name: tmp, mountPath: /tmp}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.pgbouncer.resources | nindent 12 }}
+      volumes:
+        - {name: config, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "analystos.fullname" . }}-pgbouncer
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "analystos.selector" $pgb | nindent 4 }}
+  ports:
+    - {name: pg, port: 5432, targetPort: pg}
+{{- include "analystos.pdb" (dict "root" . "component" "pgbouncer" "pdb" .Values.pgbouncer.pdb) }}
+{{- end }}

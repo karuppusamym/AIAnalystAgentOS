@@ -114,7 +114,7 @@ class StagingLoader:
             raise InvalidInput("analytics reader role name is not a safe identifier")
 
     def _engine(self):  # noqa: ANN202
-        return get_engine(self.loader_url)
+        return get_engine(self.loader_url, plane="loader")
 
     def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch], *,
              workspace_id: str, snapshot: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:

@@ -41,6 +41,46 @@ secrets:
   # ANALYSTOS_OIDC_CLIENT_SECRET and source passwords referenced by `secret_ref: env:NAME`.
   existingSecret: analystos-secrets
 
+# Connection pools per process and plane (P4-S05, src/analystos/db/pools.py). Every API process,
+# worker process and compute-pool child holds its own pools, so Postgres needs roughly
+# processes x (control + analytics + loader maxima) connections without a pooler. `mode: none` drops
+# the client-side pool (a connection per checkout) for use behind PgBouncer.
+database:
+  pools:
+    mode: queue                      # queue | none
+    recycleSeconds: -1               # below any idle cut-off between the pods and Postgres
+    control: {size: 10, maxOverflow: 20, timeoutSeconds: 30}
+    analytics: {size: 5, maxOverflow: 5, timeoutSeconds: 30}   # the reader identity, per source URL
+    loader: {size: 2, maxOverflow: 3, timeoutSeconds: 30}
+  # The Secret's control/loader/reader URLs go through a transaction-mode pooler (turns off psycopg's
+  # server-side prepared statements). Forced on when pgbouncer.enabled.
+  transactionPooler: false
+
+# Optional in-release PgBouncer (spec v3 §8), off by default. Transaction pooling for the control
+# plane and the analytics loader/reader; point those three URLs in the Secret at
+# `<release>-analystos-pgbouncer:5432`. Keep ANALYSTOS_ANALYTICS_BUILDER_URL direct: dbt sets its role
+# for the whole session. Logins are checked with auth_query against pg_shadow as the Secret's
+# DB_USER/DB_PASSWORD (a role allowed to read pg_shadow), so workspace roles need no userlist.
+pgbouncer:
+  enabled: false
+  image: {repository: edoburu/pgbouncer, tag: v1.23.1-p3}
+  replicas: 2
+  postgresHost: ""                   # required when enabled
+  postgresPort: 5432
+  existingSecret: ""                 # Secret with DB_USER and DB_PASSWORD (the auth_query login)
+  authDbname: postgres
+  poolMode: transaction
+  maxClientConn: 2000                # client connections (cheap): every pod's pools together
+  defaultPoolSize: 20                # server connections per (database, user) and replica
+  maxDbConnections: 40               # server connections per database and replica
+  # Keep the control database's pool above the concurrent analysis slots (runbook "Connection pooling"):
+  # a client waiting longer than this for a server connection gets an error and the activity retries.
+  queryWaitTimeoutSeconds: 60
+  resources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: "1", memory: 256Mi}
+  pdb: {enabled: false, minAvailable: 1}
+
 # Model providers. `modelsConfig` picks the file inside the image (config/models*.yaml) or a mounted one.
 models:
   modelsConfig: ""                   # "" = config/models.yaml (OpenRouter)

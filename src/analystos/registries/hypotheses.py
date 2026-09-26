@@ -41,7 +41,9 @@ def register_run(session: Session, run_id: str) -> int:
     exps = {e.hypothesis_id: e for e in session.scalars(select(Experiment).where(Experiment.run_id == run_id,
                                                                                     Experiment.role == "primary"))}
     now = utcnow()
-    for h in hyps:
+    # Rows are locked in spec-hash order: runs of one workspace finalizing at once register
+    # overlapping hypotheses, and any other order deadlocks them (P4-S05, 50 concurrent runs).
+    for h in sorted(hyps, key=lambda h: spec_hash(h.spec)):
         result = dict(exps[h.id].result or {}) if h.id in exps else {}
         claim = _plain(list(claim_key(h.spec, result.get("highlights"))))
         outcome = "verified" if h.id in verified else h.status
