@@ -45,7 +45,7 @@ from analystos.core.errors import (
 )
 from analystos.core.ids import new_id, stable_hash
 from analystos.core.logging import get_logger
-from analystos.db.models import QueryExecution, Source, SourceAsset
+from analystos.db.models import QueryExecution, Source, SourceAsset, Workspace
 from analystos.engines.base import Limits, ReaderIdentity
 from analystos.engines.sql import run_postgres, run_session_sql
 from analystos.gateway.cache import QueryCache
@@ -277,9 +277,10 @@ class QueryGateway:
     def _load_source(self, scope: DataScope, validated: ValidatedSQL) -> dict[str, Any]:
         session = self.session_factory()
         try:
-            from analystos.governance.policy import get_workspace
-
-            get_workspace(session, scope.workspace_id)
+            ws = session.get(Workspace, scope.workspace_id)
+            if ws is not None and (ws.status != "active" or ws.deleted_at is not None):
+                # a disabled or deleted workspace runs no query (its sources keep their rows)
+                raise NotFound(f"workspace {scope.workspace_id} not found")
             row = session.get(Source, validated.source_id)
             if row is None or row.workspace_id != scope.workspace_id:
                 raise NotFound(f"source {validated.source_id} not found in workspace {scope.workspace_id}")
