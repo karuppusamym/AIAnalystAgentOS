@@ -1,12 +1,19 @@
 {
   "runs": {
+    "escalation": {
+      "calls": 6,
+      "tokens": 13910,
+      "usd": 0.02537
+    },
     "novel_question": {
       "calls": 3,
-      "tokens": 5715
+      "tokens": 5715,
+      "usd": 0.00497
     },
     "standard_run": {
       "calls": 7,
-      "tokens": 1435
+      "tokens": 1435,
+      "usd": 0.00014
     }
   },
   "tolerance": 0.1

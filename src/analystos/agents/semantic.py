@@ -121,6 +121,21 @@ def approved_workspace_metrics(ctx: RunContext, columns: set[str], dialect: str)
     return out
 
 
+def valid_metric_definitions(data: object) -> str | None:
+    """Escalation check (schema): proposed metrics must validate as MetricDef; an empty list is an answer."""
+    if not isinstance(data, dict) or not isinstance(data.get("metrics", []), list):
+        return "answer is not an object with a metrics list"
+    metrics = data.get("metrics") or []
+    ok = 0
+    for m in metrics:
+        try:
+            MetricDef.model_validate({**m, "status": "proposed"})
+            ok += 1
+        except Exception:
+            continue
+    return None if ok or not metrics else f"none of {len(metrics)} metric definitions passed schema validation"
+
+
 def define_metrics(ctx: RunContext) -> dict:
     ds, content = dataset_def(ctx.run.id)
     dialect = content.get("dialect", "postgres")
@@ -132,7 +147,7 @@ def define_metrics(ctx: RunContext) -> dict:
     origin = ["approved"] * len(approved) + ["carried"] * (len(candidates) - len(approved))
     payload = compile_for(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
                                                      "existing": [m.name for m in candidates]})
-    data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2", payload) \
+    data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2", payload, validate=valid_metric_definitions) \
         if model_gate(ctx, "semantic_modeling", payload, deterministic_ok=len(candidates) >= 4) else (None, "deterministic")
     for m in (data or {}).get("metrics", []) if isinstance(data, dict) else []:
         try:

@@ -584,7 +584,7 @@ export interface AskStage {
 }
 
 /** The refusal kinds of services/ask.py REFUSALS: one state each, with a remedy. */
-export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "no_model"
+export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "spend_cap" | "no_model"
   | "no_scope" | "timeout" | "unavailable" | "failed";
 
 export interface AskRefusal {
@@ -1013,7 +1013,11 @@ export interface ModelProfile {
   max_tokens: number;
   timeout_seconds: number;
   exclude_families: string[];
+  /** Cheap first, escalate: the large tier, called only after a failed deterministic check (or first under always_large). */
+  escalation_models?: string[];
 }
+
+export type EscalationPolicy = "never" | "on_validation_failure" | "always_large";
 
 export interface EffectiveRoute {
   profile: string;
@@ -1023,6 +1027,35 @@ export interface EffectiveRoute {
   /** A rule-based path exists: "off"/"auto" still produce a result without a model. */
   deterministic_path: boolean;
   decision_model: boolean;
+  escalation?: EscalationPolicy;
+  escalation_models?: string[];
+}
+
+/** GET /api/admin/models/health: never carries a key, only whether one is set in the server process. */
+export interface ProviderHealth {
+  provider: string;
+  type: string;
+  kind: string;
+  base_url: string;
+  api_key_env: string | null;
+  key_required: boolean;
+  key_present: boolean;
+  last_success_at: string | null;
+  last_error: { at: string; model: string; error: string } | null;
+  cooldown: { remaining_seconds: number; reason: string } | null;
+  spend_today_usd: number;
+  calls_today: number;
+  message: string | null;
+  probe?: { probed: boolean; ok?: boolean; model?: string; latency_ms?: number; cost_usd?: number; code?: string; error?: string;
+    detail?: string; remedy?: string };
+}
+
+export interface ModelHealth {
+  checked_at: string;
+  counters_available: boolean;
+  spend_today: { usd: number; cap_usd: number | null; source: "counter" | "database"; fraction: number | null;
+    alert_fraction: number; resets_at: string };
+  providers: ProviderHealth[];
 }
 
 export interface ModelsView {
@@ -1547,6 +1580,8 @@ export interface TokenSavings {
   missing_price?: { model: string; calls: number; tokens: number }[];
   prices_version?: string;
   cost_complete?: boolean;
+  /** Large-tier calls made because a small-tier answer failed validation, by purpose. */
+  escalations?: Record<string, { calls: number; cost_usd: number; by_model: Record<string, number>; by_reason: Record<string, number> }>;
 }
 
 // ----------------------------------------------------------------------------------- capabilities
@@ -2196,6 +2231,8 @@ export const api = {
     patch("/api/tools/{tool_id}", { path: { tool_id: id }, body: { enabled } }) as Promise<ToolSpec>,
   skills: () => get("/api/skills", {}) as Promise<SkillSpec[]>,
   models: () => get("/api/admin/models", {}) as Promise<ModelsView>,
+  modelHealth: (probe = false) =>
+    get("/api/admin/models/health", { query: probe ? { probe: true } : {} }) as Promise<ModelHealth>,
   usage: () => get("/api/admin/usage", {}) as Promise<Usage>,
   audit: (limit = 300) => get("/api/admin/audit", { query: { limit } }) as Promise<AuditEvent[]>,
 

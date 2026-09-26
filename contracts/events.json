@@ -11,6 +11,7 @@
   "approval.requested",
   "ask.answered",
   "ask.promoted",
+  "budget.cap_reached",
   "budget.warning",
   "build.completed",
   "build.failed",

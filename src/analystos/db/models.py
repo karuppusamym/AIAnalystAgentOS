@@ -524,6 +524,10 @@ class ModelCall(Base):
     cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Context compiler receipts (P4-T03): the context items the prompt carried ("context used").
     context_receipts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Cheap first, escalate: set on a call of the large tier made because a small-tier answer failed
+    # deterministic validation (the small model, and why: invalid_json, schema, sql_rejected, ...).
+    escalated_from: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    escalation_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
     __table_args__ = (Index("ix_model_call_created_purpose_rung", "created_at", "purpose", "answered_by"),)

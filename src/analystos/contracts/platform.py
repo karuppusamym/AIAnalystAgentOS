@@ -10,6 +10,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 LLMMode = Literal["off", "auto", "always"]
+# Cheap first, escalate: which tier answers a chat purpose. never = the small tier only;
+# on_validation_failure = small first, the large tier only after a deterministic validation failure
+# (recorded as model_call.escalated_from / escalation_reason); always_large = the large tier first.
+EscalationPolicy = Literal["never", "on_validation_failure", "always_large"]
 # Execution ladder (spec v3 §4.1, ADR-0012): what may answer a purpose, cheapest first. cache = exact
 # response cache (L0), registry = verified query/hypothesis/metric (L1), rules = deterministic code
 # (L2), decision = typed decision model (L3), llm_small / llm_large = low_cost / strong chat profiles
@@ -39,6 +43,13 @@ class LLMSettings(BaseModel):
     purpose_run_caps: dict[str, dict[str, float]] = Field(default_factory=dict)
     routing_overrides: dict[str, str] = Field(default_factory=dict)  # purpose -> profile
     profile_models: dict[str, list[str]] = Field(default_factory=dict)  # profile -> models (fallback order)
+    profile_escalation_models: dict[str, list[str]] = Field(default_factory=dict)  # profile -> large tier override
+    escalation: dict[str, EscalationPolicy] = Field(default_factory=dict)  # purpose -> policy (else models.yaml)
+    # Hard spend caps: every billable call reserves its estimated cost atomically before it is sent
+    # (runtime/budget_counters.py). Platform-wide per UTC day; None = no daily cap. The per-workspace
+    # monthly cap is the workspace policy's workspace_monthly_cost_budget_usd.
+    daily_spend_cap_usd: float | None = Field(2.0, ge=0.0, le=100_000.0)
+    spend_alert_fraction: float = Field(0.8, ge=0.05, le=1.0)  # event + admin notification once per cap period
     disabled_models: list[str] = Field(default_factory=list)  # removed from the allowlist at runtime
     cache_enabled: bool = True
     cache_ttl_hours: int = Field(168, ge=0, le=24 * 90)
@@ -195,7 +206,7 @@ PRESETS: dict[str, dict[str, LLMMode]] = {
     # No model calls at all: the platform runs entirely on deterministic paths.
     "offline": {p: "off" for p in DETERMINISTIC_CAPABLE | {"verification", "sql_generation", "sql_repair",
                                                           "rev_second_opinion", "risk_check", "alert_triage",
-                                                          "statistical_interpretation", "decision_structured"}},
+                                                          "statistical_interpretation", "decision_structured", "health_probe"}},
     # Air-gapped (P4-S04): the offline preset plus a local OpenAI-compatible model as the last rung.
     # Deterministic rungs answer first wherever they exist; decision-model purposes stay on rules (the
     # DecisionService keeps rules / local_classifier only). Egress itself is enforced by the deployment
@@ -204,6 +215,15 @@ PRESETS: dict[str, dict[str, LLMMode]] = {
         "rev_second_opinion": "off", "risk_check": "off", "alert_triage": "off", "decision_structured": "off",
         "hypothesis_priority": "off", "chart_selection": "off", "feedback_classification": "off", "stop_check": "off",
         "ask_route": "off", "clarify_needed": "off", "metric_match": "off", "join_path_choice": "off"},
+}
+
+# Escalation policy a preset sets (replaces llm.escalation wholesale; {} = the models.yaml defaults).
+# max_quality keeps the large tier (Sonnet) first wherever it was first before cheap-first routing (the
+# reasoning_strong / analytical_reasoning / coding purposes); low_cost purposes stay small-first.
+LARGE_FIRST_PURPOSES = ("planning", "hypothesis_generation", "follow_up_generation", "statistical_interpretation",
+                        "sql_generation", "sql_repair", "semantic_modeling", "feedback_interpretation")
+PRESET_ESCALATION: dict[str, dict[str, EscalationPolicy]] = {
+    "max_quality": {p: "always_large" for p in LARGE_FIRST_PURPOSES},
 }
 
 # Settings a preset changes besides the purpose modes (deep-merged by platform_settings.apply_preset).

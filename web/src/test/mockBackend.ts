@@ -5,7 +5,7 @@
  */
 import type {
   AgentSpec, Alert, Approval, Artifact, ArtifactDetail, AskInspector, AskResponse, AskThread, AskTurn, BuildDiff, BuildJob, BuildJobDetail, BuildTarget,
-  CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight, InsightDetail, MetricValidation, Monitor, ModelsView,
+  CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight, InsightDetail, MetricValidation, ModelHealth, Monitor, ModelsView,
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
@@ -499,6 +499,18 @@ const MODELS: ModelsView = {
   effective: { planning: { profile: "chat", models: ["openrouter/auto"], mode: "auto", available: true, deterministic_path: true, decision_model: false } },
 };
 
+/** No key in the API process, a credit cooldown after HTTP 402, and today's spend near the daily cap. */
+export const MODEL_HEALTH: ModelHealth = {
+  checked_at: T, counters_available: true,
+  spend_today: { usd: 1.72, cap_usd: 2, source: "counter", fraction: 0.86, alert_fraction: 0.8, resets_at: "2026-09-27T00:00:00+00:00" },
+  providers: [{
+    provider: "openrouter", type: "openrouter", kind: "chat", base_url: "https://openrouter.ai/api/v1", api_key_env: "OPENROUTER_API_KEY",
+    key_required: true, key_present: false, last_success_at: T, last_error: { at: T, model: "openai/gpt-5.4-mini", error: "HTTP 402: insufficient credits" },
+    cooldown: { remaining_seconds: 42, reason: "model provider refused for credits HTTP 402" }, spend_today_usd: 1.72, calls_today: 58,
+    message: "No API key in this process — set OPENROUTER_API_KEY for the api and worker containers and restart them.",
+  }],
+};
+
 const MONITOR: Monitor = {
   id: "mon_1", workspace_id: WS, name: "P1 MTTR", kind: "metric_threshold", config: { metric: "mttr_hours", op: ">", value: 8 }, enabled: true,
   auto_investigate: false, state: "ok", last_evaluated_at: T, last_result: {}, created_by: USER.id, created_at: T,
@@ -688,6 +700,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/tools", TOOLS],
     ["GET", "/skills", SKILLS],
     ["GET", "/admin/models", MODELS],
+    ["GET", "/admin/models/health", MODEL_HEALTH],
     ["GET", "/admin/usage", USAGE],
     ["GET", "/admin/audit", []],
     ["GET", "/admin/prompts", []],

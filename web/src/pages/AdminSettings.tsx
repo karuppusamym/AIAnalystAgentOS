@@ -423,6 +423,26 @@ export function TokenSavingsView() {
           </Card>
           <SpendBreakdown title="By rung" by={s.data?.by_rung} keyLabel="Rung"
             missing="The server does not report the execution-ladder rung (L0 cache … L5 strong model) per call yet." />
+          <Card title="Escalations (small answer failed a check, large tier answered)">
+            {Object.keys(s.data?.escalations ?? {}).length === 0 ? <EmptyState title="No escalations in this period" /> : (
+              <div className="table-wrap">
+                <table className="table table-compact">
+                  <thead><tr><th>Purpose</th><th className="num">Calls</th><th className="num">Cost</th><th>Reasons</th><th>Models</th></tr></thead>
+                  <tbody>
+                    {Object.entries(s.data?.escalations ?? {}).map(([p, e]) => (
+                      <tr key={p}>
+                        <td><code>{p}</code></td>
+                        <td className="num">{fmtNumber(e.calls, 0)}</td>
+                        <td className="num"><Value value={e.cost_usd} format="usd" /></td>
+                        <td className="small">{Object.entries(e.by_reason).map(([k, n]) => `${k} ${n}`).join(", ")}</td>
+                        <td className="small">{Object.entries(e.by_model).map(([k, n]) => `${k} ${n}`).join(", ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
           <SpendBreakdown title="By model" by={s.data?.by_model} keyLabel="Model"
             missing="Not in this report; the Usage tab lists calls and spend per provider and model." />
         </>

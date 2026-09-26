@@ -25,8 +25,8 @@ class Sink:
         return None
 
 
-def _router(transport, *, cache=False, sink=None):
-    platform = PlatformSettings(llm=LLMSettings(cache_enabled=cache))
+def _router(transport, *, cache=False, sink=None, **llm):
+    platform = PlatformSettings(llm=LLMSettings(cache_enabled=cache, **llm))
     return ModelRouter(transport=transport, sink=sink or Sink(), api_key_lookup=KEY.get, max_retries=0,
                        settings_provider=lambda: platform, cache=ResponseCache(None))
 
@@ -68,7 +68,8 @@ def test_capability_flag_comes_from_models_yaml():
 
 def test_router_sends_blocks_to_anthropic_and_strings_to_openai():
     transport = FakeTransport(chat=_ok())
-    _router(transport).complete("planning", LAYOUT, ctx=CallContext(), json_output=True)
+    # Sonnet first (max_quality's always_large); the default small tier is OpenAI (plain strings, below)
+    _router(transport, escalation={"planning": "always_large"}).complete("planning", LAYOUT, ctx=CallContext(), json_output=True)
     sent = transport.chat_calls[0]
     assert sent["model"].startswith("anthropic/")
     assert sent["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
@@ -138,7 +139,8 @@ def test_measure_script_reports_the_provider_cached_share():
         return {"model": p["model"], "choices": [{"message": {"content": '{"ok":1}'}}],
                 "usage": {"prompt_tokens": 1000, "completion_tokens": 5, "prompt_tokens_details": {"cached_tokens": cached}}}
 
-    report = script.probe("hypothesis_generation", 4, router=_router(FakeTransport(chat=chat)))
+    report = script.probe("hypothesis_generation", 4, router=_router(FakeTransport(chat=chat),
+                                                                     escalation={"hypothesis_generation": "always_large"}))
     assert report["cached_share"] == 0.675 and report["cached_share_after_first_call"] == 0.9
     assert all(p["messages"][0]["content"][0]["cache_control"] for p in seen)  # production layout, breakpoints sent
     assert len({p["messages"][1]["content"][-1]["text"] for p in seen}) == 4  # volatile part differs: no L0 hits

@@ -184,6 +184,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/models/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Models Health
+         * @description Per provider: key present in this process (never the key), last success, cooldown, today's spend vs
+         *     the daily cap. `?probe=1` sends one tiny billable request per provider to verify credits.
+         */
+        get: operations["models_health_api_admin_models_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/prompts": {
         parameters: {
             query?: never;
@@ -3942,6 +3963,40 @@ export interface operations {
     models_api_admin_models_get: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    models_health_api_admin_models_health_get: {
+        parameters: {
+            query?: {
+                probe?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;

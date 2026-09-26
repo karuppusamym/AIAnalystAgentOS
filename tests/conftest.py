@@ -83,6 +83,19 @@ def analytics_plane():
     admin.dispose()
 
 
+def _reset_platform_spend_counters() -> None:
+    """The platform daily spend counter is seeded from model_call rows; a fresh control database must
+    not inherit the counter (and its hard cap) a previous session of this suffix left in Redis."""
+    try:
+        import redis
+
+        client = redis.Redis.from_url("redis://localhost:6379/0", socket_timeout=0.5, socket_connect_timeout=0.5)
+        for key in client.scan_iter(os.environ["ANALYSTOS_BUDGET_COUNTER_PREFIX"] + "platform:*"):
+            client.delete(key)
+    except Exception:  # no Redis: nothing to reset
+        pass
+
+
 @pytest.fixture(scope="session")
 def control_db(analytics_plane):
     """Fresh control-plane schema for the test session."""
@@ -107,5 +120,6 @@ def control_db(analytics_plane):
     from analystos.cli import seed
 
     seed()
+    _reset_platform_spend_counters()
     yield TEST_DB
     engine.dispose()

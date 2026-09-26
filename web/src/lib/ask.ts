@@ -73,6 +73,7 @@ export const REFUSAL_VIEWS: Record<string, RefusalView> = {
   no_scope: { state: "empty", action: "sources", actionLabel: "Go to Sources" },
   policy_denied: { state: "not-entitled", action: "access", actionLabel: "See the workspace policy" },
   budget_exceeded: { state: "refused", action: "retry", actionLabel: "Try again" },
+  spend_cap: { state: "refused", action: "explain", actionLabel: "Write the SQL instead" },
   timeout: { state: "failed", action: "rephrase", actionLabel: "Narrow the question" },
   unavailable: { state: "failed", action: "retry", actionLabel: "Try again" },
   failed: { state: "failed", action: "retry", actionLabel: "Try again" },

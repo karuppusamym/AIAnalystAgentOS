@@ -36,3 +36,22 @@ default) the `neo4j` check reads `{"ok": true, "status": "disabled"}` and Neo4j 
 Per workspace policy: `run_token_budget`, `run_cost_budget_usd`, `workspace_monthly_cost_budget_usd`,
 `max_queries_per_run`. When exceeded, model calls fail with `budget_exceeded` and agents continue on
 deterministic paths; queries beyond the cap fail the task that issued them.
+
+Hard spend caps: every billable model call first reserves its price-table estimate, atomically in
+Redis, against the platform **daily** cap (`llm.daily_spend_cap_usd`, default $2, UTC day) and the
+workspace **monthly** cap (`workspace_monthly_cost_budget_usd`), and settles to the actual cost after
+the call. Over a cap the call is refused (`spend_cap_reached`, recorded as a `refused` model call)
+and the deterministic path runs; at `llm.spend_alert_fraction` (80%) admins get a `budget.warning`
+event and notification. Without Redis, reservations fail closed (`spend_counters_unavailable`).
+
+* **"Why are no model calls happening?"** — Admin > Capability registry > Models > Model health
+  (`GET /api/admin/models/health`): key present in the api process, last success, credit cooldown
+  (HTTP 402), today's spend vs the cap; "Probe credits" (`?probe=1`) sends one tiny billable request.
+* **Model routing is cheap first** — small models answer; the large tier (Sonnet) only after a
+  deterministic check fails (invalid JSON, schema, SQL still rejected after repairs, no usable
+  hypotheses, a narrative the numbers guard rejects). Per purpose: `llm.escalation`
+  (`never | on_validation_failure | always_large`); `max_quality` = Sonnet first.
+  `python scripts/cost_gate.py usd` prints the expected $ per recorded run for both routings.
+* **Demo schedules and monitors** — evidence scripts mark theirs (`[demo] ` name, `config.demo`) and
+  disable them on exit. Leftovers: `analystos schedules disable-demo [--dry-run]`; every enabled
+  schedule and monitor: `--all` (per workspace: `--workspace ws_...`).

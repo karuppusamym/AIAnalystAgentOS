@@ -66,6 +66,21 @@ class BudgetExceeded(AnalystOSError):
     code, http_status = "budget_exceeded", 429
 
 
+class SpendCapReached(BudgetExceeded):
+    """A hard spend cap (platform daily or workspace monthly) would be exceeded by this call's
+    reserved estimate. The call is not sent; the caller takes its deterministic path. `details`
+    carries cap, spent, limit, estimate and the remedy the UI shows."""
+
+    code = "spend_cap_reached"
+
+
+class SpendCountersUnavailable(BudgetExceeded):
+    """The atomic spend counters (Redis) are unreachable, so a reservation cannot be proven within
+    the caps: billable model calls fail closed until they return."""
+
+    code, http_status, retryable = "spend_counters_unavailable", 503, True
+
+
 class ModelRouteUnavailable(AnalystOSError):
     """No allowed provider could serve a model profile. Fail closed: never route elsewhere silently."""
 
@@ -88,6 +103,13 @@ class LLMDisabled(ModelRouteUnavailable):
     Callers take their deterministic path; this is a decision, not an outage."""
 
     code, retryable = "llm_disabled", False
+
+
+class EscalationUnavailable(LLMDisabled):
+    """A caller asked for the large tier after a validation failure, but the purpose's escalation
+    policy is `never`/`always_large`, the profile has no large tier, or the run was downgraded."""
+
+    code = "escalation_unavailable"
 
 
 class EgressBlocked(ModelRouteUnavailable):

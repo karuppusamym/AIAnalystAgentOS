@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -319,8 +320,15 @@ def _record_context_refusal(ctx: Any, purpose: str, call: Any, reason: str, esti
 
 def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
-             prompt_vars: dict[str, str] | None = None) -> tuple[Any | None, str | None]:
+             prompt_vars: dict[str, str] | None = None, validate: Callable[[Any], str | None] | None = None,
+             escalate: str | None = None, escalated_from: str | None = None) -> tuple[Any | None, str | None]:
     """Call a chat model for JSON. Returns (data, model) or (None, reason) — callers degrade visibly.
+
+    Cheap first, escalate: `validate(data)` is the caller's deterministic check (None = usable, else
+    why not). A small-tier answer that fails it - or is not JSON - is re-asked once of the large tier
+    when the purpose's escalation policy allows (router.complete). `escalate` (with the failing model
+    as `escalated_from`) asks the large tier directly after a check further downstream failed; an
+    answer that still fails validation is returned all the same and the caller's own checks decide.
 
     `payload` is a CompiledContext (`compile_for`, P4-T03) or, for purposes without run context
     (narrative, verification, summary), a plain dict. The prompt is laid out for provider prompt
@@ -383,12 +391,25 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     spend = getattr(ctx, "spend", None)
     if spend is not None:
         spend("llm_calls")
+    check = (lambda r: validate(r.data)) if validate is not None else None
     try:
-        response = ctx.router.complete(purpose, messages, ctx=call, json_output=True, max_tokens=max_tokens)
+        response = ctx.router.complete(purpose, messages, ctx=call, json_output=True, max_tokens=max_tokens,
+                                       validate=check, escalate=escalate, escalated_from=escalated_from)
         if spend is not None:
             spend("usd", response.cost_usd)
+        if response.escalated_from:
+            ctx.say(f"{purpose}: the answer of {response.escalated_from} failed validation ({response.escalation_reason}); "
+                    f"escalated to {response.model}.", kind="decision",
+                    data={"purpose": purpose, "escalated_from": response.escalated_from, "model": response.model,
+                          "reason": response.escalation_reason})
         return response.data, response.model
     except AnalystOSError as exc:
         log.warning("llm %s failed: %s", purpose, exc)
-        ctx.say(f"Model call for {purpose} unavailable ({exc.code}); using deterministic fallback.", kind="decision")
+        if exc.code == "escalation_unavailable":  # the caller's own checks already decided; nothing else was lost
+            ctx.say(f"{purpose}: no larger model to escalate to ({exc.message}).", kind="decision")
+            return None, exc.code
+        remedy = exc.details.get("remedy") if isinstance(exc.details, dict) else None
+        ctx.say(f"Model call for {purpose} unavailable ({exc.code}); using deterministic fallback."
+                + (f" {remedy}" if remedy else ""), kind="decision",
+                data={"purpose": purpose, "code": exc.code, **({"remedy": remedy} if remedy else {})})
         return None, exc.code

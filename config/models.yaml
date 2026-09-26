@@ -42,24 +42,33 @@ models:
   google/gemini-3.5-flash-lite: {input_usd_per_mtok: 0.1, output_usd_per_mtok: 0.4}
   deepseek/deepseek-v4-flash: {input_usd_per_mtok: 0.1, output_usd_per_mtok: 0.4}
 
+# Cheap first, escalate (2026-09-26): chat profiles answer from small models; `escalation_models` is the
+# large tier the router moves to only when the small answer fails deterministic validation (unparseable
+# JSON, schema failure, SQL the gateway still rejects after repairs, no usable hypotheses, a narrative
+# the numbers guard rejects). Per-purpose policy: `escalation` below and admin `llm.escalation`
+# (never | on_validation_failure | always_large; the max_quality preset = always_large = Sonnet first).
 profiles:
   reasoning_strong:
-    models: [anthropic/claude-sonnet-5, openai/gpt-5.4]
+    models: [openai/gpt-5.4-mini, google/gemini-3.5-flash]
+    escalation_models: [anthropic/claude-sonnet-5, openai/gpt-5.4]
     temperature: 0.2
     max_tokens: 4000
     timeout_seconds: 120
   coding:
-    models: [anthropic/claude-sonnet-5, openai/gpt-5.4-mini]
+    models: [openai/gpt-5.4-mini, deepseek/deepseek-v4-flash]
+    escalation_models: [anthropic/claude-sonnet-5, openai/gpt-5.4]
     temperature: 0.0
     max_tokens: 2500
     timeout_seconds: 90
   analytical_reasoning:
-    models: [anthropic/claude-sonnet-5, google/gemini-3.5-flash]
+    models: [google/gemini-3.5-flash, openai/gpt-5.4-mini]
+    escalation_models: [anthropic/claude-sonnet-5, openai/gpt-5.4]
     temperature: 0.2
     max_tokens: 4000
     timeout_seconds: 120
   low_cost:
     models: [google/gemini-3.5-flash-lite, deepseek/deepseek-v4-flash]
+    escalation_models: [anthropic/claude-sonnet-5]  # a narrative the numbers guard rejects
     temperature: 0.2
     max_tokens: 2000
     timeout_seconds: 60
@@ -109,6 +118,7 @@ ladders:
   metric_match: [cache, rules, decision]
   join_path_choice: [cache, rules, decision]
   decision_structured: [cache, llm_small]  # the DecisionService's structured-output backend
+  health_probe: [cache, llm_small]  # never cached (not a cacheable purpose); admin `GET /api/admin/models/health?probe=1`: one tiny billable request
 
 routing:
   planning: reasoning_strong
@@ -139,6 +149,19 @@ routing:
   join_path_choice: decision
   # DecisionService `llm_structured` backend: a small chat model answering with a strict JSON schema
   decision_structured: low_cost
+  health_probe: low_cost
+
+# Escalation policy per purpose (defaults; admin `llm.escalation` overrides). Purposes not listed use
+# `default`. A purpose whose profile has no escalation_models never escalates.
+escalation:
+  default: on_validation_failure
+  purposes:
+    metadata_enrichment: never   # batch crawl prompts; the deterministic semantics already ran
+    decision_structured: never   # the DecisionService falls back to its rules backend
+    agent_actions: never         # declarative agents have default_actions
+    dashboard_design: never
+    summarization: never
+    health_probe: never
 
 # DecisionService (ADR-0015, spec v3 §5). Every decision purpose declares its authority class, its
 # backends in order, a timeout and (through `rules`) a deterministic fallback. Backends: jev | rules |
