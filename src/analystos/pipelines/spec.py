@@ -24,7 +24,7 @@ from analystos.contracts.recipe import (
     validate_recipe,
 )
 from analystos.contracts.work import PipelineSpec
-from analystos.core.errors import InvalidInput
+from analystos.core.errors import AnalystOSError, InvalidInput
 
 
 class PipelineInvalid(InvalidInput):
@@ -98,7 +98,7 @@ def check(pipeline: PipelineSpec, recipes: dict[str, dict[str, Any]]) -> dict[st
 
         try:
             check_destination(pipeline.destination.schema_name, pipeline.destination.table)
-        except InvalidInput as exc:
+        except AnalystOSError as exc:
             problems.append(f"destination: {exc.message}")
     if problems:
         raise PipelineInvalid(problems)
