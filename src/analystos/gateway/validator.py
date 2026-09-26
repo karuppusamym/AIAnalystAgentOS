@@ -362,6 +362,41 @@ def _check_sources(root: exp.Expression) -> None:
                 )
 
 
+_JOIN_COMPARISONS: tuple[type, ...] = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ)
+
+
+def _join_keyed(predicate: exp.Expression, joined: str) -> bool:
+    """True when ``predicate`` cannot hold for every row pair: some conjunct compares a column of the
+    joined source with a column of another source (every disjunct must be keyed on its own). This
+    refuses ``ON TRUE OR a.k = b.k`` and ``ON b.k = b.k`` as well as ``ON TRUE`` (P7-15)."""
+    if isinstance(predicate, exp.Paren):
+        return _join_keyed(predicate.this, joined)
+    if isinstance(predicate, exp.And):
+        return _join_keyed(predicate.this, joined) or _join_keyed(predicate.expression, joined)
+    if isinstance(predicate, exp.Or):
+        return _join_keyed(predicate.this, joined) and _join_keyed(predicate.expression, joined)
+    if isinstance(predicate, _JOIN_COMPARISONS):
+        left = {c.table for c in predicate.this.find_all(exp.Column)}
+        right = {c.table for c in predicate.expression.find_all(exp.Column)}
+        if not left or not right or "" in left | right:
+            return False
+        return (joined in left and bool(right - {joined})) or (joined in right and bool(left - {joined}))
+    return False
+
+
+def _check_join_keys(qualified: exp.Expression) -> None:
+    """After qualification (USING is expanded to ON and every column names its source), each join
+    must be keyed across its two sides."""
+    for join in qualified.find_all(exp.Join):
+        predicate = join.args.get("on")
+        joined = join.this.alias_or_name if isinstance(join.this, exp.Expression) else ""
+        if predicate is None or not joined or not _join_keyed(predicate, joined):
+            raise _reject(
+                "Unconditioned joins are not allowed. Add a join key with ON or USING that compares a column "
+                "of the joined table with a column of another table."
+            )
+
+
 def _classify_tables(root: exp.Expression) -> list[exp.Table]:
     """Return the Table nodes that reference physical tables (not CTEs). Fail closed on anything
     the scope analysis cannot account for."""
@@ -586,6 +621,8 @@ def _validate_in_dialect(
         raise _reject(f"{msg}. Known columns — {hint}.") from None
     except SqlglotError as exc:
         raise _reject(f"Could not qualify the query: {str(exc).splitlines()[0]}.") from None
+
+    _check_join_keys(qualified)
 
     denied = {d.lower() for d in scope.denied_columns if not d.startswith("*.")}
     denied_any = {d[2:].lower() for d in scope.denied_columns if d.startswith("*.")}
