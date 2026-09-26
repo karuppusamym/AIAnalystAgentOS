@@ -104,7 +104,10 @@ def test_knowledge_edit_changes_the_version_and_misses_the_cache(workspace):
 def test_model_call_records_cached_tokens_and_receipts(workspace):
     from analystos.runtime.context import workspace_call_ctx
 
-    platform = PlatformSettings()
+    # A prompt-cache model on purpose: defaults are cheap-first now, and those models take plain strings.
+    base = PlatformSettings()
+    platform = base.model_copy(update={"llm": base.llm.model_copy(update={
+        "profile_models": {**base.llm.profile_models, "analytical_reasoning": ["anthropic/claude-sonnet-5"]}})})
     usage = {"prompt_tokens": 1200, "completion_tokens": 10, "cost": 0.001, "prompt_tokens_details": {"cached_tokens": 900}}
     transport = FakeTransport(chat=lambda p: {"model": p["model"], "choices": [{"message": {"content": '{"ok":1}'}}],
                                               "usage": usage})
