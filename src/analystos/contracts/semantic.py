@@ -18,6 +18,15 @@ ModelStatus = Literal["draft", "proposed", "approved", "deprecated"]
 MetricFormat = Literal["number", "percent", "hours", "currency"]  # = MetricDef.format
 
 
+class SemanticQuery(BaseModel):
+    """Names only. SQL comes from the approved definitions and the compiler."""
+
+    model_config = ConfigDict(extra="forbid")
+    metrics: list[str] = Field(min_length=1, max_length=20)
+    dimensions: list[str] = Field(default_factory=list, max_length=10)
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
 class DialectExpression(BaseModel):
     dialect: str = "ANSI_SQL"
     expression: str

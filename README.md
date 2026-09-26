@@ -16,7 +16,9 @@ tile back to the query and table it came from.
 | Design review and priorities | [`docs/60-delivery/04-design-review.md`](docs/60-delivery/04-design-review.md) |
 | Workbench UI / API design | [UX](docs/10-architecture/02-workbench-ux.md) · [API](docs/20-contracts/02-workbench-api.md) |
 | Platform spec (v3, proposed) | [`docs/00-intent/03-spec-v3-platform.md`](docs/00-intent/03-spec-v3-platform.md): capabilities, deterministic-first ladder, open knowledge formats, ELT on your engines |
-| Latest architecture review | [`docs/70-reviews/2026-09-25-architecture-review.md`](docs/70-reviews/2026-09-25-architecture-review.md) |
+| Unified platform spec (v4, proposed) | [`docs/00-intent/04-spec-v4-unified-data-platform.md`](docs/00-intent/04-spec-v4-unified-data-platform.md): one platform for analyst, data-science, data-engineering and governed ML work; Atlas and DataPilot as donors |
+| Latest reviews | [`docs/70-reviews/2026-09-26-agent-os-comparison-review.md`](docs/70-reviews/2026-09-26-agent-os-comparison-review.md) (comparison, dispositions) · [`docs/70-reviews/2026-09-25-architecture-review.md`](docs/70-reviews/2026-09-25-architecture-review.md) |
+| AgentSwarms reuse | [`docs/70-reviews/2026-09-26-agentswarms-implementation.md`](docs/70-reviews/2026-09-26-agentswarms-implementation.md) (product fit, code boundary, first gateway change) |
 | Agent mapping and workspace lifecycle | [`docs/30-operations/workspace-lifecycle.md`](docs/30-operations/workspace-lifecycle.md) |
 | Architecture + ADRs | [`docs/10-architecture/`](docs/10-architecture/01-architecture.md) |
 | Status (tracker) · evidence · readiness | [`docs/60-delivery/`](docs/60-delivery/01-tracker.md) |
@@ -49,14 +51,14 @@ approve/reject publication at any point; redirects replan and invalidate stale a
   escalation, feedback classification, chart choice, verification second opinion, stop check).
 * **Durable execution.** Temporal workflows over idempotent, plan-versioned tasks in Postgres.
 * **Full provenance.** Queries, experiments, artifacts (versioned), approvals, publications,
-  model/tool calls; lineage mirrored to Neo4j.
+  model/tool calls; lineage in Postgres (optionally projected to Neo4j with `--profile graph`).
 
 ## Quick start
 
 ```bash
 cp .env.example .env              # add OPENROUTER_API_KEY — never commit .env
 uv venv -p 3.11 .venv && uv pip install -e ".[dev]"
-docker compose up -d postgres redis neo4j temporal superset
+docker compose up -d postgres redis temporal superset   # Neo4j is optional: --profile graph
 .venv/bin/analystos migrate && .venv/bin/analystos seed
 scripts/dev_up.sh                 # ServiceNow mock :8090, Temporal worker, API :8000
 (cd web && npm install && npm run dev)   # UI :5173 — admin@analystos.local / ChangeMe123!
@@ -73,7 +75,7 @@ Tests: `.venv/bin/pytest -m "not integration"` (no services) · `.venv/bin/pytes
 
 ## Stack
 
-Python 3.11 · FastAPI · SQLAlchemy/Alembic · PostgreSQL 16 + pgvector · Redis · Neo4j 5 ·
+Python 3.11 · FastAPI · SQLAlchemy/Alembic · PostgreSQL 16 + pgvector · Redis · Neo4j 5 (optional) ·
 Temporal · sqlglot · DuckDB/Polars · SciPy/statsmodels/scikit-learn · Apache Superset 4.1 ·
 OpenRouter (chat + Decisions API) · React 18 + Vite + ECharts.
 

@@ -3,6 +3,10 @@
 **Status:** Proposed (2026-09-25, tracker P4-G01). A decision for the owners of the three
 repositories; nothing is merged across repositories by this record. It becomes Accepted when each
 owner has signed off below.
+**Amended 2026-09-26 by [ADR-0018](0018-one-platform-donor-repositories.md):** AnalystOS becomes the
+single platform and Atlas/DataPilot become donors. The three contracts below still govern artifacts
+exchanged while the donor products run, but the "Consequences" statement that nothing moves code
+between repositories is superseded.
 
 **Context.** Three products from the same owners now exchange artifacts or will:
 

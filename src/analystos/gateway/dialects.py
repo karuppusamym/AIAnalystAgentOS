@@ -6,8 +6,7 @@ files, call out over the network, reveal session state or sleep; table syntax th
 a stage instead of a table; session variables and bind parameters the database would substitute;
 time travel that reads rows the current table no longer holds; and how unquoted identifiers fold.
 
-``postgres`` and ``tsql`` keep exactly their increment-3 behaviour (``strict=False``). Every dialect
-added since is ``strict``: besides its own denylist it rejects any function sqlglot does not model
+Every dialect is ``strict``: besides its own denylist it rejects any function sqlglot does not model
 (an ``Anonymous`` call may be a UDF, an external/remote function or a stored procedure wrapper,
 none of which the gateway can reason about) unless the dialect allowlists it, namespaced function
 calls, bind parameters and session variables, time travel, and table names that look like paths,
@@ -22,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# Shared by every dialect (the increment-3 list; postgres and tsql use exactly this).
+# Shared by every dialect.
 BASE_DENYLIST = (
     "pg_read_file", "pg_read_binary_file", "pg_ls_*", "pg_stat_file", "lo_*", "dblink*", "pg_sleep*",
     "set_config", "current_setting", "pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf",
@@ -67,8 +66,11 @@ class DialectProfile:
 
 
 PROFILES: dict[str, DialectProfile] = {
-    "postgres": DialectProfile("postgres", strict=False, notes="increment-3 rules, unchanged"),
-    "tsql": DialectProfile("tsql", strict=False, fold="insensitive", notes="increment-3 rules, unchanged"),
+    "postgres": DialectProfile("postgres", allowed_anonymous=frozenset({"date_trunc"})),
+    "tsql": DialectProfile(
+        "tsql", fold="insensitive",
+        allowed_anonymous=frozenset({"dateadd", "datediff", "datediff_big", "datepart", "hashbytes", "concat"}),
+    ),
     "duckdb": DialectProfile(
         "duckdb",
         denylist=(

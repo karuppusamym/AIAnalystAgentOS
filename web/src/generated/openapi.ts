@@ -593,6 +593,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask/turns/{turn_id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rerun */
+        post: operations["rerun_api_ask_turns__turn_id__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask/turns/{turn_id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Schedule */
+        post: operations["schedule_api_ask_turns__turn_id__schedule_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assets/{asset_id}/columns/{column}/tags": {
         parameters: {
             query?: never;
@@ -2942,6 +2976,28 @@ export interface components {
             /** Value */
             value?: number | null;
         };
+        /** AskRerunIn */
+        AskRerunIn: {
+            /** Sql */
+            sql?: string | null;
+        };
+        /** AskScheduleIn */
+        AskScheduleIn: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /**
+             * Cron
+             * @default 0 9 * * *
+             */
+            cron?: string;
+            /** Name */
+            name: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone?: string;
+        };
         /** AskThreadIn */
         AskThreadIn: {
             /** Title */
@@ -4888,6 +4944,82 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AskPromoteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_api_ask_turns__turn_id__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRerunIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    schedule_api_ask_turns__turn_id__schedule_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskScheduleIn"];
             };
         };
         responses: {

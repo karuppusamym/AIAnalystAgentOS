@@ -9,6 +9,16 @@ This page describes the implemented architecture. The proposed workspace-adaptiv
 It preserves the modular monolith and adds typed workflows, evidence versions, isolated compute
 and retry-safe dispatch in increments P4–P6; these additions are not implemented yet.
 
+[Spec v4](../00-intent/04-spec-v4-unified-data-platform.md) (proposed, 2026-09-26) makes this one platform
+for analyst, data-science, data-engineering and governed ML work, with Atlas and DataPilot as donor
+repositories ([ADR-0018](adr/0018-one-platform-donor-repositories.md)). It adds semantic compilation
+([ADR-0019](adr/0019-semantic-compilation.md)), self-voiding verdicts ([ADR-0020](adr/0020-verification-fingerprints.md)),
+published and pinned definitions ([ADR-0021](adr/0021-published-versions-and-pinned-schedules.md)), isolated
+credential-free compute pools ([ADR-0022](adr/0022-compute-worker-protocol.md)), a transformation recipe IR
+([ADR-0023](adr/0023-transformation-recipe-ir.md)) governed classical ML ([ADR-0024](adr/0024-governed-classical-ml.md)) and a lite default install
+([ADR-0025](adr/0025-lite-by-default.md)).
+Its target deployment view is spec v4 §12; none of it is implemented yet (tracker increment 7).
+
 ## Deployment view (compose / Kubernetes)
 
 ```

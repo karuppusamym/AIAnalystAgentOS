@@ -612,6 +612,10 @@ export interface AskProvenanceAsset {
 }
 
 export interface AskProvenance {
+  parent_turn_id?: string | null;
+  governance?: "governed" | "ad_hoc";
+  semantic?: { model_id: string; model_version: number; compiler_version: string;
+    metrics: { id: string; name: string; version: number; hash: string }[] } | null;
   assets?: AskProvenanceAsset[];
   answered_by?: string | null;
   verified_query?: { id: string; name: string; pattern?: string; score?: number } | null;
@@ -655,6 +659,7 @@ export interface AskPromotion {
 }
 
 export interface AskTurn {
+  evidence_status?: { state: "recorded" | "changed" | "ad_hoc"; reasons: string[] };
   id: string;
   thread_id: string;
   workspace_id: string;
@@ -2379,6 +2384,9 @@ export const api = {
     post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null } }) as
       Promise<AskTurn>,
   askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
+  rerunAsk: (turnId: string, sql?: string) => request<AskTurn>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/rerun`, { sql }),
+  scheduleAsk: (turnId: string, body: { name: string; cron: string; timezone: string; approval_id?: string }) =>
+    request<{ status: string; approval_id?: string; expires_at?: string; id?: string }>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/schedule`, body),
   promoteTurn: (turnId: string, body: AskPromoteBody) =>
     post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
 };

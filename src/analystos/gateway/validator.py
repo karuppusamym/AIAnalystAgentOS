@@ -226,7 +226,7 @@ def _parse(sql: str, dialect: str) -> exp.Expression:
             "without extra ';'-separated statements."
         )
     root = statements[0]
-    while isinstance(root, (exp.Subquery, exp.Paren)) and not root.alias:
+    while isinstance(root, exp.Subquery | exp.Paren) and not root.alias:
         root = root.this
     return root
 
@@ -239,7 +239,7 @@ def _check_forbidden(root: exp.Expression) -> None:
                 raise _reject("SELECT ... INTO is not allowed: the gateway is read-only. Remove the INTO clause.")
             if isinstance(node, exp.Lock):
                 raise _reject("Row locking clauses (FOR UPDATE / FOR SHARE) are not allowed. Remove the locking clause.")
-            if node is not root and isinstance(node, (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Returning)):
+            if node is not root and isinstance(node, exp.Insert | exp.Update | exp.Delete | exp.Merge | exp.Returning):
                 raise _reject(
                     f"Data-modifying statements ({kind.upper()}) are not allowed anywhere, including inside "
                     "CTEs. Only read-only SELECT queries are accepted."
@@ -248,7 +248,7 @@ def _check_forbidden(root: exp.Expression) -> None:
                 word = str(node.this).upper()
                 raise _reject(f"{word} statements are not allowed. Only read-only SELECT queries are accepted.")
             raise _reject(f"{kind.upper()} statements are not allowed. Only read-only SELECT queries are accepted.")
-    if not isinstance(root, (exp.Select, exp.SetOperation)):
+    if not isinstance(root, exp.Select | exp.SetOperation):
         raise _reject(
             f"Only read-only queries (SELECT, WITH ... SELECT, UNION/INTERSECT/EXCEPT) are allowed; got "
             f"{type(root).__name__.upper()}."
@@ -287,7 +287,7 @@ _TIME_TRAVEL_NODES: tuple[type, ...] = tuple(
 
 
 def _check_strict(root: exp.Expression, prof: DialectProfile) -> None:
-    """Rules of every dialect added since increment 3 (see gateway/dialects.py)."""
+    """Fail closed on calls and syntax the gateway cannot certify."""
     for node in root.walk():
         if _BIND_NODES and isinstance(node, _BIND_NODES):
             raise _reject(
@@ -341,7 +341,15 @@ def _check_sources(root: exp.Expression) -> None:
             )
         if isinstance(node, exp.Join) and (node.args.get("method") or "").upper() == "NATURAL":
             raise _reject("NATURAL JOIN is not supported. Use an explicit JOIN ... ON condition.")
+        if isinstance(node, exp.Join):
+            predicate = node.args.get("on")
+            if (node.args.get("kind") or "").upper() == "CROSS" or (
+                predicate is None and node.args.get("using") is None
+            ) or (predicate is not None and not any(predicate.find_all(exp.Column))):
+                raise _reject("Unconditioned joins are not allowed. Add a join key with ON or USING.")
         if isinstance(node, exp.Table):
+            if node.args.get("hints"):
+                raise _reject("Table hints are not allowed in governed queries.")
             if not isinstance(node.this, exp.Identifier):
                 raise _reject(
                     f"Table-valued functions and dotted table expressions ({node.sql()}) are not allowed. "

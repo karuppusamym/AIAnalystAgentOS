@@ -42,6 +42,53 @@ afterEach(() => {
   session.clear();
 });
 
+it("labels governed calculations and prevents promoting changed evidence", () => {
+  const turn = askTurn("metric", "revenue", { answered_by: "semantic", provenance: { governance: "governed" },
+    evidence_status: { state: "changed", reasons: ["Metric definition changed"] } });
+  expect(provenancePills(turn).some((p) => p.label === "Approved metric calculation" && p.tone === "warning")).toBe(true);
+  expect(canPromote(turn)).toBe(false);
+});
+
+it("refreshes saved SQL into a new answer and keeps the original", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).endsWith("/rerun")) return new Response(JSON.stringify(askTurn("refreshed", "Revenue", { seq: 2 })),
+      { headers: { "Content-Type": "application/json" } });
+    const r = mockBackend(init?.method ?? "GET", String(input), typeof init?.body === "string" ? init.body : null);
+    return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
+  });
+  renderAt(`/w/${WS}/ask`);
+  await ask("How many P1 incidents per assignment group?");
+  const first = await screen.findByRole("article", { name: "Question 1" });
+  expect(within(first).getByText("Why these numbers?")).toBeTruthy();
+  fireEvent.click(within(first).getByRole("button", { name: "Refresh saved calculation" }));
+  await screen.findByRole("article", { name: "Question 2" });
+  expect(screen.getByRole("article", { name: "Question 1" })).toBeTruthy();
+  expect(calls(fetchMock, "POST", /\/rerun$/)).toHaveLength(1);
+  expect(JSON.parse(String(calls(fetchMock, "POST", /\/rerun$/)[0][1].body))).toEqual({});
+});
+
+it("requests approval before activating a saved calculation schedule", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).endsWith("/schedule")) {
+      const body = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify(body.approval_id ? { status: "created", id: "sch" }
+        : { status: "approval_required", approval_id: "approval", expires_at: "2026-09-29T12:00:00Z" }),
+      { headers: { "Content-Type": "application/json" } });
+    }
+    const r = mockBackend(init?.method ?? "GET", String(input), typeof init?.body === "string" ? init.body : null);
+    return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
+  });
+  renderAt(`/w/${WS}/ask`);
+  await ask("How many P1 incidents per assignment group?");
+  fireEvent.click(await screen.findByRole("button", { name: "Schedule this calculation" }));
+  fireEvent.click(screen.getByRole("button", { name: "Request schedule approval" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Activate approved schedule" }));
+  await screen.findByText(/Calculation scheduled/);
+  const posts = calls(fetchMock, "POST", /\/schedule$/);
+  expect(posts).toHaveLength(2);
+  expect(JSON.parse(String(posts[1][1].body)).approval_id).toBe("approval");
+});
+
 // ------------------------------------------------------------------------------------ helpers
 describe("Ask helpers", () => {
   const thread = (id: string, updated: string): AskThread => ({ id, workspace_id: WS, user_id: "u", title: id, archived: false, created_at: updated, updated_at: updated });

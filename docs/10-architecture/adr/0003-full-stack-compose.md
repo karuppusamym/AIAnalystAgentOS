@@ -1,6 +1,8 @@
 # ADR-0003 — Full infrastructure from day one, orchestrator-agnostic engine
 
 **Status:** accepted (user decision, 2026-09-25: "full stack from day one")
+**Amended 2026-09-26 by [ADR-0025](0025-lite-by-default.md) (proposed):** the orchestrator-agnostic engine stays;
+the default install becomes `lite` (Postgres + API + web), and the full stack becomes the `standard`/`scale` profiles.
 
 **Decision.** Compose runs Postgres (pgvector), Redis, Neo4j, Temporal, Superset from the start.
 The run engine exposes four operations (plan, get_state, execute_task, finish) that both the
