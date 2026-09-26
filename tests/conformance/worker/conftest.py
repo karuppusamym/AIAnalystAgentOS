@@ -100,6 +100,13 @@ def _make_transport(url: str) -> Any:
     impl = os.environ.get("ANALYSTOS_CONFORMANCE_IMPL", "subprocess")
     if impl == "subprocess":
         return SubprocessTransport(url, conformance=True)
+    if impl == "temporal":
+        from tests.conformance.worker.temporal_impl import factory
+
+        try:
+            return factory(url)
+        except Exception as exc:  # noqa: BLE001 - no dev server binary here
+            pytest.skip(f"Temporal dev server unavailable: {type(exc).__name__}: {exc}")
     if ":" in impl:
         module, _, attr = impl.partition(":")
         return getattr(importlib.import_module(module), attr)(url)

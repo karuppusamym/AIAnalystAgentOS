@@ -225,8 +225,11 @@ def test_an_unexpected_exception_is_an_internal_error(runner):
 
 def test_a_retryable_failure_is_retried_under_the_same_task(runner):
     sink = ListSink()
-    result = runner.run(runner.envelope("raise", {"code": "upstream_unavailable"}), sink=sink, attempts=2)
-    assert result.error.retryable and [e.type for e in sink.events].count("task.started") == 2
+    env = runner.envelope("raise", {"code": "upstream_unavailable"})
+    result = runner.run(env, sink=sink, attempts=2)
+    # at least one retry per attempt (a Temporal pool also retries inside the workflow), always the same task
+    assert result.error.retryable and [e.type for e in sink.events].count("task.started") >= 2
+    assert {e.task_id for e in sink.events} == {env.task_id}
 
 
 def test_a_kind_the_pool_does_not_serve_is_refused_by_the_worker(runner, pool):
