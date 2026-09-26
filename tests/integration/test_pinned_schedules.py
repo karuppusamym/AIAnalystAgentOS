@@ -57,6 +57,21 @@ def _wait(run_id: str, timeout: float = 600) -> str:
     raise AssertionError(f"run {run_id} did not finish")
 
 
+def _wait_schedule_run(srun_id: str, timeout: float = 60) -> None:
+    """The run reaches its terminal state first; complete_from_run then finishes the schedule_run in its
+    own transaction, so a reader can see the run COMPLETED a moment before the schedule_run succeeds."""
+    from analystos.db.base import session_scope
+    from analystos.db.models import ScheduleRun
+
+    started = time.time()
+    while time.time() - started < timeout:
+        with session_scope() as s:
+            if s.get(ScheduleRun, srun_id).status in ("succeeded", "failed", "skipped"):
+                return
+        time.sleep(0.2)
+    raise AssertionError(f"schedule run {srun_id} did not finish")
+
+
 def _propose_and_approve(ws: str, expression: str) -> None:
     from analystos.contracts.semantic import DialectExpression, SemanticMetricDef
     from analystos.core.config import get_settings
@@ -176,6 +191,7 @@ def test_pinned_schedule_upgrade_available_nothing_changed_and_retired_blocks(wo
     with session_scope() as s:
         fire_run = s.get(ScheduleRun, srun).result["run_id"]
     assert _wait(fire_run) == "COMPLETED"
+    _wait_schedule_run(srun)
     with session_scope() as s:
         run = s.get(AnalysisRun, fire_run)
         assert run.capabilities["refs"] == base_refs  # agent.investigator@1.0.0, not the upgrade
