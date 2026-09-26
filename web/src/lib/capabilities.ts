@@ -111,6 +111,9 @@ export async function invoke(m: CapabilityManifest, ws: string, args: Dict): Pro
     if (err instanceof ApiError && (err.status === 404 || err.status === 405) && !mcpTarget(m)) {
       return { state: "unsupported", message: "This server has no route to run built-in or plugin capabilities directly yet; they run inside investigations." };
     }
+    if (err instanceof ApiError && err.details.reason === "not_invocable") {
+      return { state: "unsupported", message: "This capability runs inside investigations and playbooks, not on its own." };
+    }
     throw err;
   }
   if (raw.status === "approval_required") return { state: "approval", approvalId: raw.approval_id ?? null, raw };

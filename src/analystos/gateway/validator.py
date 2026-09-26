@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -34,11 +35,13 @@ from sqlglot.schema import MappingSchema
 
 from analystos.contracts.policy import DataScope
 from analystos.core.errors import SQLRejected
+from analystos.gateway.dialects import BASE_DENYLIST, SUPPORTED_DIALECTS, DialectProfile, profile
 from analystos.gateway.types import ValidatedSQL
 
 DEFAULT_DIALECT = "postgres"
 MAX_SQL_LENGTH = 100_000
-SUPPORTED_DIALECTS = {"postgres", "tsql", "duckdb"}
+FEDERATION_DIALECT = "duckdb"  # cross-source statements run on the local DuckDB federation engine
+FEDERATED_SOURCE = "federated"  # ValidatedSQL.source_id of a cross-source statement
 
 # Statement/node types that must not appear anywhere in the tree.
 _FORBIDDEN_NODE_NAMES = (
@@ -55,20 +58,9 @@ _UNSUPPORTED_SOURCES: tuple[type, ...] = tuple(
     if isinstance(getattr(exp, name, None), type)
 )
 
-# Exact names and prefixes (a trailing "*") of functions that are never allowed.
-FUNCTION_DENYLIST = (
-    "pg_read_file", "pg_read_binary_file", "pg_ls_*", "pg_stat_file", "lo_*", "dblink*", "pg_sleep*",
-    "set_config", "current_setting", "pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf",
-    "query_to_xml*", "table_to_xml*", "cursor_to_xml*", "schema_to_xml*", "database_to_xml*",
-    "xp_*", "sp_*", "openrowset", "opendatasource", "openquery", "openxml", "read_csv*", "read_parquet*",
-    "read_json*", "read_text", "read_blob", "read_ndjson*", "copy", "txid_*", "pg_current_xact_id*",
-    "pg_advisory*", "pg_try_advisory*", "nextval", "setval", "pg_notify", "pg_rotate_logfile",
-    "pg_switch_wal", "pg_create_*", "pg_drop_*", "pg_promote", "pg_logical_*", "pg_replication_*",
-    "pg_export_snapshot", "pg_import_system_collations", "pg_file_*", "ts_stat", "ts_rewrite",
-    "pg_log_backend_memory_contexts", "pg_stat_reset*", "binary_upgrade_*", "pg_backup_*",
-    "pg_start_backup", "pg_stop_backup", "pg_wal_replay_*", "http*", "load_extension", "system",
-    "getenv", "shell", "glob",
-)
+# Exact names and prefixes (a trailing "*") of functions that are never allowed in any dialect;
+# each dialect adds its own (gateway/dialects.py).
+FUNCTION_DENYLIST = BASE_DENYLIST
 _DENY_EXACT = {f for f in FUNCTION_DENYLIST if not f.endswith("*")}
 _DENY_PREFIX = tuple(f[:-1] for f in FUNCTION_DENYLIST if f.endswith("*"))
 
@@ -79,9 +71,16 @@ def _reject(message: str, **details: object) -> SQLRejected:
     return SQLRejected(message, details={k: v for k, v in details.items() if v is not None})
 
 
-def _function_denied(name: str) -> bool:
+def _function_denied(name: str, prof: DialectProfile | None = None) -> bool:
     lowered = name.strip().strip('"[]`').lower()
-    return lowered in _DENY_EXACT or lowered.startswith(_DENY_PREFIX)
+    if lowered in _DENY_EXACT or lowered.startswith(_DENY_PREFIX):
+        return True
+    if prof is None or not prof.denylist and not prof.strict:
+        return False
+    for pattern in prof.denied():
+        if lowered == pattern or (pattern.endswith("*") and lowered.startswith(pattern[:-1])):
+            return True
+    return False
 
 
 def _function_names(node: exp.Func) -> set[str]:
@@ -256,10 +255,10 @@ def _check_forbidden(root: exp.Expression) -> None:
         )
 
 
-def _check_functions(root: exp.Expression) -> None:
+def _check_functions(root: exp.Expression, prof: DialectProfile | None = None) -> None:
     for node in root.find_all(exp.Func):
         names = _function_names(node)
-        denied = sorted(n for n in names if _function_denied(n))
+        denied = sorted(n for n in names if _function_denied(n, prof))
         if denied:
             raise _reject(f"Function {denied[0]}() is not allowed in governed queries.", function=denied[0])
     for dot in root.find_all(exp.Dot):
@@ -274,6 +273,63 @@ def _check_functions(root: exp.Expression) -> None:
             raise _reject(
                 f"Field access expression {node.sql()} is not supported. Reference columns as table.column."
             )
+
+
+_NAMESPACED_CALL = re.compile(r"^([A-Za-z_][\w$]*\.[A-Za-z_][\w$.]*)\(")
+_PATH_CHARS = set("/\\:@~$*")
+_BIND_NODES: tuple[type, ...] = tuple(
+    getattr(exp, name) for name in ("Parameter", "Placeholder", "SessionParameter")
+    if isinstance(getattr(exp, name, None), type)
+)
+_TIME_TRAVEL_NODES: tuple[type, ...] = tuple(
+    getattr(exp, name) for name in ("Version", "HistoricalData", "Changes") if isinstance(getattr(exp, name, None), type)
+)
+
+
+def _check_strict(root: exp.Expression, prof: DialectProfile) -> None:
+    """Rules of every dialect added since increment 3 (see gateway/dialects.py)."""
+    for node in root.walk():
+        if _BIND_NODES and isinstance(node, _BIND_NODES):
+            raise _reject(
+                f"Parameters and session variables ({node.sql(dialect=prof.name)}) are not allowed in governed "
+                "queries; write literal values."
+            )
+        if _TIME_TRAVEL_NODES and isinstance(node, _TIME_TRAVEL_NODES):
+            raise _reject("Time travel (AS OF / AT / BEFORE / CHANGES) is not allowed; query the current table.")
+        if isinstance(node, exp.Func):
+            names = _function_names(node)
+            if isinstance(node, exp.Anonymous):
+                name = (node.name or "").lower()
+                if "." in name or name not in prof.allowed_anonymous:
+                    raise _reject(
+                        f"Function {node.name}() is not a known built-in of {prof.name}; user-defined, external and "
+                        "namespaced functions are not allowed in governed queries.",
+                        function=node.name,
+                    )
+            else:
+                namespaced = _NAMESPACED_CALL.match(node.sql(dialect=prof.name))
+                if any("." in n for n in names) or namespaced:
+                    head = namespaced.group(1) if namespaced else next(n for n in names if "." in n)
+                    raise _reject(f"Namespaced function {head}() is not allowed in governed queries.", function=head)
+        if type(node).__name__ == "MatchRecognize":
+            raise _reject("MATCH_RECOGNIZE is not supported in governed queries.")
+        if isinstance(node, exp.Table):
+            for key in ("version", "when", "changes", "format", "pattern"):
+                if node.args.get(key) is not None:
+                    raise _reject(
+                        f"Table {node.sql(dialect=prof.name)} uses {key.upper()} syntax (time travel, stages or file "
+                        "formats), which is not allowed. Read the authorized table itself."
+                    )
+            name = node.name or ""
+            db = node.args.get("db")
+            db_name = db.name.lower() if isinstance(db, exp.Identifier) else ""
+            if (any(ch in _PATH_CHARS for ch in name) or db_name in prof.path_schemas
+                    or (prof.name in ("duckdb", "databricks") and "." in name)):
+                raise _reject(
+                    f"{node.sql(dialect=prof.name)} looks like a file path, stage, wildcard or metadata table, not an "
+                    "authorized table. Read authorized tables only.",
+                    table=node.sql(dialect=prof.name),
+                )
 
 
 def _check_sources(root: exp.Expression) -> None:
@@ -362,6 +418,14 @@ class _DialectMismatch(Exception):
     pass
 
 
+def _fold(name: str, prof: DialectProfile) -> str:
+    if prof.fold == "insensitive":
+        return name.lower()
+    if prof.fold == "upper":
+        return name.upper()
+    return name
+
+
 def validate_sql(scope: DataScope, sql: str, *, max_rows: int) -> ValidatedSQL:
     """Validate ``sql`` against ``scope`` and return executable, row-capped SQL.
 
@@ -399,14 +463,34 @@ def validate_sql(scope: DataScope, sql: str, *, max_rows: int) -> ValidatedSQL:
     raise _reject("The query could not be matched to a single authorized source dialect.")
 
 
+def validate_federated_sql(scope: DataScope, sql: str, *, max_rows: int) -> ValidatedSQL:
+    """Validate a cross-source statement (P4-E03). It is written in the federation dialect (duckdb)
+    and may join assets of several sources of the scope; every other rule is the single-source one,
+    applied per asset: each table must be an authorized asset of its own source, each column must be
+    known for that asset, and a column denied in any source is rejected wherever it appears. The
+    result names every source and asset so the gateway can extract each leg under its own scope."""
+    if not isinstance(sql, str) or not sql.strip():
+        raise _reject("The statement is empty. Send a single SELECT query.")
+    if len(sql) > MAX_SQL_LENGTH:
+        raise _reject(f"The statement is too long ({len(sql)} characters, limit {MAX_SQL_LENGTH}).")
+    if "\x00" in sql:
+        raise _reject("The statement contains a NUL byte.")
+    if max_rows < 1:
+        raise _reject("max_rows must be at least 1.")
+    return _validate_in_dialect(scope, sql, FEDERATION_DIALECT, max_rows, strict_dialect=False, federated=True)
+
+
 def _validate_in_dialect(
-    scope: DataScope, sql: str, dialect: str, max_rows: int, *, strict_dialect: bool
+    scope: DataScope, sql: str, dialect: str, max_rows: int, *, strict_dialect: bool, federated: bool = False
 ) -> ValidatedSQL:
     if dialect not in SUPPORTED_DIALECTS:
         raise _reject(f"Source dialect {dialect!r} is not supported by the gateway.")
+    prof = profile(dialect)
     root = _parse(sql, dialect)
     _check_forbidden(root)
-    _check_functions(root)
+    _check_functions(root, prof)
+    if prof.strict:
+        _check_strict(root, prof)
     _check_sources(root)
     tables = _classify_tables(root)
     if not tables:
@@ -418,6 +502,8 @@ def _validate_in_dialect(
     for table in tables:
         asset = index.resolve(table)
         schema_name, table_name = asset.split(".", 1)
+        if prof.fold == "upper":
+            schema_name, table_name = schema_name.upper(), table_name.upper()
         table.set("db", exp.to_identifier(schema_name, quoted=True))
         table.set("this", exp.to_identifier(table_name, quoted=True))
         if asset not in referenced:
@@ -430,19 +516,30 @@ def _validate_in_dialect(
             raise _reject(f"Asset {asset} is not bound to an authorized source.", asset=asset)
         asset_sources[asset] = source_id
     distinct_sources = sorted(set(asset_sources.values()))
-    if len(distinct_sources) > 1:
-        by_source = {s: sorted(a for a, v in asset_sources.items() if v == s) for s in distinct_sources}
-        raise _reject(
-            "Cross-source queries are not supported: all tables in one query must come from the same "
-            f"source. This query mixes {by_source}. Query each source separately.",
-            sources=distinct_sources,
-        )
-    source_id = distinct_sources[0]
-    source_dialect = scope.source_dialects.get(source_id, DEFAULT_DIALECT)
-    if source_dialect != dialect:
-        if strict_dialect:
-            raise _DialectMismatch()
-        raise _reject(f"Source {source_id} uses the {source_dialect} dialect; write the query in {source_dialect}.")
+    if federated:
+        duplicated = sorted(a for a in referenced if scope.assets.count(a) > 1)
+        if duplicated:
+            raise _reject(
+                f"{', '.join(duplicated)} exists in more than one source of the scope, so a federated query cannot "
+                "tell them apart. Narrow the run to one of those sources.",
+                assets=duplicated,
+            )
+        source_id = FEDERATED_SOURCE
+    else:
+        if len(distinct_sources) > 1:
+            by_source = {s: sorted(a for a, v in asset_sources.items() if v == s) for s in distinct_sources}
+            raise _reject(
+                "Cross-source queries are not supported: all tables in one query must come from the same "
+                f"source. This query mixes {by_source}. Query each source separately, or use the federated "
+                "runner of a cross-source run.",
+                sources=distinct_sources,
+            )
+        source_id = distinct_sources[0]
+        source_dialect = scope.source_dialects.get(source_id, DEFAULT_DIALECT)
+        if source_dialect != dialect:
+            if strict_dialect:
+                raise _DialectMismatch()
+            raise _reject(f"Source {source_id} uses the {source_dialect} dialect; write the query in {source_dialect}.")
 
     # Build the schema for qualification from the column metadata of the referenced assets.
     mapping: dict[str, dict[str, dict[str, str]]] = {}
@@ -455,9 +552,11 @@ def _validate_in_dialect(
                 asset=asset,
             )
         schema_name, table_name = asset.split(".", 1)
-        if dialect == "tsql":
+        if prof.fold == "insensitive":
             schema_name, table_name = schema_name.lower(), table_name.lower()
-        col_map = {(c.lower() if dialect == "tsql" else c): "text" for c in cols}
+        elif prof.fold == "upper":
+            schema_name, table_name = schema_name.upper(), table_name.upper()
+        col_map = {_fold(c, prof): "text" for c in cols}
         mapping.setdefault(schema_name, {})[table_name] = col_map
         known_columns[f"{schema_name}.{table_name}"] = {c.lower(): c for c in cols}
         known_columns.setdefault(asset.lower(), {c.lower(): c for c in cols})
@@ -584,5 +683,6 @@ def _validate_in_dialect(
         referenced_assets=sorted(referenced),
         referenced_columns=sorted(referenced_columns),
         fingerprint=fingerprint,
+        asset_sources={a: asset_sources[a] for a in sorted(referenced)},
     )
 

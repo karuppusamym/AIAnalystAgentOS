@@ -42,7 +42,7 @@ class RegisteredHypothesisPatch(BaseModel):
 
 @router.get("/workspaces/{workspace_id}/verified-queries")
 def list_verified_queries(workspace_id: str, status: str | None = None, user: User = Depends(current_user),
-                          session: Session = Depends(db)):
+                          session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(VerifiedQuery).where(VerifiedQuery.workspace_id == workspace_id)
     if status:
@@ -51,19 +51,19 @@ def list_verified_queries(workspace_id: str, status: str | None = None, user: Us
 
 
 @router.post("/workspaces/{workspace_id}/verified-queries")
-def promote_verified_query(workspace_id: str, body: PromoteIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def promote_verified_query(workspace_id: str, body: PromoteIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Promote a successful Ask answer (`query_id` + `question`) or a verified finding (`insight_id`)."""
     return row(vq_svc.promote(session, session.merge(user), workspace_id, **body.model_dump()))
 
 
 @router.patch("/verified-queries/{entry_id}")
-def patch_verified_query(entry_id: str, body: VerifiedQueryPatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def patch_verified_query(entry_id: str, body: VerifiedQueryPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return row(vq_svc.update(session, session.merge(user), entry_id, body.model_dump(exclude_none=True)))
 
 
 @router.get("/workspaces/{workspace_id}/hypothesis-registry")
 def list_registered_hypotheses(workspace_id: str, status: str | None = None, user: User = Depends(current_user),
-                               session: Session = Depends(db)):
+                               session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(RegisteredHypothesis).where(RegisteredHypothesis.workspace_id == workspace_id)
     if status:
@@ -73,7 +73,7 @@ def list_registered_hypotheses(workspace_id: str, status: str | None = None, use
 
 @router.patch("/hypothesis-registry/{entry_id}")
 def patch_registered_hypothesis(entry_id: str, body: RegisteredHypothesisPatch, user: User = Depends(current_user),
-                                session: Session = Depends(db)):
+                                session: Session = Depends(db, scope="function")):
     """Retire a question so scheduled re-analysis stops replaying it (or reactivate it)."""
     entry = session.get(RegisteredHypothesis, entry_id)
     if entry is None:

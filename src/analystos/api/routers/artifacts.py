@@ -33,7 +33,7 @@ class Decision(BaseModel):
 
 @router.get("/workspaces/{workspace_id}/artifacts")
 def list_artifacts(workspace_id: str, type: str | None = None, run_id: str | None = None, user: User = Depends(current_user),
-                   session: Session = Depends(db)):
+                   session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(Artifact).where(Artifact.workspace_id == workspace_id)
     if type:
@@ -44,7 +44,7 @@ def list_artifacts(workspace_id: str, type: str | None = None, run_id: str | Non
 
 
 @router.get("/artifacts/{artifact_id}")
-def get_artifact(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_artifact(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     art = session.get(Artifact, artifact_id)
     if art is None:
         raise NotFound("artifact not found")
@@ -55,13 +55,13 @@ def get_artifact(artifact_id: str, user: User = Depends(current_user), session: 
 
 
 @router.get("/workspaces/{workspace_id}/lineage")
-def lineage(workspace_id: str, node_type: str, node_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def lineage(workspace_id: str, node_type: str, node_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return lineage_for(session, workspace_id, (node_type, node_id))
 
 
 @router.get("/queries/{query_id}")
-def get_query(query_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_query(query_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     q = session.get(QueryExecution, query_id)
     if q is None:
         raise NotFound("query not found")
@@ -70,14 +70,14 @@ def get_query(query_id: str, user: User = Depends(current_user), session: Sessio
 
 
 @router.get("/workspaces/{workspace_id}/insights")
-def insights(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def insights(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return rows(session.scalars(select(Insight).where(Insight.workspace_id == workspace_id, Insight.status != "superseded")
                                 .order_by(Insight.created_at.desc())))
 
 
 @router.get("/insights/{insight_id}")
-def get_insight(insight_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_insight(insight_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Evidence behind a finding (DoD #20): experiments, queries (with SQL and result preview), lineage."""
     ins = session.get(Insight, insight_id)
     if ins is None:
@@ -93,7 +93,7 @@ def get_insight(insight_id: str, user: User = Depends(current_user), session: Se
 
 # ---------------------------------------------------------------------------------- approvals
 @router.get("/workspaces/{workspace_id}/approvals")
-def list_approvals(workspace_id: str, status: str | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_approvals(workspace_id: str, status: str | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(Approval).where(Approval.workspace_id == workspace_id)
     if status:
@@ -115,12 +115,12 @@ def _decide(approval_id: str, user: User, session: Session, approve: bool, reaso
 
 
 @router.post("/approvals/{approval_id}/approve")
-def approve(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def approve(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, True, body.reason if body else None)
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def reject(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, False, body.reason if body else None)
 
 
@@ -133,7 +133,7 @@ def _pending_for_artifact(session: Session, art: Artifact) -> Approval:
 
 
 @router.post("/artifacts/{artifact_id}/publish")
-def publish_artifact(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def publish_artifact(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Publishing is proposal-based: returns the pending, hash-bound proposal that includes this artifact."""
     art = session.get(Artifact, artifact_id)
     if art is None:
@@ -143,7 +143,7 @@ def publish_artifact(artifact_id: str, user: User = Depends(current_user), sessi
 
 
 @router.post("/artifacts/{artifact_id}/approve")
-def approve_artifact(artifact_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def approve_artifact(artifact_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     art = session.get(Artifact, artifact_id)
     if art is None:
         raise NotFound("artifact not found")
@@ -161,7 +161,7 @@ def create_dashboards(workspace_id: str, body: dict, user: User = Depends(curren
 
 
 @router.post("/dashboards/{artifact_id}/publish")
-def publish_dashboard(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def publish_dashboard(artifact_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return publish_artifact(artifact_id, user, session)
 
 
@@ -172,7 +172,7 @@ def schedule_dashboard(artifact_id: str, user: User = Depends(current_user)):
 
 
 @router.post("/publications/{publication_id}/rollback")
-def rollback(publication_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def rollback(publication_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     from analystos.core.config import get_settings
     from analystos.governance.audit import audit
     from analystos.publishing.base import get_publisher

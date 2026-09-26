@@ -4,6 +4,8 @@ import { api, session, type User } from "./api";
 interface AuthState {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  /** Single sign-on: the callback hands the AnalystOS token back in the URL fragment. */
+  loginWithToken: (token: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -34,7 +36,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(resp.user);
   }, []);
 
-  const value = useMemo(() => ({ user, login, logout }), [user, login, logout]);
+  const loginWithToken = useCallback(async (token: string) => {
+    session.set(token, null as unknown as User);
+    try {
+      const me = await api.me();
+      session.set(token, me);
+      setUser(me);
+    } catch (err) {
+      session.clear();
+      throw err;
+    }
+  }, []);
+
+  const value = useMemo(() => ({ user, login, loginWithToken, logout }), [user, login, loginWithToken, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

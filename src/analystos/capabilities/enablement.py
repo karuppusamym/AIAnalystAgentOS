@@ -25,7 +25,7 @@ from analystos.capabilities.playbook import DEFAULT_PLAYBOOK
 from analystos.contracts.capability import CapabilityManifest
 from analystos.core.errors import InvalidInput
 
-SELF_GOVERNED_KINDS = ("Connector", "KnowledgePack")
+SELF_GOVERNED_KINDS = ("Connector", "Engine", "KnowledgePack")  # engines: governed by the gateway
 AUTONOMOUS_ORIGINS = ("schedule", "alert")
 
 

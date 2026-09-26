@@ -4,10 +4,11 @@
  * the client's response shapes so a shape change breaks the typecheck, not just a screenshot.
  */
 import type {
-  AgentSpec, Alert, Approval, Artifact, AskResponse, CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight,
-  InsightDetail, Monitor, ModelsView, PlatformSettings, Run, RunDetail, Schedule, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec,
-  Usage, User, WorkspaceDetail,
+  AgentSpec, Alert, Approval, Artifact, ArtifactDetail, AskInspector, AskResponse, AskThread, AskTurn, BuildDiff, BuildJob, BuildJobDetail, BuildTarget,
+  CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight, InsightDetail, MetricValidation, Monitor, ModelsView,
+  PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
+import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -120,9 +121,20 @@ const INSIGHT_DETAIL: InsightDetail = { ...INSIGHT_ROW, queries: [{
 
 const ARTIFACTS: Artifact[] = [{
   id: "art_dash", workspace_id: WS, run_id: RUN, type: "dashboard", name: "P1 resolution", version: 1, status: "draft", platform: null,
-  external_id: null, external_url: null, creator_agent: "bi", creator_user: null, content: { charts: [], layout: [] }, content_hash: "ff00",
-  created_at: T, updated_at: T,
+  external_id: null, external_url: null, creator_agent: "bi", creator_user: null, content_hash: "ff00", created_at: T, updated_at: T,
+  content: { title: "P1 resolution (weekly)", audience: "ops leads", charts: ["mttr_by_group"],
+    layout: [{ kind: "chart", chart: "mttr_by_group", row: 0, col: 0, width: 12, height: 6 }] },
+}, {
+  id: "art_chart", workspace_id: WS, run_id: RUN, type: "chart", name: "mttr_by_group", version: 1, status: "draft", platform: null,
+  external_id: null, external_url: null, creator_agent: "bi", creator_user: null, content_hash: "ee11", created_at: T, updated_at: T,
+  content: { key: "mttr_by_group", title: "P1 MTTR by assignment group", chart_type: "bar",
+    preview: { columns: ["assignment_group", "mttr_hours"], rows: [["Network", 9.4], ["Desktop", 6.1], ["Database", 5.2]] } },
 }];
+
+const artifactDetail = (a: Artifact): ArtifactDetail => ({
+  ...a, versions: [{ id: 1, artifact_id: a.id, version: 1, content_hash: a.content_hash, created_by: "agent:bi", created_at: T }],
+  lineage: { nodes: [], edges: [] },
+});
 
 const CATALOG: CatalogAsset[] = [{
   id: "ast_inc", fq: "servicenow.incident", source_id: SOURCE.id, name: "incident", business_name: "Incidents",
@@ -142,6 +154,333 @@ export const ASK: AskResponse = {
   explanation: "P1 incidents by assignment group.", chart: { type: "bar", x: "assignment_group", y: "p1" }, model: "rule", attempts: [],
   result: { query_id: "qry_1", columns: ["assignment_group", "p1"], rows: [["Network", 182], ["Desktop", 110]], row_count: 2, truncated: false },
 };
+
+// ------------------------------------------------------------------------------------ Ask threads (P4-U02)
+export const THREAD_OLD = "ask_old";
+export const THREAD_NEW = "ask_new";
+
+const THREAD: AskThread = { id: THREAD_OLD, workspace_id: WS, user_id: USER.id, title: "Weekly P1 volume", archived: false,
+  created_at: "2026-09-20T09:00:00Z", updated_at: "2026-09-20T09:00:00Z", turn_count: 1 };
+
+const STAGES = [
+  { key: "scope", text: "Checking what you are allowed to see", at_ms: 3 },
+  { key: "registry", text: "Looking for a verified answer to this question", at_ms: 9 },
+  { key: "route", text: "No verified answer fits: writing new SQL", at_ms: 12 },
+  { key: "context", text: "Finding the tables that answer this", at_ms: 15 },
+  { key: "generate", text: "Writing the SQL", at_ms: 20 },
+  { key: "execute", text: "Running it through the query gateway (read-only, within your access)", at_ms: 910 },
+  { key: "done", text: "Answered", at_ms: 950 },
+];
+
+export function askTurn(id: string, question: string, over: Partial<AskTurn> = {}): AskTurn {
+  return {
+    id, thread_id: THREAD_NEW, workspace_id: WS, seq: 1, question, parameters: {}, status: "answered", route: "generate", answered_by: "model",
+    refusal: null, sql: ASK.sql, explanation: ASK.explanation, chart: ASK.chart, result: { ...ASK.result, referenced_assets: ["stg_sn.incident"] },
+    verified_query: null, model: "openrouter/auto", attempts: [], stages: STAGES, promotions: [], latency_ms: 950, created_at: T,
+    decisions: [{ id: "dec_1", purpose: "ask_route", backend: "rules", value: "generate" },
+      { id: "dec_2", purpose: "clarify_needed", backend: "jev", value: "answer", model: "typesafe/jev-1", probabilities: { answer: 0.88, clarify: 0.12 } }],
+    provenance: { assets: [{ asset: "stg_sn.incident", asset_id: "ast_inc", business_name: "Incidents", source_id: SOURCE.id, source_name: "ServiceNow",
+      source_kind: "servicenow", execution_mode: "staged", freshness_at: "2026-09-25T06:00:00Z", row_count: 4210 }],
+    answered_by: "model", model: "openrouter/auto", query_id: "qry_1", cache_hit: false, result_hash: "9f86d081884c7d65", repairs: 0 },
+    staleness: { state: "fresh", label: "Data as of 3 hours ago", data_as_of: "2026-09-25T06:00:00Z" },
+    ...over,
+  };
+}
+
+const OLD_TURN = askTurn("askt_old", "How many P1 incidents per week?", { thread_id: THREAD_OLD });
+
+/** The clarify refusal: nothing to measure, so nothing ran. */
+function clarifyTurn(question: string): AskTurn {
+  return askTurn("askt_clarify", question, {
+    status: "clarify", route: "generate", answered_by: null, sql: null, explanation: null, chart: null, result: null, provenance: {},
+    refusal: { kind: "clarify", title: "The question needs more detail", message: "This question is too open to answer safely.",
+      remedy: "Say what to measure (a count, a rate, an average), over which records and period, and how to group it.", details: { missing: [{ name: "what to measure" }] } },
+    staleness: { state: "unknown", label: "Data freshness unknown", data_as_of: null },
+    stages: [STAGES[0], { key: "clarify", text: "The question needs more detail before it can be answered", at_ms: 8 }],
+  });
+}
+
+const INSPECTOR = (turn: AskTurn): AskInspector => ({
+  turn,
+  decisions: [
+    { id: "dec_1", purpose: "ask_route", authority: "route", backend: "rules", model: null, answer: "generate", proposal: "generate",
+      probabilities: { generate: 1 }, confidence: null, fallback_reason: null, attempts: [{ backend: "rules", outcome: "answered", reason: "nothing verified matched" }],
+      enforced: [], subject: `ask:${turn.id}`, latency_ms: 1, created_at: T },
+    { id: "dec_2", purpose: "clarify_needed", authority: "escalate_only", backend: "jev", model: "typesafe/jev-1", answer: "answer", proposal: "answer",
+      probabilities: { yes: 0.12, no: 0.88 }, confidence: 0.88, fallback_reason: null, attempts: [], enforced: [], subject: `ask:${turn.id}`, latency_ms: 240,
+      created_at: T },
+  ],
+  model_calls: [{ id: 91, run_id: null, task_id: turn.id, agent_id: "sql", purpose: "sql_generation", profile: "chat", provider: "openrouter",
+    model: "openrouter/auto", prompt_version: "sql_generation.v1@ab12", status: "ok", attempt: 1, latency_ms: 820, input_tokens: 2100, output_tokens: 90,
+    cost_usd: 0.0012, error: null, created_at: T, answered_by: "llm_small",
+    context_receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }] }],
+  query: { id: "qry_1", workspace_id: WS, source_id: SOURCE.id, run_id: null, task_id: null, actor: `user:${USER.id}`, purpose: "ask", sql: ASK.sql,
+    executed_sql: `${ASK.sql} LIMIT 5001`, fingerprint: "fp_ask_1", status: "ok", rejected_reason: null, referenced_assets: ["stg_sn.incident"], row_count: 2,
+    truncated: false, columns: ASK.result.columns, result_hash: "9f86d081884c7d65", cache_hit: false, duration_ms: 40, created_at: T },
+  receipts: [{ kind: "glossary", id: "term_p1", title: "P1 = priority 1 (critical)", version: 3 }, ...knowledgeReceipts()],
+});
+
+const sse = (frames: [string, unknown][]): MockResponse => ({
+  status: 200, contentType: "text/event-stream",
+  body: frames.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(""),
+});
+
+/** Ask thread routes: list, create, detail, streamed turn, inspector and promotions. */
+function askRoute(m: string, p: string, requestBody?: string | null): MockResponse | null {
+  if (m === "GET" && p === `/workspaces/${WS}/ask/threads`) return json([THREAD]);
+  if (m === "POST" && p === `/workspaces/${WS}/ask/threads`) {
+    return json({ id: THREAD_NEW, workspace_id: WS, user_id: USER.id, title: "New question", archived: false, created_at: T, updated_at: T, turns: [] });
+  }
+  if (m === "GET" && p === `/ask/threads/${THREAD_OLD}`) return json({ ...THREAD, turns: [OLD_TURN] });
+  if (m === "POST" && p === `/ask/threads/${THREAD_NEW}/turns`) {
+    const q = String((requestBody ? JSON.parse(requestBody) as { question?: string } : {}).question ?? "");
+    recordQuestion(q);
+    const turn = /about it/i.test(q) ? clarifyTurn(q) : askTurn("askt_1", q);
+    return sse([...turn.stages.map((s) => ["stage", { turn_id: turn.id, ...s }] as [string, unknown]), ["turn", turn], ["end", { status: "done" }]]);
+  }
+  const inspect = /^\/ask\/turns\/([^/]+)\/inspector$/.exec(p);
+  if (m === "GET" && inspect) return json(INSPECTOR(askTurn(inspect[1], "How many P1 incidents per assignment group?")));
+  const promote = /^\/ask\/turns\/([^/]+)\/promote$/.exec(p);
+  if (m === "POST" && promote) {
+    const body = requestBody ? JSON.parse(requestBody) as { target?: string } : {};
+    const at = T;
+    switch (body.target) {
+      case "verified_query": return json({ target: "verified_query", id: "vq_1", name: "p1_by_group", status: "created", at });
+      case "metric": return json({ target: "metric", id: "smet_1", name: "p1_count", status: "proposed", approval_id: "apr_m1", value: 292, at });
+      case "monitor": return json({ target: "monitor", id: "mon_2", name: "P1 incidents per assignment group", status: "created", kind: "metric_drift", at });
+      case "dashboard": return json({ target: "dashboard", id: "apr_d1", status: "approval_required", approval_id: "apr_d1", dashboard: "Ask answers", at }, 202);
+      case "investigate": return json({ target: "investigate", id: RUN, status: "started", objective: "Investigate why: P1 incidents", at });
+      default: return json({ error: { code: "invalid_input", message: "unknown target", details: {} } }, 422);
+    }
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------------------------ Build studio (P4-U05)
+export const BUILD_PREV = "bld_1";
+export const BUILD_NEW = "bld_2";
+export const BUILD_APPROVAL = "apr_build";
+
+/**
+ * The only mutable part of the mock: a build planned in the journey and its approval decision, and
+ * KPIs proposed or decided in the editor. `resetMockState` runs before every Playwright test (and in
+ * the vitest cases that change it), so no test sees another's state.
+ */
+const state = { planned: false, buildApproval: "pending", proposed: [] as SemanticMetric[], decided: {} as Record<string, string> };
+
+export function resetMockState(): void {
+  state.planned = false;
+  state.buildApproval = "pending";
+  state.proposed = [];
+  state.decided = {};
+  resetKnowledgeState();
+}
+
+const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
+  build_role: "aos_b_ws_demo", status: "active", provisioning: {}, created_by: USER.id, created_at: T };
+
+const FILES_V1: Record<string, string> = {
+  "dbt_project.yml": "name: analystos_p1\nversion: '1.0'\n",
+  "models/p1_incidents.sql": "select sys_id, priority, assignment_group, opened_at\nfrom {{ source('stg_sn', 'incident') }}\n",
+  "models/schema.yml": "version: 2\nmodels:\n  - name: p1_incidents\n",
+};
+const FILES_V2: Record<string, string> = {
+  "dbt_project.yml": FILES_V1["dbt_project.yml"],
+  "models/p1_incidents.sql": "select sys_id, priority, assignment_group, opened_at, resolved_at\nfrom {{ source('stg_sn', 'incident') }}\nwhere priority = '1'\n",
+  "models/schema.yml": "version: 2\nmodels:\n  - name: p1_incidents\n    columns:\n      - name: sys_id\n        tests: [not_null, unique]\n",
+  "models/semantic.yml": "semantic_models:\n  - name: p1_incidents\nmetrics:\n  - name: mttr_hours\n",
+};
+
+function buildJob(id: string, over: Partial<BuildJob>): BuildJob {
+  return {
+    id, workspace_id: WS, run_id: `run_${id}`, source_run_id: RUN, artifact_id: `art_tr_${id}`, approval_id: null, approval_status: null,
+    engine: "postgres:analytics", runner: "dbt-core", target_schema: "aos_mart", project_name: "analystos_p1",
+    project_hash: `${id}0a1b2c3d4e5f60718293a4b5c6d7e8f9`, plan_hash: "a1b2c3d4e5f6", relations: ["aos_mart.p1_incidents", "aos_mart.metricflow_time_spine"],
+    dry_run: { runner: "dbt-core", ok: true, dbt_version: "1.12.5", ossie_version: "0.1.1", allowed_sources: ["stg_sn.incident"],
+      tests: { candidates: [{ test: "not_null", column: "sys_id" }, { test: "unique", column: "sys_id" }, { test: "not_null", column: "resolved_at" }],
+        passing: [{ test: "not_null", column: "sys_id" }, { test: "unique", column: "sys_id" }], dropped: [{ test: "not_null", column: "resolved_at" }] },
+      metrics: [{ metric: "mttr_hours" }],
+      skipped_metrics: [{ metric: "reopen_rate",
+        reason: "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again" }],
+      notes: [] },
+    estimate: { rows: 4210, columns: 5, models: 2, tests: 2, approx_bytes: 336800,
+      method: "COUNT(*) of the dataset through the query gateway; bytes = rows x columns x 16 (rough)", query_id: "qry_probe" },
+    rollback: { strategy: "drop the relations this job creates or replaces", statements: ['DROP TABLE IF EXISTS "aos_mart"."p1_incidents" CASCADE'],
+      restore: "re-run build job bld_1 (same target; needs its own approval)", previous_job_id: "bld_1" },
+    status: "succeeded", run_results: {}, error: null, created_by: "agent:builder", created_at: T, started_at: null, finished_at: null,
+    ...over,
+  };
+}
+
+const JOB_PREV = buildJob(BUILD_PREV, {
+  run_id: "run_bld1", project_hash: "0f1e2d3c4b5a69788796a5b4c3d2e1f0", created_at: "2026-09-18T09:00:00Z", finished_at: "2026-09-18T09:05:00Z",
+  approval_id: "apr_b0", approval_status: "executed", run_results: { counts: { success: 2, pass: 2 } },
+  rollback: { strategy: "drop the relations this job creates or replaces", statements: [],
+    restore: "nothing to restore: no earlier build wrote this target", previous_job_id: null },
+});
+
+/** The job planned in the journey: waits for its approval, and (as the resumed run would) succeeds once approved. */
+function jobNew(): BuildJob {
+  const approved = state.buildApproval === "approved";
+  return buildJob(BUILD_NEW, { approval_id: BUILD_APPROVAL, approval_status: approved ? "executed" : state.buildApproval,
+    status: approved ? "succeeded" : "awaiting_approval", run_results: approved ? { counts: { success: 2, pass: 2 } } : {},
+    finished_at: approved ? T : null });
+}
+
+function buildApproval(): Approval {
+  const decided = state.buildApproval !== "pending";
+  return { ...APPROVAL, id: BUILD_APPROVAL, run_id: `run_${BUILD_NEW}`, action: "elt_build", risk_tier: "high", destination: "postgres:analytics/aos_mart",
+    affected_assets: ["aos_mart.p1_incidents", "aos_mart.metricflow_time_spine"], payload_hash: "b1d2e3f4a5b6c7d8e9f0",
+    status: state.buildApproval === "approved" ? "executed" : state.buildApproval, decided_by: decided ? USER.id : null, decided_at: decided ? T : null,
+    evidence: { policy: { decision: "require_approval", reasons: ["build writes to the customer's engine"] } },
+    payload: { action: "elt_build", job_id: BUILD_NEW, project_hash: `${BUILD_NEW}0a1b2c3d4e5f60718293a4b5c6d7e8f9`, engine: "postgres:analytics",
+      target_schema: "aos_mart", relations: ["aos_mart.metricflow_time_spine", "aos_mart.p1_incidents"], runner: "dbt-core" } };
+}
+
+function buildDetail(j: BuildJob, files: Record<string, string>): BuildJobDetail {
+  const a = j.id === BUILD_NEW ? buildApproval() : null;
+  return {
+    ...j, project_files: files, manifest: {}, openlineage: [],
+    log_tail: j.status === "succeeded" ? "Completed successfully\nDone. PASS=2 WARN=0 ERROR=0 SKIP=0 TOTAL=4" : "",
+    approval: a
+      ? { id: a.id, status: a.status, action: a.action, payload_hash: a.payload_hash, plan_hash: a.plan_hash, policy_version: a.policy_version,
+        risk_tier: a.risk_tier, requested_by: a.requested_by, decided_by: a.decided_by, decided_at: a.decided_at, reason: a.reason, expires_at: a.expires_at }
+      : { id: "apr_b0", status: "executed", action: "elt_build", payload_hash: "a0b0c0d0e0f00102", plan_hash: "a1b2c3d4e5f6", policy_version: 2,
+        risk_tier: "high", requested_by: USER.id, decided_by: "usr_approver", decided_at: "2026-09-18T09:02:00Z", reason: null,
+        expires_at: "2026-09-19T09:00:00Z" },
+  };
+}
+
+const DIFF_NEW: BuildDiff = {
+  job_id: BUILD_NEW, project_hash: `${BUILD_NEW}0a1b2c3d4e5f60718293a4b5c6d7e8f9`, basis: "previous_job_same_target", identical: false,
+  against: { job_id: BUILD_PREV, status: "succeeded", project_hash: JOB_PREV.project_hash, created_at: JOB_PREV.created_at },
+  summary: { added: 1, removed: 0, modified: 2, unchanged: 1, lines_added: 9, lines_removed: 1 },
+  files: [
+    { path: "dbt_project.yml", status: "unchanged", lines_added: 0, lines_removed: 0, diff: "", truncated: false },
+    { path: "models/p1_incidents.sql", status: "modified", lines_added: 2, lines_removed: 1, truncated: false,
+      diff: "--- a/models/p1_incidents.sql\n+++ b/models/p1_incidents.sql\n@@ -1,2 +1,3 @@\n-select sys_id, priority, assignment_group, opened_at\n"
+        + "+select sys_id, priority, assignment_group, opened_at, resolved_at\n from {{ source('stg_sn', 'incident') }}\n+where priority = '1'" },
+    { path: "models/schema.yml", status: "modified", lines_added: 3, lines_removed: 0, truncated: false,
+      diff: "--- a/models/schema.yml\n+++ b/models/schema.yml\n@@ -1,3 +1,6 @@\n version: 2\n models:\n   - name: p1_incidents\n"
+        + "+    columns:\n+      - name: sys_id\n+        tests: [not_null, unique]" },
+    { path: "models/semantic.yml", status: "added", lines_added: 4, lines_removed: 0, truncated: false,
+      diff: "--- /dev/null\n+++ b/models/semantic.yml\n@@ -0,0 +1,4 @@\n+semantic_models:\n+  - name: p1_incidents\n+metrics:\n+  - name: mttr_hours" },
+  ],
+};
+
+const DIFF_PREV: BuildDiff = {
+  job_id: BUILD_PREV, project_hash: JOB_PREV.project_hash, basis: "none", identical: false, against: null,
+  summary: { added: 3, removed: 0, modified: 0, unchanged: 0, lines_added: 7, lines_removed: 0 },
+  files: Object.entries(FILES_V1).map(([path, text]) => ({
+    path, status: "added" as const, lines_added: text.split("\n").length - 1, lines_removed: 0, truncated: false,
+    diff: ["--- /dev/null", `+++ b/${path}`, ...text.trimEnd().split("\n").map((l) => `+${l}`)].join("\n"),
+  })),
+};
+
+const semMetric = (name: string, version: number, status: string, expression: string, over: Partial<SemanticMetric> = {}): SemanticMetric => ({
+  id: `smet_${name}_${version}`, workspace_id: WS, name, version, status, expression, normalized_expression: expression.toLowerCase(),
+  definition: { name, expressions: [{ dialect: "ANSI_SQL", expression }], description: `${name.replace(/_/g, " ")} for P1 incidents`, format: "hours",
+    grain: "week", dimensions: ["assignment_group"], filters: [] },
+  display_name: name.replace(/_/g, " "), owner_id: "usr_analyst", proposed_by: "usr_analyst", proposed_via: "user", run_id: null,
+  approval_id: status === "proposed" ? `apr_${name}_${version}` : null, decided_by: status === "approved" ? USER.id : null,
+  decided_at: status === "approved" ? T : null, reason: null, content_hash: `c0ffee${version}${name.length}abcdef`, created_at: T, updated_at: T, ...over,
+});
+
+function kpiRows(): SemanticMetric[] {
+  const base = [
+    semMetric("mttr_hours", 1, "approved", "AVG(resolution_hours)"),
+    semMetric("mttr_hours", 2, "proposed", "AVG(resolution_hours) FILTER (WHERE priority = '1')"),
+    semMetric("reopen_rate", 1, "proposed", "AVG(CASE WHEN reopen_count > 0 THEN 1.0 ELSE 0 END)"),
+  ];
+  return [...base, ...state.proposed].map((m) => (state.decided[m.id] ? { ...m, status: state.decided[m.id], decided_by: USER.id, decided_at: T } : m));
+}
+
+/** The mock's stand-in for the server's KPI checks: the name pattern, one aggregate, no subquery, conflicts. */
+function validateKpi(body: { name?: unknown; expression?: unknown }): MetricValidation {
+  const name = String(body.name ?? "");
+  const expr = String(body.expression ?? "").trim();
+  const fail = (field: string, message: string): MetricValidation =>
+    ({ ok: false, problems: [{ field, message }], conflicts: [], normalized_expression: null, existing: null });
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return fail("name", "use letters, digits and underscores, starting with a letter or underscore (max 120)");
+  if (!expr) return fail("expression", "an expression is required");
+  if (/\bselect\b/i.test(expr)) return fail("expression", "subqueries are not allowed in metric expressions");
+  if (!/\b(count|sum|avg|min|max|percentile_cont)\s*\(/i.test(expr)) return fail("expression", "not an aggregate expression");
+  const live = kpiRows().filter((m) => m.status === "approved" || m.status === "proposed");
+  const norm = expr.toLowerCase();
+  const dup = [...new Set(live.filter((m) => m.normalized_expression === norm && m.name !== name).map((m) => m.name))];
+  const competing = live.filter((m) => m.name === name && m.normalized_expression !== norm);
+  const same = live.find((m) => m.name === name && m.normalized_expression === norm);
+  return {
+    ok: true, problems: [], normalized_expression: norm, existing: same ? { version: same.version, status: same.status } : null,
+    conflicts: [
+      ...(dup.length ? [{ kind: "duplicate_expression" as const, names: [name, ...dup],
+        detail: `${dup.join(", ")} already compute this expression; reuse that name or keep one` }] : []),
+      ...(competing.length ? [{ kind: "conflicting_definition" as const, names: [name],
+        detail: `${name} already has ${competing.length} live definition(s); approving this one deprecates the approved version` }] : []),
+    ],
+  };
+}
+
+/** Build jobs and targets, the job diff, the semantic layer (KPI editor) and dashboard publication. */
+function buildRoute(m: string, p: string, requestBody?: string | null): MockResponse | null {
+  const W = `/workspaces/${WS}`;
+  const body = requestBody ? JSON.parse(requestBody) as Record<string, unknown> : {};
+  if (m === "GET" && p === `${W}/build-targets`) return json([BUILD_TARGET]);
+  if (m === "POST" && p === `${W}/builds`) {
+    if (body.target_schema !== BUILD_TARGET.schema_name) {
+      return json({ error: { code: "forbidden", message: `schema ${String(body.target_schema)} is not a designated build target`, details: {} } }, 403);
+    }
+    state.planned = true;
+    return json({ run_id: `run_${BUILD_NEW}`, status: "PENDING", playbook: "playbook.elt_build" });
+  }
+  if (m === "GET" && p === `${W}/builds`) return json(state.planned ? [jobNew(), JOB_PREV] : [JOB_PREV]);
+  if (m === "GET" && p === `/builds/${BUILD_PREV}`) return json(buildDetail(JOB_PREV, FILES_V1));
+  if (m === "GET" && p === `/builds/${BUILD_PREV}/diff`) return json(DIFF_PREV);
+  if (state.planned && m === "GET" && p === `/builds/${BUILD_NEW}`) return json(buildDetail(jobNew(), FILES_V2));
+  if (state.planned && m === "GET" && p === `/builds/${BUILD_NEW}/diff`) return json(DIFF_NEW);
+  const decided = /^\/approvals\/([^/]+)\/(approve|reject)$/.exec(p);
+  if (m === "POST" && decided && decided[1] === BUILD_APPROVAL && state.planned) {
+    state.buildApproval = decided[2] === "approve" ? "approved" : "rejected";
+    return json({ ...buildApproval(), status: state.buildApproval, payload: undefined });
+  }
+  if (m === "GET" && p === `${W}/semantic`) {
+    const rows = kpiRows();
+    const latest = new Map<string, SemanticMetric>();
+    for (const r of rows) latest.set(r.name, r);
+    return json({ model: { name: "itsm" }, metrics: [...latest.values()], approved: rows.filter((r) => r.status === "approved").map((r) => r.name),
+      conflicts: [{ kind: "conflicting_definition", names: ["mttr_hours"], detail: "mttr_hours has 2 competing definitions; approve one, reject the others" }],
+      ossie_version: "0.1.1" });
+  }
+  if (m === "POST" && p === `${W}/semantic/metrics/validate`) return json(validateKpi(body));
+  if (m === "POST" && p === `${W}/semantic/metrics`) {
+    const v = validateKpi(body);
+    if (!v.ok) {
+      return json({ error: { code: "invalid_input", message: `metric ${String(body.name)}: ${v.problems[0].message}`, details: { problems: v.problems } } }, 422);
+    }
+    const name = String(body.name);
+    const version = kpiRows().filter((r) => r.name === name).length + 1;
+    const row = semMetric(name, version, "proposed", String(body.expression), { proposed_by: USER.id, owner_id: USER.id,
+      display_name: (body.display_name as string | null) ?? null });
+    state.proposed.push(row);
+    return json({ metric: row, created: true, conflicts: v.conflicts });
+  }
+  const kpi = new RegExp(`^${W}/semantic/metrics/([^/]+?)(/approve|/reject)?$`).exec(p);
+  if (kpi && m === "GET" && !kpi[2]) return json(kpiRows().filter((r) => r.name === decodeURIComponent(kpi[1])));
+  if (kpi && m === "POST" && kpi[2]) {
+    const pending = kpiRows().filter((r) => r.name === decodeURIComponent(kpi[1]) && r.status === "proposed");
+    const row = pending.find((r) => r.version === body.version) ?? pending[pending.length - 1];
+    if (!row) return json({ error: { code: "conflict", message: "no pending proposal", details: {} } }, 409);
+    if (row.proposed_by === USER.id) {
+      return json({ error: { code: "forbidden", message: "separation of duties: the proposer of a metric cannot approve or reject it", details: {} } }, 403);
+    }
+    state.decided[row.id] = kpi[2] === "/approve" ? "approved" : "rejected";
+    return json({ ...row, status: state.decided[row.id], decided_by: USER.id, decided_at: T });
+  }
+  const art = /^\/artifacts\/(art_dash|art_chart)$/.exec(p);
+  if (m === "GET" && art) return json(artifactDetail(ARTIFACTS.find((a) => a.id === art[1])!));
+  if (m === "POST" && p === "/artifacts/art_dash/publish") return json({ ...APPROVAL, payload: undefined });
+  return null;
+}
 
 const SETTINGS: PlatformSettings = {
   llm: {
@@ -286,32 +625,46 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   if (wsCap && m === "POST" && wsCap[2]) {
     return decodeURIComponent(wsCap[1]) === PLUGIN_METHOD.id
       ? json({ status: "ok", capability: PLUGIN_METHOD.id, side_effect: "read_source", result: FUNNEL_RESULT })
-      : json({ error: { code: "not_found", message: "no invoke route", details: {} } }, 404);
+      : json({ error: { code: "invalid_input", message: "cannot be run on its own", details: { reason: "not_invocable" } } }, 422);
   }
   if (m === "POST" && p === "/admin/capabilities/reload") {
     return json({ digest: "d1e2f3a4b5c6d7e8", previous_digest: "d1e2f3a4b5c6d7e8", count: CAPABILITIES.length, problems: [] });
   }
   if (m === "GET" && p === `${W}/mcp/capabilities`) return json([]);
-  // feedback: the server has no "accept" kind yet (services/runs.py FEEDBACK_KINDS), so it is refused as there
+  if (m === "POST" && /^\/insights\/[^/]+\/outcome$/.test(p)) {
+    const body = requestBody ? JSON.parse(requestBody) as { signal?: string } : {};
+    return json({ insight: p.split("/")[2], signal: body.signal, labelled_decisions: 1 });
+  }
   if (m === "POST" && p === `${W}/analysis/${RUN}/feedback`) {
     const body = requestBody ? JSON.parse(requestBody) as { kind?: string | null } : {};
-    if (body.kind === "accept") {
-      return json({ error: { code: "invalid_input", message: "kind must be one of ['add_context', 'deeper_analysis', 'question', 'redirect', 'reject_finding']",
-        details: {} } }, 400);
-    }
     return json({ kind: body.kind || "redirect", classified_by: body.kind ? "user" : "jev:typesafe/jev-1", consequential_p: 0.04,
       interpretation: body.kind === "reject_finding" ? undefined : { filters: [], focus: ["Network"], summary: "Focus on the Network group.", interpreted_by: "rule" },
       replan: { plan_version: 2, tasks_reset: [], tasks_removed: [], approvals_invalidated: [] }, feedback_id: "fb_2" });
   }
   if (m === "GET" && p === `${W}/approvals`) {
     const status = url.searchParams.get("status");
-    return json([APPROVAL, APPROVAL_EXECUTED].filter((a) => !status || a.status === status));
+    const all = state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED];
+    return json(all.filter((a) => !status || a.status === status));
+  }
+  const asked = askRoute(m, p, requestBody);
+  if (asked) return asked;
+  const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows);
+  if (known) {
+    return known.contentType ? { status: known.status, body: String(known.body), contentType: known.contentType } : json(known.body, known.status);
+  }
+  const built = buildRoute(m, p, requestBody);
+  if (built) return built;
+  if (m === "GET" && p === `${W}/artifacts`) {
+    const type = url.searchParams.get("type");
+    const run = url.searchParams.get("run_id");
+    return json(ARTIFACTS.filter((a) => (!type || a.type === type) && (!run || a.run_id === run)));
   }
   if (p.endsWith("/events")) {
     return { status: 200, body: `event: end\ndata: {"status":"COMPLETED"}\n\n`, contentType: "text/event-stream" };
   }
   const routes: [string, string, unknown][] = [
     ["GET", "/auth/me", USER],
+    ["GET", "/auth/providers", { password: true, oidc: { enabled: false, name: "SSO", login_url: null } }],
     ["GET", "/workspaces", [WORKSPACE]],
     ["GET", W, WORKSPACE],
     ["GET", `${W}/sources`, [SOURCE]],
@@ -320,7 +673,6 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", `${W}/analysis/${RUN}/console`, CONSOLE],
     ["GET", `${W}/insights`, [INSIGHT_ROW, INSIGHT_DRAFT]],
     ["GET", `/insights/${INSIGHT}`, INSIGHT_DETAIL],
-    ["GET", `${W}/artifacts`, ARTIFACTS],
     ["GET", `${W}/alerts`, [ALERT]],
     ["GET", `${W}/monitors`, [MONITOR]],
     ["GET", `${W}/schedules`, [SCHEDULE]],

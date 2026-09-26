@@ -14,6 +14,7 @@ from analystos.db.models import (
     AgentDefinition,
     AuditEvent,
     ContextEntry,
+    KnowledgeDocument,
     ModelCall,
     QueryExecution,
     SkillDefinition,
@@ -48,45 +49,53 @@ class EnabledPatch(BaseModel):
 
 
 @router.post("/context/search")
-def context_search(body: SearchIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def context_search(body: SearchIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, body.workspace_id, "viewer")
     return ctx_svc.search(session, body.workspace_id, body.query, limit=min(body.limit, 50))
 
 
 @router.get("/context/entities/{entry_id}")
-def context_entity(entry_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def context_entity(entry_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    from analystos.knowledge.entries import get_entry
+
     e = session.get(ContextEntry, entry_id)
-    if e is None:
+    doc = session.get(KnowledgeDocument, entry_id) if e is None else None
+    owner = e.workspace_id if e is not None else (doc.workspace_id if doc is not None else None)
+    if e is None and doc is None:
         raise NotFound("context entry not found")
-    if e.workspace_id:
-        require_role(session, user, e.workspace_id, "viewer")
-    return {"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms, "mapped_columns": e.mapped_columns,
-            "origin": e.origin, "workspace_id": e.workspace_id}
+    if owner:
+        require_role(session, user, owner, "viewer")
+    view = get_entry(session, owner, entry_id) if owner else None
+    if view is None:  # a platform-pack document: visible to every workspace
+        from analystos.knowledge.entries import doc_entry
+
+        view = doc_entry(doc, "platform")
+    return {**view.as_dict(), "workspace_id": owner}
 
 
 @router.post("/workspaces/{workspace_id}/context")
-def add_context(workspace_id: str, body: ContextIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def add_context(workspace_id: str, body: ContextIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "editor")
     e = ctx_svc.add_entry(session, workspace_id=workspace_id, **body.model_dump(), origin="user")
     return {"id": e.id}
 
 
 @router.get("/workspaces/{workspace_id}/context")
-def list_context(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_context(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    from analystos.knowledge.entries import visible_entries
+
     require_role(session, user, workspace_id, "viewer")
-    return [{"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms, "mapped_columns": e.mapped_columns,
-             "origin": e.origin, "global": e.workspace_id is None}
-            for e in session.scalars(select(ContextEntry).where((ContextEntry.workspace_id == workspace_id) | ContextEntry.workspace_id.is_(None))
-                                     .where(ContextEntry.kind != "episode").order_by(ContextEntry.kind, ContextEntry.name))]
+    return [e.as_dict() for e in sorted(visible_entries(session, workspace_id, exclude_kinds=["episode"]),
+                                        key=lambda e: (e.kind, e.name, e.id))]
 
 
 @router.get("/tools")
-def tools(_: User = Depends(current_user), session: Session = Depends(db)):
+def tools(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return list_tools(session)
 
 
 @router.post("/tools")
-def register_tool(body: dict, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def register_tool(body: dict, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     spec = ToolSpec.model_validate(body)
     session.merge(ToolDefinition(id=spec.tool_id, spec=spec.model_dump(), enabled=False))
     audit(f"user:{admin.id}", "tool.registered", target=spec.tool_id, session=session)
@@ -94,7 +103,7 @@ def register_tool(body: dict, admin: User = Depends(admin_user), session: Sessio
 
 
 @router.patch("/tools/{tool_id}")
-def patch_tool(tool_id: str, body: EnabledPatch, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def patch_tool(tool_id: str, body: EnabledPatch, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     t = session.get(ToolDefinition, tool_id)
     if t is None:
         raise NotFound("tool not found")
@@ -107,12 +116,12 @@ def patch_tool(tool_id: str, body: EnabledPatch, admin: User = Depends(admin_use
 
 
 @router.get("/agents")
-def agents(_: User = Depends(current_user), session: Session = Depends(db)):
+def agents(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return [{**a.spec, "enabled": a.enabled} for a in session.scalars(select(AgentDefinition).order_by(AgentDefinition.id))]
 
 
 @router.post("/agents")
-def register_agent(body: dict, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def register_agent(body: dict, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     spec = AgentSpec.model_validate(body)
     session.merge(AgentDefinition(id=spec.id, version=spec.version, spec=spec.model_dump(), enabled=False))
     audit(f"user:{admin.id}", "agent.registered", target=spec.id, session=session)
@@ -120,7 +129,7 @@ def register_agent(body: dict, admin: User = Depends(admin_user), session: Sessi
 
 
 @router.patch("/agents/{agent_id}")
-def patch_agent(agent_id: str, body: EnabledPatch, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def patch_agent(agent_id: str, body: EnabledPatch, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     a = session.get(AgentDefinition, agent_id)
     if a is None:
         raise NotFound("agent not found")
@@ -133,7 +142,7 @@ def patch_agent(agent_id: str, body: EnabledPatch, admin: User = Depends(admin_u
 
 
 @router.get("/skills")
-def skills(_: User = Depends(current_user), session: Session = Depends(db)):
+def skills(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return [{**s.spec, **SkillSpec.model_validate(s.spec).model_dump(), "enabled": s.enabled}
             for s in session.scalars(select(SkillDefinition).order_by(SkillDefinition.id))]
 
@@ -180,28 +189,28 @@ def get_settings_doc(_: User = Depends(admin_user)):
 
 
 @router.put("/admin/settings")
-def put_settings(body: SettingsPatch, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def put_settings(body: SettingsPatch, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     from analystos.services import platform_settings
 
     return platform_settings.update(session, session.merge(admin), body.patch, note=body.note)
 
 
 @router.post("/admin/settings/preset")
-def preset(body: PresetIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def preset(body: PresetIn, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     from analystos.services import platform_settings
 
     return platform_settings.apply_preset(session, session.merge(admin), body.preset)
 
 
 @router.get("/admin/settings/history")
-def settings_history(_: User = Depends(admin_user), session: Session = Depends(db)):
+def settings_history(_: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     from analystos.services import platform_settings
 
     return platform_settings.history(session)
 
 
 @router.post("/admin/settings/rollback")
-def settings_rollback(body: RollbackIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def settings_rollback(body: RollbackIn, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     from analystos.services import platform_settings
 
     return platform_settings.rollback(session, session.merge(admin), body.version)
@@ -215,7 +224,7 @@ def prompts(_: User = Depends(admin_user)):
 
 
 @router.get("/admin/token-savings")
-def token_savings(days: int = 30, _: User = Depends(admin_user), session: Session = Depends(db)):
+def token_savings(days: int = 30, _: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     """Tokens spent vs avoided (cache hits, deterministic skips, refused oversize prompts)."""
     # By purpose and by the ladder rung that answered (P4-T01), plus calls whose cost is unknown (P4-T07).
     from datetime import timedelta
@@ -257,6 +266,15 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
         totals["cache_hits"] += n if status == "cache_hit" else 0
         totals["deterministic_skips"] += n if status == "skipped" else 0
         totals["refused"] += n if status == "refused" else 0
+    # By model: spend of calls a provider served; avoided calls (skips) carry no model and stay out.
+    by_model: dict[str, dict] = {}
+    for model, status, n, used, saved, cost in session.execute(
+            select(ModelCall.model, ModelCall.status, func.count(),
+                   func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0),
+                   func.coalesce(func.sum(ModelCall.tokens_saved), 0), func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
+            .where(ModelCall.created_at >= since, ModelCall.status.in_(("ok", "error", "cache_hit")))
+            .group_by(ModelCall.model, ModelCall.status)).all():
+        add(by_model.setdefault(model or "unknown", bucket()), status, n, used, saved, cost)
     denom = totals["tokens_used"] + totals["tokens_saved"]
     totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
     # A model with no price and no provider-reported cost: its spend is unknown, not $0.
@@ -265,13 +283,13 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
                                .group_by(ModelCall.model)).all()
     missing = [{"model": m, "calls": n, "tokens": int(t)} for m, n, t in unpriced]
     totals["missing_price_calls"] = sum(m["calls"] for m in missing)
-    return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung,
+    return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung, "by_model": by_model,
             "missing_price": missing, "prices_version": load_models_config().prices_version,
             "cost_complete": not missing}
 
 
 @router.get("/admin/usage")
-def usage(_: User = Depends(admin_user), session: Session = Depends(db)):
+def usage(_: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     by_model = session.execute(select(ModelCall.purpose, ModelCall.model, ModelCall.provider, func.count(), func.sum(ModelCall.cost_usd),
                                       func.avg(ModelCall.latency_ms), func.count().filter(ModelCall.status == "error"))
                                .where(ModelCall.status.in_(("ok", "error")))  # skips/cache hits/refusals: see /admin/token-savings
@@ -283,5 +301,5 @@ def usage(_: User = Depends(admin_user), session: Session = Depends(db)):
 
 
 @router.get("/admin/audit")
-def admin_audit(limit: int = 300, _: User = Depends(admin_user), session: Session = Depends(db)):
+def admin_audit(limit: int = 300, _: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     return rows(session.scalars(select(AuditEvent).order_by(AuditEvent.id.desc()).limit(min(limit, 2000))))

@@ -12,7 +12,7 @@ export const JOURNEYS: { id: Exclude<Journey, "access">; label: string; descript
   { id: "home", label: "Home", description: "What changed since you were last here" },
   { id: "ask", label: "Ask", description: "Questions answered from governed data" },
   { id: "investigate", label: "Investigate", description: "Objectives, hypotheses and verified findings" },
-  { id: "knowledge", label: "Knowledge", description: "Sources, crawled metadata and the catalog" },
+  { id: "knowledge", label: "Knowledge", description: "Sources, the catalog, knowledge documents, review and the semantic model" },
   { id: "build", label: "Build", description: "Datasets, metrics, dashboards and reports" },
   { id: "operate", label: "Operate", description: "Approvals, monitors, schedules, policy, usage and platform admin" },
 ];
@@ -58,13 +58,13 @@ export const SCREENS: Screen[] = [
   { id: "investigation-console", journey: "investigate", path: "/w/:wsId/investigate/:runId/console", title: "Agent console", nav: false,
     workspace: true },
 
-  { id: "catalog", journey: "knowledge", path: "/w/:wsId/knowledge/catalog", title: "Catalog", nav: true, workspace: true,
-    keywords: "tables columns glossary descriptions" },
+  { id: "catalog", journey: "knowledge", path: "/w/:wsId/knowledge/catalog", title: "Knowledge studio", nav: true, workspace: true,
+    keywords: "catalog tables columns glossary descriptions okf documents review queue suggestions semantic graph metrics import export" },
   { id: "sources", journey: "knowledge", path: "/w/:wsId/knowledge/sources", title: "Sources & crawls", nav: true, workspace: true,
     keywords: "connect discover crawl drift data" },
 
   { id: "studio", journey: "build", path: "/w/:wsId/build/studio", title: "Studio", nav: true, workspace: true,
-    keywords: "datasets metrics charts dashboards artifacts" },
+    keywords: "datasets metrics charts dashboards artifacts dbt builds kpis semantic publish" },
   { id: "reports", journey: "build", path: "/w/:wsId/build/reports", title: "Reports", nav: true, workspace: true },
 
   { id: "approvals", journey: "operate", path: "/w/:wsId/operate/approvals", title: "Approvals", nav: true, workspace: true,
@@ -124,6 +124,13 @@ export const to = {
   sources: (ws: string) => fillPath(screen("sources").path, { wsId: ws }),
   catalog: (ws: string) => fillPath(screen("catalog").path, { wsId: ws }),
   studio: (ws: string, artifact?: string) => withQuery(fillPath(screen("studio").path, { wsId: ws }), { artifact }),
+  /** Build studio tabs (P4-U05): builds (dbt jobs), kpis (semantic layer), dashboards (preview → publish). */
+  build: (ws: string, tab: "builds" | "kpis" | "dashboards", q: { job?: string; kpi?: string; dashboard?: string } = {}) =>
+    withQuery(fillPath(screen("studio").path, { wsId: ws }), { tab, ...q }),
+  /** Knowledge studio tabs (P4-U04); `doc` is a context receipt's document id, opened in Documents. */
+  knowledge: (ws: string, tab?: "catalog" | "documents" | "review" | "graph" | "metrics" | "transfer",
+    q: { pack?: string; path?: string; doc?: string } = {}) =>
+    withQuery(fillPath(screen("catalog").path, { wsId: ws }), { tab: tab === "catalog" ? undefined : tab, ...q }),
   reports: (ws: string, artifact?: string) => withQuery(fillPath(screen("reports").path, { wsId: ws }), { artifact }),
   approvals: (ws: string) => fillPath(screen("approvals").path, { wsId: ws }),
   monitoring: (ws: string, q: { tab?: string; alert?: string } = {}) =>

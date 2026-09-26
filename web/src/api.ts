@@ -40,6 +40,12 @@ export interface LoginResponse {
   user: User;
 }
 
+/** What the login screen offers (GET /api/auth/providers). */
+export interface AuthProviders {
+  password: boolean;
+  oidc: { enabled: boolean; name: string; login_url: string | null };
+}
+
 export interface WorkspaceCounts {
   query: number;
   dataset: number;
@@ -502,6 +508,10 @@ export interface ModelCall {
   cost_usd: number;
   error: string | null;
   created_at: string;
+  /** Execution-ladder rung that answered (P4-T01) and the context compiler's receipts (P4-T03). */
+  answered_by?: string | null;
+  context_receipts?: Dict[] | null;
+  tokens_saved?: number;
 }
 
 export type AgentRunDetail = RunTask & { messages: AgentMessage[]; tool_calls: ToolExecution[]; model_calls: ModelCall[]; queries: QueryExecution[] };
@@ -549,13 +559,375 @@ export interface QueryResult {
   sql?: string;
 }
 
+export type ChartHint = { type?: string; x?: string | null; y?: string | null } | null;
+
 export interface AskResponse {
   sql: string;
   explanation: string | null;
-  chart: { type?: string; x?: string | null; y?: string | null } | null;
+  chart: ChartHint;
   model: string | null;
   attempts: { sql: string; error: string }[];
   result: QueryResult;
+  status?: string;
+  answered_by?: string | null;
+  route?: string | null;
+}
+
+// ----------------------------------------------------------------------------------- Ask threads (P4-U02, services/ask.py)
+/** One plain-language step of an Ask, streamed while it runs. */
+export interface AskStage {
+  key: string;
+  text: string;
+  at_ms: number;
+  turn_id?: string;
+  data?: Dict;
+}
+
+/** The refusal kinds of services/ask.py REFUSALS: one state each, with a remedy. */
+export type AskRefusalKind = "needs_input" | "clarify" | "sql_rejected" | "policy_denied" | "budget_exceeded" | "no_model"
+  | "no_scope" | "timeout" | "unavailable" | "failed";
+
+export interface AskRefusal {
+  kind: AskRefusalKind | string;
+  title: string;
+  message: string;
+  remedy: string;
+  details: { missing?: { name: string; type?: string; values?: string[] }[]; verified_query?: Dict | null; parameters?: Dict; [k: string]: unknown };
+}
+
+export interface AskProvenanceAsset {
+  asset: string;
+  asset_id: string | null;
+  business_name: string | null;
+  source_id: string | null;
+  source_name: string | null;
+  source_kind: string | null;
+  execution_mode: string | null;
+  freshness_at: string | null;
+  row_count: number | null;
+}
+
+export interface AskProvenance {
+  assets?: AskProvenanceAsset[];
+  answered_by?: string | null;
+  verified_query?: { id: string; name: string; pattern?: string; score?: number } | null;
+  model?: string | null;
+  query_id?: string | null;
+  cache_hit?: boolean;
+  result_hash?: string | null;
+  repairs?: number;
+}
+
+export interface AskStaleness {
+  state: "fresh" | "aging" | "stale" | "changed" | "unknown";
+  label: string;
+  data_as_of: string | null;
+}
+
+export interface AskDecisionSummary {
+  id: string | null;
+  purpose: string;
+  backend: string;
+  value: unknown;
+  p?: number | null;
+  model?: string | null;
+  fallback_reason?: string | null;
+  probabilities?: Record<string, number>;
+  note?: string | null;
+}
+
+export interface AskPromotion {
+  target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate" | string;
+  id: string;
+  status: string;
+  name?: string;
+  approval_id?: string | null;
+  value?: unknown;
+  at?: string;
+  [k: string]: unknown;
+}
+
+export interface AskTurn {
+  id: string;
+  thread_id: string;
+  workspace_id: string;
+  seq: number;
+  question: string;
+  parameters: Dict;
+  status: "running" | "answered" | "needs_input" | "clarify" | "refused" | string;
+  route: string | null;
+  answered_by: string | null;
+  refusal: AskRefusal | null;
+  sql: string | null;
+  explanation: string | null;
+  chart: ChartHint;
+  result: QueryResult | null;
+  verified_query: Dict | null;
+  model: string | null;
+  attempts: { sql: string; error: string }[];
+  stages: AskStage[];
+  decisions: AskDecisionSummary[];
+  provenance: AskProvenance;
+  promotions: AskPromotion[];
+  latency_ms: number;
+  created_at: string;
+  staleness: AskStaleness;
+}
+
+export interface AskThread {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  title: string;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  turn_count?: number;
+}
+
+export interface AskThreadDetail extends AskThread {
+  turns: AskTurn[];
+}
+
+/** A `decision` row (decisions/store.py) recorded against the turn. */
+export interface DecisionRow {
+  id: string;
+  purpose: string;
+  authority: string;
+  backend: string;
+  model: string | null;
+  answer: unknown;
+  proposal: unknown;
+  probabilities: Record<string, number>;
+  confidence: number | null;
+  fallback_reason: string | null;
+  attempts: { backend: string; outcome: string; reason?: string | null }[];
+  enforced: string[];
+  subject: string | null;
+  latency_ms: number;
+  created_at: string;
+}
+
+export interface AskInspector {
+  turn: AskTurn;
+  decisions: DecisionRow[];
+  model_calls: ModelCall[];
+  query: QueryExecution | null;
+  receipts: ContextReceipt[];
+}
+
+/**
+ * One item the context compiler put in a prompt (P4-T03/K05). Pack sections carry their document,
+ * path, anchor and hashes; `source` is `review:<origin>` for a document approved in the review queue.
+ */
+export interface ContextReceipt {
+  id?: string;
+  section?: string;
+  kind?: string;
+  name?: string;
+  title?: string;
+  source?: string;
+  score?: number;
+  trusted?: boolean;
+  sha256?: string;
+  document_id?: string;
+  path?: string;
+  anchor?: string;
+  section_sha256?: string;
+  rank?: number;
+  via?: string;
+  version?: number;
+  [k: string]: unknown;
+}
+
+// ----------------------------------------------------------------------------------- knowledge studio (P4-U04)
+export type KnowledgePackKind = "platform" | "workspace" | "imported";
+
+export interface KnowledgePackInfo {
+  id: string;
+  kind: KnowledgePackKind;
+  slug: string;
+  title: string;
+  read_only: boolean;
+  /** True only for the workspace's own pack and an editor or owner. */
+  writable: boolean;
+  head_revision: number | null;
+  okf_root: string;
+  okf_version: string;
+  git_remote: string | null;
+  git_branch: string;
+  origin: Dict;
+  files: number;
+  content_digest: string | null;
+  updated_at: string;
+}
+
+export interface KnowledgeDocSummary {
+  path: string;
+  document_id: string;
+  sha256: string;
+  size: number;
+  markdown: boolean;
+  reserved: boolean;
+  type: string | null;
+  title: string;
+  status?: string;
+  trust_tier?: "unverified" | "machine-confirmed" | "human-reviewed" | string;
+  stale?: boolean;
+  kind?: string | null;
+  /** `review_queue`: written by the review queue, which may replace it; `owner`: a person's content. */
+  authorship?: "review_queue" | "owner";
+  tags?: string[];
+  problem?: string;
+}
+
+export interface KnowledgeDocList {
+  pack_id: string;
+  revision: number | null;
+  documents: KnowledgeDocSummary[];
+}
+
+export interface VerifiedEntry {
+  by: string;
+  at?: string;
+  [k: string]: unknown;
+}
+
+export interface KnowledgeTrust {
+  tier: string;
+  verified: VerifiedEntry[];
+  status: string;
+  stale_after: string | null;
+  stale: boolean;
+  trusted: boolean | null;
+}
+
+export interface KnowledgeDocument extends KnowledgeDocSummary {
+  pack_id: string;
+  revision: number | null;
+  text: string;
+  frontmatter: Dict | null;
+  body: string | null;
+  trust: KnowledgeTrust | null;
+  sections: { anchor: string; heading: string }[];
+  links: { raw: string; kind: string; target: string | null; exists: boolean }[];
+}
+
+export type KnowledgeSaveBody = Schemas["DocumentSaveIn"];
+
+export interface KnowledgeSaveResult {
+  changed: boolean;
+  revision: number | null;
+  document: KnowledgeDocument;
+}
+
+export interface KnowledgeRevisionInfo {
+  number: number;
+  parent: number | null;
+  author: string;
+  reason: string;
+  origin: string;
+  files: number;
+  content_digest: string;
+  created_at: string;
+  added: string[];
+  changed: string[];
+  removed: string[];
+  sha256: string | null;
+  conformance_problems: number;
+}
+
+export interface SuggestionField {
+  value: unknown;
+  confidence: number;
+  provenance: Dict;
+  before?: unknown;
+}
+
+export interface KnowledgeSuggestion {
+  id: string;
+  kind: string;
+  subject: string;
+  title: string;
+  path: string;
+  fields: Record<string, SuggestionField>;
+  confidence: number;
+  origin: string;
+  proposed_by: string;
+  batch: string | null;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  revision: number | null;
+  created_at: string;
+}
+
+export type ReviewDecisionBody = Schemas["ReviewDecision"];
+
+export interface ReviewResult {
+  revision: number | null;
+  approved: { id: string; path: string | null; catalog?: string }[];
+  rejected: { id: string; path: string | null; catalog?: string }[];
+  errors: { id: string; error: string; [k: string]: unknown }[];
+}
+
+export interface KnowledgeImportReport {
+  pack_id: string;
+  slug: string;
+  format: "atlas" | "okf" | string;
+  okf_root: string;
+  revision: number | null;
+  changed: boolean;
+  files: number;
+  documents: number;
+  ignored: string[];
+  conformance: { code: string; path: string; detail?: string }[];
+  dangling_links: number;
+  verified_claims: number;
+  attested_computations: number;
+  manifest: Dict;
+  warnings: string[];
+}
+
+export type GraphNodeKind = "table" | "dataset" | "metric" | "document" | "suggestion";
+
+export interface KnowledgeGraphNode {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+  status?: string;
+  path?: string;
+  pack_id?: string;
+  pack_kind?: KnowledgePackKind;
+  trust_tier?: string;
+  confidence?: number;
+  suggestion_id?: string;
+  [k: string]: unknown;
+}
+
+export interface KnowledgeGraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+  /** Governed edges are drawn solid, inferred ones dashed. */
+  governed: boolean;
+  why: string;
+  label: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  truncated: boolean;
+  governed: number;
+  inferred: number;
+}
+
+export type AskPromoteBody = Schemas["AskPromoteIn"];
+
+export interface AskStreamCallbacks {
+  onStage: (s: AskStage) => void;
 }
 
 export interface Artifact {
@@ -1082,6 +1454,9 @@ export interface SqlExplanation {
   window_functions?: number;
   distinct?: boolean;
   gateway: { accepted: boolean; code?: string; reason?: string };
+  /** The source's plan through the gateway (EXPLAIN, never executed); only when the validator accepts. */
+  plan?: { available: boolean; reason?: string; node?: string | null; estimated_rows?: number | null; total_cost?: number | null;
+    nodes?: string[]; relations?: string[] };
 }
 
 // ----------------------------------------------------------------------------------- platform settings (admin)
@@ -1242,6 +1617,187 @@ export interface CapabilityInvocation {
   approval_id?: string;
   result?: unknown;
   [k: string]: unknown;
+}
+
+// ----------------------------------------------------------------------------------- build (P4-E04/E06, P4-U05)
+export interface BuildTarget {
+  id: string;
+  workspace_id: string;
+  engine: string;
+  schema_name: string;
+  build_role: string;
+  status: string;
+  provisioning: Dict;
+  created_by: string;
+  created_at: string;
+}
+
+export type BuildStatus = "planned" | "awaiting_approval" | "running" | "succeeded" | "failed" | "refused" | string;
+
+export interface BuildTest {
+  column: string;
+  test: string;
+}
+
+export interface BuildDryRun {
+  runner?: string;
+  command?: string[] | string;
+  ok?: boolean;
+  dbt_version?: string | null;
+  ossie_version?: string | null;
+  tests?: { candidates?: BuildTest[]; passing?: BuildTest[]; dropped?: BuildTest[] };
+  allowed_sources?: string[];
+  metrics?: { metric: string; [k: string]: unknown }[];
+  skipped_metrics?: { metric: string; reason: string }[];
+  notes?: string[];
+  [k: string]: unknown;
+}
+
+export interface BuildEstimate {
+  rows?: number | null;
+  columns?: number | null;
+  models?: number | null;
+  tests?: number | null;
+  approx_bytes?: number | null;
+  method?: string;
+  query_id?: string | null;
+}
+
+export interface BuildRollback {
+  strategy?: string;
+  statements?: string[];
+  restore?: string;
+  previous_job_id?: string | null;
+}
+
+/** GET /api/workspaces/{id}/builds: a job without its files, manifest or logs, plus its approval status. */
+export interface BuildJob {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  source_run_id: string;
+  artifact_id: string | null;
+  approval_id: string | null;
+  approval_status?: string | null;
+  engine: string;
+  runner: string;
+  target_schema: string;
+  project_name: string;
+  project_hash: string;
+  plan_hash: string | null;
+  relations: string[];
+  dry_run: BuildDryRun;
+  estimate: BuildEstimate;
+  rollback: BuildRollback;
+  status: BuildStatus;
+  run_results: { counts?: Record<string, number>; [k: string]: unknown };
+  error: string | null;
+  created_by: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface BuildApprovalState {
+  id: string;
+  status: string;
+  action: string;
+  payload_hash: string;
+  plan_hash: string | null;
+  policy_version: number;
+  risk_tier: string;
+  requested_by: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  expires_at: string | null;
+}
+
+export interface BuildJobDetail extends BuildJob {
+  project_files: Record<string, string>;
+  manifest: Dict;
+  openlineage: Dict[];
+  log_tail: string;
+  approval: BuildApprovalState | null;
+}
+
+export interface BuildFileDiff {
+  path: string;
+  status: "added" | "removed" | "modified" | "unchanged";
+  lines_added: number;
+  lines_removed: number;
+  diff: string;
+  truncated: boolean;
+}
+
+export interface BuildDiff {
+  job_id: string;
+  project_hash: string;
+  basis: "previous_job_same_target" | "requested" | "none";
+  against: { job_id: string; status: string; project_hash: string; created_at: string | null } | null;
+  identical: boolean;
+  files: BuildFileDiff[];
+  summary: { added: number; removed: number; modified: number; unchanged: number; lines_added: number; lines_removed: number };
+}
+
+// ----------------------------------------------------------------------------------- semantic layer (P4-K03)
+export type MetricProposal = Schemas["MetricProposalIn"];
+
+export interface SemanticMetric {
+  id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  status: "draft" | "proposed" | "approved" | "deprecated" | "rejected" | string;
+  definition: Dict;
+  expression: string;
+  normalized_expression: string;
+  display_name: string | null;
+  owner_id: string | null;
+  proposed_by: string;
+  proposed_via: string;
+  run_id: string | null;
+  approval_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SemanticConflictRow {
+  kind: "duplicate_expression" | "conflicting_definition";
+  names: string[];
+  metrics?: { name: string; version: number; status: string; expression: string }[];
+  detail: string;
+}
+
+export interface SemanticModelView {
+  model: Dict | null;
+  metrics: SemanticMetric[];
+  approved: string[];
+  conflicts: SemanticConflictRow[];
+  ossie_version: string;
+}
+
+export interface MetricProblem {
+  field: string;
+  message: string;
+}
+
+export interface MetricValidation {
+  ok: boolean;
+  problems: MetricProblem[];
+  conflicts: SemanticConflictRow[];
+  normalized_expression: string | null;
+  existing: { version: number; status: string } | null;
+}
+
+export interface MetricProposalResult {
+  metric: SemanticMetric;
+  created: boolean;
+  conflicts: SemanticConflictRow[];
 }
 
 // ----------------------------------------------------------------------------------- errors
@@ -1497,6 +2053,7 @@ export const api = {
   // auth
   login: (email: string, password: string) => post("/api/auth/login", { body: { email, password } }) as Promise<LoginResponse>,
   me: () => get("/api/auth/me", {}) as Promise<User>,
+  authProviders: () => get("/api/auth/providers", {}) as Promise<AuthProviders>,
   users: () => get("/api/users", {}) as Promise<UserSummary[]>,
 
   // workspaces
@@ -1667,13 +2224,94 @@ export const api = {
   invokeMcpTool: (ws: string, server: string, tool: string, args: Dict) =>
     post("/api/workspaces/{workspace_id}/mcp/servers/{server_name}/tools/{tool_name}/invoke",
       { path: { workspace_id: ws, server_name: server, tool_name: tool }, body: { arguments: args } }) as Promise<CapabilityInvocation>,
-  /**
-   * Backend gap: there is no generic invoke route for built-in or plugin capabilities yet (only MCP
-   * tools). The call is untyped on purpose so the route can land without a client change; until it
-   * does the server answers 404/405 and the form shows a "not available" state.
-   */
-  invokeCapability: (ws: string, id: string, args: Dict) =>
-    request<CapabilityInvocation>("POST", `/workspaces/${encodeURIComponent(ws)}/capabilities/${encodeURIComponent(id)}/invoke`, { arguments: args }),
+  /** Built-in or plugin capability (capabilities/invoke.py): read-only runs now; a side effect answers 202 + approval. */
+  invokeCapability: (ws: string, id: string, args: Dict, approvalId?: string) =>
+    post("/api/workspaces/{workspace_id}/capabilities/{capability_id}/invoke",
+      { path: { workspace_id: ws, capability_id: id }, body: approvalId ? { arguments: args, approval_id: approvalId } : { arguments: args } }) as Promise<CapabilityInvocation>,
+  /** P4-T09: accept or dismiss a finding (labels the decisions behind it for calibration). */
+  findingOutcome: (insightId: string, signal: "accept" | "dismiss") =>
+    post("/api/insights/{insight_id}/outcome", { path: { insight_id: insightId }, body: { signal } }) as
+      Promise<{ insight: string; signal: string; labelled_decisions: number }>,
+
+  // build (P4-E04/E06): targets, elt_build runs and their jobs; approval goes through the inbox
+  buildTargets: (ws: string) => get("/api/workspaces/{workspace_id}/build-targets", { path: W(ws) }) as Promise<BuildTarget[]>,
+  designateBuildTarget: (ws: string, schema: string) =>
+    post("/api/workspaces/{workspace_id}/build-targets", { path: W(ws), body: { schema_name: schema } }) as Promise<BuildTarget>,
+  startBuild: (ws: string, fromRunId: string, targetSchema: string) =>
+    post("/api/workspaces/{workspace_id}/builds", { path: W(ws), body: { from_run_id: fromRunId, target_schema: targetSchema } }) as
+      Promise<{ run_id: string; status: string; playbook: string }>,
+  listBuilds: (ws: string) => get("/api/workspaces/{workspace_id}/builds", { path: W(ws) }) as Promise<BuildJob[]>,
+  getBuild: (id: string) => get("/api/builds/{job_id}", { path: { job_id: id } }) as Promise<BuildJobDetail>,
+  buildDiff: (id: string, against?: string) =>
+    get("/api/builds/{job_id}/diff", { path: { job_id: id }, query: { against } }) as Promise<BuildDiff>,
+
+  // semantic layer (P4-K03): KPI proposals, validation and the separation-of-duties approve route
+  semanticModel: (ws: string) => get("/api/workspaces/{workspace_id}/semantic", { path: W(ws) }) as Promise<SemanticModelView>,
+  metricVersions: (ws: string, name: string) =>
+    get("/api/workspaces/{workspace_id}/semantic/metrics/{name}", { path: { workspace_id: ws, name } }) as Promise<SemanticMetric[]>,
+  validateMetric: (ws: string, body: MetricProposal) =>
+    post("/api/workspaces/{workspace_id}/semantic/metrics/validate", { path: W(ws), body }) as Promise<MetricValidation>,
+  proposeMetric: (ws: string, body: MetricProposal) =>
+    post("/api/workspaces/{workspace_id}/semantic/metrics", { path: W(ws), body }) as Promise<MetricProposalResult>,
+  decideMetric: (ws: string, name: string, approve: boolean, version?: number, reason?: string) =>
+    post(approve ? "/api/workspaces/{workspace_id}/semantic/metrics/{name}/approve" : "/api/workspaces/{workspace_id}/semantic/metrics/{name}/reject",
+      { path: { workspace_id: ws, name }, body: { version: version ?? null, reason: reason || null } }) as Promise<SemanticMetric>,
+
+  // knowledge studio (P4-U04): packs, documents, revisions, review queue, import/export, graph
+  knowledgePacks: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/packs", { path: W(ws) }) as Promise<KnowledgePackInfo[]>,
+  knowledgeDocuments: (ws: string, pack: string, revision?: number) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/documents", { path: { workspace_id: ws, pack_id: pack }, query: { revision } }) as
+      Promise<KnowledgeDocList>,
+  knowledgeDocument: (ws: string, pack: string, path: string, revision?: number) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document", { path: { workspace_id: ws, pack_id: pack }, query: { path, revision } }) as
+      Promise<KnowledgeDocument>,
+  saveKnowledgeDocument: (ws: string, pack: string, body: KnowledgeSaveBody) =>
+    put("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/document", { path: { workspace_id: ws, pack_id: pack }, body }) as
+      Promise<KnowledgeSaveResult>,
+  knowledgeRevisions: (ws: string, pack: string, path?: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/revisions", { path: { workspace_id: ws, pack_id: pack }, query: { path } }) as
+      Promise<KnowledgeRevisionInfo[]>,
+  locateKnowledge: (ws: string, documentId: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/locate", { path: W(ws), query: { document_id: documentId } }) as
+      Promise<{ document_id: string; pack_id: string; path: string; title: string; revision: number }>,
+  knowledgeSuggestions: (ws: string, status: string = "pending") =>
+    get("/api/workspaces/{workspace_id}/knowledge/suggestions", { path: W(ws), query: { status } }) as Promise<KnowledgeSuggestion[]>,
+  reviewSuggestions: (ws: string, decisions: ReviewDecisionBody[]) =>
+    post("/api/workspaces/{workspace_id}/knowledge/suggestions/review", { path: W(ws), body: { decisions } }) as Promise<ReviewResult>,
+  importKnowledge: (ws: string, file: File, slug: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("slug", slug);
+    return post("/api/workspaces/{workspace_id}/knowledge/import", { path: W(ws), body: fd }) as Promise<KnowledgeImportReport>;
+  },
+  exportKnowledge: (ws: string, pack: string, slug: string, revision?: number) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/export", { path: { workspace_id: ws, pack_id: pack },
+      query: { revision } }), `${slug}.okf.zip`),
+  requestKnowledgePush: (ws: string, pack: string) =>
+    post("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push/request", { path: { workspace_id: ws, pack_id: pack } }) as Promise<Approval>,
+  pushKnowledge: (ws: string, pack: string, approvalId: string) =>
+    post("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push", { path: { workspace_id: ws, pack_id: pack }, body: { approval_id: approvalId } }) as
+      Promise<{ revision: number; commit: string; remote: string; branch: string }>,
+  knowledgeGraph: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/graph", { path: W(ws) }) as Promise<KnowledgeGraph>,
+
+  // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
+  publishDashboard: (artifactId: string) =>
+    post("/api/artifacts/{artifact_id}/publish", { path: { artifact_id: artifactId } }) as Promise<Approval>,
+
+  // Ask threads (P4-U02)
+  askThreads: (ws: string, q?: string) =>
+    get("/api/workspaces/{workspace_id}/ask/threads", { path: W(ws), query: { q: q || undefined } }) as Promise<AskThread[]>,
+  createAskThread: (ws: string, title?: string) =>
+    post("/api/workspaces/{workspace_id}/ask/threads", { path: W(ws), body: { title: title ?? null } }) as Promise<AskThreadDetail>,
+  askThread: (id: string) => get("/api/ask/threads/{thread_id}", { path: { thread_id: id } }) as Promise<AskThreadDetail>,
+  patchAskThread: (id: string, body: Schemas["AskThreadPatch"]) =>
+    patch("/api/ask/threads/{thread_id}", { path: { thread_id: id }, body }) as Promise<AskThread>,
+  askTurn: (threadId: string, question: string, parameters?: Dict) =>
+    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null } }) as
+      Promise<AskTurn>,
+  askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
+  promoteTurn: (turnId: string, body: AskPromoteBody) =>
+    post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)
@@ -1763,4 +2401,43 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
   };
   void loop();
   return { close: () => controller.abort() };
+}
+
+/**
+ * Ask in a thread with the stages streamed (POST + `Accept: text/event-stream`): `stage` events as
+ * the Ask runs, then `turn` (the persisted answer or refusal). Rejects with ApiError on an `error`
+ * event, a non-2xx status or a stream that ends without the answer.
+ */
+export async function streamAskTurn(threadId: string, question: string, parameters: Dict | undefined, cb: AskStreamCallbacks,
+  signal?: AbortSignal): Promise<AskTurn> {
+  let turn: AskTurn | null = null;
+  let failure: ApiError | null = null;
+  try {
+    await readSSE({
+      url: API_BASE + apiPath("post", "/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId } }),
+      method: "POST", body: { question, parameters: parameters ?? null }, headers: authHeaders(),
+      signal: signal ?? new AbortController().signal,
+      onMessage: (m) => {
+        let data: unknown = null;
+        try {
+          data = m.data ? JSON.parse(m.data) : null;
+        } catch {
+          return;
+        }
+        if (m.event === "stage") cb.onStage(data as AskStage);
+        else if (m.event === "turn") turn = data as AskTurn;
+        else if (m.event === "error") {
+          const e = (data as { error?: { code?: string; message?: string; details?: Dict } }).error ?? {};
+          failure = new ApiError(422, e.code ?? "error", e.message ?? "The question could not be asked", e.details ?? {});
+        }
+      },
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 401) unauthorizedHandler?.();
+    throw new ApiError(status ?? 0, status ? `http_${status}` : "network_error", err instanceof Error ? err.message : String(err));
+  }
+  if (failure) throw failure;
+  if (!turn) throw new ApiError(0, "stream_incomplete", "The answer stream ended before the answer arrived");
+  return turn;
 }

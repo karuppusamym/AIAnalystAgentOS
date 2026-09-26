@@ -12,26 +12,27 @@ execute():
        pushdown pg     -> connector.sqlalchemy_url(), READ ONLY transaction + statement_timeout;
        pushdown tsql   -> connector URL with the driver query timeout, plus the source-kind
                           catalog's session statements (connectors/kinds.py);
-     a connector whose catalog kind cannot be pushed down is refused (staged kinds only ever run
-     in the analytics DB);
+       pushdown duckdb -> the DuckDB engine on the file: read_only, external access off;
+       federated       -> (cross-source runs, P4-E03) validated against every source's scope in the
+                          duckdb dialect; each source's leg (the referenced columns of a referenced
+                          table) is itself run through execute() with that source's own bound scope,
+                          identity and audit row; the statement then runs on the sandboxed in-memory
+                          DuckDB federation engine over those legs only;
+     each path is an `Engine` (engines/, P4-E01); a connector whose catalog kind cannot be pushed
+     down is refused (staged kinds only ever run in the analytics DB);
   6. JSON-safe values, result hash, audit row (QueryExecution) for every attempt in its own short
      transaction, optional on_event("query.executed" | "query.rejected", payload).
 """
 from __future__ import annotations
 
-import math
 import time
-import uuid
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
-from datetime import time as dtime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
-from analystos.connectors.naming import is_safe_identifier, staging_schema_for, workspace_reader_role
+from analystos.connectors.naming import staging_schema_for, workspace_reader_role
 from analystos.contracts.policy import DataScope
 from analystos.core.errors import (
     AnalystOSError,
@@ -45,10 +46,14 @@ from analystos.core.errors import (
 from analystos.core.ids import new_id, stable_hash
 from analystos.core.logging import get_logger
 from analystos.db.models import QueryExecution, Source, SourceAsset
+from analystos.engines.base import Limits, ReaderIdentity
+from analystos.engines.sql import run_postgres, run_session_sql
 from analystos.gateway.cache import QueryCache
-from analystos.gateway.engines import get_engine
 from analystos.gateway.types import QueryResult, ValidatedSQL
-from analystos.gateway.validator import validate_sql
+from analystos.gateway.validator import FEDERATION_DIALECT, validate_federated_sql, validate_sql
+from analystos.gateway.values import json_safe
+
+__all__ = ["PREVIEW_ROWS", "QueryGateway", "json_safe", "result_hash"]
 
 PREVIEW_ROWS = 20
 _log = get_logger(__name__)
@@ -60,31 +65,6 @@ def _default_session_factory():  # noqa: ANN202
     return SessionLocal()
 
 
-def json_safe(value: Any) -> Any:
-    """Convert a driver value into something JSON (and JSONB) can store losslessly enough."""
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, Decimal):
-        if not value.is_finite():
-            return None
-        return float(value)
-    if isinstance(value, (datetime, date, dtime)):
-        return value.isoformat()
-    if isinstance(value, timedelta):
-        return value.total_seconds()
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value).hex()
-    if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [json_safe(v) for v in value]
-    return str(value)
-
-
 def result_hash(columns: list[str], rows: list[list[Any]]) -> str:
     return stable_hash({"columns": columns, "rows": rows})
 
@@ -93,20 +73,22 @@ class _Runner:
     """RunSQL bound to one source of a scope."""
 
     def __init__(self, gateway: QueryGateway, scope: DataScope, *, actor: str, run_id: str | None, task_id: str | None,
-                 source_id: str) -> None:
+                 source_id: str | None, federated: bool = False) -> None:
         self._gateway = gateway
         self._scope = scope
         self._actor = actor
         self._run_id = run_id
         self._task_id = task_id
         self.source_id = source_id
-        self.dialect = scope.source_dialects.get(source_id, "postgres")
+        self.federated = federated
+        self.dialect = FEDERATION_DIALECT if federated else scope.source_dialects.get(source_id or "", "postgres")
 
     def __call__(self, sql: str, *, purpose: str = "analysis", max_rows: int | None = None,
                  retain_rows: bool = True, use_cache: bool = True) -> QueryResult:
+        extra = {"federated": True} if self.federated else {}
         return self._gateway.execute(
             self._scope, sql, actor=self._actor, purpose=purpose, run_id=self._run_id, task_id=self._task_id,
-            max_rows=max_rows, retain_rows=retain_rows, use_cache=use_cache,
+            max_rows=max_rows, retain_rows=retain_rows, use_cache=use_cache, **extra,
         )
 
 
@@ -140,11 +122,22 @@ class QueryGateway:
             raise InvalidInput("analytics_reader_url must not point at the control-plane database")
         if reader.username in (control.username, loader.username):
             raise InvalidInput("analytics_reader_url must use the dedicated reader identity, not the loader/control identity")
+        builder = getattr(self.settings, "analytics_builder_url", None)
+        if builder and make_url(builder).username == reader.username:
+            raise InvalidInput("analytics_reader_url must not be the build (write) identity")
 
     # ------------------------------------------------------------------ public API
     def run_sql_for(self, scope: DataScope, *, actor: str, run_id: str | None = None, task_id: str | None = None,
-                    source_id: str | None = None) -> _Runner:
+                    source_id: str | None = None, federated: bool = False) -> _Runner:
+        """A runner bound to one source of the scope, or (``federated=True``, cross-source runs) to the
+        whole scope: its statements are duckdb-dialect SQL over assets of any of the scope's sources."""
         sources = sorted(set(scope.source_ids) | set(scope.asset_sources.values()))
+        if federated:
+            if source_id is not None:
+                raise InvalidInput("a federated runner spans every source of the scope; do not pass source_id")
+            if not sources:
+                raise InvalidInput("the scope has no source to federate")
+            return _Runner(self, scope, actor=actor, run_id=run_id, task_id=task_id, source_id=None, federated=True)
         if source_id is None:
             if len(sources) != 1:
                 raise InvalidInput(
@@ -153,13 +146,8 @@ class QueryGateway:
             source_id = sources[0]
         elif source_id not in sources:
             raise Forbidden(f"source {source_id} is not in the authorized scope")
-        bound = scope.model_copy(deep=True)
-        bound.source_ids = [source_id]
-        bound.assets = [a for a in scope.assets if scope.asset_sources.get(a, source_id) == source_id]
-        bound.asset_sources = {a: s for a, s in scope.asset_sources.items() if s == source_id}
-        bound.columns = {a: c for a, c in scope.columns.items() if a in bound.assets}
-        bound.source_dialects = {source_id: scope.source_dialects.get(source_id, "postgres")}
-        return _Runner(self, bound, actor=actor, run_id=run_id, task_id=task_id, source_id=source_id)
+        return _Runner(self, _bind_scope(scope, source_id), actor=actor, run_id=run_id, task_id=task_id,
+                       source_id=source_id)
 
     def execute(
         self,
@@ -174,9 +162,11 @@ class QueryGateway:
         max_rows: int | None = None,
         timeout_seconds: int | None = None,
         retain_rows: bool = True,
+        federated: bool = False,
     ) -> QueryResult:
         """`retain_rows=False` (e.g. crawler PII value sampling): the statement is validated, executed
-        and audited as usual, but no result value is stored anywhere — no audit preview, no result cache."""
+        and audited as usual, but no result value is stored anywhere — no audit preview, no result cache.
+        `federated=True`: a cross-source statement (module docstring, P4-E03)."""
         if not retain_rows:
             use_cache = False
         started = time.perf_counter()
@@ -194,6 +184,10 @@ class QueryGateway:
             "purpose": (purpose or "analysis")[:120],
             "sql": sql if isinstance(sql, str) else str(sql),
         }
+
+        if federated:
+            return self._execute_federated(scope, sql, audit, started, eff_rows=eff_rows, eff_timeout=eff_timeout,
+                                           use_cache=use_cache, retain_rows=retain_rows)
 
         # 1. validate
         try:
@@ -244,6 +238,41 @@ class QueryGateway:
             })
         return result
 
+    def explain(self, scope: DataScope, sql: str, *, actor: str, purpose: str = "explain",
+                timeout_seconds: int | None = None) -> dict[str, Any]:
+        """Dry explain (paste-SQL explain in Ask): validated exactly as `execute` validates, then the
+        source is asked for its plan without running the statement (`EXPLAIN (FORMAT JSON)`, never
+        ANALYZE, inside the same read-only transaction). Rejections are audited like an execution's;
+        a source with no plan explain reports `available: False`. No rows are read or kept."""
+        started = time.perf_counter()
+        eff_rows = min(x for x in (scope.max_rows, self.settings.query_max_rows) if x is not None and x > 0)
+        eff_timeout = min(
+            x for x in (timeout_seconds, scope.timeout_seconds, self.settings.query_timeout_seconds) if x is not None and x > 0
+        )
+        audit = {"id": new_id("qry"), "workspace_id": scope.workspace_id, "run_id": None, "task_id": None,
+                 "actor": actor[:80], "purpose": (purpose or "explain")[:120], "sql": sql if isinstance(sql, str) else str(sql)}
+        try:
+            validated = validate_sql(scope, sql, max_rows=eff_rows)
+            source = self._load_source(scope, validated)
+        except (SQLRejected, Forbidden, NotFound) as exc:
+            self._reject(audit, exc, started)
+            raise
+        audit.update(source_id=validated.source_id, executed_sql=validated.executable_sql, fingerprint=validated.fingerprint,
+                     referenced_assets=validated.referenced_assets)
+        if validated.dialect != "postgres":
+            return {"available": False, "reason": f"plan explain is not supported for {validated.dialect} sources"}
+        try:
+            _, rows = self._run(source, validated, 1, eff_timeout, sql="EXPLAIN (FORMAT JSON) " + validated.executable_sql)
+        except AnalystOSError as exc:
+            self._fail(audit, "error", exc, started)
+            raise
+        self._persist(dict(audit, status="explained", row_count=0, duration_ms=int((time.perf_counter() - started) * 1000)),
+                      strict=False)
+        summary = plan_summary(rows[0][0] if rows and rows[0] else None)
+        shown = visible_relations(summary["relations"], scope.assets, validated.referenced_assets)
+        summary.update(relations=shown, relations_hidden=len(summary["relations"]) - len(shown))
+        return {"available": True, **summary}
+
     # ------------------------------------------------------------------ helpers
     def _load_source(self, scope: DataScope, validated: ValidatedSQL) -> dict[str, Any]:
         session = self.session_factory()
@@ -279,11 +308,16 @@ class QueryGateway:
                 )
         return source
 
-    def _run(self, source: dict[str, Any], validated: ValidatedSQL, max_rows: int, timeout: int) -> tuple[list[str], list[list[Any]]]:
+    def _run(self, source: dict[str, Any], validated: ValidatedSQL, max_rows: int, timeout: int,
+             sql: str | None = None) -> tuple[list[str], list[list[Any]]]:
+        """`sql` replaces the validated statement only for the gateway's own wrappers of it (EXPLAIN)."""
+        from analystos.engines.registry import engine_for_kind
+
+        statement = sql or validated.executable_sql
         if source["execution_mode"] == "staged":
             role = workspace_reader_role(source["workspace_id"],
                                          getattr(self.settings, "analytics_workspace_role_prefix", "analystos_r_"))
-            return self._run_postgres(self.settings.analytics_reader_url, validated.executable_sql, max_rows, timeout,
+            return self._run_postgres(self.settings.analytics_reader_url, statement, max_rows, timeout,
                                       role=role)
         connector = self.connector_factory(_SourceView(source), self.settings)
         if getattr(connector, "execution_mode", "pushdown") != "pushdown":
@@ -294,91 +328,85 @@ class QueryGateway:
         if dialect != validated.dialect:
             raise SQLRejected(f"Source {source['id']} expects {dialect} SQL")
         if dialect == "postgres":
-            return self._run_postgres(connector.sqlalchemy_url(), validated.executable_sql, max_rows, timeout)
+            return self._run_postgres(connector.sqlalchemy_url(), statement, max_rows, timeout)
         if dialect == "tsql":
             url = connector.query_url(timeout) if hasattr(connector, "query_url") else connector.sqlalchemy_url()
             session_sql = connector.session_statements(timeout) if hasattr(connector, "session_statements") else []
-            return self._run_generic(url, validated.executable_sql, max_rows, session_sql)
+            return self._run_generic(url, statement, max_rows, session_sql)
+        if dialect == "duckdb":
+            path = str((getattr(connector, "config", None) or {}).get("path") or "")
+            return engine_for_kind(source["kind"], dialect).execute_read(
+                validated, identity=ReaderIdentity(path=path), limits=Limits(max_rows=max_rows, timeout_seconds=timeout))
         raise InvalidInput(f"Unsupported pushdown dialect {dialect}")
+
+    # ------------------------------------------------------------------ federation (P4-E03)
+    def _execute_federated(self, scope: DataScope, sql: str, audit: dict[str, Any], started: float, *, eff_rows: int,
+                           eff_timeout: int, use_cache: bool, retain_rows: bool) -> QueryResult:
+        from analystos.engines.registry import federation_engine
+
+        try:
+            validated = validate_federated_sql(scope, sql, max_rows=eff_rows)
+            sources = {sid: self._load_source(_bind_scope(scope, sid), _leg_view(validated, sid))
+                       for sid in sorted(set(validated.asset_sources.values()))}
+        except (SQLRejected, Forbidden, NotFound) as exc:
+            self._reject(audit, exc, started)
+            raise
+        audit.update(executed_sql=validated.executable_sql, fingerprint=validated.fingerprint,
+                     referenced_assets=validated.referenced_assets, purpose=f"federated:{audit['purpose']}"[:120])
+        key = None
+        if use_cache and self.cache is not None:
+            versions = "|".join(sources[s]["version"] for s in sorted(sources))
+            key = self.cache.key(validated.fingerprint, scope.scope_hash(), versions, eff_rows)
+            hit = self.cache.get(key)
+            if hit is not None and isinstance(hit.get("columns"), list) and isinstance(hit.get("rows"), list):
+                return self._finish(audit, validated, hit["columns"], hit["rows"], bool(hit.get("truncated")), started,
+                                    cache_hit=True, hash_=hit.get("result_hash"))
+        leg_cap = min(x for x in (scope.max_rows, self.settings.query_max_rows) if x is not None and x > 0)
+        try:
+            tables: dict[str, tuple[list[str], list[list[Any]]]] = {}
+            for asset, source_id in validated.asset_sources.items():
+                bound = _bind_scope(scope, source_id)
+                leg_sql = _leg_sql(asset, validated.referenced_columns, bound.source_dialects[source_id])
+                leg = self.execute(bound, leg_sql, actor=audit["actor"], purpose=f"federation.leg:{audit['id']}",
+                                   run_id=audit["run_id"], task_id=audit["task_id"], max_rows=leg_cap,
+                                   timeout_seconds=eff_timeout, retain_rows=False, use_cache=False)
+                if leg.truncated:
+                    raise InvalidInput(
+                        f"{asset} has more than {leg_cap} rows, the federation limit per source; a partial leg would "
+                        "change the join, so the query was not run. Filter or aggregate within the source first."
+                    )
+                tables[asset] = (_leg_columns(asset, validated.referenced_columns) or ["_row"], leg.rows)
+            engine = federation_engine(getattr(self.settings, "federation_engine", "duckdb"))
+            columns, rows = engine.federate(tables, validated,
+                                            limits=Limits(max_rows=eff_rows, timeout_seconds=eff_timeout))
+        except QueryTimeout as exc:
+            self._fail(audit, "timeout", exc, started)
+            raise
+        except AnalystOSError as exc:
+            self._fail(audit, "error", exc, started)
+            raise
+        except Exception as exc:  # noqa: BLE001 - unexpected; audit then surface as upstream failure
+            err = UpstreamUnavailable(f"Federated query failed: {exc.__class__.__name__}")
+            self._fail(audit, "error", err, started)
+            raise err from exc
+        truncated = len(rows) > eff_rows
+        rows = rows[:eff_rows]
+        result = self._finish(audit, validated, columns, rows, truncated, started, cache_hit=False,
+                              retain_rows=retain_rows)
+        if key is not None and self.cache is not None:
+            self.cache.set(key, {"columns": result.columns, "rows": result.rows, "truncated": result.truncated,
+                                 "result_hash": result.result_hash})
+        return result
 
     def _run_postgres(self, url: str, sql: str, max_rows: int, timeout: int,
                       role: str | None = None) -> tuple[list[str], list[list[Any]]]:
-        """``role``: staged sources run as the owning workspace's reader role for this transaction only."""
-        import psycopg
-
-        if role is not None and not is_safe_identifier(role):
-            raise Forbidden("workspace reader role name is not a safe identifier")
-
-        engine = get_engine(url)
-        try:
-            with engine.connect() as conn:
-                dbapi = conn.connection
-                cur = dbapi.cursor()
-                try:
-                    dbapi.rollback()  # start from a clean transaction (pool pre-ping may have opened one)
-                    cur.execute("SET TRANSACTION READ ONLY")
-                    if role is not None:
-                        try:
-                            cur.execute(f'SET LOCAL ROLE "{role}"')
-                        except psycopg.Error:
-                            raise Forbidden(f"The workspace reader role {role} is not provisioned for this reader; "
-                                            "re-stage the source or run `analystos migrate`") from None
-                    cur.execute(f"SET LOCAL statement_timeout = {int(timeout * 1000)}")
-                    cur.execute("SET LOCAL idle_in_transaction_session_timeout = 60000")
-                    cur.execute(sql)
-                    columns = [d[0] for d in (cur.description or [])]
-                    raw_rows = cur.fetchmany(max_rows + 1)
-                finally:
-                    try:
-                        dbapi.rollback()
-                    finally:
-                        cur.close()
-        except psycopg.errors.QueryCanceled:
-            raise QueryTimeout(f"The query exceeded the {timeout}s timeout. Aggregate more or filter the data.") from None
-        except (psycopg.errors.InsufficientPrivilege, psycopg.errors.ReadOnlySqlTransaction) as exc:
-            raise Forbidden(f"The source refused the query: {_first_line(exc)}") from None
-        except psycopg.OperationalError as exc:
-            raise UpstreamUnavailable(f"The source database is unavailable: {_first_line(exc)}") from None
-        except psycopg.Error as exc:
-            raise InvalidInput(f"The query failed in the source: {_first_line(exc)}") from None
-        except Exception as exc:  # sqlalchemy-wrapped connection errors
-            orig = getattr(exc, "orig", None)
-            if isinstance(orig, psycopg.OperationalError) or exc.__class__.__name__ == "OperationalError":
-                raise UpstreamUnavailable(f"The source database is unavailable: {_first_line(orig or exc)}") from None
-            raise
-        rows = [[json_safe(v) for v in r] for r in raw_rows]
-        return columns, rows
+        """The Postgres engine (engines/sql.py): READ ONLY transaction, timeout, optional reader role."""
+        return run_postgres(url, sql, max_rows, timeout, role=role)
 
     def _run_generic(self, url: str, sql: str, max_rows: int,
                      session_sql: list[str] | tuple[str, ...] = ()) -> tuple[list[str], list[list[Any]]]:
-        """Non-postgres pushdown: the catalog's read-only/timeout session statements (if the kind
-        has any) run on the same connection first; the driver URL carries the query timeout."""
-        engine = get_engine(url)
-        try:
-            with engine.connect() as conn:
-                dbapi = conn.connection
-                cur = dbapi.cursor()
-                try:
-                    for stmt in session_sql:
-                        cur.execute(stmt)
-                    cur.execute(sql)
-                    columns = [d[0] for d in (cur.description or [])]
-                    raw_rows = cur.fetchmany(max_rows + 1)
-                finally:
-                    try:
-                        dbapi.rollback()
-                    finally:
-                        cur.close()
-        except AnalystOSError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - driver specific
-            text_ = _first_line(getattr(exc, "orig", None) or exc)
-            if "timeout" in text_.lower() or "timed out" in text_.lower():
-                raise QueryTimeout("The query exceeded the timeout. Aggregate more or filter the data.") from None
-            if exc.__class__.__name__ in ("OperationalError", "InterfaceError"):
-                raise UpstreamUnavailable(f"The source database is unavailable: {text_}") from None
-            raise InvalidInput(f"The query failed in the source: {text_}") from None
-        return columns, [[json_safe(v) for v in r] for r in raw_rows]
+        """The session-SQL engine (engines/sql.py): catalog read-only/timeout statements first."""
+        return run_session_sql(url, sql, max_rows, session_sql)
 
     def _finish(self, audit: dict[str, Any], validated: ValidatedSQL, columns: list[str], rows: list[list[Any]],
                 truncated: bool, started: float, *, cache_hit: bool, hash_: str | None = None,
@@ -468,3 +496,65 @@ class _SourceView:
 def _first_line(exc: BaseException | None) -> str:
     text_ = str(exc or "").strip()
     return text_.splitlines()[0][:500] if text_ else (exc.__class__.__name__ if exc else "error")
+
+
+def visible_relations(relations: list[str], assets: list[str], referenced: list[str]) -> list[str]:
+    """A plan can name relations the caller may not see (a view's base tables, catalog tables): only the
+    caller's own assets are shown, and a bare (unqualified) name only when this statement referenced it."""
+    full, bare = set(assets), {a.rsplit(".", 1)[-1] for a in referenced if a in assets}
+    return [r for r in relations if (r in full if "." in r else r in bare)]
+
+
+def plan_summary(raw: Any) -> dict[str, Any]:
+    """The top of a Postgres JSON plan: estimated rows and cost, and every node and relation in it."""
+    import json
+
+    doc = json.loads(raw) if isinstance(raw, str) else raw
+    top = (doc[0] if isinstance(doc, list) and doc else doc or {}).get("Plan") or {}
+    nodes: list[str] = []
+    relations: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        nodes.append(str(node.get("Node Type")))
+        if node.get("Relation Name"):
+            relations.append(f"{node.get('Schema') or ''}.{node['Relation Name']}".lstrip("."))
+        for child in node.get("Plans") or []:
+            walk(child)
+
+    walk(top)
+    return {"node": top.get("Node Type"), "estimated_rows": top.get("Plan Rows"), "total_cost": top.get("Total Cost"),
+            "nodes": nodes[:40], "relations": sorted(set(relations))}
+
+
+def _bind_scope(scope: DataScope, source_id: str) -> DataScope:
+    """The scope narrowed to one source: its assets, columns and dialect only."""
+    bound = scope.model_copy(deep=True)
+    bound.source_ids = [source_id]
+    bound.assets = [a for a in scope.assets if scope.asset_sources.get(a, source_id) == source_id]
+    bound.asset_sources = {a: s for a, s in scope.asset_sources.items() if s == source_id}
+    bound.columns = {a: c for a, c in scope.columns.items() if a in bound.assets}
+    bound.source_dialects = {source_id: scope.source_dialects.get(source_id, "postgres")}
+    return bound
+
+
+def _leg_view(validated: ValidatedSQL, source_id: str) -> ValidatedSQL:
+    """One source's part of a federated statement, as `_load_source` checks it."""
+    assets = sorted(a for a, s in validated.asset_sources.items() if s == source_id)
+    return validated.model_copy(update={"source_id": source_id, "referenced_assets": assets})
+
+
+def _leg_columns(asset: str, referenced_columns: list[str]) -> list[str]:
+    prefix = asset + "."
+    return [c[len(prefix):] for c in referenced_columns if c.startswith(prefix)]
+
+
+def _leg_sql(asset: str, referenced_columns: list[str], dialect: str) -> str:
+    """A federated statement's extraction from one source: only the referenced columns of one table,
+    in the source's own dialect, validated again against that source's scope by execute()."""
+    from sqlglot import exp
+
+    schema, table = asset.split(".", 1)
+    cols = _leg_columns(asset, referenced_columns)
+    select = ([exp.column(c, quoted=True).as_(exp.to_identifier(c, quoted=True)) for c in cols]
+              or [exp.Literal.number(1).as_(exp.to_identifier("_row", quoted=True))])
+    return exp.select(*select).from_(exp.table_(table, db=schema, quoted=True)).sql(dialect=dialect)

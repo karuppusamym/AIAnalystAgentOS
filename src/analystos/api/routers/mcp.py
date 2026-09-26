@@ -62,14 +62,14 @@ def _server_out(srv: McpServer) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------------------ client side (P4-X05)
 @router.post("/workspaces/{workspace_id}/mcp/servers", status_code=201)
-def register_server(workspace_id: str, body: ServerIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def register_server(workspace_id: str, body: ServerIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     srv = mcp_client.register_server(session, user, workspace_id, name=body.name, url=body.url, secret_ref=body.secret_ref,
                                      transport=body.transport, config=body.config)
     return _server_out(srv)
 
 
 @router.get("/workspaces/{workspace_id}/mcp/servers")
-def list_servers(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_servers(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return [_server_out(s) for s in session.scalars(select(McpServer).where(McpServer.workspace_id == workspace_id)
                                                     .order_by(McpServer.name))]
@@ -77,23 +77,23 @@ def list_servers(workspace_id: str, user: User = Depends(current_user), session:
 
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/allow")
 def allow_server(workspace_id: str, server_id: str, body: AllowIn, user: User = Depends(current_user),
-                 session: Session = Depends(db)):
+                 session: Session = Depends(db, scope="function")):
     return _server_out(mcp_client.set_allowed(session, user, workspace_id, server_id, body.allowed))
 
 
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/refresh")
-def refresh_server(workspace_id: str, server_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def refresh_server(workspace_id: str, server_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _server_out(mcp_client.refresh_tools(session, user, workspace_id, server_id))
 
 
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}/classify")
 def classify_tool(workspace_id: str, server_id: str, tool_name: str, body: ClassifyIn, user: User = Depends(current_user),
-                  session: Session = Depends(db)):
+                  session: Session = Depends(db, scope="function")):
     return _server_out(mcp_client.classify_tool(session, user, workspace_id, server_id, tool_name, body.side_effect))
 
 
 @router.get("/workspaces/{workspace_id}/mcp/capabilities")
-def workspace_capabilities(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def workspace_capabilities(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return [m.model_dump() for m in mcp_client.workspace_manifests(session, workspace_id)]
 
@@ -107,30 +107,30 @@ def invoke_tool(workspace_id: str, server_name: str, tool_name: str, body: Invok
 
 # ------------------------------------------------------------------------------------ server side (P4-X06)
 @router.post("/admin/mcp/clients", status_code=201)
-def create_client(body: ClientIn, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def create_client(body: ClientIn, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     client, token = mcp_grants.create_client(session, admin, body.name)
     return {"client_id": client.id, "name": client.name, "token": token,
             "note": "the token is shown once; store it in the client's secret store"}
 
 
 @router.get("/admin/mcp/clients")
-def list_clients(admin: User = Depends(admin_user), session: Session = Depends(db)):
+def list_clients(admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     return mcp_grants.list_clients(session)
 
 
 @router.post("/admin/mcp/clients/{client_id}/revoke")
-def revoke_client(client_id: str, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def revoke_client(client_id: str, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     c = mcp_grants.revoke_client(session, admin, client_id)
     return {"client_id": c.id, "status": c.status}
 
 
 @router.put("/admin/mcp/clients/{client_id}/grants/{workspace_id}")
 def set_grant(client_id: str, workspace_id: str, body: GrantIn, admin: User = Depends(admin_user),
-              session: Session = Depends(db)):
+              session: Session = Depends(db, scope="function")):
     g = mcp_grants.set_grant(session, admin, client_id, workspace_id, role=body.role, tools=body.tools, quotas=body.quotas)
     return {"client_id": g.client_id, "workspace_id": g.workspace_id, "role": g.role, "tools": g.tools, "quotas": g.quotas}
 
 
 @router.delete("/admin/mcp/clients/{client_id}/grants/{workspace_id}", status_code=204)
-def delete_grant(client_id: str, workspace_id: str, admin: User = Depends(admin_user), session: Session = Depends(db)):
+def delete_grant(client_id: str, workspace_id: str, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     mcp_grants.delete_grant(session, admin, client_id, workspace_id)

@@ -1,0 +1,31 @@
+# Minimal ELT (spec v3 §7.3, ADR-0014, P4-E04): a completed run's virtual dataset and KPIs -> a dbt
+# project -> dry run (dbt parse, static guard, tests and size read through the query gateway) ->
+# approval bound to the project hash, engine, target schema and plan hash -> dbt build on the
+# customer's runner through the BuildGateway -> manifest, run results and OpenLineage into lineage.
+# Disabled per workspace until an owner enables it; `tested`, so it never runs autonomously or on a
+# schedule until it is certified. Started by POST /api/workspaces/{id}/builds (origin.type = build).
+apiVersion: analystos/v1
+kind: Playbook
+id: playbook.elt_build
+version: 1.0.0
+summary: Build a run's dataset and KPIs as a dbt project on the customer's engine (dry run, approval, dbt build, lineage)
+determinism: deterministic
+side_effect: write_external  # the build step writes only under an approved, hash-bound approval
+cost_class: query
+certification: {status: tested, evidence: tests/integration/test_elt_build.py}
+tags: [elt, build, dbt]
+spec:
+  framing: false
+  steps:
+    - key: elt_plan
+      use: agent.transformation
+      title: Generate the dbt project, dry-run and estimate it, and request build approval
+      type: approval_gate
+      payload: build
+      approval_for: elt_run
+    - key: elt_run
+      use: agent.transformation
+      behaviour: run
+      title: Run the approved dbt build through the BuildGateway and harvest lineage
+      type: side_effect
+      after: [elt_plan]

@@ -143,59 +143,71 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def measure_candidate(run_sql: RunSQL, dialect: str, a: dict[str, Any], c: dict[str, Any], t: dict[str, Any],
+                      tc: dict[str, Any], source: str, uniq_cache: dict[tuple[str, str], dict[str, Any]]
+                      ) -> RelationshipCandidate | None:
+    """Containment of ``a.c`` in ``t.tc`` plus target uniqueness, measured through ``run_sql`` (the
+    gateway). None when the from-column has no non-null value. Used for rule candidates here and for
+    model/user join-key proposals in ``skills/federation.py`` (models propose, this decides)."""
+    fam_f, fam_t = type_family(c.get("data_type", "")), type_family(tc.get("data_type", ""))
+    mismatch = fam_f != fam_t
+
+    def key_expr(e: exp.Expression, _m: bool = mismatch) -> exp.Expression:
+        return cast(e, "text", dialect) if _m else e
+
+    ukey = (t["asset"], tc["name"])
+    if ukey not in uniq_cache:
+        uq = exp.select(exp.Count(this=col(tc["name"])).as_(ident("n")),
+                        exp.Count(this=exp.Distinct(expressions=[col(tc["name"])])).as_(ident("nd"))).from_(table(t["asset"]))
+        sql_u = to_sql(uq, dialect)
+        r = run_sql(sql_u, purpose="relationships.target_uniqueness", max_rows=1).records()
+        row = {k.lower(): v for k, v in r[0].items()} if r else {}
+        uniq_cache[ukey] = {"rows": int(row.get("n") or 0), "distinct": int(row.get("nd") or 0), "sql": sql_u}
+    u = uniq_cache[ukey]
+    parent = (exp.select(key_expr(col(tc["name"])).as_(ident("k"))).distinct().from_(table(t["asset"]))
+              .where(not_null(col(tc["name"]))))
+    f = exp.column(c["name"], table="f", quoted=True)
+    pk = exp.column("k", table="p", quoted=True)
+    q = (exp.select(count_star().as_(ident("fk_rows")),
+                    exp.Count(this=exp.Distinct(expressions=[f.copy()])).as_(ident("fk_distinct")),
+                    exp.Sum(this=case([(is_null(pk.copy()), num(0))], num(1))).as_(ident("matched")))
+         .from_(table(a["asset"], alias="f"))
+         .join(exp.Subquery(this=parent, alias=exp.TableAlias(this=ident("p"))),
+               on=exp.EQ(this=key_expr(f.copy()), expression=pk.copy()), join_type="left")
+         .where(not_null(f.copy())))
+    sql = to_sql(q, dialect)
+    rr = run_sql(sql, purpose="relationships.containment", max_rows=1).records()
+    row = {k.lower(): v for k, v in rr[0].items()} if rr else {}
+    fk_rows, fk_distinct, matched = int(row.get("fk_rows") or 0), int(row.get("fk_distinct") or 0), int(row.get("matched") or 0)
+    if fk_rows == 0:
+        return None
+    containment = matched / fk_rows
+    pk_unique = u["rows"] > 0 and u["rows"] == u["distinct"]
+    fk_unique = fk_distinct == fk_rows
+    cardinality = ("one_to_one" if fk_unique else "many_to_one") if pk_unique else "many_to_many"
+    prior = PRIORS.get(source, 0.5)
+    conf = (0.35 * prior + 0.65 * containment) * (1.0 if pk_unique else 0.8)
+    return RelationshipCandidate(
+        from_asset=a["asset"], from_column=c["name"], to_asset=t["asset"], to_column=tc["name"], cardinality=cardinality,
+        confidence=round(conf, 3),
+        evidence={"source": source, "containment": round(containment, 6), "fk_rows": fk_rows,
+                  "fk_distinct": fk_distinct, "matched_rows": matched, "orphan_rows": fk_rows - matched,
+                  "target_unique": pk_unique, "target_rows": u["rows"], "target_distinct": u["distinct"],
+                  "type_cast": mismatch, "sql": [sql, u["sql"]]})
+
+
 def discover_relationships(run_sql: RunSQL, assets: list[dict[str, Any]]) -> list[RelationshipCandidate]:
     """assets: [{"asset": "schema.table", "columns": [{name, data_type, is_key, references}], "row_count"}]."""
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
     uniq_cache: dict[tuple[str, str], dict[str, Any]] = {}
     results: list[RelationshipCandidate] = []
     for cand in _candidates(assets):
-        a, c, t, tc = cand["from"], cand["col"], cand["to"], cand["to_col"]
-        fam_f, fam_t = type_family(c.get("data_type", "")), type_family(tc.get("data_type", ""))
-        mismatch = fam_f != fam_t
-
-        def key_expr(e: exp.Expression, _m: bool = mismatch) -> exp.Expression:
-            return cast(e, "text", dialect) if _m else e
-
-        ukey = (t["asset"], tc["name"])
-        if ukey not in uniq_cache:
-            uq = exp.select(exp.Count(this=col(tc["name"])).as_(ident("n")),
-                            exp.Count(this=exp.Distinct(expressions=[col(tc["name"])])).as_(ident("nd"))).from_(table(t["asset"]))
-            sql_u = to_sql(uq, dialect)
-            r = run_sql(sql_u, purpose="relationships.target_uniqueness", max_rows=1).records()
-            row = {k.lower(): v for k, v in r[0].items()} if r else {}
-            uniq_cache[ukey] = {"rows": int(row.get("n") or 0), "distinct": int(row.get("nd") or 0), "sql": sql_u}
-        u = uniq_cache[ukey]
-        parent = (exp.select(key_expr(col(tc["name"])).as_(ident("k"))).distinct().from_(table(t["asset"]))
-                  .where(not_null(col(tc["name"]))))
-        f = exp.column(c["name"], table="f", quoted=True)
-        pk = exp.column("k", table="p", quoted=True)
-        q = (exp.select(count_star().as_(ident("fk_rows")),
-                        exp.Count(this=exp.Distinct(expressions=[f.copy()])).as_(ident("fk_distinct")),
-                        exp.Sum(this=case([(is_null(pk.copy()), num(0))], num(1))).as_(ident("matched")))
-             .from_(table(a["asset"], alias="f"))
-             .join(exp.Subquery(this=parent, alias=exp.TableAlias(this=ident("p"))),
-                   on=exp.EQ(this=key_expr(f.copy()), expression=pk.copy()), join_type="left")
-             .where(not_null(f.copy())))
-        sql = to_sql(q, dialect)
-        rr = run_sql(sql, purpose="relationships.containment", max_rows=1).records()
-        row = {k.lower(): v for k, v in rr[0].items()} if rr else {}
-        fk_rows, fk_distinct, matched = int(row.get("fk_rows") or 0), int(row.get("fk_distinct") or 0), int(row.get("matched") or 0)
-        if fk_rows == 0:
+        found = measure_candidate(run_sql, dialect, cand["from"], cand["col"], cand["to"], cand["to_col"],
+                                  cand["source"], uniq_cache)
+        if found is None:
             continue
-        containment = matched / fk_rows
-        if cand["source"] != "declared" and containment < MIN_CONTAINMENT:
+        if cand["source"] != "declared" and found.evidence["containment"] < MIN_CONTAINMENT:
             continue
-        pk_unique = u["rows"] > 0 and u["rows"] == u["distinct"]
-        fk_unique = fk_distinct == fk_rows
-        cardinality = ("one_to_one" if fk_unique else "many_to_one") if pk_unique else "many_to_many"
-        prior = PRIORS[cand["source"]]
-        conf = (0.35 * prior + 0.65 * containment) * (1.0 if pk_unique else 0.8)
-        results.append(RelationshipCandidate(
-            from_asset=a["asset"], from_column=c["name"], to_asset=t["asset"], to_column=tc["name"], cardinality=cardinality,
-            confidence=round(conf, 3),
-            evidence={"source": cand["source"], "containment": round(containment, 6), "fk_rows": fk_rows,
-                      "fk_distinct": fk_distinct, "matched_rows": matched, "orphan_rows": fk_rows - matched,
-                      "target_unique": pk_unique, "target_rows": u["rows"], "target_distinct": u["distinct"],
-                      "type_cast": mismatch, "sql": [sql, u["sql"]]}))
+        results.append(found)
     results.sort(key=lambda r: (-r.confidence, r.from_asset, r.from_column))
     return results

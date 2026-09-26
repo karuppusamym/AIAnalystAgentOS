@@ -1,0 +1,277 @@
+{
+  "dbt": "1.12.5",
+  "plan": {
+    "relations": [
+      "aos_mart.aos_find_the_drivers_of_sla_breach_007f3a",
+      "aos_mart.metricflow_time_spine"
+    ],
+    "estimate": {
+      "rows": 20000,
+      "tests": 3,
+      "method": "COUNT(*) of the dataset through the query gateway; bytes = rows x columns x 16 (rough)",
+      "models": 2,
+      "columns": 30,
+      "query_id": "qry_ed93a11535da",
+      "approx_bytes": 9600000
+    },
+    "rollback": {
+      "restore": "nothing to restore: no earlier build wrote this target",
+      "strategy": "drop the relations this job creates or replaces",
+      "statements": [
+        "DROP TABLE IF EXISTS \"aos_mart\".\"aos_find_the_drivers_of_sla_breach_007f3a\" CASCADE",
+        "DROP VIEW IF EXISTS \"aos_mart\".\"metricflow_time_spine\" CASCADE"
+      ],
+      "previous_job_id": null
+    },
+    "tests": {
+      "dropped": [],
+      "passing": [
+        {
+          "test": "not_null",
+          "column": "sys_id"
+        },
+        {
+          "test": "unique",
+          "column": "sys_id"
+        },
+        {
+          "test": "not_null",
+          "column": "opened_at_month"
+        }
+      ],
+      "candidates": [
+        {
+          "test": "not_null",
+          "column": "sys_id"
+        },
+        {
+          "test": "unique",
+          "column": "sys_id"
+        },
+        {
+          "test": "not_null",
+          "column": "opened_at_month"
+        }
+      ]
+    },
+    "metrics": [
+      {
+        "agg": "count",
+        "expr": "1",
+        "metric": "record_count",
+        "dbt_metric": "record_count"
+      }
+    ],
+    "skipped_metrics": [
+      {
+        "metric": "avg_reassignment_count",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      },
+      {
+        "metric": "avg_reopen_count",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      },
+      {
+        "metric": "avg_opened_at_to_resolved_at_hours",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      },
+      {
+        "metric": "median_opened_at_to_resolved_at_hours",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      },
+      {
+        "metric": "avg_opened_at_after_hours",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      },
+      {
+        "metric": "median_opened_at_after_hours",
+        "reason": "not approved in the workspace semantic model (policy require_approved_metrics); approve it, then plan the build again"
+      }
+    ],
+    "project_hash": "e7b0126d0ce6925c797e52fbebf3f4f99394eb5d629736d7db1311108d324ae3",
+    "payload_hash": "aad0e6cc38257f863aaa1b8f701f88538a0b870a2a417bcb22dfd9b8b1a054dc",
+    "files": [
+      "dbt_project.yml",
+      "models/aos_find_the_drivers_of_sla_breach_007f3a.sql",
+      "models/metricflow_time_spine.sql",
+      "models/schema.yml",
+      "models/sources.yml"
+    ]
+  },
+  "result": {
+    "id": "bld_c3942ce851bb",
+    "status": "succeeded",
+    "engine": "postgres:analytics",
+    "runner": "dbt-core",
+    "target_schema": "aos_mart",
+    "project_name": "analystos_aos_find_the_drivers_of_sla_breach_007f3a",
+    "project_hash": "e7b0126d0ce6925c797e52fbebf3f4f99394eb5d629736d7db1311108d324ae3",
+    "relations": [
+      "aos_mart.aos_find_the_drivers_of_sla_breach_007f3a",
+      "aos_mart.metricflow_time_spine"
+    ],
+    "run_results": {
+      "counts": {
+        "pass": 3,
+        "success": 2
+      },
+      "results": [
+        {
+          "status": "success",
+          "message": "SELECT 20000",
+          "failures": null,
+          "unique_id": "model.analystos_aos_find_the_drivers_of_sla_breach_007f3a.aos_find_the_drivers_of_sla_breach_007f3a",
+          "rows_affected": 20000,
+          "execution_time": 0.199
+        },
+        {
+          "status": "success",
+          "message": "CREATE VIEW",
+          "failures": null,
+          "unique_id": "model.analystos_aos_find_the_drivers_of_sla_breach_007f3a.metricflow_time_spine",
+          "rows_affected": -1,
+          "execution_time": 0.048
+        },
+        {
+          "status": "pass",
+          "message": "",
+          "failures": 0,
+          "unique_id": "test.analystos_aos_find_the_drivers_of_sla_breach_007f3a.not_null_aos_find_the_drivers_of_sla_breach_007f3a__opened_at_month_.115f283123",
+          "rows_affected": 1,
+          "execution_time": 0.057
+        },
+        {
+          "status": "pass",
+          "message": "",
+          "failures": 0,
+          "unique_id": "test.analystos_aos_find_the_drivers_of_sla_breach_007f3a.not_null_aos_find_the_drivers_of_sla_breach_007f3a__sys_id_.a52aed98b7",
+          "rows_affected": 1,
+          "execution_time": 0.03
+        },
+        {
+          "status": "pass",
+          "message": "",
+          "failures": 0,
+          "unique_id": "test.analystos_aos_find_the_drivers_of_sla_breach_007f3a.unique_aos_find_the_drivers_of_sla_breach_007f3a__sys_id_.2e20f77183",
+          "rows_affected": 1,
+          "execution_time": 0.037
+        }
+      ],
+      "elapsed_time": 0.53,
+      "invocation_id": "444e0988-bf18-4acb-9c62-5238408df39d"
+    },
+    "osi_conformance": {
+      "valid": true,
+      "issues": [],
+      "metrics": [
+        "record_count"
+      ],
+      "datasets": [
+        "sm_aos_find_the_drivers_of_sla_breach_007f3a"
+      ]
+    },
+    "dbt_version": "1.12.5",
+    "openlineage_sample": {
+      "job": {
+        "name": "bld_c3942ce851bb.metricflow_time_spine",
+        "facets": {
+          "sql": {
+            "query": "\nSELECT CAST(d AS DATE) AS date_day\nFROM generate_series(CAST('2000-01-01' AS DATE), CAST('2040-12-31' AS DATE), INTERVAL '1 day') AS d",
+            "_producer": "https://github.com/context2ai/analystos/build",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SQLJobFacet.json#/$defs/SQLJobFacet"
+          },
+          "jobType": {
+            "jobType": "MODEL",
+            "_producer": "https://github.com/context2ai/analystos/build",
+            "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/JobTypeJobFacet.json#/$defs/JobTypeJobFacet",
+            "integration": "DBT",
+            "processingType": "BATCH"
+          }
+        },
+        "namespace": "analystos:ws_10d53b320acb"
+      },
+      "run": {
+        "runId": "76f19453-2948-55b6-befc-1d0fe978069a",
+        "facets": {}
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "analystos_test_dp_e04_analytics.aos_mart.metricflow_time_spine",
+          "facets": {
+            "schema": {
+              "fields": [
+                {
+                  "name": "date_day"
+                }
+              ],
+              "_producer": "https://github.com/context2ai/analystos/build",
+              "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SchemaDatasetFacet.json#/$defs/SchemaDatasetFacet"
+            }
+          },
+          "namespace": "postgres://localhost:5432"
+        }
+      ],
+      "producer": "https://github.com/context2ai/analystos/build",
+      "eventTime": "2026-09-25T21:48:00.466208+00:00",
+      "eventType": "COMPLETE",
+      "schemaURL": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent"
+    },
+    "lineage_edges": [
+      [
+        "approval",
+        "authorized",
+        "build_job",
+        "bld_c3942ce851bb"
+      ],
+      [
+        "transformation",
+        "executed_as",
+        "build_job",
+        "bld_c3942ce851bb"
+      ],
+      [
+        "build_job",
+        "produced",
+        "table",
+        "aos_mart.aos_find_the_drivers_of_sla_breach_007f3a"
+      ],
+      [
+        "table",
+        "transformed_into",
+        "table",
+        "aos_mart.aos_find_the_drivers_of_sla_breach_007f3a"
+      ],
+      [
+        "build_job",
+        "produced",
+        "table",
+        "aos_mart.metricflow_time_spine"
+      ],
+      [
+        "dataset",
+        "materialized_by",
+        "transformation",
+        "art_ff7b887435bb"
+      ],
+      [
+        "metric",
+        "materialized_by",
+        "transformation",
+        "art_ff7b887435bb"
+      ]
+    ],
+    "audit_actions": [
+      "approval.decided",
+      "approval.requested",
+      "build.completed",
+      "build.node",
+      "build.started",
+      "policy.build",
+      "policy.tool"
+    ]
+  },
+  "table_rows": 20000,
+  "owner": "aostest_e04_b_ws_10d53b320acb",
+  "elapsed_seconds": 8.4
+}

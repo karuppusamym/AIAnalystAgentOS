@@ -1,0 +1,52 @@
+{{- /* One Deployment per Temporal task-queue pool (P4-S01): each runs `analystos worker` with
+       ANALYSTOS_WORKER_QUEUES set to its queue(s), so every pool scales on its own. */ -}}
+{{- range $name, $pool := .Values.workers }}
+{{- $component := printf "worker-%s" $name }}
+{{- $ctx := dict "root" $ "component" $component }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analystos.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "analystos.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    analystos.io/task-queues: {{ $pool.queues | replace "," "_" | quote }}
+spec:
+  {{- if not (and $pool.autoscaling $pool.autoscaling.enabled) }}
+  replicas: {{ $pool.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "analystos.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analystos.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $component }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      {{- include "analystos.podCommon" $ctx | nindent 6 }}
+      # Longer than the longest heartbeat window: Temporal re-dispatches what a stopped worker held.
+      terminationGracePeriodSeconds: 180
+      containers:
+        - name: worker
+          image: {{ include "analystos.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["analystos", "worker"]
+          env:
+            - {name: ANALYSTOS_WORKER_QUEUES, value: {{ $pool.queues | quote }}}
+          {{- include "analystos.appEnv" $ | nindent 10 }}
+          # No HTTP probe: a worker that loses its process pool exits and is restarted; a hung activity is
+          # detected by Temporal's heartbeat timeout and retried on another pod (P4-S01).
+          resources:
+            {{- toYaml $pool.resources | nindent 12 }}
+      volumes:
+        {{- include "analystos.appVolumes" $ | nindent 8 }}
+{{- include "analystos.pdb" (dict "root" $ "component" $component "pdb" (default (dict "enabled" false) $pool.pdb)) }}
+{{- include "analystos.hpa" (dict "root" $ "component" $component "autoscaling" $pool.autoscaling) }}
+{{- end }}

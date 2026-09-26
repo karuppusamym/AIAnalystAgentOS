@@ -5,7 +5,7 @@ description = "Context2AI AnalystOS - autonomous, governed data & analytics agen
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115",
+  "fastapi>=0.121",
   "uvicorn[standard]>=0.30",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
@@ -49,6 +49,14 @@ dev = [
 sqlserver = ["pymssql>=2.3"]
 # MCP client and server (P4-X05/X06): the official SDK, streamable HTTP, protocol 2026-07-28.
 mcp = ["mcp>=2.2"]
+# The customer's dbt runner for playbook.elt_build (P4-E04). The platform only runs the `dbt`
+# executable as a separate process (ANALYSTOS_DBT_EXECUTABLE), so installing it into its own venv or
+# image is preferred: dbt pins protobuf/networkx versions that can differ from the platform's.
+dbt = ["dbt-core>=1.12,<1.13", "dbt-postgres>=1.9"]
+# Local sentence-transformer embeddings for the knowledge index (P4-K10). Optional: hashing is the fallback.
+embeddings = ["sentence-transformers>=3.0"]
+# PDF text for knowledge document uploads (P4-K06). Optional: a built-in extractor reads simple-font PDFs.
+documents = ["pypdf>=5.0"]
 # Source drivers (config/source_kinds.yaml names the extra each kind needs).
 mysql = ["pymysql>=1.1"]
 oracle = ["oracledb>=2.0"]

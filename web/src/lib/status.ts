@@ -13,10 +13,10 @@ const TONES: Record<string, Tone> = {
   running: "running", planning: "running", testing: "running", started: "running", in_progress: "running",
   // needs attention
   waiting_user: "warning", paused: "warning", pending: "warning", inconclusive: "warning", partial: "warning",
-  approval_required: "warning", open: "warning", acknowledged: "info", proposed: "info", registered: "info", new: "neutral", approved_plan: "warning",
+  approval_required: "warning", awaiting_approval: "warning", open: "warning", acknowledged: "info", proposed: "info", registered: "info", new: "neutral", approved_plan: "warning",
   // bad
   failed: "danger", rejected: "danger", error: "danger", denied: "danger", deny: "danger", failed_verification: "danger",
-  timeout: "danger", invalidated: "danger", alerting: "danger",
+  timeout: "danger", invalidated: "danger", alerting: "danger", refused: "danger",
   // inert
   cancelled: "neutral", superseded: "neutral", skipped: "neutral", draft: "neutral", expired: "neutral",
   rolled_back: "neutral", unknown: "neutral", disabled: "neutral",

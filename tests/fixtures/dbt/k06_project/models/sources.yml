@@ -1,0 +1,16 @@
+version: 2
+sources:
+  - name: servicenow
+    schema: src_sn
+    description: Incidents staged from ServiceNow.
+    tables:
+      - name: incident
+        description: One row per ServiceNow incident.
+        columns:
+          - name: number
+            description: Incident number, unique per incident.
+            data_tests: [unique, not_null]
+          - name: caller_email
+            description: Email of the person who raised the incident.
+            meta: {contains_pii: true}
+            tags: [pii]

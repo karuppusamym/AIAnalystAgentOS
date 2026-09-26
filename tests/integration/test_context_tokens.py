@@ -63,7 +63,7 @@ def _prefix_chars(messages: list[dict]) -> int:
 
 
 class CountingTransport:
-    def __init__(self) -> None:
+    def __init__(self, **_: object) -> None:  # the router passes allowed_hosts (egress guard)
         pass
 
     def chat(self, *, base_url, api_key, payload, timeout):
