@@ -102,3 +102,65 @@ Migration `0030` maps every existing finding onto the model without upgrading it
 (`equivalent: exploratory`; checks, reproducibility and the confidence kept with verifier version `rev.v1`),
 `failed_verification` → `inconclusive`, `rejected` → `invalid`, anything else → `legacy` (unverified).
 The mapping is a copy of `evidence.bundle.legacy_bundle` (tested equal) so the migration does not drift.
+
+## 7. Verification records that void themselves (P7-01, ADR-0020)
+
+Code: `src/analystos/evidence/verification.py`, tables `verification_record`, `verification_dependency`
+(indexed on `kind, ref`) and `verification_sweep` (migration `0032`).
+
+REV (`agents/critic.py`) writes one record per verdict (verified or failed) with the dependencies it saw:
+
+| kind | ref | version |
+|---|---|---|
+| `query` | the step (today the hypothesis id) | spec hash + sha256 of each primary query's SQL + `sqlbuild.v1` + dialects |
+| `data` | `<source_id>/<schema.table>` | the run's manifest entry version (P4-03) |
+| `semantic` | `<workspace_id>/<metric>` | the approved version (id + content hash) of each live KPI on the outcome column, or "none approved" |
+| `method` | method name | manifest id + version + sha256 of the method module |
+| `context` | glossary entry / knowledge document id | its content hash (terms the run resolved onto the claim's columns; glossary, rule and metric sections of the narrative's model calls) |
+| `model_call` | model call id (narrative written by a model only) | purpose + model + prompt version |
+| `policy` | workspace id | hash of `restricted_columns, pii_columns, pii_access, attribute_rules, max_rows, alpha` |
+
+`fingerprint = sha256(canonical_json(sorted(dependencies)))`. A new verdict on the same subject supersedes
+the live one; a replan supersedes the run's verdicts.
+
+**Voiding is event-driven, in the transaction of the change:** `mark_stale` (snapshot re-staged; P4-03's
+`stale` is now the `data` case of `VOID`), `semantic.apply_decision` / `deprecate_metric`, `save_policy`,
+`knowledge.index.index_pack` (every knowledge revision), and `POST /api/admin/capabilities/reload` (method
+versions) call `dependency_changed` / `recheck`. `void_dependents(session, kind, ref, new_version, reason)` is
+the public hook for later change paths (editing a step, P7-04). The scheduler runs `sweep` once a day:
+it recomputes every live dependency and voids what an event missed; each is a **late void** (the sweep row's
+`late_voids`, a `verification.sweep_completed` event and a warning log), a defect in some change path.
+
+**Consumers read the state:** the publish gate (`publisher.build_bundle` → `gate_publish`) refuses a chart
+that presents a VOID finding; reports never present a VOID finding as verified (label `VOID: <cause>`, listed
+in the executive report too); the Attested Computation export and the learning loop refuse VOID; the insight
+APIs and the MCP finding tool return `verification_state`. Presentation: a void carries its cause; earlier
+verdicts on the same question (`question_hash` = spec hash) are listed as `prior_verdicts` with
+`offered: true, applied: false`; flagging a finding *wrong* (`POST /api/insights/{id}/outcome` with
+`signal: wrong`, or run feedback `reject_finding`) requires a reason, stored in the record's `flags` and
+drafted as Negative Knowledge.
+
+Migration `0032` maps existing verified findings: stale → `VOID(data)`; with a manifest entry → `ACTIVE`
+with the rebuilt `data` dependency; otherwise `LEGACY` (shown without a verification badge).
+
+## 8. "Why this number?" (P7-08)
+
+`GET /api/insights/{id}/why[?number=<text>|fact_id=<id>]` and `GET /api/workspaces/{ws}/analysis/{run}/why`
+(`evidence/why.py`). Each displayed number is re-bound to the finding's facts and resolved through six
+links, each with its current state (`ok | changed | void | failed | broken | unknown | not_applicable`);
+the number's `state` is its worst link. Nothing is dropped: a broken or voided link is returned with a reason.
+
+```json
+{"subject": {"type": "insight", "id": "...", "code": "I-2", "run_id": "...", "title": "...", "finding": "...", "status": "verified"},
+ "verification_state": {"state": "VOID", "badge": "void", "record_id": "ver_...", "void": {"kind": "data", "reason": "...", "at": "..."}, "...": "..."},
+ "state": "void",
+ "numbers": [{"text": "41.2%", "value": 41.2, "unit": "percent", "state": "void", "links": [
+   {"link": "fact", "state": "ok", "reason": null, "detail": {"fact_id": "...", "role": "top_rate", "value": 0.412, "unit": "fraction", "subject": "P1", "...": "..."}},
+   {"link": "step", "state": "ok", "detail": {"hypothesis_id": "...", "code": "H-2", "method": "rate_by_segment", "method_version": "1.0.0", "spec_hash": "...", "experiment_id": "..."}},
+   {"link": "query_receipt", "state": "ok", "detail": {"queries": [{"query_id": "...", "kind": "sql", "sql": "...", "query_hash": "...", "result_hash": "...", "recorded_result_hash": "...", "rows": 4, "state": "ok"}]}},
+   {"link": "data_version", "state": "changed", "reason": "snapshot of shop.orders changed (...)", "detail": {"asset": "...", "recorded_version": "...", "current_version": "..."}},
+   {"link": "semantic_version", "state": "not_applicable", "detail": {"metrics": []}},
+   {"link": "verdict", "state": "void", "reason": "data: data snapshot shop.orders changed (...)", "detail": {"record_id": "...", "state": "VOID", "...": "..."}}]}]}
+```
+
+The run form returns `{"run_id", "findings": [<the object above per verified finding>], "numbers": n, "by_state": {"ok": n}}`.

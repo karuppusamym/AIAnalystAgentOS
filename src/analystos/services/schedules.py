@@ -7,6 +7,7 @@ the schedule owner's permissions as they are at fire time, not when the schedule
 """
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -25,6 +26,7 @@ from analystos.db.models import AnalysisRun, Monitor, Schedule, ScheduleRun, Sou
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import require_role
+from analystos.services import pins as pins_svc
 from analystos.services.notifications import notify
 
 log = get_logger(__name__)
@@ -60,6 +62,32 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
         from analystos.registries.replay import validate_schedule_config
 
         validate_schedule_config(config)
+        definition = config.get("definition")
+        if definition is not None and not isinstance(definition, (dict, str)):
+            raise InvalidInput("config.definition must name a playbook definition: {key, version} or a definition id")
+
+
+def _check_definition(session: Session, workspace_id: str, config: dict) -> None:
+    """A schedule may only name a runnable definition (published; a draft only in a dev workspace)."""
+    if config.get("definition") is not None:
+        from analystos.services.definitions import resolve_runnable
+
+        resolve_runnable(session, workspace_id, config["definition"], trigger="schedule")
+
+
+def _pin_baseline(session: Session, sch: Schedule) -> None:
+    """A re-analysis schedule created from a completed baseline run pins that run's versions now."""
+    from analystos.services import pins
+
+    baseline = sch.config.get("baseline_run_id")
+    if sch.kind != "reanalysis" or not baseline or sch.pins:
+        return
+    run = session.get(AnalysisRun, baseline)
+    if run is None or run.workspace_id != sch.workspace_id:
+        raise InvalidInput("config.baseline_run_id is not a run of this workspace")
+    if run.status == "COMPLETED":
+        sch.pins = pins.capture(session, run, revision=1)
+        pins.refresh(session, sch)
 
 
 def create_schedule(session: Session, user: User, workspace_id: str, *, name: str, kind: str, cron: str, timezone: str = "UTC",
@@ -67,32 +95,45 @@ def create_schedule(session: Session, user: User, workspace_id: str, *, name: st
     require_role(session, user, workspace_id, "editor")
     config = config or {}
     validate(kind, cron, timezone, config)
+    _check_definition(session, workspace_id, config)
     if kind == "saved_analysis":
         from analystos.services.saved_analysis import verify
 
         verify(session, user, workspace_id, name, cron, timezone, config)
     sch = Schedule(id=new_id("sch"), workspace_id=workspace_id, name=name, kind=kind, cron=cron, timezone=timezone, config=config,
-                   owner_id=user.id, enabled=True, next_run_at=next_fire(cron, timezone))
+                   owner_id=user.id, enabled=True, next_run_at=next_fire(cron, timezone), revision=1, pins={}, pin_status={})
     session.add(sch)
+    _pin_baseline(session, sch)
     audit(f"user:{user.id}", "schedule.created", workspace_id=workspace_id, target=sch.id,
-          details={"kind": kind, "cron": cron, "timezone": timezone}, session=session)
+          details={"kind": kind, "cron": cron, "timezone": timezone, "pin_revision": (sch.pins or {}).get("revision")},
+          session=session)
     return sch
 
 
-def update_schedule(session: Session, user: User, schedule_id: str, patch: dict) -> Schedule:
-    sch = session.get(Schedule, schedule_id)
+def update_schedule(session: Session, user: User, schedule_id: str, patch: dict, *, expected_revision: int | None = None) -> Schedule:
+    """Edits never change the pins (only an accepted upgrade does). `expected_revision` is the
+    client's If-Match: a stale one is 412, so two editors cannot silently overwrite each other."""
+    from analystos.core.errors import PreconditionFailed
+
+    sch = session.get(Schedule, schedule_id, with_for_update=expected_revision is not None)
     if sch is None:
         raise NotFound("schedule not found")
     require_role(session, user, sch.workspace_id, "editor")
+    if expected_revision is not None and expected_revision != sch.revision:
+        raise PreconditionFailed(f"schedule {sch.id} is at revision {sch.revision}, not {expected_revision}",
+                                 details={"current_revision": sch.revision})
     for key in ("name", "cron", "timezone", "config", "enabled"):
         if patch.get(key) is not None:
             setattr(sch, key, patch[key])
     validate(sch.kind, sch.cron, sch.timezone, sch.config)
+    if patch.get("config") is not None:
+        _check_definition(session, sch.workspace_id, sch.config)
     if sch.kind == "saved_analysis" and (patch.get("enabled") is not False or set(patch) != {"enabled"}):
         from analystos.services.saved_analysis import verify
 
         verify(session, session.get(User, sch.owner_id), sch.workspace_id, sch.name, sch.cron, sch.timezone, sch.config)
     sch.next_run_at = next_fire(sch.cron, sch.timezone) if sch.enabled else None
+    sch.revision = (sch.revision or 1) + 1
     audit(f"user:{user.id}", "schedule.updated", workspace_id=sch.workspace_id, target=sch.id, details=patch, session=session)
     return sch
 
@@ -166,9 +207,21 @@ def execute(srun_id: str) -> None:
             s.expunge_all()
             _finish(srun_id, "failed", error=f"authorization: {exc.message}")
             return
-        srun.status = "running"
+        blocked, pin_info = None, None
+        if kind in pins_svc.PINNED_KINDS and sch.pins:
+            st = pins_svc.refresh(s, sch)  # decided in code at every fire, not only when something was published
+            if st.state == "blocked":
+                blocked = "; ".join(st.blocking)
+            else:
+                pin_info = {"revision": st.revision, "state": st.state, "warnings": st.warnings,
+                            "upgrade_available": st.state == "upgrade_available"}
+        if blocked is None:
+            srun.status = "running"
         s.flush()
         s.expunge_all()
+    if blocked is not None:  # a retired or rejected pin: nothing runs until the owner upgrades (notified by refresh)
+        _finish(srun_id, "skipped", {"blocked": True}, error=f"blocked by a retired or rejected pinned version: {blocked}")
+        return
     try:
         from analystos.services.saved_analysis import execute as saved_analysis
 
@@ -182,6 +235,8 @@ def execute(srun_id: str) -> None:
         log.exception("schedule %s failed", schedule_id)
         _finish(srun_id, "failed", error=f"{type(exc).__name__}: {exc}")
         return
+    if pin_info is not None:
+        result["pins"] = pin_info  # pinned versions ran; an available upgrade or a deprecation is reported, not applied
     if result.pop("_pending", False):  # re-analysis: the run's finalize step completes the schedule_run
         with session_scope() as s:
             s.get(ScheduleRun, srun_id).result = result
@@ -193,8 +248,9 @@ def _refresh(owner: User, workspace_id: str, schedule_id: str, srun_id: str, con
     from analystos.services.sources import select_assets
 
     with session_scope() as s:
+        # recipe outputs (kind `recipe`) are written by recipe runs, not extracted
         sources = list(s.scalars(select(Source).where(Source.workspace_id == workspace_id, Source.execution_mode == "staged",
-                                                      Source.status == "ready")))
+                                                      Source.status == "ready", Source.kind != "recipe")))
         if config.get("source_ids"):
             sources = [x for x in sources if x.id in config["source_ids"]]
         plan = {x.id: [a.name for a in s.scalars(select(SourceAsset).where(SourceAsset.source_id == x.id, SourceAsset.selected.is_(True)))]
@@ -211,7 +267,8 @@ def _crawl(owner: User, workspace_id: str, schedule_id: str, srun_id: str, confi
     from analystos.services.crawler import crawl_source
 
     with session_scope() as s:
-        stmt = select(Source.id).where(Source.workspace_id == workspace_id, Source.status.in_(("discovered", "ready")))
+        stmt = select(Source.id).where(Source.workspace_id == workspace_id, Source.status.in_(("discovered", "ready")),
+                                       Source.kind != "recipe")
         if config.get("source_ids"):
             stmt = stmt.where(Source.id.in_(config["source_ids"]))
         ids = list(s.scalars(stmt))
@@ -229,32 +286,52 @@ def _crawl(owner: User, workspace_id: str, schedule_id: str, srun_id: str, confi
 
 
 def _previous_run(workspace_id: str, schedule_id: str) -> str | None:
+    """The run this fire's deltas compare against: the last completed fire of the same pin revision, else
+    that revision's baseline. After an accepted upgrade the first fire is the new baseline (None)."""
     with session_scope() as s:
+        sch = s.get(Schedule, schedule_id)
+        pins = sch.pins or {}
+        revision = pins.get("revision")
         for srun in s.scalars(select(ScheduleRun).where(ScheduleRun.schedule_id == schedule_id, ScheduleRun.status == "succeeded")
                               .order_by(ScheduleRun.started_at.desc()).limit(10)):
+            if revision is not None and (srun.result or {}).get("pin_revision") != revision:
+                continue
             rid = (srun.result or {}).get("run_id")
             if rid and (r := s.get(AnalysisRun, rid)) and r.status == "COMPLETED":
                 return rid
-        if (cfg_prev := s.get(Schedule, schedule_id).config.get("baseline_run_id")):
+        if pins:
+            return pins.get("baseline_run_id")
+        if (cfg_prev := sch.config.get("baseline_run_id")):
             return cfg_prev
     return None
 
 
 def _reanalysis(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
+    """A pinned schedule (ADR-0021) replays its frozen set: the baseline's manifests, metric and method
+    versions and AnalysisSpecs, with no model call; the objective is never sent back to a planner. An
+    unpinned one (no completed baseline yet) runs the named definition, and its first completed run
+    becomes the baseline its pins are taken from."""
     from analystos.services.runs import create_run
 
     refreshed = _refresh(owner, workspace_id, schedule_id, srun_id, config) if config.get("refresh_first", True) else {}
     from analystos.registries.replay import novelty_config
 
+    with session_scope() as s:
+        sch = s.get(Schedule, schedule_id)
+        pinned = pins_svc.for_run(sch) if sch.pins else None
     previous = _previous_run(workspace_id, schedule_id)
     # Replay (default): the run re-tests the hypothesis registry with no model call; novelty is opt-in (P4-T05).
     run = create_run(owner, workspace_id, objective=config.get("objective"), source_ids=config.get("source_ids"),
+                     definition=None if pinned else config.get("definition"), pins=pinned,
                      origin={"type": "schedule", "schedule_id": schedule_id, "schedule_run_id": srun_id,
                              "previous_run_id": previous, "publish": config.get("publish", "skip"),
-                             "replay": bool(config.get("replay", True)), "novelty": novelty_config(config.get("novelty")),
+                             "replay": bool(pinned) or bool(config.get("replay", True)),
+                             "novelty": novelty_config(config.get("novelty")),
                              "registry_scope": config.get("registry_scope", "previous_run"),
+                             "pin_revision": (pinned or {}).get("revision"),
                              "report": config.get("report", {"kind": "weekly_summary", "formats": ["html", "pdf", "xlsx"]})})
-    return {"_pending": True, "run_id": run.id, "previous_run_id": previous, "refreshed": refreshed}
+    return {"_pending": True, "run_id": run.id, "previous_run_id": previous, "refreshed": refreshed,
+            "pin_revision": (pinned or {}).get("revision")}
 
 
 def _report(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
@@ -299,10 +376,53 @@ def complete_from_run(run_id: str) -> None:
         return
     if status == "COMPLETED":
         changes = summary.get("changes") or {}
+        verdict = {"nothing_changed": changes.get("nothing_changed"), "summary": changes.get("summary")} if changes else \
+            {"nothing_changed": None, "summary": "First run of this pinned set: it is the baseline later fires compare with."}
+        with session_scope() as s:
+            baseline = _record_baseline(s, origin, run_id)
+            stale = _mark_superseded(s, origin.get("previous_run_id"), run_id)
         _finish(srun_id, "succeeded", {"run_id": run_id, "report_artifact_id": summary.get("report_artifact_id"),
-                                       "changes": {k: len(changes.get(k, [])) for k in ("new", "persisting", "changed", "resolved", "new_questions")}})
+                                       "changes": {k: len(changes.get(k, [])) for k in ("new", "persisting", "changed", "resolved", "new_questions")},
+                                       **verdict, "baseline": baseline, "stale_narratives": stale})
     else:
         _finish(srun_id, "failed", {"run_id": run_id}, error=f"run {status}: {summary.get('error') or ''}".strip())
+
+
+def _record_baseline(session: Session, origin: dict, run_id: str) -> bool:
+    """An unpinned re-analysis schedule pins the first run that completes; the first fire after an
+    accepted upgrade becomes that revision's baseline. True when this run is a baseline."""
+    sch = session.get(Schedule, origin.get("schedule_id"), with_for_update=True) if origin.get("schedule_id") else None
+    if sch is None or sch.kind != "reanalysis":
+        return False
+    if not sch.pins:
+        sch.pins = pins_svc.capture(session, session.get(AnalysisRun, run_id), revision=1)
+        pins_svc.refresh(session, sch)
+        return True
+    if origin.get("pin_revision") == sch.pins.get("revision") and not sch.pins.get("baseline_run_id"):
+        sch.pins = {**sch.pins, "baseline_run_id": run_id}
+        return True
+    return False
+
+
+def _mark_superseded(session: Session, previous_run_id: str | None, run_id: str) -> list[str]:
+    """A narrative written for an earlier fire is stale once a newer fire has its own,
+    regenerated from the new bound facts; it is marked, never rewritten."""
+    from analystos.artifacts.registry import link
+    from analystos.db.models import Artifact
+
+    if not previous_run_id:
+        return []
+    marked = []
+    for art in session.scalars(select(Artifact).where(Artifact.run_id == previous_run_id, Artifact.type == "narrative",
+                                                      Artifact.status == "final")):
+        art.status = "stale"
+        link(session, art.workspace_id, ("artifact", art.id), "superseded_by", ("run", run_id), run_id=run_id)
+        marked.append(art.id)
+    if marked:
+        run = session.get(AnalysisRun, run_id)
+        emit(run.workspace_id, "narrative.stale", {"artifacts": marked, "previous_run_id": previous_run_id,
+                                                   "superseded_by": run_id}, run_id=run_id, session=session)
+    return marked
 
 
 DEMO_PREFIX = "[demo] "  # name prefix of schedules/monitors an evidence or demo script creates
@@ -337,6 +457,21 @@ def disable_demo(session: Session, *, include_all: bool = False, workspace_id: s
     return {"dry_run": dry_run, "include_all": include_all, **out}
 
 
+def housekeeping() -> dict[str, Any]:
+    """Every scheduler iteration (P4-06): relay pending run dispatches, give orphaned NEW runs an outbox
+    row, and drop idempotency records past retention. Failures are logged, never fatal to the loop."""
+    from analystos.services import dispatch, idempotency
+
+    out: dict[str, Any] = {}
+    try:
+        out["dispatch"] = dispatch.reconcile()
+        with session_scope() as s:
+            out["idempotency_purged"] = idempotency.purge_expired(s)
+    except Exception:
+        log.exception("scheduler housekeeping failed")
+    return out
+
+
 def nightly_calibration() -> None:
     """Decision calibration (P4-T09) once a day, whichever scheduler process gets the advisory lock."""
     from analystos.decisions.calibration import maybe_run_nightly
@@ -348,10 +483,25 @@ def nightly_calibration() -> None:
         log.exception("decision calibration failed")
 
 
-def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
+def nightly_verification_sweep() -> None:
+    """P7-01 sweep once a day: re-check every live verdict's dependencies; late voids are logged defects."""
+    from analystos.evidence.verification import maybe_sweep_nightly
+
+    try:
+        with session_scope() as s:
+            maybe_sweep_nightly(s)
+    except Exception:
+        log.exception("verification sweep failed")
+
+
+def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False, stop: threading.Event | None = None,
+                  configure: bool = True) -> None:
+    """The schedule/monitor loop: `analystos scheduler`, or a thread of the API process in the lite
+    profile (`start_inprocess_scheduler`). Claim-then-execute keeps several loops from double firing."""
     from analystos.core.logging import configure_logging
 
-    configure_logging()
+    if configure:
+        configure_logging()
     log.info("scheduler started (poll %ss)", poll_seconds)
     while True:
         try:
@@ -359,7 +509,20 @@ def run_scheduler(poll_seconds: float = 15.0, *, once: bool = False) -> None:
                 execute(srun)
         except Exception:
             log.exception("scheduler iteration failed")
+        housekeeping()
         nightly_calibration()
+        nightly_verification_sweep()
         if once:
             return
-        time.sleep(poll_seconds)
+        if stop is None:
+            time.sleep(poll_seconds)
+        elif stop.wait(poll_seconds):
+            return
+
+
+def start_inprocess_scheduler(poll_seconds: float = 15.0) -> threading.Event:
+    """Run the scheduler in a daemon thread of this process (lite, ADR-0025); set the event to stop it."""
+    stop = threading.Event()
+    threading.Thread(target=run_scheduler, args=(poll_seconds,), kwargs={"stop": stop, "configure": False},
+                     daemon=True, name="inprocess-scheduler").start()
+    return stop

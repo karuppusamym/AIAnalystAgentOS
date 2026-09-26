@@ -27,11 +27,11 @@ def build_workers(client: Any, workloads: list[str], *, prefix: str, stack: cont
     from temporalio.worker import SharedStateManager, Worker
 
     from analystos.workflows.activities import BY_WORKLOAD
-    from analystos.workflows.analysis_workflow import AnalysisWorkflow, CrawlWorkflow
+    from analystos.workflows.analysis_workflow import AnalysisWorkflow, CrawlWorkflow, RecipeComputeWorkflow
 
     specs = specs or load_config()[0]
     activities = activities or BY_WORKLOAD
-    workflows = workflows or {"analysis": [AnalysisWorkflow], "crawl": [CrawlWorkflow]}
+    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow], "crawl": [CrawlWorkflow]}
     workers = []
     for workload in workloads:
         spec = specs[workload]
@@ -65,5 +65,8 @@ async def _main(workloads: list[str]) -> None:
 
 
 def run_worker(queues: str | None = None) -> None:
+    from analystos.core.profiles import require_extra
+
     configure_logging()
+    require_extra("temporal", "`analystos worker` (the standard profile)")
     asyncio.run(_main(parse_workloads(queues if queues is not None else get_settings().worker_queues)))

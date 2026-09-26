@@ -24,6 +24,7 @@ from analystos.core.errors import AnalystOSError, InvalidInput, ModelUnavailable
 from analystos.db.base import session_scope
 from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset, by_code
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
+from analystos.llm.redaction import QUESTION_MODEL_INSTRUCTION, redact_question, restore_values, tokenize_values
 from analystos.runtime.context import RunContext
 
 
@@ -397,15 +398,89 @@ def clarify(ctx: Any, question: str) -> dict[str, Any]:
 def ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
         use_registry: bool = True) -> dict[str, Any]:
     out = _ask(ctx, question, max_repairs=max_repairs, parameters=parameters, use_registry=use_registry)
-    return {"governance": "ad_hoc", **out}
+    return label(out)
+
+
+def label(out: dict[str, Any]) -> dict[str, Any]:
+    """Every answer, and the chart it draws, says whether it was compiled from an approved definition
+    (`governed`, with the model and compiler versions) or improvised (`ad_hoc`), ADR-0019."""
+    out = {"governance": "ad_hoc", **out}
+    tag: dict[str, Any] = {"governance": out["governance"]}
+    if out["governance"] == "governed":
+        semantic = out.get("semantic") or {}
+        tag |= {"semantic_model_version": semantic.get("semantic_model_version", semantic.get("model_version")),
+                "compiler_version": semantic.get("compiler_version")}
+    if isinstance(out.get("chart"), dict):
+        out["chart"] = {**out["chart"], **tag}
+    return out
+
+
+SEMANTIC_PURPOSE = "semantic_query"
+
+
+def _semantic_words(catalog: dict[str, Any]) -> set[str]:
+    """Tokens of every metric name, display name, synonym and dimension the planner may use."""
+    from analystos.registries.verified_queries import tokens
+
+    words: set[str] = set()
+    for name, entry in catalog["metrics"].items():
+        d = entry["definition"]
+        for text in [name, d.get("display_name") or "", *(d.get("dimensions") or [])]:
+            words |= tokens(text.replace(".", " "))
+    for phrase in catalog.get("synonyms") or {}:
+        words |= tokens(phrase)
+    return words
+
+
+def _model_semantic_query(ctx: Any, question: str, catalog: dict[str, Any]) -> Any:
+    """Model rung of `semantic_query` (P7-02): a small model *chooses* a SemanticQuery from the planner
+    catalog (names only). Only when the rules rung found nothing and the question names a metric word;
+    otherwise the avoided call is recorded. None = not expressible (the ad-hoc path answers)."""
+    from pydantic import ValidationError
+
+    from analystos.agents.common import model_gate
+    from analystos.contracts.semantic import SemanticQuery
+    from analystos.registries.verified_queries import tokens
+
+    if getattr(ctx, "router", None) is None or not catalog["metrics"]:
+        return None
+    related = bool(tokens(question) & _semantic_words(catalog))
+    payload = {"question": question, "metrics": {n: {k: e["definition"].get(k) for k in ("display_name", "description",
+                                                                                          "dimensions", "format")}
+                                                 for n, e in sorted(catalog["metrics"].items())},
+               "time_dimensions": sorted({f"{d['name']}.{f['name']}" for d in catalog["datasets"] for f in d.get("fields", [])
+                                          if isinstance(f.get("dimension"), dict) and f["dimension"].get("is_time")})}
+    if not model_gate(ctx, SEMANTIC_PURPOSE, payload, deterministic_ok=not related):
+        return None
+
+    def check(data: Any) -> str | None:
+        if not isinstance(data, dict) or "semantic_query" not in data:
+            return "answer must be {\"semantic_query\": {...} | null}"
+        if data["semantic_query"] is None:
+            return None
+        try:
+            chosen = SemanticQuery.model_validate(data["semantic_query"])
+        except ValidationError as exc:
+            return f"not a SemanticQuery: {exc.errors()[0]['msg']}"
+        unknown = [m for m in chosen.metrics if m not in catalog["metrics"]]
+        return f"unknown metrics {unknown}" if unknown else None
+
+    _stage(ctx, "semantic", "Matching the question to the approved metrics")
+    data, _model = llm_json(ctx, SEMANTIC_PURPOSE, "semantic_query.v1", payload, validate=check)
+    if data is None or check(data) is not None or data.get("semantic_query") is None:
+        return None
+    return SemanticQuery.model_validate(data["semantic_query"])
 
 
 def _semantic_answer(ctx: Any, question: str, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Governed rung (ADR-0019): an explicit `semantic_query`, the rules rung (exact metric / synonym
+    match) or the `semantic_query` model's choice is compiled against the approved model version.
+    None means not expressible here: the caller's ad-hoc path answers, labelled `ad_hoc`."""
     from pydantic import ValidationError
 
     from analystos.contracts.semantic import SemanticQuery
     from analystos.core.ids import stable_hash
-    from analystos.semantic.compiler import compile_query, match_question
+    from analystos.semantic.compiler import compile_query, match_question, planner_catalog
 
     catalog = getattr(ctx, "semantic_catalog", None)
     explicit = (parameters or {}).get("semantic_query")
@@ -417,22 +492,52 @@ def _semantic_answer(ctx: Any, question: str, parameters: dict[str, Any] | None)
         return None
     if parameters and explicit is None:
         return None
+    visible = planner_catalog(catalog, ctx.scope)  # masked fields and out-of-scope datasets are absent
+    chosen_by = "explicit" if explicit is not None else "rules"
     try:
-        query = SemanticQuery.model_validate(explicit) if explicit is not None else match_question(question, catalog)
+        query = SemanticQuery.model_validate(explicit) if explicit is not None else match_question(question, visible)
     except ValidationError as exc:
         raise InvalidInput("The metric query contains invalid fields or values.") from exc
     if query is None:
-        return None
-    _stage(ctx, "semantic", "Compiling the approved metric definition (no model call)")
-    compiled = compile_query(query, catalog, ctx.scope)
+        query, chosen_by = _model_semantic_query(ctx, question, visible), "model"
+        if query is None:
+            return None
+    _stage(ctx, "semantic", "Compiling the approved metric definition" + (" (no model call)" if chosen_by != "model" else ""))
+    try:
+        compiled = compile_query(query, catalog, ctx.scope)
+    except InvalidInput as exc:
+        # A model's choice the compiler cannot use (an unknown name) is not an answer: the ad-hoc path
+        # answers. A governance refusal (fan-out, unvalidated join) is the answer, whoever chose the query.
+        if chosen_by == "model" and "edge" not in exc.details:
+            _stage(ctx, "semantic", f"The metric query could not be compiled ({exc.message[:120]}); answering ad hoc")
+            return None
+        raise
     compiled.provenance["policy_hash"] = stable_hash(ctx.policy.model_dump(mode="json"))
+    compiled.provenance["chosen_by"] = chosen_by
     _stage(ctx, "execute", "Running the approved calculation through the query gateway")
     result = ctx.services.gateway.execute(ctx.scope, compiled.sql, actor=ask_actor(ctx.user.id),
                                           purpose=ASK_PURPOSE, run_id=None, task_id=getattr(ctx, "turn_id", None))
     _record_skip(ctx, "Approved metric compiled deterministically", 500, rung="rules")
+    if chosen_by == "rules":
+        router = getattr(ctx, "router", None)
+        if router is not None:
+            router.record_skip(SEMANTIC_PURPOSE, ctx.call_ctx(), estimated_tokens=500, reason="rules: exact metric match",
+                               rung="rules")
+    chart = _semantic_chart(query)
     return {"status": "answered", "answered_by": "semantic", "governance": "governed", "semantic": compiled.provenance,
             "sql": compiled.sql, "explanation": "Calculated from the approved metric definition: " + ", ".join(query.metrics),
-            "chart": None, "model": None, "attempts": [], "decisions": [], "route": "semantic", "result": _result(result)}
+            "chart": chart, "model": None, "attempts": [], "decisions": [], "route": "semantic", "result": _result(result)}
+
+
+def _semantic_chart(query: Any) -> dict[str, Any] | None:
+    """A presentation hint for a governed answer, labelled like the answer it draws."""
+    if len(query.metrics) != 1 or len(query.dimensions) + (1 if query.time and query.time.grain else 0) > 1:
+        return None
+    if query.time and query.time.grain:
+        return {"type": "line", "x": query.time.dimension, "y": query.metrics[0]}
+    if query.dimensions:
+        return {"type": "bar", "x": query.dimensions[0], "y": query.metrics[0]}
+    return {"type": "kpi", "x": None, "y": query.metrics[0]}
 
 
 def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
@@ -486,19 +591,26 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
                 "missing": [{"name": n} for n in asked["missing_inputs"]],
                 "explanation": "This question is too open to answer safely. Say what to measure (a count, a rate, an "
                                "average), over which records and period, and how to group it."}
+    # P7-10: account/customer numbers, cards, SSNs, IBANs and e-mails typed into the question leave as
+    # tokens; the model writes the token and the real value is restored here, before the gateway.
+    rq = redact_question(question)
+    asked_text = rq.text
     _stage(ctx, "context", "Finding the tables that answer this")
-    catalog = catalog_for_prompt(ctx, objective=question, capped=False)
+    catalog = catalog_for_prompt(ctx, objective=asked_text, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     _stage(ctx, "generate", "Writing the SQL")
-    generation = compile_for(ctx, "sql_generation", {"question": question, "dialect": dialect}, objective=question,
-                             catalog=catalog, reference_text=question)
+    required = {"question": asked_text, "dialect": dialect}
+    if rq.redacted:
+        required["redacted_values"] = QUESTION_MODEL_INSTRUCTION
+    generation = compile_for(ctx, "sql_generation", required, objective=asked_text, catalog=catalog,
+                             reference_text=asked_text)
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", generation, prompt_vars={"dialect": dialect},
                            validate=has_sql)
     if has_sql(data):  # no data, or an answer without a SQL statement: say which cause stopped it
         raise _generation_unavailable(model if data is None else ModelOutcome(
             "invalid_output", "the model answered without a SQL statement", purpose="sql_generation"))
     attempts = []
-    sql = str(data["sql"])
+    sql = restore_values(str(data["sql"]), rq.values)
     escalated = False
     attempt = 0
     while True:
@@ -508,7 +620,10 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
             _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
             result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
-            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": data.get("explanation"),
+            explanation = data.get("explanation")
+            if isinstance(explanation, str):
+                explanation = restore_values(explanation, rq.values)
+            return {"status": "answered", "answered_by": "model", "sql": sql, "explanation": explanation,
                     "chart": data.get("chart"), "model": model, "attempts": attempts, "result": _result(result),
                     "route": chosen["value"], "decisions": decisions}
         except (SQLRejected, AnalystOSError) as exc:
@@ -527,17 +642,18 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
                     raise
                 _stage(ctx, "escalate", f"The gateway still refused the SQL ({exc.message[:120]}); a stronger model rewrites it",
                        model=better_model)
-                data, model, sql = better, better_model, str(better["sql"])
+                data, model, sql = better, better_model, restore_values(str(better["sql"]), rq.values)
                 attempt += 1
                 continue
             _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
+            sent_sql, sent_error = tokenize_values(sql, rq.values), tokenize_values(exc.message, rq.values)
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
-                              compile_for(ctx, "sql_repair", {"question": question, "dialect": dialect, "sql": sql,
-                                                              "error": exc.message}, objective=question, catalog=catalog,
-                                          reference_text=f"{sql}\n{exc.message}"), validate=has_sql)
+                              compile_for(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
+                                          objective=asked_text, catalog=catalog,
+                                          reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
             if has_sql(fix):
                 raise
-            sql = str(fix["sql"])
+            sql = restore_values(str(fix["sql"]), rq.values)
             attempt += 1
 
 

@@ -179,7 +179,18 @@ export function filterGraph(g: KnowledgeGraph, kinds: Set<string>, showInferred:
   return { ...g, nodes, edges, governed: edges.filter((e) => e.governed).length, inferred: edges.filter((e) => !e.governed).length };
 }
 
-/** ECharts force graph: one category per node kind; governed edges solid, inferred dashed. */
+/** Shortened for the on-canvas label; the tooltip (from `name`) always shows the full text. */
+function shortenLabel(label: string, max = 26): string {
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
+/**
+ * ECharts force graph: one category per node kind; governed edges solid, inferred dashed.
+ * Repulsion and edge length scale with node count so a dense crawl (many `src_*` staging tables)
+ * spreads out instead of clumping into unreadable overlap; `labelLayout.hideOverlap` then drops
+ * whichever labels still collide rather than stacking text (the edge table stays the complete,
+ * always-readable list).
+ */
 export function graphOption(g: KnowledgeGraph, palette: ChartPalette): object {
   const cats = NODE_KINDS.map((k) => ({ name: NODE_LABELS[k] }));
   const degree = new Map<string, number>();
@@ -187,15 +198,18 @@ export function graphOption(g: KnowledgeGraph, palette: ChartPalette): object {
     degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
     degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
   }
+  const nodeCount = g.nodes.length;
   return {
     color: palette.series,
     tooltip: { backgroundColor: palette.tooltipBg, textStyle: { color: palette.text } },
     legend: { data: cats.map((c) => c.name), textStyle: { color: palette.text }, top: 0 },
     series: [{
       type: "graph", layout: "force", roam: true, draggable: true, top: 36,
-      force: { repulsion: 180, edgeLength: [60, 140], gravity: 0.08 },
+      force: { repulsion: Math.max(220, 28 * Math.sqrt(nodeCount)), edgeLength: [70, 180], gravity: 0.05, layoutAnimation: true },
       categories: cats,
-      label: { show: true, position: "right", color: palette.text, fontSize: 11 },
+      label: { show: true, position: "right", color: palette.text, fontSize: 11, formatter: (p: { name: string }) => shortenLabel(p.name) },
+      labelLayout: { hideOverlap: true },
+      emphasis: { label: { show: true, formatter: (p: { name: string }) => p.name }, focus: "adjacency" },
       edgeSymbol: ["none", "arrow"], edgeSymbolSize: 6,
       lineStyle: { color: palette.textMuted, opacity: 0.8, width: 1.4 },
       data: g.nodes.map((n) => ({

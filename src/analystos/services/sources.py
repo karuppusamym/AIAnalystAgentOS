@@ -110,6 +110,8 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
 
     with session_scope() as s:
         src = _source(s, user, source_id, workspace_id=workspace_id)
+        if src.kind == "recipe":
+            raise InvalidInput("recipe outputs are written by recipe runs; they cannot be re-staged")
         assets = list(s.scalars(select(SourceAsset).where(SourceAsset.source_id == source_id)))
         wanted = set(asset_names)
         unknown = wanted - {a.name for a in assets} - {a.source_name for a in assets}

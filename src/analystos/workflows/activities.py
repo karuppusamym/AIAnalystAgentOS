@@ -103,6 +103,15 @@ def run_crawl(crawl_id: str, user_id: str) -> dict:
     return heartbeating(crawl, crawl_id, user_id)
 
 
+@activity.defn(name="run_recipe_snapshot")
+def run_recipe_snapshot(job: dict) -> dict:
+    """A recipe's DuckDB statement over its immutable input snapshots (ADR-0023, P6-04), on the compute
+    pool until isolated compute-py pools exist (P7-06). Reads only snapshot files, never a source."""
+    from analystos.recipes.execute import run_snapshot_job
+
+    return heartbeating(run_snapshot_job, job)
+
+
 @activity.defn(name="queue_ping")
 def queue_ping() -> str:
     """Liveness probe answered by every pool (the only activity of the placeholder `elt` pool)."""
@@ -113,7 +122,7 @@ ENGINE_ACTIVITIES = [plan_run, get_state, execute_task, finish_run]
 # Activities served by each workload's worker. The analysis worker also hosts AnalysisWorkflow.
 BY_WORKLOAD: dict[str, list] = {
     "analysis": [*ENGINE_ACTIVITIES, queue_ping],
-    "compute": [execute_task, queue_ping],
+    "compute": [execute_task, run_recipe_snapshot, queue_ping],
     "publish": [execute_task, queue_ping],
     "crawl": [run_crawl, queue_ping],
     "elt": [queue_ping],

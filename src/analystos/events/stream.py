@@ -177,6 +177,8 @@ class RunEventHub:
             from analystos.core.config import get_settings
 
             url = get_settings().redis_url
+        if not url:
+            return  # lite: no Redis; streams fall back to polling the database (poll_seconds)
         backoff = 1.0
         while True:
             client = aioredis.Redis.from_url(url, socket_connect_timeout=1)

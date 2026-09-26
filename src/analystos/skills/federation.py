@@ -107,8 +107,8 @@ def validate_join_keys(run_sql: RunSQL, proposals: list[JoinProposal], assets: l
         containment = measured.evidence["containment"]
         if containment < min_containment:
             reason, ok = f"containment {containment:.3f} < {min_containment}", False
-        elif measured.cardinality == "many_to_many":
-            reason, ok = "the to-column is not unique (many_to_many): the join would duplicate rows", False
+        elif measured.cardinality in ("many_to_many", "one_to_many"):
+            reason, ok = f"the to-column is not unique ({measured.cardinality}): the join would duplicate rows", False
         else:
             reason, ok = f"containment {containment:.3f}, {measured.cardinality}", True
         decisions.append(JoinDecision(proposal=p, accepted=ok, reason=reason, measured=measured))

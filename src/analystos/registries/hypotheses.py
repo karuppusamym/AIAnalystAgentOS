@@ -66,6 +66,32 @@ def register_run(session: Session, run_id: str) -> int:
     return len(hyps)
 
 
+def pinned_proposals(session: Session, workspace_id: str, analyses: list[dict[str, Any]], assets: list[str], *,
+                     label: str = "registry") -> list[dict[str, Any]]:
+    """The frozen AnalysisSpec set of a pinned schedule or work order (ADR-0021), in pinned order. A spec
+    the registry holds keeps its registry entry (so its history counts this test); the others replay
+    the pinned spec as given. Nothing is added: novelty is a separate, opt-in round."""
+    wanted = [a for a in analyses if isinstance(a, dict) and isinstance(a.get("spec"), dict)]
+    hashes = {a.get("spec_hash") or spec_hash(a["spec"]) for a in wanted}
+    rows = {r.spec_hash: r for r in session.scalars(select(RegisteredHypothesis).where(
+        RegisteredHypothesis.workspace_id == workspace_id, RegisteredHypothesis.spec_hash.in_(hashes)))}
+    allowed = set(assets)
+    out = []
+    for a in wanted:
+        h = a.get("spec_hash") or spec_hash(a["spec"])
+        r = rows.get(h)
+        spec = dict(r.spec) if r is not None else dict(a["spec"])
+        if spec.get("asset") not in allowed:
+            continue
+        verified = r is not None and r.last_outcome == "verified"
+        out.append({"question": (r.question if r is not None else a.get("question")) or a.get("statement") or "",
+                    "statement": (r.statement if r is not None else a.get("statement")) or "", "spec": spec, "origin": label,
+                    **({"registry_id": r.id} if r is not None else {}),
+                    "priority": "high" if verified else "medium", "priority_score": 1.0 if verified else 0.5,
+                    "rationale": f"Pinned analysis {h[:12]} (ADR-0021)" + (f", registry entry {r.id}" if r is not None else "")})
+    return out
+
+
 def replay_proposals(session: Session, workspace_id: str, previous_run_id: str | None, assets: list[str], *,
                      scope: str = "previous_run") -> list[dict[str, Any]]:
     """The registered hypotheses a scheduled re-analysis re-tests, as investigator proposals.

@@ -1,0 +1,692 @@
+{
+  "$defs": {
+    "AnalysisSpec": {
+      "description": "One executable hypothesis test. `method` must be a registered analysis method: the vocabulary,\nits JSON Schema enum and the per-method requirements come from the method registry\n(`analystos.methods`, spec v3 \u00a73.5), never from a list kept here.",
+      "properties": {
+        "method": {
+          "description": "A registered analysis method:\nrate_by_segment: Boolean outcome rate across segment groups -> chi-square (+ grouped logistic and permutation check)\nnumeric_by_segment: Numeric outcome across segment groups -> Mann-Whitney / Kruskal-Wallis (+ bootstrap median difference)\ntrend: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)\npareto: Share of volume by segment -> concentration (top-k share, Gini, GOF) (+ multinomial bootstrap of the top share)\ncorrelation: Numeric vs numeric -> Spearman (+ Pearson and a bootstrap CI of the primary coefficient)\ndriver_model: Boolean outcome vs several drivers -> logistic regression (+ random-forest permutation importance)\ncohort_retention: Retention of entity cohorts over time buckets -> chi-square across cohorts (+ grouped logistic and permutation check)\ncontribution_decomposition: Mix / volume / rate decomposition of a KPI change between two periods -> z test of the within-segment effect (+ stratified CMH / Stouffer check)",
+          "enum": [
+            "rate_by_segment",
+            "numeric_by_segment",
+            "trend",
+            "pareto",
+            "correlation",
+            "driver_model",
+            "cohort_retention",
+            "contribution_decomposition"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Derivation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "segment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Derivation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "drivers": {
+          "items": {
+            "$ref": "#/$defs/Derivation"
+          },
+          "title": "Drivers",
+          "type": "array"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Derivation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "title": "Filters",
+          "type": "array"
+        },
+        "min_group_size": {
+          "default": 30,
+          "title": "Min Group Size",
+          "type": "integer"
+        },
+        "top_k": {
+          "default": 12,
+          "title": "Top K",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "method",
+        "asset"
+      ],
+      "title": "AnalysisSpec",
+      "type": "object"
+    },
+    "AnalysisWork": {
+      "additionalProperties": false,
+      "description": "Describe / compare / diagnose / monitor: a frozen set of `AnalysisSpec`s replayed as given.",
+      "properties": {
+        "type": {
+          "const": "analysis",
+          "default": "analysis",
+          "title": "Type",
+          "type": "string"
+        },
+        "analyses": {
+          "items": {
+            "$ref": "#/$defs/AnalysisSpec"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Analyses",
+          "type": "array"
+        },
+        "statements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Statements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "analyses"
+      ],
+      "title": "AnalysisWork",
+      "type": "object"
+    },
+    "Derivation": {
+      "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)",
+      "properties": {
+        "type": {
+          "default": "column",
+          "enum": [
+            "column",
+            "duration_hours",
+            "after_hours",
+            "bucket",
+            "equals",
+            "is_true",
+            "date_trunc",
+            "hour_of_day",
+            "day_of_week"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "end_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Column"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "edges": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Edges"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "start_hour": {
+          "default": 8,
+          "title": "Start Hour",
+          "type": "integer"
+        },
+        "end_hour": {
+          "default": 18,
+          "title": "End Hour",
+          "type": "integer"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "Derivation",
+      "type": "object"
+    },
+    "ExperimentSpec": {
+      "additionalProperties": true,
+      "description": "Placeholder for P5 experiment design. Not executable yet.",
+      "properties": {
+        "type": {
+          "const": "experiment",
+          "default": "experiment",
+          "title": "Type",
+          "type": "string"
+        },
+        "hypothesis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hypothesis"
+        }
+      },
+      "title": "ExperimentSpec",
+      "type": "object"
+    },
+    "Filter": {
+      "properties": {
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "=",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "in",
+            "not in",
+            "is null",
+            "is not null"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        },
+        "origin": {
+          "default": "plan",
+          "enum": [
+            "plan",
+            "user_redirect",
+            "policy"
+          ],
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "column",
+        "op"
+      ],
+      "title": "Filter",
+      "type": "object"
+    },
+    "InputRef": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset Id"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "title": "InputRef",
+      "type": "object"
+    },
+    "MLSpec": {
+      "additionalProperties": true,
+      "description": "Placeholder for P5-01 (ADR-0024). Envelope-level fields only; not executable yet.",
+      "properties": {
+        "type": {
+          "const": "ml",
+          "default": "ml",
+          "title": "Type",
+          "type": "string"
+        },
+        "task": {
+          "enum": [
+            "forecast",
+            "classify",
+            "regress",
+            "cluster",
+            "anomaly"
+          ],
+          "title": "Task",
+          "type": "string"
+        },
+        "target_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Metric"
+        },
+        "time_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Column"
+        },
+        "horizon": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Horizon"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "MLSpec",
+      "type": "object"
+    },
+    "PipelineSpec": {
+      "additionalProperties": true,
+      "description": "Placeholder for P6-04 (recipe IR). Envelope-level fields only; not executable yet.",
+      "properties": {
+        "type": {
+          "const": "pipeline",
+          "default": "pipeline",
+          "title": "Type",
+          "type": "string"
+        },
+        "recipe": {
+          "additionalProperties": true,
+          "title": "Recipe",
+          "type": "object"
+        },
+        "output_grain": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Grain",
+          "type": "array"
+        }
+      },
+      "title": "PipelineSpec",
+      "type": "object"
+    },
+    "ValidationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "require_second_method": {
+          "default": false,
+          "title": "Require Second Method",
+          "type": "boolean"
+        },
+        "confirmatory": {
+          "default": false,
+          "title": "Confirmatory",
+          "type": "boolean"
+        },
+        "min_group_size": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Group Size"
+        }
+      },
+      "title": "ValidationPolicy",
+      "type": "object"
+    },
+    "WorkBudget": {
+      "additionalProperties": false,
+      "description": "Requested limits; the server clamps them to workspace and platform policy.",
+      "properties": {
+        "max_wall_seconds": {
+          "anyOf": [
+            {
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Wall Seconds"
+        },
+        "max_queries": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Queries"
+        },
+        "max_trials": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Trials"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        }
+      },
+      "title": "WorkBudget",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "kind": {
+      "enum": [
+        "describe",
+        "compare",
+        "diagnose",
+        "forecast",
+        "predict",
+        "experiment",
+        "prepare",
+        "monitor"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "objective": {
+      "maxLength": 4000,
+      "minLength": 10,
+      "title": "Objective",
+      "type": "string"
+    },
+    "brief_revision": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Brief Revision"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/InputRef"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "semantic_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Semantic Version"
+    },
+    "scope_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scope Hash"
+    },
+    "acceptance": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Acceptance",
+      "type": "array"
+    },
+    "budget": {
+      "$ref": "#/$defs/WorkBudget"
+    },
+    "outputs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "validation": {
+      "$ref": "#/$defs/ValidationPolicy"
+    },
+    "source_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Ids"
+    },
+    "spec": {
+      "discriminator": {
+        "mapping": {
+          "analysis": "#/$defs/AnalysisWork",
+          "experiment": "#/$defs/ExperimentSpec",
+          "ml": "#/$defs/MLSpec",
+          "pipeline": "#/$defs/PipelineSpec"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AnalysisWork"
+        },
+        {
+          "$ref": "#/$defs/PipelineSpec"
+        },
+        {
+          "$ref": "#/$defs/MLSpec"
+        },
+        {
+          "$ref": "#/$defs/ExperimentSpec"
+        }
+      ],
+      "title": "Spec"
+    }
+  },
+  "required": [
+    "kind",
+    "objective",
+    "spec"
+  ],
+  "title": "WorkOrderSpec",
+  "type": "object"
+}

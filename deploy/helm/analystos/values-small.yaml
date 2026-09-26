@@ -1,0 +1,53 @@
+# Small overlay (ADR-0025, P7-17): helm install analystos deploy/helm/analystos -f values-small.yaml
+# One API, one worker serving every task queue (`--queues all`), one web pod and no pod disruption
+# budgets: requests fit a single 2-CPU / 4 GiB node next to its system pods. External Postgres (pgvector)
+# and Temporal as in values.yaml; Redis is optional (spend caps use Postgres when the Secret has no
+# ANALYSTOS_REDIS_URL); Superset is off (publishing uses the preview destination) until supersetUrl is set.
+# The scheduler runs inside the API process (ANALYSTOS_INPROCESS_SCHEDULER), so its Deployment scales to 0.
+# For no Temporal at all use the lite profile: orchestrator local, workers {} (the API runs every step).
+
+config:
+  supersetUrl: ""                    # no `bi` profile: preview publishing; set a URL to add Superset
+  extra:
+    ANALYSTOS_PROFILE: standard
+    ANALYSTOS_INPROCESS_SCHEDULER: "true"
+    ANALYSTOS_SPEND_COUNTER_STORE: auto
+
+api:
+  replicas: 1
+  uvicornWorkers: 1
+  resources:
+    requests: {cpu: 250m, memory: 768Mi}
+    limits: {cpu: "1", memory: 1536Mi}
+  autoscaling: {enabled: false}
+  pdb: {enabled: false}
+
+# null removes the per-queue pools of values.yaml; one Deployment serves them all.
+workers:
+  analysis: null
+  compute: null
+  publish: null
+  crawl: null
+  elt: null
+  all:
+    queues: all
+    replicas: 1
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "1500m", memory: 2Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+
+scheduler:
+  replicas: 0                        # the API runs the schedule/monitor loop in-process (claim-then-execute)
+  pdb: {enabled: false}
+
+web:
+  replicas: 1
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+  pdb: {enabled: false}
+
+pgbouncer:
+  enabled: false

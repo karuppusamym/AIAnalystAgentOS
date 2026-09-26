@@ -16,6 +16,12 @@ in ONE Lua script (check every cap, then increment every counter), so concurrent
 overshoot a cap by more than the difference between one call's estimate and its actual cost. After
 the call the reservation is settled to the actual cost (a failed call settles to 0 = released). A
 reservation cannot be proven without Redis, so it fails closed (SpendCountersUnavailable).
+
+Without Redis (the lite profile, ADR-0025; `ANALYSTOS_SPEND_COUNTER_STORE`) the hard caps use the same
+keys in the Postgres `spend_counter` table instead (PgSpendStore): the reservation locks each cap's row
+in key order, checks every cap and adds to every row in one transaction, so it is just as atomic, and a
+database error still refuses the call. The store is chosen by configuration, never switched at runtime:
+a Redis outage in `standard` fails closed as before rather than splitting the counters across stores.
 """
 from __future__ import annotations
 
@@ -114,6 +120,7 @@ class SpendReservation:
     caps: list[CapSpec]
     after: dict[str, float] = field(default_factory=dict)  # cap name -> counter value right after reserving
     settled: bool = False
+    store: str = "redis"
 
 
 class CapExceeded(Exception):
@@ -128,13 +135,16 @@ class CountersUnavailable(Exception):
 
 class BudgetCounters:
     def __init__(self, redis_url: str | None, prefix: str = "aos:budget:", *, client: Any = None,
-                 clock: Callable[[], datetime] | None = None) -> None:
+                 clock: Callable[[], datetime] | None = None, spend_store: str | None = None) -> None:
         self.prefix = prefix
         self._redis = client
         self._down_until = 0.0
         self._script = None
         self._reserve_script = None
         self.clock = clock or (lambda: datetime.now(UTC))
+        # Hard caps: redis (Lua) or postgres (row locks). Default: redis when a URL or client is given.
+        self.spend_store = spend_store or ("redis" if (redis_url or client is not None) else "postgres")
+        self.pg = PgSpendStore(lambda: self.clock()) if self.spend_store == "postgres" else None
         if client is None and redis_url:
             try:
                 import redis
@@ -224,6 +234,8 @@ class BudgetCounters:
         re-runs. Redis unavailable -> CountersUnavailable: a reservation is never assumed."""
         if not caps:
             return SpendReservation(estimate=0.0, caps=[], settled=True)
+        if self.pg is not None:
+            return self.pg.reserve(caps, estimate)
         if not self.available:
             raise CountersUnavailable("Redis unavailable")
         amount = max(float(estimate), 0.0)
@@ -258,6 +270,9 @@ class BudgetCounters:
         delta = float(actual or 0.0) - reservation.estimate
         if not delta:
             return
+        if reservation.store == "postgres" and self.pg is not None:
+            self.pg.add({cap.key: delta for cap in reservation.caps})
+            return
         by_ttl: dict[int, dict[str, float]] = {}
         for cap in reservation.caps:
             by_ttl.setdefault(cap.ttl, {})[cap.key] = delta
@@ -266,6 +281,8 @@ class BudgetCounters:
 
     def value(self, key: str) -> float | None:
         """A counter's current value without seeding (None = missing or Redis unavailable)."""
+        if self.pg is not None and self._is_spend_key(key):
+            return self.pg.value(key)
         if not self.available:
             return None
         try:
@@ -277,6 +294,8 @@ class BudgetCounters:
 
     def mark_once(self, key: str, ttl: int) -> bool:
         """True the first time `key` is marked in its TTL (one alert per cap period across processes)."""
+        if self.pg is not None:
+            return self.pg.mark_once(key, ttl)
         if not self.available:
             return False
         try:
@@ -284,6 +303,14 @@ class BudgetCounters:
         except Exception as exc:
             self._failed(exc)
             return False
+
+    def _is_spend_key(self, key: str) -> bool:
+        return key.startswith(self.key("platform", "d")) or (key.startswith(self.key("ws")) and ":m:" in key)
+
+    @property
+    def spend_available(self) -> bool:
+        """Whether a hard-cap reservation can be proven now (the admin model health view)."""
+        return self.pg.available() if self.pg is not None else self.available
 
     # ------------------------------------------------------------------ provider health (admin)
     def note_cooldown(self, provider: str, seconds: float, reason: str) -> None:
@@ -322,13 +349,155 @@ class BudgetCounters:
         """`capped` = the call held a spend reservation, whose settlement already moved the platform day
         and workspace month counters to the actual cost."""
         if cost_usd and not capped:
-            self.add({self.platform_day_key(): cost_usd}, DAY_TTL_SECONDS)
-            if workspace_id:
-                self.add({self.workspace_month_key(workspace_id): cost_usd}, MONTH_TTL_SECONDS)
+            if self.pg is not None:
+                self.pg.add({self.platform_day_key(): cost_usd,
+                             **({self.workspace_month_key(workspace_id): cost_usd} if workspace_id else {})})
+            else:
+                self.add({self.platform_day_key(): cost_usd}, DAY_TTL_SECONDS)
+                if workspace_id:
+                    self.add({self.workspace_month_key(workspace_id): cost_usd}, MONTH_TTL_SECONDS)
         if run_id:
             self.add({self.run_key(run_id, "tokens"): tokens, self.run_key(run_id, "usd"): cost_usd,
                       self.purpose_key(run_id, purpose, "tokens"): tokens, self.purpose_key(run_id, purpose, "usd"): cost_usd,
                       self.purpose_key(run_id, purpose, "calls"): 1 if billable else 0}, RUN_TTL_SECONDS)
+
+
+class PgSpendStore:
+    """Hard spend caps in Postgres (`spend_counter`) for installations without Redis (lite).
+
+    reserve: (1) seed every missing or expired cap row from its database aggregate, in its own short
+    transaction (an upsert that keeps a live row a concurrent seeder wrote); (2) one transaction takes
+    the rows FOR UPDATE in key order (no deadlock between reservations naming the same caps), checks
+    every cap and adds the estimate to every row, or to none. Concurrent reservations serialize on the
+    row locks, so a cap cannot be overshot by more than one call's estimate-vs-actual difference, as
+    with the Redis script. Any database error raises CountersUnavailable: the call is refused."""
+
+    def __init__(self, clock: Callable[[], datetime]) -> None:
+        self.clock = clock
+
+    def _now(self) -> datetime:
+        return self.clock().astimezone(UTC)
+
+    @staticmethod
+    def _live(s: Any, keys: list[str], now: datetime, *, lock: bool) -> dict[str, float]:
+        from sqlalchemy import select
+
+        from analystos.db.models import SpendCounter
+
+        q = select(SpendCounter.key, SpendCounter.value).where(SpendCounter.key.in_(keys), SpendCounter.expires_at > now)
+        if lock:
+            q = q.order_by(SpendCounter.key).with_for_update()
+        return {k: float(v) for k, v in s.execute(q)}
+
+    def _seed(self, caps: list[CapSpec], now: datetime) -> None:
+        from sqlalchemy import delete
+        from sqlalchemy.dialects.postgresql import insert
+
+        from analystos.db.base import session_scope
+        from analystos.db.models import SpendCounter
+
+        with session_scope() as s:
+            live = self._live(s, [c.key for c in caps], now, lock=False)
+        missing = [c for c in caps if c.key not in live]
+        if not missing:
+            return
+        seeds = {c.key: float(c.seed()) for c in missing}  # each seed reads the committed model_call rows
+        with session_scope() as s:
+            for cap in missing:
+                stmt = insert(SpendCounter).values(key=cap.key, value=seeds[cap.key],
+                                                   expires_at=now + timedelta(seconds=cap.ttl), updated_at=now)
+                s.execute(stmt.on_conflict_do_update(
+                    index_elements=[SpendCounter.key],
+                    set_={"value": stmt.excluded.value, "expires_at": stmt.excluded.expires_at, "updated_at": now},
+                    where=SpendCounter.expires_at <= now))
+            s.execute(delete(SpendCounter).where(SpendCounter.expires_at < now - timedelta(days=1)))
+
+    def reserve(self, caps: list[CapSpec], estimate: float) -> SpendReservation:
+        from sqlalchemy import update
+
+        from analystos.db.base import session_scope
+        from analystos.db.models import SpendCounter
+
+        amount = max(float(estimate), 0.0)
+        keys = sorted({c.key for c in caps})
+        try:
+            for _ in range(3):
+                now = self._now()
+                self._seed(caps, now)
+                with session_scope() as s:
+                    live = self._live(s, keys, now, lock=True)
+                    if len(live) < len(keys):
+                        continue  # a row expired between the seed and the lock: seed again
+                    for cap in caps:
+                        if cap.limit is not None and live[cap.key] + amount > float(cap.limit) + 1e-12:
+                            raise CapExceeded(cap, live[cap.key], amount)
+                    for cap in caps:
+                        s.execute(update(SpendCounter).where(SpendCounter.key == cap.key).values(
+                            value=SpendCounter.value + amount, expires_at=now + timedelta(seconds=cap.ttl), updated_at=now))
+                    after = {cap.name: live[cap.key] + amount for cap in caps}
+                return SpendReservation(estimate=amount, caps=caps, after=after, store="postgres")
+            raise CountersUnavailable("spend counters could not be seeded")
+        except (CapExceeded, CountersUnavailable):
+            raise
+        except Exception as exc:
+            log.warning("spend counters (postgres) unavailable: %s", exc)
+            raise CountersUnavailable(f"Postgres spend counters: {type(exc).__name__}") from exc
+
+    def add(self, increments: dict[str, float]) -> None:
+        """Add to live rows only: a missing row is seeded from the database, which already has the call."""
+        from sqlalchemy import update
+
+        from analystos.db.base import session_scope
+        from analystos.db.models import SpendCounter
+
+        now = self._now()
+        try:
+            with session_scope() as s:
+                for key, delta in sorted(increments.items()):
+                    if delta:
+                        s.execute(update(SpendCounter).where(SpendCounter.key == key, SpendCounter.expires_at > now)
+                                  .values(value=SpendCounter.value + float(delta), updated_at=now))
+        except Exception as exc:  # best effort, like Redis: the model_call row stays the record
+            log.warning("spend counters (postgres): settle failed: %s", exc)
+
+    def value(self, key: str) -> float | None:
+        from analystos.db.base import session_scope
+
+        try:
+            with session_scope() as s:
+                return self._live(s, [key], self._now(), lock=False).get(key)
+        except Exception:
+            return None
+
+    def mark_once(self, key: str, ttl: int) -> bool:
+        from sqlalchemy.dialects.postgresql import insert
+
+        from analystos.db.base import session_scope
+        from analystos.db.models import SpendCounter
+
+        now = self._now()
+        try:
+            with session_scope() as s:
+                stmt = insert(SpendCounter).values(key=key, value=1.0, expires_at=now + timedelta(seconds=ttl), updated_at=now)
+                won = s.execute(stmt.on_conflict_do_update(
+                    index_elements=[SpendCounter.key],
+                    set_={"value": 1.0, "expires_at": stmt.excluded.expires_at, "updated_at": now},
+                    where=SpendCounter.expires_at <= now).returning(SpendCounter.key)).first()
+            return won is not None
+        except Exception:
+            return False
+
+    def available(self) -> bool:
+        from sqlalchemy import text
+
+        from analystos.db.base import session_scope
+
+        try:
+            with session_scope() as s:
+                s.execute(text("select 1 from spend_counter limit 1"))
+            return True
+        except Exception:
+            return False
 
 
 @lru_cache
@@ -336,4 +505,4 @@ def default_budget_counters() -> BudgetCounters:
     from analystos.core.config import get_settings
 
     settings = get_settings()
-    return BudgetCounters(settings.redis_url, settings.budget_counter_prefix)
+    return BudgetCounters(settings.redis_url, settings.budget_counter_prefix, spend_store=settings.spend_store)

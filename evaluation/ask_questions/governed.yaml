@@ -1,0 +1,88 @@
+# P7-02 governed-question slice of the P4-V02 Ask benchmark (ADR-0019). Written 2026-09-26, before the
+# slice was run. Each domain gets an approved semantic model over its staged table (one dataset, the
+# metrics below, approved by a second person). A governed question is scored on:
+#   governed        the answer is labelled `governed` (compiled, not model-written);
+#   sql_equivalent  its SQL is exactly what the compiler produces for `query` on the same model version;
+#   match           its rows match `gold` (execution match, as the rest of the benchmark);
+#   deterministic   asking again yields the identical SQL.
+# `not_governed` items must never carry the governed label (a period, filter or measure the approved
+# model cannot express is answered ad hoc or refused, never silently narrowed).
+# `parameters` sends an explicit semantic_query (filters, time windows, order), as an API client would.
+# Metric and dimension names are the domain's own columns; nothing here is shared with the P4-V02 sets.
+
+itsm:
+  metrics:
+    - {name: incidents, expression: "COUNT(*)", display_name: "Incident count",
+       dimensions: [priority, category, contact_type, assignment_group_name, opened_at]}
+    - {name: sla_breach_rate, expression: "AVG(CASE WHEN made_sla THEN 0.0 ELSE 1.0 END)", display_name: "SLA breach rate",
+       dimensions: [priority, assignment_group_name, contact_type], format: percent}
+    - {name: reassignments, expression: "SUM(reassignment_count)", display_name: "Total reassignments",
+       dimensions: [category, assignment_group_name]}
+  questions:
+    - {id: gov-itsm-01, q: "incident count", query: {metrics: [incidents]}, gold: "SELECT COUNT(*) FROM @table"}
+    - {id: gov-itsm-02, q: "SLA breach rate by priority", query: {metrics: [sla_breach_rate], dimensions: [priority]},
+       gold: "SELECT priority, AVG(CASE WHEN made_sla THEN 0.0 ELSE 1.0 END) FROM @table GROUP BY priority"}
+    - {id: gov-itsm-03, q: "What is the total reassignments by category?", query: {metrics: [reassignments], dimensions: [category]},
+       gold: "SELECT category, SUM(reassignment_count) FROM @table GROUP BY category"}
+    - {id: gov-itsm-04, q: "monthly incident count", query: {metrics: [incidents], time: {dimension: opened_at, grain: month}},
+       gold: "SELECT date_trunc('month', opened_at), COUNT(*) FROM @table GROUP BY 1"}
+    - {id: gov-itsm-05, q: "Incidents for priority 1 and 2 by contact type",
+       parameters: {semantic_query: {metrics: [incidents], dimensions: [contact_type],
+                                     filters: [{field: priority, op: in, value: [1, 2]}], order: [{field: incidents, direction: desc}]}},
+       query: {metrics: [incidents], dimensions: [contact_type], filters: [{field: priority, op: in, value: [1, 2]}],
+               order: [{field: incidents, direction: desc}]},
+       gold: "SELECT contact_type, COUNT(*) FROM @table WHERE priority IN (1, 2) GROUP BY contact_type"}
+    - {id: gov-itsm-06, q: "incident count last quarter", expect: not_governed}
+    - {id: gov-itsm-07, q: "SLA breach rate by caller", expect: not_governed}
+
+sales:
+  metrics:
+    - {name: revenue, expression: "SUM(net_amount)", display_name: "Net revenue", format: currency,
+       dimensions: [sales_region, channel, customer_segment, order_date, payment_method],
+       ai_context: {synonyms: [turnover]}}
+    - {name: return_rate, expression: "AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END)", display_name: "Return rate",
+       dimensions: [channel, sales_region, customer_segment], format: percent}
+    - {name: units_sold, expression: "SUM(quantity)", display_name: "Units sold", dimensions: [device_type, channel]}
+  questions:
+    - {id: gov-sales-01, q: "net revenue", query: {metrics: [revenue]}, gold: "SELECT SUM(net_amount) FROM @table"}
+    - {id: gov-sales-02, q: "turnover by sales region", query: {metrics: [revenue], dimensions: [sales_region]},
+       gold: "SELECT sales_region, SUM(net_amount) FROM @table GROUP BY sales_region"}
+    - {id: gov-sales-03, q: "Return rate by channel?", query: {metrics: [return_rate], dimensions: [channel]},
+       gold: "SELECT channel, AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END) FROM @table GROUP BY channel"}
+    - {id: gov-sales-04, q: "net revenue per quarter", query: {metrics: [revenue], time: {dimension: order_date, grain: quarter}},
+       gold: "SELECT date_trunc('quarter', order_date), SUM(net_amount) FROM @table GROUP BY 1"}
+    - {id: gov-sales-05, q: "Enterprise revenue by channel in the first half of 2025",
+       parameters: {semantic_query: {metrics: [revenue], dimensions: [channel],
+                                     filters: [{field: customer_segment, op: "=", value: Enterprise}],
+                                     time: {dimension: order_date, start: "2025-01-01", end: "2025-07-01"}}},
+       query: {metrics: [revenue], dimensions: [channel], filters: [{field: customer_segment, op: "=", value: Enterprise}],
+               time: {dimension: order_date, start: "2025-01-01", end: "2025-07-01"}},
+       gold: "SELECT channel, SUM(net_amount) FROM @table WHERE customer_segment = 'Enterprise' AND order_date >= '2025-01-01' AND order_date < '2025-07-01' GROUP BY channel"}
+    - {id: gov-sales-06, q: "Units sold by device type", query: {metrics: [units_sold], dimensions: [device_type]},
+       gold: "SELECT device_type, SUM(quantity) FROM @table GROUP BY device_type"}
+    - {id: gov-sales-07, q: "net revenue excluding refunds", expect: not_governed}
+    - {id: gov-sales-08, q: "revenue by customer email", expect: not_governed}
+
+finance:
+  metrics:
+    - {name: invoice_total, expression: "SUM(invoice_amount)", display_name: "Invoice total",
+       dimensions: [vendor_category, business_unit, currency, invoice_date]}
+    - {name: late_payment_rate, expression: "AVG(CASE WHEN paid_late THEN 1.0 ELSE 0.0 END)", display_name: "Late payment rate",
+       dimensions: [business_unit, vendor_category, entry_channel], format: percent}
+    - {name: average_days_to_pay, expression: "AVG(days_to_pay)", display_name: "Average days to pay",
+       dimensions: [business_unit, entry_channel]}
+  questions:
+    - {id: gov-fin-01, q: "invoice total", query: {metrics: [invoice_total]}, gold: "SELECT SUM(invoice_amount) FROM @table"}
+    - {id: gov-fin-02, q: "late payment rate by business unit", query: {metrics: [late_payment_rate], dimensions: [business_unit]},
+       gold: "SELECT business_unit, AVG(CASE WHEN paid_late THEN 1.0 ELSE 0.0 END) FROM @table GROUP BY business_unit"}
+    - {id: gov-fin-03, q: "Show me the average days to pay by entry channel", query: {metrics: [average_days_to_pay], dimensions: [entry_channel]},
+       gold: "SELECT entry_channel, AVG(days_to_pay) FROM @table GROUP BY entry_channel"}
+    - {id: gov-fin-04, q: "weekly invoice total", query: {metrics: [invoice_total], time: {dimension: invoice_date, grain: week}},
+       gold: "SELECT date_trunc('week', invoice_date), SUM(invoice_amount) FROM @table GROUP BY 1"}
+    - {id: gov-fin-05, q: "Invoice total by currency without Travel vendors",
+       parameters: {semantic_query: {metrics: [invoice_total], dimensions: [currency],
+                                     filters: [{field: vendor_category, op: not_in, value: [Travel]}]}},
+       query: {metrics: [invoice_total], dimensions: [currency], filters: [{field: vendor_category, op: not_in, value: [Travel]}]},
+       gold: "SELECT currency, SUM(invoice_amount) FROM @table WHERE vendor_category NOT IN ('Travel') GROUP BY currency"}
+    - {id: gov-fin-06, q: "invoice total by vendor iban", expect: not_governed}
+    - {id: gov-fin-07, q: "late payment rate compared to last year", expect: not_governed}

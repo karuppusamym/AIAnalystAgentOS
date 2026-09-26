@@ -1,6 +1,169 @@
 {
+  "$defs": {
+    "SemanticFilter": {
+      "additionalProperties": false,
+      "description": "One predicate on a model field. Values become literals in the compiler, never SQL text.",
+      "properties": {
+        "field": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Field",
+          "type": "string"
+        },
+        "op": {
+          "default": "=",
+          "enum": [
+            "=",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "in",
+            "not_in",
+            "is_null",
+            "is_not_null"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "SemanticFilter",
+      "type": "object"
+    },
+    "SemanticOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Field",
+          "type": "string"
+        },
+        "direction": {
+          "default": "asc",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "title": "Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "SemanticOrder",
+      "type": "object"
+    },
+    "SemanticTime": {
+      "additionalProperties": false,
+      "description": "A time dimension, its grain (a truncation that becomes a group) and an absolute window [start, end).",
+      "properties": {
+        "dimension": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Dimension",
+          "type": "string"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        }
+      },
+      "required": [
+        "dimension"
+      ],
+      "title": "SemanticTime",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
-  "description": "Names only. SQL comes from the approved definitions and the compiler.",
+  "description": "ADR-0019 IR. Names only: metrics, model fields and literal values. SQL comes from the approved\ndefinitions and the compiler (`semantic/compiler.py`), never from whoever chose the query.",
   "properties": {
     "metrics": {
       "items": {
@@ -17,6 +180,33 @@
       },
       "maxItems": 10,
       "title": "Dimensions",
+      "type": "array"
+    },
+    "filters": {
+      "items": {
+        "$ref": "#/$defs/SemanticFilter"
+      },
+      "maxItems": 20,
+      "title": "Filters",
+      "type": "array"
+    },
+    "time": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SemanticTime"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "order": {
+      "items": {
+        "$ref": "#/$defs/SemanticOrder"
+      },
+      "maxItems": 10,
+      "title": "Order",
       "type": "array"
     },
     "limit": {

@@ -220,6 +220,28 @@ class Screening:
     links_neutralized: int = 0
 
 
+_REMOVED = "[removed: text that reads like an instruction to a model]"
+
+
+def _drop_spread_instructions(lines: list[str], s: Screening, flagged: Any) -> list[str]:
+    """An instruction split over several lines ("ignore\\nall\\nprevious\\ninstructions") passes the
+    per-line test; a paragraph (lines between blank lines) that reads as one is removed whole."""
+    out: list[str] = []
+    block: list[str] = []
+    for line in [*lines, ""]:
+        if line.strip() and line != _REMOVED:
+            block.append(line)
+            continue
+        if len(block) > 1 and flagged(" ".join(block)):
+            s.instruction_lines += len(block)
+            out.append(_REMOVED)
+        else:
+            out.extend(block)
+        block = []
+        out.append(line)
+    return out[:-1]
+
+
 def screen(text: str) -> tuple[str, Screening]:
     from analystos.llm.redaction import redact
     from analystos.skills.catalog import has_injection
@@ -232,11 +254,12 @@ def screen(text: str) -> tuple[str, Screening]:
     for line in redacted.split("\n"):
         if has_injection(line):
             s.instruction_lines += 1
-            lines.append("[removed: text that reads like an instruction to a model]")
+            lines.append(_REMOVED)
         elif _REF_DEF.match(line) and not _SCHEME.match(line.split("]:", 1)[1].strip()):
             s.links_neutralized += 1
         else:
             lines.append(line)
+    lines = _drop_spread_instructions(lines, s, has_injection)
 
     def link(m: re.Match) -> str:
         target = m.group(3)

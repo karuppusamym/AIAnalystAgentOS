@@ -25,7 +25,7 @@ MODEL_RUNGS: tuple[str, ...] = ("decision", "llm_small", "llm_large")
 DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generation", "insight_narrative", "summarization",
                          "semantic_modeling", "dashboard_design", "feedback_interpretation", "metadata_enrichment",
                          "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check", "agent_actions",
-                         "ask_route", "clarify_needed", "metric_match", "join_path_choice"}
+                         "ask_route", "clarify_needed", "metric_match", "join_path_choice", "semantic_query"}
 
 
 class LLMSettings(BaseModel):

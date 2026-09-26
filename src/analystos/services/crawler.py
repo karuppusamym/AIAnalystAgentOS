@@ -129,6 +129,8 @@ def start_crawl(session: Session, user: User, source_id: str, *, mode: str | Non
     if src is None:
         raise NotFound(f"source {source_id} not found")
     require_role(session, user, src.workspace_id, "editor")
+    if src.kind == "recipe":
+        raise InvalidInput("recipe outputs are catalogued by the recipe runs that write them; they are not crawled")
     cfg = platform().crawl
     mode = mode or cfg.default_mode
     if mode not in ("full", "incremental"):

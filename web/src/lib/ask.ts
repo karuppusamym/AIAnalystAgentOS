@@ -30,7 +30,7 @@ export interface Pill {
   title?: string;
 }
 
-/** Where the answer came from, in the order a reader checks it: who answered, the gateway, the tables. */
+/** Where the answer came from, in the order a reader checks it: governed or ad hoc, who answered, the gateway, the tables. */
 export function provenancePills(turn: AskTurn): Pill[] {
   const p = turn.provenance ?? {};
   const out: Pill[] = [];

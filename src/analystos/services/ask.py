@@ -228,8 +228,8 @@ class AdhocContext:
 
 def adhoc_context(session: Session, user: User, workspace_id: str) -> AdhocContext:
     from analystos.runtime.context import default_services
-    from analystos.tools.registry import get_agent_spec
     from analystos.semantic.compiler import load_catalog
+    from analystos.tools.registry import get_agent_spec
 
     scope = resolve_scope(session, session.merge(user), workspace_id)
     ws = get_workspace(session, workspace_id)
@@ -250,8 +250,9 @@ def _thread_for(session: Session, user: User, thread_id: str, workspace_id: str 
 
 
 @scoped_loader
-def _turn_for(session: Session, user: User, turn_id: str) -> AskTurn:
-    turn = load_in_workspace(session, AskTurn, turn_id, user=user, label="question")
+def _turn_for(session: Session, user: User, turn_id: str, workspace_id: str | None = None) -> AskTurn:
+    """`workspace_id` (a saved-analysis schedule's) additionally requires the turn to belong there."""
+    turn = load_in_workspace(session, AskTurn, turn_id, workspace_id, user=user, label="question")
     try:
         _thread_for(session, user, turn.thread_id, turn.workspace_id)
     except NotFound:
@@ -362,7 +363,13 @@ def turn_out(session: Session, turn: AskTurn) -> dict[str, Any]:
     from analystos.semantic.evidence import evidence_status
 
     fresh = staleness(session, turn)
-    return {**row(turn), "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
+    prov = turn.provenance or {}
+    semantic = prov.get("semantic") or {}
+    governance = {"governance": prov.get("governance", "ad_hoc")}  # ADR-0019: on every answer
+    if governance["governance"] == "governed":
+        governance |= {"semantic_model_version": semantic.get("semantic_model_version", semantic.get("model_version")),
+                       "compiler_version": semantic.get("compiler_version")}
+    return {**row(turn), **governance, "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
 
 
 # ------------------------------------------------------------------------------ asking
@@ -531,6 +538,7 @@ def inspector(session: Session, user: User, turn_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------ explain pasted SQL
+@scoped_loader
 def rerun_turn(user: User, turn_id: str, sql: str | None = None) -> dict[str, Any]:
     """A fresh immutable turn, with a link to the old result and current access checks."""
     from analystos.agents.sql_agent import _authorize_ask, _check_budget, _result
@@ -738,8 +746,13 @@ def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], reques
     require_role(s, me, turn.workspace_id, "editor")
     ws = get_workspace(s, turn.workspace_id)
     policy = load_policy(s, ws)
-    destination = body.get("destination") or (policy.publish_destinations[0] if policy.publish_destinations else None)
-    if destination not in policy.publish_destinations:
+    from analystos.publishing.base import default_destination
+
+    destination = body.get("destination") or default_destination(policy.publish_destinations)
+    # Without Superset (no `bi` profile) the default is the in-platform preview, as for run publications;
+    # a destination the caller names must still be one the policy allows.
+    defaulted_preview = destination == "preview" and not body.get("destination")
+    if destination not in policy.publish_destinations and not defaulted_preview:
         raise PolicyDenied(f"destination {destination} is not allowed by this workspace's policy")
     payload = {"kind": "ask_chart", "turn_id": turn.id, "question": turn.question, "sql": turn.sql,
                "chart": body.get("chart") or turn.chart, "dashboard": (body.get("dashboard") or "Ask answers")[:200],
@@ -756,7 +769,9 @@ def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], reques
     if apr is None or apr.workspace_id != turn.workspace_id or apr.action != DASHBOARD_ACTION:
         raise InvalidInput("the approval does not cover adding this answer to a dashboard")
     verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-    apr.status = "executed"  # single use
+    from analystos.governance.approvals import consume
+
+    consume(s, apr)  # single use (compare-and-set)
     art = save_artifact(s, workspace_id=turn.workspace_id, type_="chart", name=_slug(turn.question), creator_user=me.id,
                         status="approved", content={"title": turn.question[:200], "sql": turn.sql, "chart": payload["chart"],
                                                     "dashboard": payload["dashboard"], "destination": destination,

@@ -32,6 +32,7 @@ from analystos.evidence.confirmation import is_replication, prior_claim
 from analystos.evidence.facts import bind_finding
 from analystos.evidence.manifest import changed as manifest_changed
 from analystos.evidence.manifest import current_entry
+from analystos.evidence.verification import insight_dependencies, record_verdict
 from analystos.knowledge.attested import sql_hash
 from analystos.llm.cache import estimate_tokens
 from analystos.llm.config import family
@@ -263,9 +264,18 @@ def verify_insights(ctx: RunContext) -> dict:
             if not deterministic_ok:
                 h = s.get(Hypothesis, ins.hypothesis_id)
                 h.status = "inconclusive"
+            # P7-01 (ADR-0020): the verdict is bound to the versions it depended on; any change voids it.
+            record = record_verdict(
+                s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, subject_type="insight", subject_id=ins.id,
+                verdict="verified" if deterministic_ok else "failed_verification", checks=checks,
+                verifier=bundle.verifier_version, question_hash=spec_hash(spec_d), evidence_bundle=ins.evidence_bundle,
+                dependencies=insight_dependencies(
+                    s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=ins.hypothesis_id, spec=spec_d,
+                    entry=recorded or entry, narrative_source=narrative_source))
             emit(ctx.workspace.id, "insight.verified", {"code": code, "verified": deterministic_ok, "confidence": ins.confidence,
                                                         "validation": bundle.validation.state, "label": bundle.validation.label,
-                                                        "failed_checks": [c["check"] for c in checks if not c["passed"]]},
+                                                        "failed_checks": [c["check"] for c in checks if not c["passed"]],
+                                                        "verification_record": record.id, "fingerprint": record.fingerprint},
                  run_id=ctx.run.id, session=s)
         (verified_codes if deterministic_ok else failed_codes).append(code)
         ctx.say(f"REV {code}: {'VERIFIED' if deterministic_ok else 'FAILED'} ({bundle.validation.state}; review score "

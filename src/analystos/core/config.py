@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ANALYSTOS_", env_file=".env", extra="ignore")
 
     env: str = "dev"
+    # Deployment profile (ADR-0025): `lite` = Postgres + API + web (local orchestrator with resume, the
+    # in-process scheduler, Postgres spend reservations, preview publishing); `standard` = lite + Redis,
+    # Temporal, one worker, a scheduler process; `scale` = standard with per-queue pools and HA values.
+    # The profile only fills defaults of settings the environment leaves unset (see `_profile_defaults`).
+    # The code default stays `standard` so an existing deployment that sets nothing keeps its behaviour;
+    # the install defaults (compose, .env.example, values-small) choose `lite`.
+    profile: Literal["lite", "standard", "scale"] = "standard"
     # Control plane (application state). Never reachable from user/model SQL.
     database_url: str = "postgresql+psycopg://analystos:analystos@localhost:5432/analystos"
     # Analytics plane: staging database for API/file sources. Two identities:
@@ -77,8 +84,23 @@ class Settings(BaseSettings):
     # config/task_queues.yaml. `analystos worker` serves `worker_queues` unless --queues is given.
     temporal_queue_prefix: str = "analystos"
     worker_queues: str = "all"
-    # temporal | local. local runs the same durable steps in a background thread (tests, laptops).
+    # temporal | local. local runs the same engine in-process (lite profile, tests, laptops); lite's default.
     orchestrator: str = "temporal"
+    # Local orchestrator (ADR-0025): None = the profile default (lite: 4, otherwise tasks run inline in
+    # each run's driver thread, as before). A shared pool of this many threads executes ready tasks.
+    local_workers: int | None = Field(default=None, ge=1, le=64)
+    # Re-drive every non-terminal run when the API starts (the engine's claims make it safe). Assumes one
+    # API process drives local runs: orphaned RUNNING claims are released at startup. None = lite only.
+    local_resume: bool | None = None
+    # Seconds between sweeps that re-drive parked (WAITING_USER, PAUSED) local runs whose state changed
+    # without a signal (an approval decided by another process, an expiry). 0 = no sweep.
+    local_sweep_seconds: float = Field(default=60.0, ge=0)
+    # Run the schedule/monitor loop inside the API process (lite). Claim-then-execute makes it safe next
+    # to a separate `analystos scheduler`. None = lite only.
+    inprocess_scheduler: bool | None = None
+    # Hard spend cap reservations (P4-06): redis (Lua script) | postgres (row-locked `spend_counter`
+    # table) | auto = redis when ANALYSTOS_REDIS_URL is set, else postgres. Both fail closed.
+    spend_counter_store: Literal["auto", "redis", "postgres"] = "auto"
 
     superset_url: str = "http://localhost:8088"
     # Browser-facing base URL. In Docker, workers use ``superset_url`` over the
@@ -152,6 +174,53 @@ class Settings(BaseSettings):
 
     servicenow_mock_url: str = "http://localhost:8090"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+
+    # Outbound HTTP (P7-11, tools/http.py). HTTP tool capabilities may call only these hostnames
+    # (comma-separated; empty = none). Every outbound call (HTTP tools and MCP servers) is refused when
+    # the host resolves to a non-public address, unless the operator lists that hostname or network
+    # (CIDR) here -- e.g. "127.0.0.1,mcp.internal,10.20.0.0/16" for internal MCP servers.
+    http_tool_allowlist: str = ""
+    outbound_private_hosts: str = ""
+    # MCP servers only: loopback and RFC 1918 ranges are allowed by default (owner decision 2026-09-26) so
+    # in-cluster servers keep working; link-local/metadata and CGNAT stay refused. Set "" to require listing.
+    mcp_private_hosts: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    http_tool_timeout_seconds: float = 30.0
+    http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
+
+    @model_validator(mode="after")
+    def _profile_defaults(self) -> Settings:
+        """`lite` needs no Redis, Temporal or Superset: settings the environment did not set take the
+        lite values. An explicit variable always wins, so a lite install can still add `bi` (Superset)."""
+        if self.profile == "lite":
+            given = self.model_fields_set
+            if "orchestrator" not in given:
+                self.orchestrator = "local"
+            if "redis_url" not in given:
+                self.redis_url = ""
+            if "superset_url" not in given:
+                self.superset_url = ""
+        return self
+
+    @property
+    def local_worker_count(self) -> int | None:
+        """Threads executing local tasks; None = inline in each run's driver (the standard behaviour)."""
+        if self.local_workers is not None:
+            return self.local_workers
+        return 4 if self.profile == "lite" else None
+
+    @property
+    def resume_local_runs(self) -> bool:
+        return self.local_resume if self.local_resume is not None else self.profile == "lite"
+
+    @property
+    def run_inprocess_scheduler(self) -> bool:
+        return self.inprocess_scheduler if self.inprocess_scheduler is not None else self.profile == "lite"
+
+    @property
+    def spend_store(self) -> str:
+        if self.spend_counter_store != "auto":
+            return self.spend_counter_store
+        return "redis" if self.redis_url else "postgres"
 
 
 @lru_cache

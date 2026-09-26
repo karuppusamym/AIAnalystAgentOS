@@ -132,6 +132,39 @@
       "additionalProperties": true,
       "title": "Preview",
       "type": "object"
+    },
+    "governance": {
+      "default": "ad_hoc",
+      "enum": [
+        "governed",
+        "ad_hoc"
+      ],
+      "title": "Governance",
+      "type": "string"
+    },
+    "semantic_model_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Semantic Model Version"
+    },
+    "compiler_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compiler Version"
     }
   },
   "required": [

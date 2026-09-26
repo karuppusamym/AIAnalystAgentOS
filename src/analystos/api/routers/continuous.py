@@ -1,8 +1,7 @@
 """Phase 3 API: schedules, monitors, alerts, notifications, reports (§37-§38, §43)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Header, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -37,6 +36,10 @@ class SchedulePatch(BaseModel):
     enabled: bool | None = None
 
 
+class UpgradeIn(BaseModel):
+    upgrade_hash: str | None = None  # from the pin status the owner reviewed
+
+
 class MonitorIn(BaseModel):
     name: str
     kind: str
@@ -62,27 +65,98 @@ class ReadIn(BaseModel):
 
 
 # ---------------------------------------------------------------------------------- schedules
+def schedule_out(sch: Schedule) -> dict:
+    """A schedule with its pins summarized (refs, versions, revision; not the bound manifests)."""
+    from analystos.services.pins import view
+
+    return {**row(sch, exclude={"pins"}), "pins": view(sch)}
+
+
 @router.post("/workspaces/{workspace_id}/schedules")
-def create_schedule(workspace_id: str, body: ScheduleIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    sch = sch_svc.create_schedule(session, session.merge(user), workspace_id, **body.model_dump())
-    session.flush()
-    return row(sch)
+def create_schedule(workspace_id: str, body: ScheduleIn, response: Response, user: User = Depends(current_user),
+                    session: Session = Depends(db, scope="function"),
+                    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    from analystos.api.http import set_etag
+    from analystos.services.idempotency import Key, begin_in, complete_in
+
+    require_role(session, user, workspace_id, "editor")
+    key = Key.of(idempotency_key, principal=user.id, workspace_id=workspace_id, operation="schedule.create",
+                 request=body.model_dump())
+    if key is not None and (replay := begin_in(session, key)) is not None:
+        sch = load_in_workspace(session, Schedule, replay.resource_id, workspace_id, user=user, label="schedule")
+        response.headers["Idempotent-Replayed"] = "true"
+    else:
+        sch = sch_svc.create_schedule(session, session.merge(user), workspace_id, **body.model_dump())
+        session.flush()
+        if key is not None:
+            complete_in(session, key, response={"id": sch.id}, resource_type="schedule", resource_id=sch.id)
+    set_etag(response, sch.revision)
+    return schedule_out(sch)
 
 
 @router.get("/workspaces/{workspace_id}/schedules")
-def list_schedules(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def list_schedules(workspace_id: str, limit: int | None = None, cursor: str | None = None, user: User = Depends(current_user),
+                   session: Session = Depends(db, scope="function")):
+    """Oldest first as an array (existing clients); with `limit`/`cursor`, newest-first `{items, next_cursor}` pages."""
+    from analystos.api.http import page, wants_page
+
     require_role(session, user, workspace_id, "viewer")
-    out = []
-    for sch in session.scalars(select(Schedule).where(Schedule.workspace_id == workspace_id).order_by(Schedule.created_at)):
-        runs = session.scalars(select(ScheduleRun).where(ScheduleRun.schedule_id == sch.id).order_by(ScheduleRun.started_at.desc()).limit(10))
-        out.append({**row(sch), "recent_runs": rows(runs)})
+
+    def render(schedules) -> list[dict]:
+        out = []
+        for sch in schedules:
+            runs = session.scalars(select(ScheduleRun).where(ScheduleRun.schedule_id == sch.id).order_by(ScheduleRun.started_at.desc()).limit(10))
+            out.append({**schedule_out(sch), "recent_runs": rows(runs)})
+        return out
+    stmt = select(Schedule).where(Schedule.workspace_id == workspace_id)
+    if wants_page(limit, cursor):
+        return page(session, stmt, Schedule, limit=limit, cursor=cursor, scope={"workspace": workspace_id, "list": "schedules"},
+                    render=render)
+    return render(session.scalars(stmt.order_by(Schedule.created_at)))
+
+
+@router.get("/workspaces/{workspace_id}/schedules/{schedule_id}")
+def get_schedule(workspace_id: str, schedule_id: str, response: Response, user: User = Depends(current_user),
+                 session: Session = Depends(db, scope="function")):
+    """The schedule, its ETag revision and its pin status computed now: upgrade available (with the
+    diff), deprecated (keeps running, with a warning) or blocked (a retired or rejected pin)."""
+    from analystos.api.http import set_etag
+    from analystos.services.pins import refresh
+
+    sch = load_in_workspace(session, Schedule, schedule_id, workspace_id, user=user, label="schedule")
+    status = refresh(session, sch)
+    set_etag(response, sch.revision)
+    return {**schedule_out(sch), "pin_status": status.model_dump(mode="json")}
+
+
+@router.post("/workspaces/{workspace_id}/schedules/{schedule_id}/upgrade")
+def accept_schedule_upgrade(workspace_id: str, schedule_id: str, body: UpgradeIn, response: Response,
+                            user: User = Depends(current_user), session: Session = Depends(db, scope="function"),
+                            if_match: str | None = Header(default=None)):
+    """The owner accepts the available upgrade: a new schedule revision whose next fire is the new
+    baseline. Requires If-Match (the revision) and the `upgrade_hash` the owner reviewed."""
+    from analystos.api.http import expected_revision, set_etag
+    from analystos.services.pins import accept_upgrade
+
+    sch = load_in_workspace(session, Schedule, schedule_id, workspace_id, user=user, minimum="editor", label="schedule",
+                            for_update=True)
+    out = accept_upgrade(session, session.merge(user), sch, expected_revision=expected_revision(if_match, required=True),
+                         upgrade_hash=body.upgrade_hash)
+    set_etag(response, sch.revision)
     return out
 
 
 @router.patch("/schedules/{schedule_id}")
-def patch_schedule(schedule_id: str, body: SchedulePatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def patch_schedule(schedule_id: str, body: SchedulePatch, response: Response, user: User = Depends(current_user),
+                   session: Session = Depends(db, scope="function"), if_match: str | None = Header(default=None)):
+    """Edit a schedule. `If-Match` (its ETag) makes a stale edit 412; clients that predate revisions may omit it."""
+    from analystos.api.http import expected_revision, set_etag
+
     load_in_workspace(session, Schedule, schedule_id, user=user, label="schedule")
-    return row(sch_svc.update_schedule(session, session.merge(user), schedule_id, body.model_dump()))
+    sch = sch_svc.update_schedule(session, session.merge(user), schedule_id, body.model_dump(),
+                                  expected_revision=expected_revision(if_match, required=False))
+    set_etag(response, sch.revision)
+    return schedule_out(sch)
 
 
 @router.delete("/schedules/{schedule_id}")

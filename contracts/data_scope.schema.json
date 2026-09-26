@@ -72,6 +72,23 @@
       "default": 1,
       "title": "Policy Version",
       "type": "integer"
+    },
+    "row_filters": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Row Filters",
+      "type": "object"
+    },
+    "withheld_assets": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Withheld Assets",
+      "type": "object"
     }
   },
   "required": [

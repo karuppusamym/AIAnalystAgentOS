@@ -362,6 +362,13 @@ def _invoke_world(monkeypatch, m, *, approval=None):
                         lambda s, **kw: calls["requested"].append(kw) or SimpleNamespace(id="apr_1", payload_hash="ph"))
     monkeypatch.setattr("analystos.governance.approvals.verify_for_execution",
                         lambda s, approval_id, **kw: calls["verified"].append((approval_id, kw)))
+
+    def consume(s, apr):  # the compare-and-set claim (P7-10) on this fake session: approved -> executed once
+        assert apr.status == "approved"
+        apr.status = "executed"
+        return apr
+
+    monkeypatch.setattr("analystos.governance.approvals.consume", consume)
     monkeypatch.setattr("analystos.governance.audit.audit", lambda *a, **k: calls["audits"].append((a, k)))
     monkeypatch.setattr("analystos.events.bus.emit", lambda *a, **k: None)
     monkeypatch.setattr(inv.registry, "resolve_entry", lambda m: lambda ctx, **kw: calls["ran"].append(kw) or {"done": True})

@@ -166,6 +166,17 @@ class _AssetIndex:
         )
 
 
+def _withheld(scope: DataScope, table: exp.Table) -> str | None:
+    if not scope.withheld_assets:
+        return None
+    name, db = table.name.lower(), (table.db or "").lower()
+    for asset, reason in scope.withheld_assets.items():
+        schema_name, table_name = asset.lower().split(".", 1)
+        if table_name == name and db in ("", schema_name):
+            return reason
+    return None
+
+
 def _is_denied(column_key: str, denied: set[str], denied_any: set[str]) -> bool:
     lowered = column_key.lower()
     return lowered in denied or lowered.rsplit(".", 1)[-1] in denied_any
@@ -343,6 +354,8 @@ def _check_sources(root: exp.Expression) -> None:
             raise _reject("NATURAL JOIN is not supported. Use an explicit JOIN ... ON condition.")
         if isinstance(node, exp.Join):
             predicate = node.args.get("on")
+            if _single_row_cross_join(node):
+                continue
             if (node.args.get("kind") or "").upper() == "CROSS" or (
                 predicate is None and node.args.get("using") is None
             ) or (predicate is not None and not any(predicate.find_all(exp.Column))):
@@ -360,6 +373,61 @@ def _check_sources(root: exp.Expression) -> None:
                     f"Three-part names ({node.sql()}) are not allowed. Reference tables as schema.table.",
                     table=node.sql(),
                 )
+
+
+def _single_row_cross_join(join: exp.Join) -> bool:
+    """An explicit CROSS JOIN to a derived table that provably returns one row (aggregates only and no
+    GROUP BY, or LIMIT 1): the percent-of-total shape. It cannot multiply rows, so it is allowed; comma
+    joins, ON TRUE and CROSS JOIN to a table stay refused (owner decision 2026-09-26, P7-15)."""
+    if (join.args.get("kind") or "").upper() != "CROSS" or join.args.get("on") is not None or join.args.get("using"):
+        return False
+    sub = join.this
+    if not isinstance(sub, exp.Subquery) or not isinstance(sub.this, exp.Select):
+        return False
+    select = sub.this
+    limit = select.args.get("limit")
+    if limit is not None and _literal_int(limit.expression) == 1:
+        return True
+    if select.args.get("group") is not None or any(select.find_all(exp.Window)):
+        return False
+    return bool(select.expressions) and all(any(e.find_all(exp.AggFunc)) for e in select.expressions)
+
+
+_JOIN_COMPARISONS: tuple[type, ...] = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ)
+
+
+def _join_keyed(predicate: exp.Expression, joined: str) -> bool:
+    """True when ``predicate`` cannot hold for every row pair: some conjunct compares a column of the
+    joined source with a column of another source (every disjunct must be keyed on its own). This
+    refuses ``ON TRUE OR a.k = b.k`` and ``ON b.k = b.k`` as well as ``ON TRUE`` (P7-15)."""
+    if isinstance(predicate, exp.Paren):
+        return _join_keyed(predicate.this, joined)
+    if isinstance(predicate, exp.And):
+        return _join_keyed(predicate.this, joined) or _join_keyed(predicate.expression, joined)
+    if isinstance(predicate, exp.Or):
+        return _join_keyed(predicate.this, joined) and _join_keyed(predicate.expression, joined)
+    if isinstance(predicate, _JOIN_COMPARISONS):
+        left = {c.table for c in predicate.this.find_all(exp.Column)}
+        right = {c.table for c in predicate.expression.find_all(exp.Column)}
+        if not left or not right or "" in left | right:
+            return False
+        return (joined in left and bool(right - {joined})) or (joined in right and bool(left - {joined}))
+    return False
+
+
+def _check_join_keys(qualified: exp.Expression) -> None:
+    """After qualification (USING is expanded to ON and every column names its source), each join
+    must be keyed across its two sides."""
+    for join in qualified.find_all(exp.Join):
+        if _single_row_cross_join(join):
+            continue
+        predicate = join.args.get("on")
+        joined = join.this.alias_or_name if isinstance(join.this, exp.Expression) else ""
+        if predicate is None or not joined or not _join_keyed(predicate, joined):
+            raise _reject(
+                "Unconditioned joins are not allowed. Add a join key with ON or USING that compares a column "
+                "of the joined table with a column of another table."
+            )
 
 
 def _classify_tables(root: exp.Expression) -> list[exp.Table]:
@@ -507,15 +575,30 @@ def _validate_in_dialect(
     index = _AssetIndex.build(scope.assets, dialect)
     default_source = scope.source_ids[0] if len(set(scope.source_ids)) == 1 else None
     referenced: list[str] = []
+    resolved: list[tuple[exp.Table, str]] = []
     for table in tables:
-        asset = index.resolve(table)
+        try:
+            asset = index.resolve(table)
+        except SQLRejected:
+            withheld = _withheld(scope, table)
+            if withheld:
+                raise _reject(f"Table {table.sql(dialect=dialect)} is withheld from you by a row filter: {withheld}.",
+                              table=table.sql()) from None
+            raise
         schema_name, table_name = asset.split(".", 1)
         if prof.fold == "upper":
             schema_name, table_name = schema_name.upper(), table_name.upper()
         table.set("db", exp.to_identifier(schema_name, quoted=True))
         table.set("this", exp.to_identifier(table_name, quoted=True))
+        resolved.append((table, asset))
         if asset not in referenced:
             referenced.append(asset)
+    if scope.row_filters:
+        # Row-level security (P7-02): every read of a filtered asset goes through its filter, whichever
+        # path wrote the statement; compiled SQL that already carries the exact wrapper passes unchanged.
+        from analystos.governance.row_filters import wrap_tables
+
+        wrap_tables(resolved, scope, dialect, prof.fold)
 
     asset_sources = {}
     for asset in referenced:
@@ -586,6 +669,8 @@ def _validate_in_dialect(
         raise _reject(f"{msg}. Known columns — {hint}.") from None
     except SqlglotError as exc:
         raise _reject(f"Could not qualify the query: {str(exc).splitlines()[0]}.") from None
+
+    _check_join_keys(qualified)
 
     denied = {d.lower() for d in scope.denied_columns if not d.startswith("*.")}
     denied_any = {d[2:].lower() for d in scope.denied_columns if d.startswith("*.")}

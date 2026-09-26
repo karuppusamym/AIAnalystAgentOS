@@ -113,6 +113,8 @@ def health(session: Session, *, probe: bool = False, router: ModelRouter | None 
     return {
         "checked_at": now.isoformat(),
         "counters_available": counters.available,
+        # Hard caps can be proven (Redis, or Postgres in the lite profile); false = billable calls are refused.
+        "spend_counters": {"store": counters.spend_store, "available": counters.spend_available},
         "spend_today": {"usd": round(float(spent), 6), "cap_usd": cap, "source": source,
                         "fraction": round(float(spent) / cap, 4) if cap else None,
                         "alert_fraction": llm.spend_alert_fraction, "resets_at": next_day_start(now).isoformat()},

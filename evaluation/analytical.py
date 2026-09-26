@@ -179,14 +179,14 @@ def _top(stat: Any) -> Any:
     return None
 
 
-def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None = None) -> ReplicateScore:
+def component_tests(domain: str, seed: int, *, effects: bool = True, n: int | None = None) -> tuple[Dataset, Any, list[dict[str, Any]]]:
+    """Every valid proposal of the component tier tested once: (dataset, DuckDB runner, [{spec, stat, statement}]).
+    Shared by the benchmark below and the grounding suite (evaluation/grounding.py)."""
     from analystos.agents.investigator import proposals_for_table, validate_spec
     from analystos.capabilities import packs
     from analystos.contracts.analysis import AnalysisSpec
-    from analystos.skills.analysis import run_analysis, verify_analysis
-    from analystos.skills.stats import benjamini_hochberg
+    from analystos.skills.analysis import run_analysis
 
-    started = time.perf_counter()
     ds = build(domain, seed, effects=effects, n=n)
     run_sql = _duck(ds)
     fq = f"{SCHEMA}.{ds.table}"
@@ -208,6 +208,15 @@ def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None
         seen.add(key)
         stat = run_analysis(spec, run_sql, alpha=ALPHA).stat
         tested.append({"spec": spec, "stat": stat, "statement": p.get("statement", "")})
+    return ds, run_sql, tested
+
+
+def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None = None) -> ReplicateScore:
+    from analystos.skills.analysis import verify_analysis
+    from analystos.skills.stats import benjamini_hochberg
+
+    started = time.perf_counter()
+    ds, run_sql, tested = component_tests(domain, seed, effects=effects, n=n)
     with_p = [t for t in tested if t["stat"].p_value is not None]
     for t, q in zip(with_p, benjamini_hochberg([t["stat"].p_value for t in with_p]), strict=True):
         t["q"] = float(q)

@@ -46,12 +46,22 @@ def validate_schedule_config(config: dict[str, Any]) -> None:
     novelty_config(config.get("novelty"))
 
 
+def frozen_analyses(run: Any) -> list[dict[str, Any]]:
+    """The pinned AnalysisSpec set a run replays (ADR-0021): a schedule's baseline set or a work order's."""
+    return list((((getattr(run, "capabilities", None) or {}).get("pinned") or {}).get("analyses")) or [])
+
+
 def replay_settings(run: Any) -> dict[str, Any] | None:
-    """The replay settings of a scheduled re-analysis run, else None."""
+    """The replay settings of a scheduled re-analysis run (or a run of a typed work order), else None.
+    With a frozen set the run replays exactly those specs; otherwise the registry scope decides."""
     origin = getattr(run, "origin", None) or {}
+    analyses = frozen_analyses(run)
+    if origin.get("type") == "work_order" and analyses:
+        return {"novelty": dict(NOVELTY_DEFAULTS), "registry_scope": "previous_run", "analyses": analyses, "label": "work_order"}
     if origin.get("type") != "schedule" or not origin.get("replay"):
         return None
-    return {"novelty": novelty_config(origin.get("novelty")), "registry_scope": origin.get("registry_scope", "previous_run")}
+    return {"novelty": novelty_config(origin.get("novelty")), "registry_scope": origin.get("registry_scope", "previous_run"),
+            "analyses": analyses, "label": "registry"}
 
 
 class ReplayRouter:

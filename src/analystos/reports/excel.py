@@ -150,7 +150,8 @@ def _fraction(c: Any) -> float | None:
 
 def _findings(ws: Worksheet, d: ReportData) -> None:
     items = [(i, i.change or "") for i in d.insights] + [(i, "resolved") for i in d.resolved_insights]
-    rows = [[i.code, i.title, i.finding, _fraction(i.confidence), "yes" if i.verified else "no", "; ".join(i.caveats), chg]
+    rows = [[i.code, i.title, i.finding, _fraction(i.confidence),
+             "yes" if i.verified else f"void: {i.void_reason}" if i.void_reason else "no", "; ".join(i.caveats), chg]
             for i, chg in items]
     _table(ws, ["Code", "Title", "Finding", "Confidence", "Verified", "Caveats", "Change"], rows, {4: "0%"})
 

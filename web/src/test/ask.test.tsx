@@ -104,9 +104,9 @@ describe("Ask helpers", () => {
 
   it("names who answered, the gateway and the tables; staleness has its own tone", () => {
     const pills = provenancePills(askTurn("t", "q"));
-    expect(pills.map((p) => p.label)).toEqual(["Generated SQL · openrouter/auto", "Validated by the query gateway", "Incidents (stg_sn.incident)"]);
+    expect(pills.map((p) => p.label)).toEqual(["Ad hoc analysis", "Generated SQL · openrouter/auto", "Validated by the query gateway", "Incidents (stg_sn.incident)"]);
     const reg = provenancePills(askTurn("t", "q", { answered_by: "registry", model: null, provenance: { verified_query: { id: "vq", name: "p1_by_group" } } }));
-    expect(reg[0]).toMatchObject({ tone: "success", label: "Verified query: p1_by_group" });
+    expect(reg[1]).toMatchObject({ tone: "success", label: "Verified query: p1_by_group" });
     expect(stalenessPill({ state: "stale", label: "Data as of 9 days ago", data_as_of: null }).tone).toBe("danger");
     expect(stalenessPill(undefined).label).toBe("Data freshness unknown");
   });
@@ -124,7 +124,7 @@ describe("Ask helpers", () => {
 
   it("marks a rules answer as built from the catalog and offers its follow-ups", () => {
     const turn = rulesTurn("distribution of incident");
-    expect(provenancePills(turn)[0]).toMatchObject({ tone: "success", label: "Built from the catalog · no model" });
+    expect(provenancePills(turn)[1]).toMatchObject({ tone: "success", label: "Built from the catalog · no model" });
     expect(turnSuggestions(turn)).toEqual(["distribution of incident by contact channel", "distribution of incident by priority"]);
     const clarify = askTurn("c", "count of incidents by group", { status: "clarify", result: null, provenance: {},
       refusal: { kind: "clarify", title: "", message: "", remedy: "", details: { suggestions: ["count of incident by assignment group"] } } });

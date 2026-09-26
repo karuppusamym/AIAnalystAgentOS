@@ -1,0 +1,99 @@
+# Evaluation release gates (spec v4 §13, tracker P7-07). The thresholds are the product owner's.
+#
+# * Change a threshold only in a reviewed commit that bumps `version` and says why in `changelog`. The
+#   gate result names the version and a hash of this file.
+# * A regression past a threshold blocks the merge (deterministic tiers, CI) or the release (live tiers,
+#   nightly / pre-release), even when answers subjectively improve.
+# * `min` / `max` bound a metric; a tier's metrics come from the suite's own scoring (evaluation/*.py).
+#
+# Run: python scripts/eval_gates.py [--tiers grounding,analytical_component,cost] [--out gate-result.json]
+version: 1
+owner: product owner (Context2AI)
+changelog:
+  - {version: 1, date: 2026-09-26, change: "initial gates: today's measured values as the regression floor (P7-07)"}
+
+tiers:
+  # --------------------------------------------------------------- deterministic: CI on every change
+  grounding:
+    kind: deterministic
+    runs: ci
+    suite: "evaluation/grounding.py (component-tier findings + evaluation/grounding_cases.yaml)"
+    metrics:
+      bound_numeric_share: {min: 1.0}         # every number in a finding binds to a computed fact
+      findings_bound_share: {min: 1.0}
+      fabricated_accepted: {max: 0}           # an altered number is never accepted
+      swapped_accepted: {max: 0}              # nor the other group, nor the reversed direction
+      adversarial_accepted: {max: 0}
+      narratives_correct_share: {min: 1.0}
+      void_on_change_recall: {min: 1.0}       # every registered checker voids a finding when its data changes
+      void_false_positives: {max: 0}
+      findings: {min: 20}                     # coverage floors: the suite may not shrink silently
+      methods_covered: {min: 4}
+  analytical_component:
+    kind: deterministic
+    runs: ci
+    suite: "evaluation/analytical.py (component tier, seeds 1-10, null seeds 101-105)"
+    metrics:
+      precision: {min: 0.90}
+      recall: {min: 0.90}
+      fdr: {max: 0.05}                        # nominal alpha
+      null_fdr: {max: 0.05}
+      null_fdr_per_method_max: {max: 0.05}
+      incomplete: {max: 0}
+  cost:
+    kind: deterministic
+    runs: ci
+    suite: "scripts/cost_gate.py (replayed runs vs tests/fixtures/cost_baseline/baseline.json)"
+    metrics:
+      max_rise: {max: 0.10}                   # model calls, tokens or $ per recorded run, vs the baseline
+      missing_baseline: {max: 0}
+  ask_fake:
+    kind: deterministic
+    runs: ci                                  # needs Postgres: tests/integration/test_ask_benchmark.py
+    suite: "evaluation/ask.py tier fake (162 questions, oracle model)"
+    metrics:
+      execution_accuracy: {min: 0.98}
+      outcome_accuracy: {min: 0.90}
+      answered_precision: {min: 1.0}
+      confident_wrong: {max: 0}
+      restricted_leaks: {max: 0}
+      errors: {max: 0}
+      problems: {max: 0}
+      governed_decline_recall: {min: 1.0}
+      decline_recall: {min: 1.0}
+      needs_input_recall: {min: 0.80}
+  ask_off:
+    kind: deterministic
+    runs: ci
+    suite: "evaluation/ask.py tier off (no model: registry + rules)"
+    metrics:
+      execution_accuracy: {min: 0.60}
+      outcome_accuracy: {min: 0.65}
+      answered_precision: {min: 1.0}
+      confident_wrong: {max: 0}
+      restricted_leaks: {max: 0}
+      errors: {max: 0}
+      problems: {max: 0}
+      model_calls: {max: 0}
+      decline_recall: {min: 1.0}
+
+  # --------------------------------------------------------------- live models: nightly and before a release
+  # Placeholders until a provider key is available to the pipeline: the runner reports them as `skipped`
+  # with the reason and they never pass silently. Thresholds are the owner's to set before the pilot.
+  ask_live:
+    kind: live
+    runs: nightly
+    suite: "scripts/benchmark_ask.py --models live"
+    metrics:
+      execution_accuracy: {min: 0.85}         # PROPOSED_THRESHOLDS in evaluation/ask.py
+      execution_accuracy_per_domain_min: {min: 0.80}
+      confident_wrong_share: {max: 0.05}
+      restricted_leaks: {max: 0}
+  analytical_platform_live:
+    kind: live
+    runs: pre-release
+    suite: "scripts/benchmark_analytical.py --tier platform --models live"
+    metrics:
+      precision: {min: 0.90}
+      recall: {min: 0.90}
+      fdr: {max: 0.05}

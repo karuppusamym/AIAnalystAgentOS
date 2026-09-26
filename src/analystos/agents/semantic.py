@@ -105,14 +105,27 @@ def admission_clash(name: str, norm: str, seen: dict[str, str], names: set[str])
 
 def approved_workspace_metrics(ctx: RunContext, columns: set[str], dialect: str) -> list[MetricDef]:
     """The workspace semantic model's approved KPIs that apply to this dataset (unqualified columns it
-    has): they are the stable definitions and come before anything carried forward or proposed."""
+    has): they are the stable definitions and come before anything carried forward or proposed.
+    The versions are the ones the run bound (ADR-0021): a pinned schedule fire keeps measuring with
+    its baseline's metric versions after a newer version is approved."""
+    from sqlalchemy import select
+
+    from analystos.capabilities.binding import bound_metric_ids
+    from analystos.db.models import SemanticMetric
     from analystos.semantic.service import approved_metrics, to_metricdef
 
+    bound = bound_metric_ids(ctx.run)
     with session_scope() as s:
-        rows = list(approved_metrics(s, ctx.workspace.id).values())
+        if bound is None:  # a run bound before P7-03
+            rows = list(approved_metrics(s, ctx.workspace.id).values())
+        else:
+            rows = list(s.scalars(select(SemanticMetric).where(SemanticMetric.workspace_id == ctx.workspace.id,
+                                                               SemanticMetric.id.in_(bound)).order_by(SemanticMetric.name)))
     out = []
     for row in rows:
         m = to_metricdef(row)
+        if row.status == "deprecated" and bound is not None:  # superseded after the pin: still the pinned approved version
+            m = m.model_copy(update={"status": "approved"})
         try:
             qualified = any(c.table for c in sqlglot.parse_one(m.sql_expression, read=dialect).find_all(exp.Column))
         except sqlglot.errors.ParseError:

@@ -53,7 +53,7 @@ def closure(snapshot: Any, root: str) -> set[str]:
             todo += [tool_ids[t] for t in m.spec.get("tools") or [] if t in tool_ids]
         elif m.spec.get("tool") in tool_ids:
             todo.append(tool_ids[m.spec["tool"]])
-        todo += [r for r in m.requires if not r.startswith("engine:")]
+        todo += [r for r in m.requires if not r.startswith(("engine:", "profile:", "extra:"))]
     return out
 
 
@@ -122,6 +122,10 @@ def autonomous(run: Any) -> bool:
 
 def usable(m: CapabilityManifest, snapshot: Any, explicit: dict[str, bool], *, autonomous_run: bool) -> str | None:
     """None when the capability may run here, else the reason it may not."""
+    from analystos.capabilities.registry import install_reason
+
+    if missing := install_reason(m):
+        return f"capability {m.ref} is unavailable on this installation: {missing}"
     if not is_enabled(m, snapshot, explicit):
         return f"capability {m.ref} is disabled for this workspace"
     if m.certification.status == "deprecated":

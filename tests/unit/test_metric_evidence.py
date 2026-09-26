@@ -28,6 +28,9 @@ def world(monkeypatch):
     rows = {SemanticModel: model, SemanticMetric: metric, QueryExecution: receipt}
     session = NS(get=lambda cls, ident: rows.get(cls), merge=lambda user: user)
     monkeypatch.setattr(service, "current_model", lambda *args: model)
+    from analystos.semantic import review  # P4-05: evidence compares against the newest *approved* version
+
+    monkeypatch.setattr(review, "approved_model", lambda *args: model)
     monkeypatch.setattr(evidence, "get_workspace", lambda *args: NS(id="w"))
     monkeypatch.setattr(evidence, "load_policy", lambda *args: policy)
     scope = DataScope(workspace_id="w", user_id="u", role="analyst")

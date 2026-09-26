@@ -334,6 +334,13 @@
           ],
           "default": null,
           "title": "Datatype"
+        },
+        "pre_aggregations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pre Aggregations",
+          "type": "array"
         }
       },
       "required": [
@@ -394,6 +401,48 @@
           },
           "title": "Custom Extensions",
           "type": "array"
+        },
+        "cardinality": {
+          "anyOf": [
+            {
+              "enum": [
+                "one_to_one",
+                "many_to_one",
+                "one_to_many",
+                "many_to_many"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cardinality"
+        },
+        "validated_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validated At"
+        },
+        "validated_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validated By"
         }
       },
       "required": [

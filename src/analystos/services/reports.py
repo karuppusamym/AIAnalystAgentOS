@@ -17,6 +17,7 @@ from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import stable_hash, utcnow
 from analystos.db.models import Alert, AnalysisRun, Artifact, Hypothesis, Insight, QueryExecution, Workspace
 from analystos.events.bus import emit
+from analystos.evidence.verification import insight_states, void_cause
 from analystos.governance.audit import audit
 from analystos.services.notifications import notify
 
@@ -37,11 +38,16 @@ def build_report_data(session: Session, run_id: str, kind: str = "executive", *,
     change_of = {c["code"]: "new" for c in changes.get("new", [])} | {c["code"]: "persisting" for c in changes.get("persisting", [])} \
         | {c["code"]: "changed" for c in changes.get("changed", [])}
     insights = []
-    for ins in session.scalars(select(Insight).where(Insight.run_id == run_id, Insight.status == "verified").order_by(Insight.confidence.desc())):
+    found = list(session.scalars(select(Insight).where(Insight.run_id == run_id, Insight.status == "verified")
+                                 .order_by(Insight.confidence.desc())))
+    states = insight_states(session, [i.id for i in found])  # P7-01: the record's state, not the old boolean
+    for ins in found:
+        void = void_cause(states[ins.id])
         qids = [e["id"] for e in ins.evidence if e.get("type") == "query"]
         queries = [ReportQuery(id=q.id, sql=q.sql, row_count=q.row_count, result_hash=q.result_hash)
                    for q in session.scalars(select(QueryExecution).where(QueryExecution.id.in_(qids)))]
-        insights.append(ReportInsight(code=ins.code, title=ins.title, finding=ins.finding, confidence=ins.confidence, verified=ins.verified,
+        insights.append(ReportInsight(code=ins.code, title=ins.title, finding=ins.finding, confidence=ins.confidence,
+                                      verified=ins.verified and void is None, void_reason=void,
                                       caveats=ins.caveats, business_impact=ins.business_impact, evidence_queries=queries,
                                       change=change_of.get(ins.code) if changes else None,
                                       validation=ins.validation, stale=ins.stale_since is not None))
@@ -83,6 +89,15 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
     bad = [f for f in formats if f not in FORMATS]
     if bad or not formats:
         raise InvalidInput(f"formats must be within {FORMATS}")
+    from analystos.reports import unavailable_formats
+
+    unavailable = unavailable_formats(formats)
+    if unavailable and len(unavailable) == len(formats):
+        from analystos.core.errors import FeatureUnavailable
+
+        raise FeatureUnavailable(f"report formats {', '.join(formats)} are unavailable: {next(iter(unavailable.values()))}",
+                                 details={"unavailable_formats": unavailable})
+    formats = tuple(f for f in formats if f not in unavailable)  # the rest render; the artifact says why not all
     data = build_report_data(session, run_id, kind, finalizing=finalizing)
     run = session.get(AnalysisRun, run_id)
     directory = Path(get_settings().artifact_dir) / run.workspace_id / "reports"
@@ -97,6 +112,7 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
         files[fmt] = {"path": str(path), "sha256": digest, "bytes": len(content), "mime": mime, "ext": ext}
     art = save_artifact(session, workspace_id=run.workspace_id, run_id=run_id, type_="report", name=f"{kind} report",
                         content={"kind": kind, "title": data.title, "report_data_hash": data_hash, "files": files,
+                                 **({"unavailable_formats": unavailable} if unavailable else {}),
                                  "insights": len(data.insights), "metrics": len(data.metrics), "alerts": len(data.alerts)},
                         creator_agent="insight" if actor == "system" else None,
                         creator_user=None if actor == "system" else actor.split(":", 1)[-1], status="final")
@@ -107,7 +123,10 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
     emit(run.workspace_id, "report.generated", {"artifact_id": art.id, "kind": kind, "formats": list(formats)}, run_id=run_id,
          session=session)
     notify(session, run.workspace_id, kind="report", title=f"Report ready: {data.title}"[:300],
-           body=f"{len(data.insights)} verified findings, {len(data.alerts)} open alerts.", link={"type": "artifact", "id": art.id})
+           body=f"{sum(1 for i in data.insights if i.verified)} verified findings"
+                + (f" ({sum(1 for i in data.insights if i.void_reason)} void: need re-verification)"
+                   if any(i.void_reason for i in data.insights) else "")
+                + f", {len(data.alerts)} open alerts.", link={"type": "artifact", "id": art.id})
     audit(actor, "report.generated", workspace_id=run.workspace_id, run_id=run_id, target=art.id,
           details={"kind": kind, "formats": list(formats), "report_data_hash": data_hash}, session=session)
     return art

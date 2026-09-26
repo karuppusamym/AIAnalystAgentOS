@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from analystos.artifacts.registry import link
+from analystos.evidence.lineage.sql import redact_literals
 from analystos.evidence.schemas import OL_RUN_EVENT as OL_SCHEMA
 from analystos.evidence.schemas import facet_schema_urls
 
@@ -65,11 +66,37 @@ def _ol_dataset(namespace: str, database: str, schema: str, name: str, columns: 
     return ds
 
 
+_SUBTYPE = {"DIRECT": "IDENTITY", "DERIVED": "TRANSFORMATION", "AGGREGATED": "AGGREGATION"}
+
+
+def column_lineage_fields(manifest: dict[str, Any], *, namespace: str, database: str) -> dict[str, dict[str, Any]]:
+    """{model unique_id: ColumnLineageDatasetFacet fields} from each model's compiled SQL (P6-07,
+    `evidence/lineage/dbt.py`: sqlglot lineage through CTEs, mapped onto the model's declared dependencies).
+    Lineage is evidence: a model it cannot parse simply has no column facet."""
+    from analystos.evidence.lineage.dbt import manifest_lineage
+
+    nodes, sources = manifest.get("nodes") or {}, manifest.get("sources") or {}
+    try:
+        edges = manifest_lineage(manifest)["column_edges"]
+    except Exception:  # noqa: BLE001 - never fail a build harvest over lineage
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for e in edges:
+        dep = sources.get(e["source_unique_id"]) or nodes.get(e["source_unique_id"]) or {}
+        name = f"{database}.{dep.get('schema')}.{dep.get('alias') or dep.get('name')}"
+        field = out.setdefault(e["target_unique_id"], {}).setdefault(e["target_column"], {"inputFields": []})
+        field["inputFields"].append({"namespace": namespace, "name": name, "field": e["source_column"],
+                                     "transformations": [{"type": "DIRECT",
+                                                          "subtype": _SUBTYPE.get(e["transformation_type"], "TRANSFORMATION")}]})
+    return out
+
+
 def openlineage_events(*, job_id: str, workspace_id: str, manifest: dict[str, Any], run_results: dict[str, Any],
                        namespace: str, database: str, started_at: datetime, finished_at: datetime) -> list[dict[str, Any]]:
     nodes = manifest.get("nodes") or {}
     sources = manifest.get("sources") or {}
     status = {r.get("unique_id"): r.get("status") for r in run_results.get("results") or []}
+    columns = column_lineage_fields(manifest, namespace=namespace, database=database)
     events: list[dict[str, Any]] = []
     for uid, node in sorted(nodes.items()):
         if node.get("resource_type") != "model":
@@ -79,7 +106,7 @@ def openlineage_events(*, job_id: str, workspace_id: str, manifest: dict[str, An
                "facets": {"jobType": _facet("JobTypeJobFacet", processingType="BATCH", integration="DBT", jobType="MODEL")}}
         code = node.get("compiled_code")
         if code:
-            job["facets"]["sql"] = _facet("SQLJobFacet", query=code)
+            job["facets"]["sql"] = _facet("SQLJobFacet", query=redact_literals(code))  # literals never stored
         inputs = []
         for dep in (node.get("depends_on") or {}).get("nodes") or []:
             if dep in sources:
@@ -88,6 +115,8 @@ def openlineage_events(*, job_id: str, workspace_id: str, manifest: dict[str, An
                 inputs.append(_ol_dataset(namespace, database, nodes[dep].get("schema"), nodes[dep].get("name")))
         output = _ol_dataset(namespace, database, node.get("schema"), node.get("alias") or node.get("name"),
                              sorted((node.get("columns") or {}).keys()))
+        if columns.get(uid):
+            output["facets"]["columnLineage"] = _facet("ColumnLineageDatasetFacet", fields=columns[uid])
         ok = status.get(uid) == "success"
         for event_type, when in (("START", started_at), ("COMPLETE" if ok else "FAIL", finished_at)):
             events.append({"eventType": event_type, "eventTime": when.isoformat(), "producer": PRODUCER, "schemaURL": OL_SCHEMA,

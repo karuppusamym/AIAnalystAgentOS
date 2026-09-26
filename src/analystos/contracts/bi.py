@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 ChartType = Literal["kpi", "line", "bar", "stacked_bar", "histogram", "scatter", "heatmap", "table", "pie", "treemap"]
 
@@ -54,6 +54,26 @@ class ChartSpec(BaseModel):
     insight_codes: list[str] = Field(default_factory=list)
     rationale: str = ""
     preview: dict[str, Any] = Field(default_factory=dict)  # {columns, rows} computed via gateway for UI preview
+    # ADR-0019: `governed` only when compiled from a SemanticQuery against an approved model version.
+    governance: Literal["governed", "ad_hoc"] = "ad_hoc"
+    semantic_model_version: int | None = None
+    compiler_version: str | None = None
+
+    @model_validator(mode="after")
+    def _governed_carries_versions(self) -> ChartSpec:
+        if self.governance == "governed" and (self.semantic_model_version is None or not self.compiler_version):
+            raise ValueError("a governed chart carries semantic_model_version and compiler_version")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_default_label(self, handler: Any) -> dict[str, Any]:
+        """An ad-hoc chart serializes as before the label existed, so bundle hashes (and the publish
+        approvals bound to them) do not change; the attribute still reads `ad_hoc`."""
+        data = handler(self)
+        if self.governance == "ad_hoc" and self.semantic_model_version is None and self.compiler_version is None:
+            for key in ("governance", "semantic_model_version", "compiler_version"):
+                data.pop(key, None)
+        return data
 
 
 class DashboardSpec(BaseModel):

@@ -162,7 +162,7 @@ def test_harvest_to_openlineage_and_lineage():
     assert [e["eventType"] for e in events] == ["START", "COMPLETE"]
     done = events[1]
     assert done["inputs"][0]["name"] == "analytics.src_s1.incident" and done["outputs"][0]["name"] == "analytics.mart.ds"
-    assert done["job"]["facets"]["sql"]["query"] == "select 1" and done["run"]["runId"] == events[0]["run"]["runId"]
+    assert done["job"]["facets"]["sql"]["query"] == "select <NUM>" and done["run"]["runId"] == events[0]["run"]["runId"]
     assert {"eventType", "eventTime", "producer", "schemaURL", "run", "job"} <= set(done)
     summary = lineage.run_results_summary(results)
     assert summary["counts"] == {"success": 1, "pass": 1} and summary["results"][0]["rows_affected"] == 42

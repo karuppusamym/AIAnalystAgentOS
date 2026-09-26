@@ -59,6 +59,7 @@ approve/reject publication at any point; redirects replan and invalidate stale a
 cp .env.example .env              # add OPENROUTER_API_KEY — never commit .env
 uv venv -p 3.11 .venv && uv pip install -e ".[dev]"
 docker compose up -d postgres redis temporal superset   # Neo4j is optional: --profile graph
+# or everything in containers, lite (Postgres + API + web): docker compose up -d --build   (docs/30-runbooks/04)
 .venv/bin/analystos migrate && .venv/bin/analystos seed
 scripts/dev_up.sh                 # ServiceNow mock :8090, Temporal worker, API :8000
 (cd web && npm install && npm run dev)   # UI :5173 — admin@analystos.local / ChangeMe123!

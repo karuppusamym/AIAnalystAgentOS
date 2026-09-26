@@ -35,6 +35,30 @@ class AttributeRule(BaseModel):
         return value
 
 
+class RowFilter(BaseModel):
+    """Row-level security (P7-02, ADR-0019): rows of the matching assets a caller may see. `predicate` is a
+    boolean SQL expression over the asset's own columns and may reference the caller's attributes as
+    `{{user.<attribute>}}` (also `{{user.id}}`, `{{user.email}}`, `{{user.role}}`). Values become literals,
+    never SQL text; a list value expands inside `IN (...)`. A missing attribute fails closed: the asset
+    is withheld from that caller. Applied by the semantic compiler and again by the gateway validator, so
+    no query path reads the asset unfiltered. `exempt_roles` see every row (for example owner)."""
+
+    id: str = Field(min_length=1, max_length=80)
+    assets: list[str] = Field(min_length=1)  # "schema.table" or "*.table"
+    predicate: str = Field(min_length=1, max_length=2000)
+    exempt_roles: list[str] = Field(default_factory=list)
+
+    @field_validator("predicate")
+    @classmethod
+    def _predicate_parses(cls, value: str) -> str:
+        from analystos.governance.row_filters import predicate_problem
+
+        problem = predicate_problem(value)
+        if problem:
+            raise ValueError(problem)
+        return value
+
+
 class ContextProviderConfig(BaseModel):
     kind: Literal["local", "okf_import", "mcp"]
     slug: str | None = None  # okf_import: the imported pack
@@ -73,6 +97,7 @@ class WorkspacePolicyDoc(BaseModel):
     pii_access: Literal["none", "restricted", "allowed"] = "restricted"
     tool_denylist: list[str] = Field(default_factory=list)
     attribute_rules: list[AttributeRule] = Field(default_factory=list)  # ABAC; applied in resolve_scope
+    row_filters: list[RowFilter] = Field(default_factory=list)  # row-level security; rendered in resolve_scope
     publish_destinations: list[str] = Field(default_factory=lambda: ["superset"])
     publish_requires_approval: bool = True  # cannot be disabled in the MVP (enforced in code)
     separation_of_duties: bool = False
@@ -111,11 +136,18 @@ class DataScope(BaseModel):
     max_rows: int = 50_000
     timeout_seconds: int = 30
     policy_version: int = 1
+    # Row filters rendered for this caller ("schema.table" -> predicates in the asset's dialect; RowFilter).
+    # Every read of the asset is wrapped in `SELECT <permitted columns> FROM t WHERE <predicates>`.
+    row_filters: dict[str, list[str]] = Field(default_factory=dict)
+    # Assets a row filter withheld from this caller (a missing attribute: fail closed) -> the reason.
+    withheld_assets: dict[str, str] = Field(default_factory=dict)
 
     def scope_hash(self) -> str:
         from analystos.core.ids import stable_hash
 
-        return stable_hash(self.model_dump())
+        # Empty row-security fields are left out, so a scope without row filters keeps its earlier hash.
+        empty = {k for k in ("row_filters", "withheld_assets") if not getattr(self, k)}
+        return stable_hash(self.model_dump(exclude=empty))
 
 
 class PolicyDecision(BaseModel):

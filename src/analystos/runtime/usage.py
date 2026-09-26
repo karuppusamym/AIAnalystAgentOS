@@ -187,6 +187,13 @@ class DbUsageSink:
                                   f"(spent ${exc.spent:.4f}, this call needs up to ${exc.estimate:.4f}); {purpose} was not "
                                   f"sent to {model}", details=details) from None
         except CountersUnavailable as exc:
+            if getattr(self.counters, "spend_store", "redis") == "postgres":
+                raise SpendCountersUnavailable(
+                    f"spend counters unavailable ({exc}); billable model calls are paused until the spend_counter table "
+                    "is reachable (fail closed)",
+                    details={"purpose": purpose, "model": model, "store": "postgres",
+                             "remedy": "Check Postgres and run `analystos migrate`; deterministic paths continue meanwhile."}
+                ) from None
             raise SpendCountersUnavailable(
                 f"spend counters unavailable ({exc}); billable model calls are paused until Redis is back (fail closed)",
                 details={"purpose": purpose, "model": model,

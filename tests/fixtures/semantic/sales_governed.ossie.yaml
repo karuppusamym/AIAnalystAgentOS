@@ -1,0 +1,171 @@
+# Governed sales model (P7-02): a first-party Ossie 0.1.1 model, checked in CI by
+# `analystos check-semantics tests/fixtures/semantic`. AnalystOS fields (dataset, dimensions, cardinality,
+# validation, pre-aggregations) ride in the COMMON custom extension. Generated from contracts, then kept.
+version: 0.1.1
+semantic_model:
+- name: sales_governed
+  description: 'Hand-authored governed sales model: the check-semantics fixture (ADR-0019).'
+  datasets:
+  - name: orders
+    source: sales.orders
+    primary_key:
+    - order_id
+    description: One row per order.
+    fields:
+    - name: order_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_id
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: customer_id
+    - name: net_amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: net_amount
+    - name: returned
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: returned
+    - name: order_date
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_date
+      dimension:
+        is_time: true
+    - name: channel
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: channel
+      dimension:
+        is_time: false
+    - name: sales_region
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: sales_region
+      dimension:
+        is_time: false
+      label: Sales region
+  - name: customers
+    source: sales.customers
+    primary_key:
+    - customer_id
+    fields:
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: customer_id
+    - name: customer_segment
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: customer_segment
+      dimension:
+        is_time: false
+      label: Segment
+    - name: country
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: country
+      dimension:
+        is_time: false
+  - name: order_lines
+    source: sales.order_lines
+    primary_key:
+    - order_id
+    - line_no
+    fields:
+    - name: order_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_id
+    - name: line_no
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: line_no
+    - name: product
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: product
+      dimension:
+        is_time: false
+    - name: quantity
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: quantity
+  relationships:
+  - name: orders__customers__customer_id
+    from: orders
+    to: customers
+    from_columns:
+    - customer_id
+    to_columns:
+    - customer_id
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"cardinality": "many_to_one", "validated_at": "2026-09-26T12:00:00+00:00", "validated_by": "fixture-reviewer"}}'
+  - name: order_lines__orders__order_id
+    from: order_lines
+    to: orders
+    from_columns:
+    - order_id
+    to_columns:
+    - order_id
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"cardinality": "many_to_one", "validated_at": "2026-09-26T12:00:00+00:00", "validated_by": "fixture-reviewer"}}'
+  metrics:
+  - name: revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(net_amount)
+    ai_context:
+      synonyms:
+      - net revenue
+      - sales
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"dataset": "orders", "dimensions": ["sales_region", "channel", "order_date", "customers.customer_segment",
+        "order_lines.product"], "display_name": "Revenue", "format": "currency", "pre_aggregations": ["order_lines__orders__order_id"]}}'
+  - name: return_rate
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: AVG(CASE WHEN returned THEN 1.0 ELSE 0.0 END)
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"dataset": "orders", "dimensions": ["channel", "sales_region", "customers.customer_segment"],
+        "display_name": "Return rate", "format": "percent"}}'
+  - name: orders_placed
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(*)
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"dataset": "orders", "dimensions": ["channel", "sales_region", "order_date"], "display_name":
+        "Orders"}}'
+  - name: customers_buying
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(DISTINCT customer_id)
+    custom_extensions:
+    - vendor_name: COMMON
+      data: '{"analystos": {"dataset": "orders", "dimensions": ["order_lines.product", "sales_region"], "display_name": "Buying
+        customers"}}'

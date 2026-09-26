@@ -28,6 +28,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
+from analystos.security.injection import is_injection
 
 TableRole = Literal["fact", "dimension", "bridge", "event", "reference", "staging", "audit", "unknown"]
 ColumnRole = Literal["identifier", "foreign_key", "measure", "dimension", "timestamp", "date", "flag", "code", "name",
@@ -1017,13 +1018,6 @@ def needs_enrichment(table: TableSemantics, *, existing_description: str | None,
     return table.confidence < ENRICH_CONFIDENCE or table.role == "unknown" or not table.description
 
 
-_INJECTION = re.compile(
-    r"(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+|these\s+)*(previous|prior|above|earlier|"
-    r"preceding|system|safety)?\s*(instructions?|prompts?|rules?|messages?|context|directions?)"
-    r"|system\s*prompt|you\s+are\s+now|act\s+as\s|pretend\s+(to\s+be|you)|jailbreak|developer\s+mode"
-    r"|new\s+instructions?|do\s+anything\s+now|<\|[^|]*\|>|\b(assistant|system|user)\s*:"
-    r"|\bbegin\s+(prompt|instructions)|\bexfiltrat|\bexecute\s+(this|the\s+following)",
-    re.I)
 _URL = re.compile(r"(https?://|ftp://|www\.)\S+|\b[\w.-]+\.(com|net|org|io|ai|xyz|ru|cn)/\S*", re.I)
 _FENCE = re.compile(r"```.*?(```|$)|~~~.*?(~~~|$)", re.S)
 _TAGS = re.compile(r"<\s*/?\s*(script|style|iframe|img|a|system|instructions?)\b[^>]*>", re.I)
@@ -1031,9 +1025,9 @@ _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏ -‮⁠-⁤﻿]")
 
 
 def has_injection(s: str | None) -> bool:
-    """True when untrusted text contains an instruction-to-the-model pattern (the same test
-    `screen_text` uses to drop a sentence), so a caller can refuse the text rather than trim it."""
-    return bool(s) and bool(_INJECTION.search(_CTRL.sub(" ", str(s))))
+    """True when untrusted text reads like an instruction to a model (``security/injection.py``, the
+    same test `screen_text` uses to drop a sentence), so a caller can refuse the text rather than trim it."""
+    return bool(s) and is_injection(str(s))
 
 
 def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
@@ -1042,12 +1036,15 @@ def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
     cap the length. Names and comments are untrusted data from the source system."""
     if not s:
         return ""
-    t = _CTRL.sub(" ", str(s))
+    # Screen the raw text: invisible characters, URLs and markup are evidence the detector reads.
+    sentences = re.split(r"(?<=[.!?;\n])\s+", str(s))
+    kept = [x for x in sentences if not is_injection(x)]
+    if len(kept) == len(sentences) and is_injection(str(s)):
+        kept = []  # an instruction spread over several sentences or lines: nothing of it is kept
+    t = _CTRL.sub(" ", " ".join(kept))
     t = _FENCE.sub(" ", t)
     t = _TAGS.sub(" ", t)
     t = _URL.sub(" ", t)
-    sentences = re.split(r"(?<=[.!?;\n])\s+", t)
-    t = " ".join(x for x in sentences if not _INJECTION.search(x))
     t = re.sub(r"`+", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     if len(t) > max_chars:

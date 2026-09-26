@@ -14,3 +14,4 @@ web/dist/
 .DS_Store
 .claude/worktrees/
 /dist/
+/eval-gates/

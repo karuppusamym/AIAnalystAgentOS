@@ -31,7 +31,8 @@ class BackendStateIn(BaseModel):
 
 
 class FindingOutcomeIn(BaseModel):
-    signal: Literal["accept", "dismiss"]
+    signal: Literal["accept", "dismiss", "wrong"]
+    reason: str | None = None  # required for "wrong" (P7-01): stored with the verdict, feeds negative knowledge
 
 
 class CorrectionIn(BaseModel):
@@ -67,19 +68,32 @@ def set_backend_state(purpose: str, backend: str, body: BackendStateIn, admin: U
 
 @router.post("/insights/{insight_id}/outcome")
 def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    """Accept or dismiss a finding (a rejection goes through run feedback, which also replans)."""
+    """Accept, dismiss or flag a finding wrong (a rejection that replans goes through run feedback).
+    Flagging *wrong* needs a reason: it is stored with the verification record and becomes a Negative
+    Knowledge draft (ADR-0020 presentation rules)."""
     ins = load_in_workspace(session, Insight, insight_id, user=user, minimum="analyst", label="insight")
-    labelled = calibration.record_signal(session, f"finding.{body.signal}", f"insight:{ins.id}", user_id=user.id,
+    flag = None
+    if body.signal == "wrong":
+        from analystos.evidence.verification import flag_wrong
+
+        flag = flag_wrong(session, ins, user_id=user.id, reason=body.reason)  # InvalidInput without a reason
+    signal = "reject" if body.signal == "wrong" else body.signal
+    labelled = calibration.record_signal(session, f"finding.{signal}", f"insight:{ins.id}", user_id=user.id,
                                          workspace_id=ins.workspace_id)
     audit(f"user:{user.id}", f"insight.{body.signal}", workspace_id=ins.workspace_id, run_id=ins.run_id, target=ins.id,
-          session=session)
+          reasons=[flag["reason"]] if flag else None, session=session)
     draft = None
     if body.signal == "accept":  # P4-K08: an accepted, verified finding becomes a draft Attested Computation
         from analystos.knowledge.learning import draft_from_finding
 
         draft = draft_from_finding(session, ins, user_id=user.id)
+    elif flag is not None:
+        from analystos.knowledge.learning import draft_from_flag
+
+        draft = draft_from_flag(session, ins, reason=flag["reason"], user_id=user.id)
     return {"insight": ins.id, "signal": body.signal, "labelled_decisions": labelled,
-            "knowledge_draft": draft.id if draft is not None else None}
+            "knowledge_draft": draft.id if draft is not None else None,
+            **({"flag": flag} if flag is not None else {})}
 
 
 @router.post("/feedback/{feedback_id}/correct")

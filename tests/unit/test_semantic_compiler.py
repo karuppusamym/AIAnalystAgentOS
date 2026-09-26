@@ -76,10 +76,17 @@ def test_unsupported_or_unsafe_definitions_refused(catalog, scope, change):
         compile_query(query, catalog, scope)
 
 
-def test_restricted_column_still_refused_by_gateway(catalog, scope):
+def test_restricted_column_refused_in_the_compiler_and_still_by_gateway(catalog, scope):
+    """P7-02: a restricted column masks its field in the compiler (refused before any SQL is built); a
+    hand-written statement over it is still refused by the gateway."""
+    from analystos.core.errors import PolicyDenied
+    from analystos.gateway.validator import validate_sql
+
     scope.denied_columns = ["sales.orders.amount"]
-    with pytest.raises(SQLRejected):
+    with pytest.raises(PolicyDenied, match="masked"):
         compile_query(SemanticQuery(metrics=["revenue"]), catalog, scope)
+    with pytest.raises(SQLRejected):
+        validate_sql(scope, "SELECT SUM(amount) FROM sales.orders", max_rows=10)
 
 
 def test_different_metric_populations_cannot_be_combined(catalog, scope):

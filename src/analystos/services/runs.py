@@ -29,16 +29,59 @@ TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
 
 
 def create_run(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
-               autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None) -> AnalysisRun:
-    """`playbook` names a Playbook capability (default playbook.investigate); it must exist now, and
-    enablement and certification are checked when the plan binds it."""
-    if playbook is not None:
-        from analystos.capabilities import registry
+               autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None,
+               definition: dict | str | None = None, pins: dict | None = None) -> AnalysisRun:
+    """`playbook` names a Playbook capability (default playbook.investigate) or a workspace playbook
+    definition key; `definition` names an exact version ({key, version} or a definition id). Either
+    must be runnable now (published; a draft only in a dev workspace; never retired), and enablement
+    and certification are checked when the plan binds it. `pins` (a schedule fire) freezes the
+    manifests, semantic versions and AnalysisSpecs the run binds (ADR-0021)."""
+    return start_run_request(user, workspace_id, objective=objective, source_ids=source_ids, autonomy_level=autonomy_level,
+                             origin=origin, playbook=playbook, definition=definition, pins=pins)[0]
 
-        if registry.current().get(playbook).kind != "Playbook":
+
+def _capabilities(s, workspace_id: str, *, playbook: str | None, definition: dict | str | None, pins: dict | None,
+                  trigger: str) -> dict:
+    from analystos.capabilities import registry
+    from analystos.services import definitions
+
+    if pins:
+        keep = ("revision", "schedule_id", "baseline_run_id", "manifests", "semantic", "methods", "analyses")
+        return {"playbook": pins.get("playbook") or "playbook.investigate", "definition": pins.get("definition") or {},
+                "pinned": {k: pins[k] for k in keep if pins.get(k) is not None}}
+    if definition is None and playbook is not None:
+        manifest = registry.current().manifests.get(playbook)
+        if manifest is not None and manifest.kind != "Playbook":
             raise InvalidInput(f"{playbook} is not a playbook")
+        definition = {"key": playbook}
+    if definition is None:
+        return {}
+    ref, spec = definitions.resolve_runnable(s, workspace_id, definition, trigger=trigger)
+    if ref.kind != "playbook":
+        raise InvalidInput(f"a {ref.kind} definition is not started as an analysis run")
+    if ref.source == "workspace":
+        return {"playbook": ref.key, "definition": {**ref.model_dump(), "manifest": spec, "dev": ref.status == "draft"}}
+    return {"playbook": ref.key, "definition": ref.model_dump()}
+
+
+def start_run_request(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
+                      autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None,
+                      definition: dict | str | None = None, pins: dict | None = None,
+                      idempotency: Any = None) -> tuple[AnalysisRun, bool]:
+    """Create a run and its dispatch-outbox row in one transaction (P4-06), then dispatch best-effort;
+    the outbox relay retries whatever did not go out. With an idempotency key the claim is part of the
+    same transaction: a duplicate returns the original run (`True` = replayed)."""
+    from analystos.services import dispatch
+    from analystos.services.idempotency import begin_in, complete_in
+
     with session_scope() as s:
-        require_role(s, user, workspace_id, "analyst")
+        require_role(s, user, workspace_id, "analyst")  # a replay is re-authorized too
+        if idempotency is not None and (replay := begin_in(s, idempotency)) is not None:
+            run = s.get(AnalysisRun, replay.resource_id)
+            if run is None or run.workspace_id != workspace_id:
+                raise NotFound("the run this Idempotency-Key created no longer exists")
+            s.expunge(run)
+            return run, True
         ws = get_workspace(s, workspace_id)
         objective = (objective or ws.objective or "").strip()
         if len(objective) < 10:
@@ -54,22 +97,29 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
         decision = evaluate(s, s.merge(user), identity, "run_analysis", autonomy_level=level)
         if decision.decision == "deny":
             raise PolicyDenied("analysis run denied: " + ", ".join(decision.reasons))
+        origin = origin or {"type": "user"}
+        caps = _capabilities(s, workspace_id, playbook=playbook, definition=definition, pins=pins,
+                             trigger=str(origin.get("type") or "api"))
         run = AnalysisRun(id=new_id("run"), workspace_id=workspace_id, objective=objective, status="NEW", autonomy_level=level,
                           policy_version=ws.policy_version, requested_by=user.id,
                           scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={},
-                          origin=origin or {"type": "user"}, capabilities={"playbook": playbook} if playbook else {})
+                          origin=origin, capabilities=caps)
         s.add(run)
         s.flush()
         emit(workspace_id, "run.created", {"objective": objective, "autonomy_level": level, "assets": scope.assets,
-                                           "policy": decision.model_dump()}, run_id=run.id, actor=f"user:{user.id}", session=s)
+                                           "policy": decision.model_dump(),
+                                           **({"definition": {k: v for k, v in caps["definition"].items() if k != "manifest"}}
+                                              if caps.get("definition") else {})},
+             run_id=run.id, actor=f"user:{user.id}", session=s)
+        outbox_id = dispatch.enqueue(s, run).id
+        if idempotency is not None:
+            complete_in(s, idempotency, response={"run_id": run.id}, resource_type="analysis_run", resource_id=run.id)
         run_id = run.id
-    wf = start_run(run_id)
+    dispatch.dispatch(outbox_id)  # best effort: a failure stays pending for the relay
     with session_scope() as s:
         run = s.get(AnalysisRun, run_id)
-        run.workflow_id = wf
-        s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
-    return run
+    return run, False
 
 
 @scoped_loader
@@ -314,6 +364,9 @@ def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = No
             ins = s.get(Insight, target_id)
             if ins is None or ins.run_id != run.id:
                 raise NotFound("insight not found in this run")
+            from analystos.evidence.verification import flag_wrong
+
+            flag_wrong(s, ins, user_id=user.id, reason=text)  # P7-01: a rejection needs its reason, kept on the record
             ins.status = "rejected"
             from analystos.decisions.calibration import record_signal
 

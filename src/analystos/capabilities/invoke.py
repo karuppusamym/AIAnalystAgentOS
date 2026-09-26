@@ -87,7 +87,25 @@ def schema_errors(m: CapabilityManifest, arguments: dict[str, Any]) -> list[dict
 
 
 def executable(m: CapabilityManifest) -> bool:
+    if is_http_tool(m):
+        return True
     return m.kind in EXECUTABLE_KINDS and m.spec.get("call") == "context" and (m.entry or "").startswith("python:")
+
+
+def is_http_tool(m: CapabilityManifest) -> bool:
+    """P7-11: a Tool whose entry is ``http:<name>`` and whose ``spec.http`` names the URL and method."""
+    return m.kind == "Tool" and (m.entry or "").startswith("http:")
+
+
+def _http_entry(m: CapabilityManifest) -> Any:
+    from analystos.tools import http as outbound
+
+    outbound.http_spec(m)  # refuses a malformed spec before any approval is requested or consumed
+
+    def run(ctx: InvokeContext, **arguments: Any) -> dict[str, Any]:
+        return outbound.invoke_manifest(m, arguments)
+
+    return run
 
 
 def payload_for(m: CapabilityManifest, arguments: dict[str, Any], requested_by: str) -> dict[str, Any]:
@@ -101,7 +119,7 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
     from analystos.contracts.registry import AgentPolicies, AgentSpec
     from analystos.db.models import Approval
     from analystos.events.bus import emit
-    from analystos.governance.approvals import request_approval, verify_for_execution
+    from analystos.governance.approvals import consume, request_approval, verify_for_execution
     from analystos.governance.audit import audit
     from analystos.governance.policy import get_workspace, load_policy, require_role, resolve_scope
     from analystos.runtime.context import default_services
@@ -147,7 +165,7 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
                         capability=m.ref)
     # Everything that can refuse runs before an approval is requested or consumed: a gate denial or an
     # unresolvable entry must not burn a single-use approval.
-    fn = registry.resolve_entry(m)
+    fn = _http_entry(m) if is_http_tool(m) else registry.resolve_entry(m)
     gate = m.spec.get("tool")
     if gate:
         ctx.tools().authorize(gate, {"capability": m.ref, **arguments}, bound=False)
@@ -170,7 +188,7 @@ def invoke(user: Any, workspace_id: str, capability_id: str, arguments: dict[str
                       details={"approval_id": approval_id})  # own transaction: survives the refusal
                 raise PolicyDenied("this approval was requested by another user; request your own")
             verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-            apr.status = "executed"  # single use: consumed immediately before the side effect, never replayable
+            consume(s, apr)  # single use (compare-and-set): consumed immediately before the side effect
     result = fn(ctx, **arguments)
     with session_scope() as s:
         audit(f"user:{user.id}", "capability.invoked", workspace_id=workspace_id, target=m.ref,

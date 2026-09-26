@@ -1,0 +1,1042 @@
+{
+  "$defs": {
+    "AggregateNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "aggregate",
+          "default": "aggregate",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "measures": {
+          "items": {
+            "$ref": "#/$defs/Measure"
+          },
+          "title": "Measures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "measures"
+      ],
+      "title": "AggregateNode",
+      "type": "object"
+    },
+    "CastNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "cast",
+          "default": "cast",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "casts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Casts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "casts"
+      ],
+      "title": "CastNode",
+      "type": "object"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "Column",
+      "type": "object"
+    },
+    "DedupeNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "dedupe",
+          "default": "dedupe",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "order": {
+          "items": {
+            "$ref": "#/$defs/OrderKey"
+          },
+          "title": "Order",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "keys"
+      ],
+      "title": "DedupeNode",
+      "type": "object"
+    },
+    "Derivation": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "expr": {
+          "title": "Expr",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "expr",
+        "type"
+      ],
+      "title": "Derivation",
+      "type": "object"
+    },
+    "DeriveNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "derive",
+          "default": "derive",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/Derivation"
+          },
+          "title": "Columns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "columns"
+      ],
+      "title": "DeriveNode",
+      "type": "object"
+    },
+    "FilterNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "filter",
+          "default": "filter",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "predicate"
+      ],
+      "title": "FilterNode",
+      "type": "object"
+    },
+    "Gate": {
+      "additionalProperties": false,
+      "description": "A data-quality gate on an output (P6-05). Row gates (not_null, unique, accepted_values, range)\nmay `drop` failing rows into quarantine; table gates (row_count_delta) may only fail or warn.",
+      "properties": {
+        "type": {
+          "enum": [
+            "not_null",
+            "unique",
+            "accepted_values",
+            "range",
+            "row_count_delta"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "severity": {
+          "default": "fail",
+          "enum": [
+            "fail",
+            "warn",
+            "drop"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "values": {
+          "items": {},
+          "title": "Values",
+          "type": "array"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max"
+        },
+        "allow_null": {
+          "default": true,
+          "title": "Allow Null",
+          "type": "boolean"
+        },
+        "max_change_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Change Pct"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Gate",
+      "type": "object"
+    },
+    "JoinKey": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "title": "Left",
+          "type": "string"
+        },
+        "right": {
+          "title": "Right",
+          "type": "string"
+        }
+      },
+      "required": [
+        "left",
+        "right"
+      ],
+      "title": "JoinKey",
+      "type": "object"
+    },
+    "JoinNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "join",
+          "default": "join",
+          "title": "Op",
+          "type": "string"
+        },
+        "left": {
+          "title": "Left",
+          "type": "string"
+        },
+        "right": {
+          "title": "Right",
+          "type": "string"
+        },
+        "how": {
+          "default": "inner",
+          "enum": [
+            "inner",
+            "left"
+          ],
+          "title": "How",
+          "type": "string"
+        },
+        "on": {
+          "items": {
+            "$ref": "#/$defs/JoinKey"
+          },
+          "title": "On",
+          "type": "array"
+        },
+        "expected_cardinality": {
+          "enum": [
+            "one_to_one",
+            "many_to_one",
+            "one_to_many",
+            "many_to_many"
+          ],
+          "title": "Expected Cardinality",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "left",
+        "right",
+        "on",
+        "expected_cardinality"
+      ],
+      "title": "JoinNode",
+      "type": "object"
+    },
+    "Measure": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "func": {
+          "enum": [
+            "count",
+            "count_distinct",
+            "sum",
+            "avg",
+            "min",
+            "max"
+          ],
+          "title": "Func",
+          "type": "string"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "func",
+        "type"
+      ],
+      "title": "Measure",
+      "type": "object"
+    },
+    "OrderKey": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "desc": {
+          "default": false,
+          "title": "Desc",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "OrderKey",
+      "type": "object"
+    },
+    "OutputNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "output",
+          "default": "output",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "grain": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Grain",
+          "type": "array"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/Gate"
+          },
+          "title": "Gates",
+          "type": "array"
+        },
+        "schema_policy": {
+          "default": "warn",
+          "enum": [
+            "evolve",
+            "warn",
+            "strict"
+          ],
+          "title": "Schema Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "name"
+      ],
+      "title": "OutputNode",
+      "type": "object"
+    },
+    "RenameNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "rename",
+          "default": "rename",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "mapping": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Mapping",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "mapping"
+      ],
+      "title": "RenameNode",
+      "type": "object"
+    },
+    "SelectNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "select",
+          "default": "select",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "columns"
+      ],
+      "title": "SelectNode",
+      "type": "object"
+    },
+    "SourceNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "source",
+          "default": "source",
+          "title": "Op",
+          "type": "string"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot"
+        }
+      },
+      "required": [
+        "id",
+        "asset"
+      ],
+      "title": "SourceNode",
+      "type": "object"
+    },
+    "UnionNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "union",
+          "default": "union",
+          "title": "Op",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Inputs",
+          "type": "array"
+        },
+        "distinct": {
+          "default": false,
+          "title": "Distinct",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "inputs"
+      ],
+      "title": "UnionNode",
+      "type": "object"
+    },
+    "WindowColumn": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "func": {
+          "enum": [
+            "row_number",
+            "rank",
+            "dense_rank",
+            "lag",
+            "lead",
+            "sum",
+            "avg",
+            "min",
+            "max",
+            "count"
+          ],
+          "title": "Func",
+          "type": "string"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        },
+        "offset": {
+          "default": 1,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "partition_by": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Partition By",
+          "type": "array"
+        },
+        "order_by": {
+          "items": {
+            "$ref": "#/$defs/OrderKey"
+          },
+          "title": "Order By",
+          "type": "array"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "func",
+        "type"
+      ],
+      "title": "WindowColumn",
+      "type": "object"
+    },
+    "WindowNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Column"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "op": {
+          "const": "window",
+          "default": "window",
+          "title": "Op",
+          "type": "string"
+        },
+        "input": {
+          "title": "Input",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/WindowColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "columns"
+      ],
+      "title": "WindowNode",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "Recipe",
+      "default": "Recipe",
+      "title": "Kind",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "aggregate": "#/$defs/AggregateNode",
+            "cast": "#/$defs/CastNode",
+            "dedupe": "#/$defs/DedupeNode",
+            "derive": "#/$defs/DeriveNode",
+            "filter": "#/$defs/FilterNode",
+            "join": "#/$defs/JoinNode",
+            "output": "#/$defs/OutputNode",
+            "rename": "#/$defs/RenameNode",
+            "select": "#/$defs/SelectNode",
+            "source": "#/$defs/SourceNode",
+            "union": "#/$defs/UnionNode",
+            "window": "#/$defs/WindowNode"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SourceNode"
+          },
+          {
+            "$ref": "#/$defs/SelectNode"
+          },
+          {
+            "$ref": "#/$defs/FilterNode"
+          },
+          {
+            "$ref": "#/$defs/CastNode"
+          },
+          {
+            "$ref": "#/$defs/DeriveNode"
+          },
+          {
+            "$ref": "#/$defs/RenameNode"
+          },
+          {
+            "$ref": "#/$defs/DedupeNode"
+          },
+          {
+            "$ref": "#/$defs/JoinNode"
+          },
+          {
+            "$ref": "#/$defs/AggregateNode"
+          },
+          {
+            "$ref": "#/$defs/WindowNode"
+          },
+          {
+            "$ref": "#/$defs/UnionNode"
+          },
+          {
+            "$ref": "#/$defs/OutputNode"
+          }
+        ]
+      },
+      "minItems": 2,
+      "title": "Nodes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "nodes"
+  ],
+  "title": "Recipe",
+  "type": "object"
+}

@@ -1,0 +1,453 @@
+{
+  "origin": "AIDataAnalyst@8b48fd9cf1d5ff1fcf4c05968f11b973b1cf9fdb:tests/fixtures/adversarial_sql_corpus",
+  "checked_by": "tests/unit/test_gateway_corpus.py",
+  "rule": "every case is rejected with the listed reason code, except SELECT * (accepted by policy)",
+  "cases": {
+    "bigquery:bigquery-dialect_specific-unauthorized-udf-under-safe-prefix": {
+      "outcome": "rejected",
+      "code": "UNAUTHORIZED_FUNCTION"
+    },
+    "bigquery:bigquery-stacked_statement-stacked-ddl": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "bigquery:bigquery-stacked_statement-stacked-benign-looking": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "bigquery:bigquery-mutating_statement-delete": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "bigquery:bigquery-ddl_statement-drop-table": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "bigquery:bigquery-select_into-select-into": {
+      "outcome": "rejected",
+      "code": "SELECT_INTO_FORBIDDEN"
+    },
+    "bigquery:bigquery-wildcard_projection-star": {
+      "outcome": "accepted",
+      "policy": "star expansion: the gateway rewrites SELECT * to the authorized, non-denied columns of the scope (a denied column makes it a rejection)"
+    },
+    "bigquery:bigquery-unbounded_join-comma-join": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "bigquery:bigquery-unbounded_join-tautological-on-true": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "bigquery:bigquery-unbounded_join-tautological-on-1-eq-1": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "bigquery:bigquery-cte_trick-cte-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "bigquery:bigquery-subquery_trick-correlated-scalar-subquery": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "bigquery:bigquery-dialect_specific-forbidden-export-data": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "bigquery:bigquery-dialect_specific-forbidden-execute-immediate": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "bigquery:bigquery-dialect_specific-forbidden-external-query": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "bigquery:bigquery-dialect_specific-table-valued-ml-predict-unauthorized": {
+      "outcome": "rejected",
+      "code": "TABLE_VALUED_SOURCE_FORBIDDEN"
+    },
+    "bigquery:bigquery-dialect_specific-union-all-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "oracle:oracle-dialect_specific-unauthorized-package-function": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-stacked_statement-stacked-ddl": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-stacked_statement-stacked-benign-looking": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-mutating_statement-delete": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-ddl_statement-drop-table": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-select_into-select-into": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-wildcard_projection-star": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-unbounded_join-comma-join": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-unbounded_join-tautological-on-true": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-unbounded_join-tautological-on-1-eq-1": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-locking_read-for-update": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-cte_trick-cte-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-subquery_trick-correlated-scalar-subquery": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-comment_based_injection-block-comment-union": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-second_order_literal_injection-quoted-payload-in-literal": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-union_exfiltration-union-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-utl-http": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-dbms-lock-sleep": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-sys-qualified": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-utl-file": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-utl-tcp": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "oracle:oracle-dialect_specific-package-dbms-scheduler": {
+      "outcome": "rejected",
+      "code": "UNSUPPORTED_DIALECT",
+      "note": "oracle is not a gateway dialect; the source kind cannot be registered for pushdown"
+    },
+    "postgres:postgres-dialect_specific-unauthorized-udf-unqualified": {
+      "outcome": "rejected",
+      "code": "UNAUTHORIZED_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-unauthorized-udf-schema-qualified": {
+      "outcome": "rejected",
+      "code": "UNAUTHORIZED_FUNCTION"
+    },
+    "postgres:postgres-stacked_statement-stacked-ddl": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "postgres:postgres-stacked_statement-stacked-benign-looking": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "postgres:postgres-mutating_statement-delete": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "postgres:postgres-ddl_statement-drop-table": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "postgres:postgres-select_into-select-into": {
+      "outcome": "rejected",
+      "code": "SELECT_INTO_FORBIDDEN"
+    },
+    "postgres:postgres-wildcard_projection-star": {
+      "outcome": "accepted",
+      "policy": "star expansion: the gateway rewrites SELECT * to the authorized, non-denied columns of the scope (a denied column makes it a rejection)"
+    },
+    "postgres:postgres-unbounded_join-comma-join": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "postgres:postgres-unbounded_join-tautological-on-true": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "postgres:postgres-unbounded_join-tautological-on-1-eq-1": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "postgres:postgres-locking_read-for-update": {
+      "outcome": "rejected",
+      "code": "LOCKING_READ_FORBIDDEN"
+    },
+    "postgres:postgres-union_exfiltration-union-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "postgres:postgres-cte_trick-cte-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "postgres:postgres-subquery_trick-correlated-scalar-subquery": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "postgres:postgres-comment_based_injection-block-comment-union": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "postgres:postgres-second_order_literal_injection-quoted-payload-in-literal": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "postgres:postgres-dialect_specific-forbidden-pg-sleep": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-forbidden-dblink-connect": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-forbidden-dblink-exfil": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-forbidden-pg-read-file": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-forbidden-lo-export": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "postgres:postgres-dialect_specific-forbidden-copy-to-file": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "postgres:postgres-dialect_specific-forbidden-pg-terminate-backend": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "snowflake:snowflake-dialect_specific-unauthorized-udf-unqualified": {
+      "outcome": "rejected",
+      "code": "UNAUTHORIZED_FUNCTION"
+    },
+    "snowflake:snowflake-stacked_statement-stacked-ddl": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "snowflake:snowflake-stacked_statement-stacked-benign-looking": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "snowflake:snowflake-mutating_statement-delete": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "snowflake:snowflake-ddl_statement-drop-table": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "snowflake:snowflake-select_into-select-into": {
+      "outcome": "rejected",
+      "code": "SELECT_INTO_FORBIDDEN"
+    },
+    "snowflake:snowflake-wildcard_projection-star": {
+      "outcome": "accepted",
+      "policy": "star expansion: the gateway rewrites SELECT * to the authorized, non-denied columns of the scope (a denied column makes it a rejection)"
+    },
+    "snowflake:snowflake-unbounded_join-comma-join": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "snowflake:snowflake-unbounded_join-tautological-on-true": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "snowflake:snowflake-unbounded_join-tautological-on-1-eq-1": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "snowflake:snowflake-locking_read-for-update": {
+      "outcome": "rejected",
+      "code": "LOCKING_READ_FORBIDDEN"
+    },
+    "snowflake:snowflake-union_exfiltration-union-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "snowflake:snowflake-cte_trick-cte-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "snowflake:snowflake-subquery_trick-correlated-scalar-subquery": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "snowflake:snowflake-comment_based_injection-block-comment-union": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "snowflake:snowflake-second_order_literal_injection-quoted-payload-in-literal": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "snowflake:snowflake-dialect_specific-forbidden-system-wait": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "snowflake:snowflake-dialect_specific-forbidden-system-abort-session": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "snowflake:snowflake-dialect_specific-table-valued-query-history": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "snowflake:snowflake-dialect_specific-forbidden-copy-into-stage": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "snowflake:snowflake-dialect_specific-forbidden-execute-immediate": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "tsql:tsql-dialect_specific-unauthorized-udf-schema-qualified": {
+      "outcome": "rejected",
+      "code": "UNAUTHORIZED_FUNCTION"
+    },
+    "tsql:tsql-stacked_statement-stacked-ddl": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "tsql:tsql-stacked_statement-stacked-benign-looking": {
+      "outcome": "rejected",
+      "code": "EXACTLY_ONE_STATEMENT_REQUIRED"
+    },
+    "tsql:tsql-mutating_statement-delete": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "tsql:tsql-ddl_statement-drop-table": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "tsql:tsql-select_into-select-into": {
+      "outcome": "rejected",
+      "code": "SELECT_INTO_FORBIDDEN"
+    },
+    "tsql:tsql-wildcard_projection-star": {
+      "outcome": "accepted",
+      "policy": "star expansion: the gateway rewrites SELECT * to the authorized, non-denied columns of the scope (a denied column makes it a rejection)"
+    },
+    "tsql:tsql-unbounded_join-comma-join": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "tsql:tsql-unbounded_join-tautological-on-true": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "tsql:tsql-unbounded_join-tautological-on-1-eq-1": {
+      "outcome": "rejected",
+      "code": "CROSS_OR_UNBOUNDED_JOIN_FORBIDDEN"
+    },
+    "tsql:tsql-locking_read-updlock-hint": {
+      "outcome": "rejected",
+      "code": "LOCKING_READ_FORBIDDEN"
+    },
+    "tsql:tsql-cte_trick-cte-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "tsql:tsql-subquery_trick-correlated-scalar-subquery": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "tsql:tsql-comment_based_injection-block-comment-union": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "tsql:tsql-second_order_literal_injection-quoted-payload-in-literal": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "tsql:tsql-union_exfiltration-union-unauthorized-table": {
+      "outcome": "rejected",
+      "code": "UNKNOWN_OR_UNAUTHORIZED_TABLE"
+    },
+    "tsql:tsql-dialect_specific-forbidden-xp-cmdshell-function": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "tsql:tsql-dialect_specific-table-valued-openquery": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "tsql:tsql-dialect_specific-table-valued-openrowset": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "tsql:tsql-dialect_specific-forbidden-sp-executesql": {
+      "outcome": "rejected",
+      "code": "FORBIDDEN_FUNCTION"
+    },
+    "tsql:tsql-dialect_specific-forbidden-exec-sp-configure": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    },
+    "tsql:tsql-dialect_specific-forbidden-exec-xp-cmdshell": {
+      "outcome": "rejected",
+      "code": "READ_ONLY_QUERY_REQUIRED"
+    }
+  }
+}

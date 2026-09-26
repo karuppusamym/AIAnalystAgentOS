@@ -32,11 +32,11 @@ NOW = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 def test_pinned_schema_files_match_their_provenance():
     prov = yaml.safe_load((SCHEMA_DIR / "PROVENANCE.yaml").read_text())
     pinned = {k: v for k, v in prov.items() if isinstance(v, dict) and "sha256" in v}
-    assert len(pinned) == 7
+    assert len(pinned) == 8
     for rel, meta in pinned.items():
         assert hashlib.sha256((SCHEMA_DIR / rel).read_bytes()).hexdigest() == meta["sha256"], rel
     assert set(facet_schema_urls()) == {"SQLJobFacet", "JobTypeJobFacet", "SchemaDatasetFacet", "ParentRunFacet",
-                                        "ErrorMessageRunFacet"}
+                                        "ErrorMessageRunFacet", "ColumnLineageDatasetFacet"}
 
 
 # ------------------------------------------------------------------------------------ ODCS
