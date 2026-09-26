@@ -52,3 +52,19 @@ def test_off_tier_is_the_no_model_floor(control_db):
     # is not served from the registry: no confident wrong answer, and the registry's own phrasings still answer.
     assert o["confident_wrong"] == 0, [x.id for x in r.outcomes if x.confident_wrong]
     assert o["by_tag"]["registry_exact"]["accuracy"] == 1.0 and o["by_tag"]["parameter"]["accuracy"] == 1.0
+
+
+def test_governed_slice_compiles_identical_sql_and_never_mislabels(control_db):
+    """P7-02: each governed question is answered from the approved model version (labelled governed), its
+    SQL is exactly the compiler's for the labelled query, its rows match the gold SQL, and asking again
+    gives the same SQL; questions the model cannot express are never labelled governed. No model call."""
+    from evaluation.ask_governed import run_governed
+
+    r = run_governed("off")
+    s = r.summary
+    failed = [(o.id, o.governance, o.sql_equivalent, o.match, o.match_note, o.deterministic, o.error)
+              for o in r.outcomes if not o.passed]
+    assert not failed, failed
+    assert s["governed_items"] >= 15 and s["errors"] == 0 and s["false_governed"] == 0
+    assert s["governed_rate"] == s["sql_equivalence"] == s["execution_accuracy"] == s["deterministic"] == 1.0
+    assert s["model_calls"] == 0

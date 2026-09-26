@@ -96,6 +96,10 @@ ladders:
   hypothesis_generation: [cache, registry, rules, llm_large]
   follow_up_generation: [cache, rules, llm_large]
   sql_generation: [cache, registry, llm_large]
+  # P7-02 (ADR-0019): choose a SemanticQuery (names only) for a governed question; the rules rung is an exact
+  # metric / display name / glossary-synonym match, the model only when no rule matched and the question names
+  # a metric word. The compiler validates whatever is chosen; a model never writes this path's SQL.
+  semantic_query: [cache, rules, llm_small]
   sql_repair: [cache, llm_large]
   statistical_interpretation: [cache, llm_large]
   insight_narrative: [cache, rules, llm_small]
@@ -125,6 +129,7 @@ routing:
   hypothesis_generation: analytical_reasoning
   follow_up_generation: analytical_reasoning
   sql_generation: coding
+  semantic_query: low_cost
   sql_repair: coding
   statistical_interpretation: analytical_reasoning
   insight_narrative: low_cost
@@ -162,6 +167,7 @@ escalation:
     dashboard_design: never
     summarization: never
     health_probe: never
+    semantic_query: never       # a refused or invalid choice falls through to the labelled ad-hoc path
 
 # DecisionService (ADR-0015, spec v3 §5). Every decision purpose declares its authority class, its
 # backends in order, a timeout and (through `rules`) a deterministic fallback. Backends: jev | rules |

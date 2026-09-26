@@ -189,8 +189,8 @@ def test_approving_a_new_metric_version_voids_the_verdict(db, monkeypatch):
     with db() as s:
         _, rec = _insight(s)
         s.add(SemanticMetric(id="smet_2", workspace_id=WS, name="missed_sla_rate", version=2, status="proposed",
-                             definition={"name": "missed_sla_rate", "expressions": [{"dialect": "ANSI_SQL", "expression": "y"}]},
-                             expression="y", normalized_expression="y", proposed_by="u_owner", proposed_via="user",
+                             definition={"name": "missed_sla_rate", "expressions": [{"dialect": "ANSI_SQL", "expression": "AVG(y)"}]},
+                             expression="AVG(y)", normalized_expression="avg(y)", proposed_by="u_owner", proposed_via="user",
                              content_hash="m2", approval_id="apr_2"))
         s.add(Approval(id="apr_2", workspace_id=WS, action=semantic.APPROVAL_ACTION, payload={}, payload_hash="p",
                        policy_version=0, requested_by="u_owner", status="approved", decided_by="u_approver",

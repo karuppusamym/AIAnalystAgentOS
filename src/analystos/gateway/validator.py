@@ -166,6 +166,17 @@ class _AssetIndex:
         )
 
 
+def _withheld(scope: DataScope, table: exp.Table) -> str | None:
+    if not scope.withheld_assets:
+        return None
+    name, db = table.name.lower(), (table.db or "").lower()
+    for asset, reason in scope.withheld_assets.items():
+        schema_name, table_name = asset.lower().split(".", 1)
+        if table_name == name and db in ("", schema_name):
+            return reason
+    return None
+
+
 def _is_denied(column_key: str, denied: set[str], denied_any: set[str]) -> bool:
     lowered = column_key.lower()
     return lowered in denied or lowered.rsplit(".", 1)[-1] in denied_any
@@ -564,15 +575,30 @@ def _validate_in_dialect(
     index = _AssetIndex.build(scope.assets, dialect)
     default_source = scope.source_ids[0] if len(set(scope.source_ids)) == 1 else None
     referenced: list[str] = []
+    resolved: list[tuple[exp.Table, str]] = []
     for table in tables:
-        asset = index.resolve(table)
+        try:
+            asset = index.resolve(table)
+        except SQLRejected:
+            withheld = _withheld(scope, table)
+            if withheld:
+                raise _reject(f"Table {table.sql(dialect=dialect)} is withheld from you by a row filter: {withheld}.",
+                              table=table.sql()) from None
+            raise
         schema_name, table_name = asset.split(".", 1)
         if prof.fold == "upper":
             schema_name, table_name = schema_name.upper(), table_name.upper()
         table.set("db", exp.to_identifier(schema_name, quoted=True))
         table.set("this", exp.to_identifier(table_name, quoted=True))
+        resolved.append((table, asset))
         if asset not in referenced:
             referenced.append(asset)
+    if scope.row_filters:
+        # Row-level security (P7-02): every read of a filtered asset goes through its filter, whichever
+        # path wrote the statement; compiled SQL that already carries the exact wrapper passes unchanged.
+        from analystos.governance.row_filters import wrap_tables
+
+        wrap_tables(resolved, scope, dialect, prof.fold)
 
     asset_sources = {}
     for asset in referenced:

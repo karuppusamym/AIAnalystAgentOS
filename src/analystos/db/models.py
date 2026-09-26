@@ -648,6 +648,10 @@ class Insight(Base):
     validation: Mapped[str] = mapped_column(String(30), default="exploratory", server_default="legacy")
     data_version: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     stale_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ADR-0019 (P7-02): `governed` only when computed from a compiled SemanticQuery (then `semantic` holds
+    # the model and compiler versions); run findings are `ad_hoc`.
+    governance: Mapped[str] = mapped_column(String(10), default="ad_hoc", server_default="ad_hoc")
+    semantic: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -809,6 +813,42 @@ class SemanticModel(Base):
     run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    # P4-05: an agent-proposed structure version waits for a hash-bound approval (separation of duties).
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SemanticRelationshipCandidate(Base):
+    """P7-09 review queue: a join between two assets, measured through the gateway (containment, each
+    side's uniqueness, the cardinality they imply) with Atlas's assessment, waiting for a person.
+    `cardinality` is only ever the measured one. Accepting it (a hash-bound approval by someone other
+    than the proposer) writes the relationship into the semantic model with validated_at/validated_by."""
+
+    __tablename__ = "semantic_relationship_candidate"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    from_asset: Mapped[str] = mapped_column(String(400))
+    from_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    to_asset: Mapped[str] = mapped_column(String(400))
+    to_columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    cardinality: Mapped[str] = mapped_column(String(20))  # measured: one_to_one|many_to_one|one_to_many|many_to_many
+    containment: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # counts and the measuring SQL
+    assessment: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # skills.relationships.assess_relationship
+    origin: Mapped[str] = mapped_column(String(80))  # discovered | user | agent:<id>
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | accepted | rejected | superseded
+    proposed_by: Mapped[str] = mapped_column(String(40))
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relationship_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = _ts()
 
 

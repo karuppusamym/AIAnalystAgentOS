@@ -21,7 +21,7 @@ from analystos.governance.policy import get_workspace, load_policy, member_role
 from analystos.security.auth import APPROVER_ROLES, role_at_least
 
 # Actions whose approver must differ from the requester whatever the workspace policy says (P4-K03).
-ALWAYS_SEPARATE_DUTIES = {"semantic_metric.approve"}
+ALWAYS_SEPARATE_DUTIES = {"semantic_metric.approve", "semantic_model.approve", "semantic_relationship.accept"}
 
 
 def request_approval(session: Session, *, workspace_id: str, run_id: str | None, action: str, payload: dict[str, Any],
