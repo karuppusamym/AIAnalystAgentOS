@@ -29,7 +29,7 @@ PASSWORD = "ChangeMe123!"
 PLAYBOOK = {
     "apiVersion": "analystos/v1", "kind": "Playbook", "id": "playbook.lite_probe", "version": "0.1.0",
     "summary": "Wait for plan approval, collect metadata, write the data dictionary", "determinism": "model",
-    "side_effect": "write_internal", "certification": {"status": "tested", "evidence": "tests/integration/test_lite_profile.py"},
+    "side_effect": "write_internal", "certification": {"status": "tested", "evidence": "tests/integration/test_lite_profile_db.py"},
     "spec": {"framing": False, "steps": [
         {"key": "plan_approval", "use": "agent.supervisor", "behaviour": "plan_approved", "title": "Wait for plan approval",
          "type": "approval_gate", "payload": "plan", "when": "run.autonomy_level <= 2", "gates_roots": True},

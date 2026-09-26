@@ -1,0 +1,55 @@
+# Grounding suite fixed cases (P7-07; evaluation/grounding.py). Each `result` is a method output (spec +
+# stat) the binder checks narratives against; its deterministic template, and every fabricated/swapped
+# variant of it, is scored like the benchmark's findings. `narratives` are model-style sentences with the
+# expected verdict: `bound` (every number and group claim is a computed fact) or `reject` (an invented
+# number, a wrong unit, the wrong group or the reversed direction). The adversarial ones are those the
+# P4-03 design review named (tests/unit/test_evidence_p403.py). Add a case; never loosen an expectation.
+results:
+  rate:
+    spec: {method: rate_by_segment, asset: src_x.incident,
+           outcome: {type: equals, column: made_sla, value: false, label: missed SLA},
+           segment: {type: column, column: priority, label: priority}}
+    stat: {test: chi_square_independence, n: 20000, p_value: 1.0e-14, p_adjusted: 1.0e-12, effect_size: 0.21,
+           effect_label: cramers_v, supported: true,
+           highlights: {top_segment: P1, top_rate: 0.412, top_n: 2000, baseline_segment: P4, baseline_rate: 0.131,
+                        baseline_n: 9000, rate_ratio: 3.14, n_groups: 4},
+           groups: [{segment: P1, n: 2000}, {segment: P2, n: 4000}, {segment: P3, n: 5000}, {segment: P4, n: 9000}]}
+  duration:
+    spec: {method: numeric_by_segment, asset: src_x.incident,
+           outcome: {type: duration_hours, column: opened_at, end_column: resolved_at, label: resolution time},
+           segment: {type: column, column: assignment_group, label: group}}
+    stat: {test: kruskal_wallis_h, n: 8000, p_value: 1.0e-9, p_adjusted: 1.0e-8, effect_size: 0.04,
+           effect_label: epsilon_squared, supported: true,
+           highlights: {top_segment: Network, top_median: 12.0, baseline_segment: Desk, baseline_median: 4.5,
+                        median_ratio: 2.667, n_groups: 3},
+           groups: [{segment: Network, n: 1500}, {segment: Desk, n: 4000}, {segment: Apps, n: 2500}]}
+  trend:
+    spec: {method: trend, asset: src_x.incident, time: {type: date_trunc, column: opened_at, grain: week}}
+    stat: {test: ols_linear_trend, n: 58, p_value: 7.0e-5, p_adjusted: 2.0e-4, effect_size: -0.4416,
+           effect_label: pct_change_fitted, supported: true,
+           highlights: {direction: decreasing, pct_change: -0.4416, first_period: "2025-09-01",
+                        last_period: "2027-01-04", n_periods: 58}}
+narratives:
+  - {result: rate, expect: bound, text: "Priority P1 misses SLA 41.2% of the time versus 13.1% for P4 (3.1x)."}
+  - {result: rate, expect: bound, text: "Missed SLA rate is 41.2% for P1 and 13.1% for P4."}
+  - {result: rate, expect: bound, text: "P1 is 3.1x higher than P4."}
+  - {result: rate, expect: bound, text: "Of 20,000 incidents, P1 (n=2,000) misses SLA 41.2% of the time."}
+  - {result: rate, expect: reject, why: swapped group, text: "Priority P4 misses SLA 41.2% of the time versus 13.1% for P1 (3.1x)."}
+  - {result: rate, expect: reject, why: swapped group, text: "Missed SLA concentrates in priority = P4."}
+  - {result: rate, expect: reject, why: reversed direction, text: "P1 is 3.1x lower than P4."}
+  - {result: rate, expect: reject, why: fraction as a plain number, text: "P1 misses SLA at a rate of 41.2 versus 13.1 for P4."}
+  - {result: rate, expect: reject, why: percent of a fraction, text: "P1 misses SLA 0.412% of the time."}
+  - {result: rate, expect: reject, why: ratio as percent, text: "P1 misses SLA 314% more often than P4."}
+  - {result: rate, expect: reject, why: invented number, text: "P1 misses SLA 57% of the time."}
+  - {result: rate, expect: reject, why: invented small number, text: "P1 misses SLA 2% more often."}
+  - {result: duration, expect: bound, text: "Median resolution time is 12.0 hours for Network versus 4.5 hours for Desk."}
+  - {result: duration, expect: bound, text: "Network takes a median 0.5 days to resolve."}
+  - {result: duration, expect: reject, why: hours as days, text: "Median resolution time is 12.0 days for Network versus 4.5 days for Desk."}
+  - {result: duration, expect: reject, why: wrong group, text: "Median resolution time is 4.5 hours for Network."}
+  - {result: trend, expect: bound, text: "Weekly volume fell by 44.2% over the period."}
+  - {result: trend, expect: bound, text: "Weekly volume changed by -44.2%."}
+  - {result: trend, expect: reject, why: reversed direction, text: "Weekly volume rose by 44.2% over the period."}
+  - {result: trend, expect: reject, why: direction not stated, text: "Weekly volume changed by 44.2%."}
+  - {result: trend, expect: reject, why: wrong sign, text: "Weekly volume changed by +44.2%."}
+  - {result: trend, expect: reject, why: fraction printed as percent, text: "Weekly volume changed by -0.4% from first to last period."}
+  - {result: trend, expect: reject, why: wrong direction without a number, text: "Incident volume is increasing week over week."}
