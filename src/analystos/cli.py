@@ -63,6 +63,12 @@ def provision_analytics_roles() -> dict:
         out["builder_login"] = ensure_builder_login(settings)
     except Exception as exc:  # noqa: BLE001
         log.warning("build login provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
+    try:  # the managed output writer's login (P6-03); clusters from before it lack it
+        from analystos.pipelines.writer import ensure_writer_login
+
+        out["writer_login"] = ensure_writer_login(settings)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("writer login provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
     return out
 
 
