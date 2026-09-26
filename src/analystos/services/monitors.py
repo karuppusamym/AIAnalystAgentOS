@@ -409,8 +409,11 @@ def start_investigation(alert_id: str, user: User, *, automatic: bool = False) -
         objective = (f"Investigate this monitored change and identify its drivers: {alert.message} "
                      f"Business objective: {ws.objective}")[:2000]
         ws_id = ws.id
-    run = create_run(user, ws_id, objective=objective, origin={"type": "alert", "alert_id": alert_id, "publish": "skip",
-                                                               "automatic": automatic})
+        monitor = s.get(Monitor, alert.monitor_id) if getattr(alert, "monitor_id", None) else None
+        # A monitor may name the playbook version it investigates with; like every trigger it runs a published one.
+        definition = (monitor.config or {}).get("investigate_definition") if monitor is not None else None
+    run = create_run(user, ws_id, objective=objective, definition=definition,
+                     origin={"type": "alert", "alert_id": alert_id, "publish": "skip", "automatic": automatic})
     with session_scope() as s:
         a = s.get(Alert, alert_id)
         a.investigation_run_id = run.id

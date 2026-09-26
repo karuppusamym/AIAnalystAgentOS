@@ -37,7 +37,10 @@ def sqlite_db(monkeypatch):
         "app_user", "workspace", "workspace_member", "analysis_run", "run_task", "run_event", "approval", "hypothesis",
         "insight", "artifact", "artifact_version", "audit_event", "monitor", "alert", "notification", "workspace_capability",
         "agent_definition", "tool_definition", "tool_execution", "agent_message", "workspace_policy", "source", "source_asset",
-        "source_column", "model_call", "query_execution", "lineage_edge")]
+        "source_column", "model_call", "query_execution", "lineage_edge",
+        # P7-03 / P4-06: a run binding reads semantic versions; definitions, pins, outbox, idempotency, work orders
+        "semantic_model", "semantic_metric", "definition", "schedule", "schedule_run", "dispatch_outbox",
+        "idempotency_record", "work_order")]
     models.Base.metadata.create_all(engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(base, "SessionLocal", lambda: factory())

@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
@@ -846,6 +847,13 @@ class Schedule(Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("app_user.id"))
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Optimistic concurrency (P4-06): every edit and every accepted upgrade bumps it; PATCH takes If-Match.
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # The frozen set a fire replays (ADR-0021, P7-03): definition, capability manifests, semantic model,
+    # metric and method versions and the baseline's AnalysisSpecs. Empty until a baseline exists.
+    pins: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
+    # Last computed comparison of the pins with what is current (contracts.definition.PinStatus).
+    pin_status: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = _ts()
 
 
@@ -1259,3 +1267,95 @@ class AskTurn(Base):
     promotions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
+
+
+# ------------------------------------------------------------ definitions, work orders, outbox (P7-03, P4-06)
+class Definition(Base):
+    """One version of an executable definition (ADR-0021): `kind` + JSON `spec`. A draft is editable
+    (its `revision` guards concurrent edits); publishing freezes it; retiring stops it running. One
+    draft per (workspace, kind, key) at a time; published versions are immutable."""
+
+    __tablename__ = "definition"
+    __table_args__ = (UniqueConstraint("workspace_id", "kind", "key", "version", name="uq_definition_version"),
+                      Index("uq_definition_one_draft", "workspace_id", "kind", "key", unique=True,
+                            postgresql_where=text("status = 'draft'"), sqlite_where=text("status = 'draft'")))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    key: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | deprecated | retired
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[str] = mapped_column(String(80))
+    published_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class IdempotencyRecord(Base):
+    """`Idempotency-Key` of a mutating request (workbench API §1): scoped by principal, workspace and
+    operation; the canonical request hash decides replay (same) or 409 (different)."""
+
+    __tablename__ = "idempotency_record"
+    __table_args__ = (UniqueConstraint("principal", "workspace_id", "operation", "key", name="uq_idempotency_scope"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    principal: Mapped[str] = mapped_column(String(80))
+    workspace_id: Mapped[str] = mapped_column(String(40))
+    operation: Mapped[str] = mapped_column(String(60))
+    key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")  # in_progress | completed
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response: Mapped[Any] = mapped_column(JSON, nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = _ts()
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DispatchOutbox(Base):
+    """Run creation and its dispatch in one transaction (workbench API §4): the row commits with the
+    run; a relay starts the workflow (stable id, so a duplicate delivery converges) and retries."""
+
+    __tablename__ = "dispatch_outbox"
+    __table_args__ = (UniqueConstraint("kind", "run_id", name="uq_dispatch_outbox_run"),
+                      Index("ix_dispatch_outbox_pending", "status", "available_at"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    kind: Mapped[str] = mapped_column(String(30), default="run.start")
+    run_id: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | dispatched | cancelled
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = _ts()
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkOrder(Base):
+    """A typed work order (`contracts.work.WorkOrderSpec`), editable under revision checks."""
+
+    __tablename__ = "work_order"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    spec_type: Mapped[str] = mapped_column(String(30))
+    objective: Mapped[str] = mapped_column(Text)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | started
+    run_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -66,8 +66,27 @@ def request_schedule(session, user, turn_id, *, name, cron, timezone, approval_i
                     if s.config.get("approval_id") == approval_id), None)
     schedule = existing or schedules.create_schedule(session, user, turn.workspace_id, name=name, kind="saved_analysis",
                                                       cron=cron, timezone=timezone, config=config)
+    if existing is None:
+        _pin(session, user, turn, schedule, approval_id)
     session.flush()
     return {"status": "created", "id": schedule.id}
+
+
+def _pin(session, user, turn, schedule, approval_id):
+    """The approved calculation is published as a `saved_analysis` definition (the approval is its
+    publication) and the schedule pins it with the metric versions it compiled from (ADR-0021)."""
+    from analystos.db.models import Approval
+    from analystos.services import pins
+    from analystos.services.definitions import publish_frozen, ref_of
+
+    semantic = (turn.provenance or {}).get("semantic")
+    approval = session.get(Approval, approval_id)
+    row = publish_frozen(session, turn.workspace_id, "saved_analysis", turn.id,
+                         {"turn_id": turn.id, "sql": turn.sql, "fingerprint": fingerprint(turn), "semantic": semantic},
+                         created_by=user.id, published_by=(approval.decided_by if approval and approval.decided_by else user.id),
+                         title=schedule.name)
+    schedule.pins = pins.saved_analysis_pins(ref_of(row).model_dump(), semantic)
+    pins.refresh(session, schedule)
 
 
 def changes(before, after):

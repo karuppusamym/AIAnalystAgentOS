@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -36,7 +36,8 @@ class RunIn(BaseModel):
     objective: str | None = None
     source_ids: list[str] | None = None
     autonomy_level: int | None = None
-    playbook: str | None = None  # a Playbook capability id; default playbook.investigate
+    playbook: str | None = None  # a Playbook capability id or workspace playbook key; default playbook.investigate
+    definition: dict | str | None = None  # an exact definition version: {key, version} or a definition id (P7-03)
 
 
 class FeedbackIn(BaseModel):
@@ -64,15 +65,32 @@ class HypothesisPatch(BaseModel):
 
 
 @router.post("/workspaces/{workspace_id}/analysis")
-def start(workspace_id: str, body: RunIn, user: User = Depends(current_user)):
-    return row(run_svc.create_run(user, workspace_id, **body.model_dump()))
+def start(workspace_id: str, body: RunIn, response: Response, user: User = Depends(current_user),
+          idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    """Start a run. With `Idempotency-Key` a retried request returns the run the first one created
+    (`Idempotent-Replayed: true`); the same key with a different body is 409 (P4-06)."""
+    from analystos.services.idempotency import Key
+
+    key = Key.of(idempotency_key, principal=user.id, workspace_id=workspace_id, operation="run.create",
+                 request=body.model_dump())
+    run, replayed = run_svc.start_run_request(user, workspace_id, **body.model_dump(), idempotency=key)
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return row(run)
 
 
 @router.get("/workspaces/{workspace_id}/analysis")
-def list_runs(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def list_runs(workspace_id: str, limit: int | None = None, cursor: str | None = None, user: User = Depends(current_user),
+              session: Session = Depends(db, scope="function")):
+    """Newest runs first. With `limit` or `cursor`: a `{items, next_cursor}` page; without: the old array of 50."""
+    from analystos.api.http import page, wants_page
+
     require_role(session, user, workspace_id, "viewer")
-    return rows(session.scalars(select(AnalysisRun).where(AnalysisRun.workspace_id == workspace_id)
-                                .order_by(AnalysisRun.created_at.desc()).limit(50)), exclude={"scope", "plan"})
+    stmt = select(AnalysisRun).where(AnalysisRun.workspace_id == workspace_id)
+    if wants_page(limit, cursor):
+        return page(session, stmt, AnalysisRun, limit=limit, cursor=cursor, scope={"workspace": workspace_id, "list": "runs"},
+                    render=lambda rs: rows(rs, exclude={"scope", "plan"}))
+    return rows(session.scalars(stmt.order_by(AnalysisRun.created_at.desc()).limit(50)), exclude={"scope", "plan"})
 
 
 def _run_detail(session: Session, run: AnalysisRun) -> dict:

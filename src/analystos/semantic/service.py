@@ -125,6 +125,7 @@ def save_model(session: Session, workspace_id: str, *, actor: str, origin: str, 
          run_id=run_id, actor=actor, session=session)
     audit(actor, "semantic.model.saved", workspace_id=workspace_id, run_id=run_id, target=row.id,
           details={"version": version, "origin": origin, "content_hash": digest}, session=session)
+    _refresh_pins(session, workspace_id)
     return row
 
 
@@ -347,6 +348,7 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
              actor=f"user:{approval.decided_by}", session=session)
         audit(f"user:{approval.decided_by}", "semantic.metric.rejected", workspace_id=row.workspace_id, target=row.id,
               decision="deny", reasons=[approval.reason or ""], session=session)
+        _refresh_pins(session, row.workspace_id)
         return row
     if approval.status != "approved":
         return row
@@ -365,7 +367,17 @@ def apply_decision(session: Session, approval: Approval) -> SemanticMetric:
     from analystos.knowledge.learning import draft_from_metric
 
     draft_from_metric(session, row)  # P4-K08: the approved KPI becomes a knowledge draft for review
+    _refresh_pins(session, row.workspace_id)  # pinned schedules show "upgrade available"; their next fire is unchanged
     return row
+
+
+def _refresh_pins(session: Session, workspace_id: str) -> None:
+    """A metric or model version changed state: recompute the pin status of the workspace's schedules
+    (ADR-0021). Nothing a schedule runs changes here; it only learns what is newer, deprecated or rejected."""
+    from analystos.services.pins import refresh_workspace
+
+    session.flush()
+    refresh_workspace(session, workspace_id)
 
 
 def deprecate_metric(session: Session, workspace_id: str, name: str, user: User, *, reason: str | None = None) -> list[SemanticMetric]:
@@ -384,6 +396,7 @@ def deprecate_metric(session: Session, workspace_id: str, name: str, user: User,
          actor=f"user:{user.id}", session=session)
     audit(f"user:{user.id}", "semantic.metric.deprecated", workspace_id=workspace_id, target=name, decision="allow",
           reasons=[reason or ""], session=session)
+    _refresh_pins(session, workspace_id)
     return rows
 
 

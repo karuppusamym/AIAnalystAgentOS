@@ -118,4 +118,8 @@ def reload_capabilities(admin: User = Depends(admin_user), session: Session = De
     sync_agent_definitions(session)  # agent_definition rows cache the manifest-derived contract (FND-006)
     audit(f"user:{admin.id}", "capabilities.reloaded", details={"before": before, "after": snap.digest,
                                                                "count": len(snap.manifests)}, session=session)
-    return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems)}
+    from analystos.services.pins import refresh_workspace
+
+    pinned = refresh_workspace(session) if snap.digest != before else {}  # a pack upgrade: "upgrade available", no change
+    return {"digest": snap.digest, "previous_digest": before, "count": len(snap.manifests), "problems": list(snap.problems),
+            "pinned_schedules": {state: sum(1 for v in pinned.values() if v == state) for state in sorted(set(pinned.values()))}}

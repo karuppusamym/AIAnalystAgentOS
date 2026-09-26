@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "PinItem": {
+      "description": "One pinned dependency of a schedule and how it compares with what is current now.",
+      "properties": {
+        "type": {
+          "enum": [
+            "definition",
+            "capability",
+            "method",
+            "metric",
+            "semantic_model"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "pinned": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pinned"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current"
+        },
+        "state": {
+          "default": "current",
+          "enum": [
+            "current",
+            "newer",
+            "deprecated",
+            "retired",
+            "rejected"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "diff": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Diff",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "pinned"
+      ],
+      "title": "PinItem",
+      "type": "object"
+    }
+  },
+  "description": "Upgrade-available / deprecated / blocked, computed in code from the pins and the registries.",
+  "properties": {
+    "state": {
+      "enum": [
+        "current",
+        "upgrade_available",
+        "deprecated",
+        "blocked",
+        "unpinned"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "revision": {
+      "default": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/PinItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "blocking": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocking",
+      "type": "array"
+    },
+    "upgrade_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Upgrade Hash"
+    },
+    "checked_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checked At"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "PinStatus",
+  "type": "object"
+}

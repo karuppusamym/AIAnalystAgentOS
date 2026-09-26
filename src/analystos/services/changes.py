@@ -78,5 +78,24 @@ def diff_runs(session: Session, previous_run_id: str, run_id: str) -> dict[str, 
         prev = m_before.get(name)
         delta = (value - prev) / prev if isinstance(value, (int, float)) and isinstance(prev, (int, float)) and prev else None
         metrics.append({"name": name, "value": value, "previous_value": prev, "pct_change": None if delta is None else round(delta, 4)})
-    return {"previous_run_id": previous_run_id, "new": new, "persisting": persisting, "changed": changed, "resolved": resolved,
-            "not_retested": not_retested, "new_questions": new_questions, "metrics": metrics}
+    out = {"previous_run_id": previous_run_id, "new": new, "persisting": persisting, "changed": changed, "resolved": resolved,
+           "not_retested": not_retested, "new_questions": new_questions, "metrics": metrics}
+    return {**out, **verdict(out)}
+
+
+def verdict(changes: dict[str, Any]) -> dict[str, Any]:
+    """'Nothing changed' is stated in code, and only when it is true: no new, changed, resolved or
+    un-retested finding and no KPI moved. Novelty-round questions are reported as new, never as change."""
+    moved = [m for m in changes.get("metrics") or [] if m.get("previous_value") != m.get("value")]
+    counts = {k: len(changes.get(k) or []) for k in ("new", "persisting", "changed", "resolved", "not_retested", "new_questions")}
+    nothing = not (counts["new"] or counts["changed"] or counts["resolved"] or counts["not_retested"] or moved)
+    if nothing:
+        text = f"Nothing changed since the previous run: {counts['persisting']} finding(s) persist and no KPI moved."
+    else:
+        text = (f"{counts['new']} new, {counts['changed']} changed, {counts['resolved']} resolved, "
+                f"{counts['persisting']} persisting finding(s)"
+                + (f", {counts['not_retested']} not re-tested" if counts["not_retested"] else "")
+                + (f"; {len(moved)} KPI(s) moved" if moved else "") + ".")
+    if counts["new_questions"]:
+        text += f" The opt-in novelty round added {counts['new_questions']} new question(s)."
+    return {"nothing_changed": nothing, "summary": text, "kpis_moved": len(moved)}

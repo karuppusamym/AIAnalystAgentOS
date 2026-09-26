@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -13,6 +13,8 @@ from analystos.api.deps import StreamAuth, current_user, db, stream_guard, strea
 from analystos.db.base import session_scope
 from analystos.db.models import User
 from analystos.services import ask as ask_svc
+from analystos.services import idempotency as idem
+from analystos.services.idempotency import Key
 
 router = APIRouter(prefix="/api", tags=["ask"])
 
@@ -84,10 +86,13 @@ def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(curr
 
 
 @router.post("/ask/threads/{thread_id}/turns")
-async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: StreamAuth = Depends(streaming_auth)):
+async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: StreamAuth = Depends(streaming_auth),
+                   idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     """Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
-    A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access."""
+    A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.
+    With `Idempotency-Key` a retry of the same question returns the turn the first request produced
+    (`Idempotent-Replayed: true`), 409 while that one still runs, 409 for a different body (P4-06)."""
     from analystos.events.stream import run_blocking
 
     user = auth.user
@@ -95,17 +100,63 @@ async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: Stre
     def load(session: Session, caller: User) -> object:
         return ask_svc._thread_for(session, caller, thread_id)
 
-    def check() -> None:
+    def check() -> str:
         with session_scope() as s:
-            load(s, s.merge(user))
+            return load(s, s.merge(user)).workspace_id
 
-    await run_blocking(check)  # an unknown thread is a 404 before any stream opens
-    if "text/event-stream" in request.headers.get("accept", ""):
-        return StreamingResponse(ask_svc.stream_turn(user, thread_id, body.question, body.parameters, guard=stream_guard(auth, load)),
+    workspace_id = await run_blocking(check)  # an unknown thread is a 404 before any stream opens
+    streamed = "text/event-stream" in request.headers.get("accept", "")
+    key = Key.of(idempotency_key, principal=user.id, workspace_id=workspace_id, operation="ask.turn",
+                 request={"thread_id": thread_id, "question": body.question, "parameters": body.parameters})
+    if key is not None and (replay := await run_blocking(lambda: idem.claim(key))) is not None:
+        turn = await run_blocking(lambda: _turn_json(user, replay.resource_id))
+        headers = {"Idempotent-Replayed": "true"}
+        if streamed:
+            frames = [ask_svc._sse("turn", turn), ask_svc._sse("end", {"status": "done", "replayed": True})]
+            return StreamingResponse(iter(frames), media_type="text/event-stream", headers={"Cache-Control": "no-cache", **headers})
+        return JSONResponse(content=turn, headers=headers)
+    if streamed:
+        stream = ask_svc.stream_turn(user, thread_id, body.question, body.parameters, guard=stream_guard(auth, load))
+        return StreamingResponse(_settle_stream(stream, key) if key is not None else stream,
                                  media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     import anyio
 
-    return await anyio.to_thread.run_sync(lambda: ask_svc.ask_in_thread(user, thread_id, body.question, body.parameters))
+    try:
+        out = await anyio.to_thread.run_sync(lambda: ask_svc.ask_in_thread(user, thread_id, body.question, body.parameters))
+    except BaseException:
+        if key is not None:
+            await run_blocking(lambda: idem.release(key))
+        raise
+    if key is not None:
+        await run_blocking(lambda: idem.complete(key, response={"turn_id": out["id"]}, resource_type="ask_turn", resource_id=out["id"]))
+    return out
+
+
+def _turn_json(user: User, turn_id: str) -> dict:
+    with session_scope() as s:
+        return ask_svc.turn_out(s, ask_svc._turn_for(s, s.merge(user), turn_id))
+
+
+async def _settle_stream(stream, key):
+    """Pass the SSE frames through; the `turn` frame completes the idempotency claim, anything else
+    (an error, a revoked stream, a disconnect) releases it so a retry runs the question again."""
+    import json
+
+    from analystos.events.stream import run_blocking
+
+    turn_id = None
+    try:
+        async for frame in stream:
+            if frame.startswith("event: turn\n"):
+                data = json.loads(frame.split("data: ", 1)[1])
+                turn_id = data.get("id") if isinstance(data, dict) else None
+            yield frame
+    finally:
+        if turn_id:
+            await run_blocking(lambda: idem.complete(key, response={"turn_id": turn_id}, resource_type="ask_turn",
+                                                     resource_id=turn_id))
+        else:
+            await run_blocking(lambda: idem.release(key))
 
 
 @router.get("/ask/turns/{turn_id}/inspector")

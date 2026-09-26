@@ -28,6 +28,36 @@ class InvalidInput(AnalystOSError):
     code, http_status = "invalid_input", 422
 
 
+class IdempotencyConflict(Conflict):
+    """The `Idempotency-Key` was already used for a different request body (workbench API §1)."""
+
+    code = "idempotency_conflict"
+
+
+class IdempotencyInProgress(Conflict):
+    """The first request with this key is still executing; retry after it finishes."""
+
+    code, retryable = "idempotency_in_progress", True
+
+
+class PreconditionFailed(AnalystOSError):
+    """`If-Match` names a revision that is no longer current (optimistic concurrency)."""
+
+    code, http_status = "precondition_failed", 412
+
+
+class PreconditionRequired(AnalystOSError):
+    """An edit of a revisioned resource without `If-Match`."""
+
+    code, http_status = "precondition_required", 428
+
+
+class UnsupportedCapability(InvalidInput):
+    """A typed request whose payload exists as a contract but has no executor yet (e.g. MLSpec before P5)."""
+
+    code = "unsupported_capability"
+
+
 class Unauthenticated(AnalystOSError):
     code, http_status = "unauthenticated", 401
 

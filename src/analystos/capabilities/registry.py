@@ -255,6 +255,13 @@ def resolve_python(entry: str) -> Callable[..., Any]:
     return obj
 
 
+def pinned(base: Snapshot, manifests: Iterable[CapabilityManifest]) -> Snapshot:
+    """A snapshot in which the given versions replace the current ones (ADR-0021): a pinned schedule
+    fire or a workspace-published playbook binds these exact manifests, whatever a reload installed."""
+    merged = {**base.manifests, **{m.id: m for m in manifests}}
+    return Snapshot(manifests=merged, digest=stable_hash(sorted(m.ref for m in merged.values())), problems=base.problems)
+
+
 def overlay(base: Snapshot, manifests: Iterable[CapabilityManifest]) -> Snapshot:
     """A snapshot with extra, already-validated manifests layered on top (e.g. one workspace's MCP
     tools). An overlay can never replace a capability the base already defines."""
