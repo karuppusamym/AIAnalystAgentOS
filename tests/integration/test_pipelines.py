@@ -521,3 +521,42 @@ def test_pipeline_api_routes(world):
         assert refresh.status_code == 200 and refresh.json()["incremental"]["load_mode"] == "merge"
         other = api.post(f"/api/workspaces/{ws}/sources/{world['b']}/refresh", headers=h, json={"asset": TABLE, "mode": "full"})
         assert other.status_code == 422  # no incremental block declared
+
+
+def test_migration_0039_up_down_up_matches_the_models(control_db):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect, text
+
+    from analystos.core.config import REPO_ROOT
+    from analystos.db.models import Materialization, Pipeline, PipelineRun, WriterDestination
+
+    base, name = control_db.rsplit("/", 1)
+    mig_db = f"{name}_mig39"
+    admin = create_engine(base + "/postgres", isolation_level="AUTOCOMMIT")
+    with admin.connect() as c:
+        c.execute(text(f"DROP DATABASE IF EXISTS {mig_db}"))
+        c.execute(text(f"CREATE DATABASE {mig_db}"))
+    url = f"{base}/{mig_db}"
+    engine = create_engine(url)
+    models = [Pipeline, PipelineRun, WriterDestination, Materialization]
+    try:
+        with engine.begin() as c:
+            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+        cfg.set_main_option("sqlalchemy.url", url)
+        command.upgrade(cfg, "0039")
+        for m in models:
+            cols = {c["name"] for c in inspect(engine).get_columns(m.__tablename__)}
+            assert cols == {c.name for c in m.__table__.columns}, m.__tablename__
+        command.downgrade(cfg, "0035")
+        assert not {m.__tablename__ for m in models} & set(inspect(engine).get_table_names())
+        command.upgrade(cfg, "0039")
+        assert {m.__tablename__ for m in models} <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+        with admin.connect() as c:
+            c.execute(text(f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{mig_db}'"))
+            c.execute(text(f"DROP DATABASE IF EXISTS {mig_db}"))
+        admin.dispose()
