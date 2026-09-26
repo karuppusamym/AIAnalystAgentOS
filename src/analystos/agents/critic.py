@@ -1,27 +1,41 @@
 """REV Critic Agent (§26, §28): Reason -> Evaluate -> Verify.
 
 Verified == every deterministic check passes (method fit, sample size, adjusted significance,
-effect size, reproducible re-run, independent second method). Model opinions (independent model
-family + JEV) are recorded and can lower confidence or add caveats, but cannot make a finding true."""
+effect size, reproducible re-run, independent second method, and since P4-03: the narrative binds to
+the typed facts, the data version did not change during the run, and the evidence bundle is complete).
+`verified` says the REV checks passed; it does not say the claim is confirmed: the bundle's validation
+state (`evidence.bundle`) is `exploratory` for a discovery until a confirmation rule
+(`evidence.confirmation`) passes. Model opinions (independent model family + JEV) are recorded and can
+lower the review score or add caveats, but cannot make a finding true; the score is uncalibrated."""
 from __future__ import annotations
 
 import re
 
 from sqlalchemy import select
 
+from analystos import methods
 from analystos.agents.common import compact_json, llm_json, task_output
 from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link
 from analystos.contracts.analysis import AnalysisSpec, StatResult
+from analystos.contracts.evidence import DataManifest, Fact
 from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
-from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution
+from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution
 from analystos.decisions import Question
 from analystos.events.bus import emit
+from analystos.evidence.bundle import assemble
+from analystos.evidence.confirmation import evaluate as confirm
+from analystos.evidence.confirmation import is_replication, prior_claim
+from analystos.evidence.facts import bind_finding
+from analystos.evidence.manifest import changed as manifest_changed
+from analystos.evidence.manifest import current_entry
+from analystos.knowledge.attested import sql_hash
 from analystos.llm.cache import estimate_tokens
 from analystos.llm.config import family
+from analystos.registries.hypotheses import spec_hash
 from analystos.runtime.context import RunContext
 from analystos.services.platform_settings import get as platform
 
@@ -67,10 +81,15 @@ def verify_insights(ctx: RunContext) -> dict:
             ins = s.get(Insight, insight_id)
             h = s.get(Hypothesis, ins.hypothesis_id)
             exp = s.scalar(select(Experiment).where(Experiment.hypothesis_id == h.id, Experiment.role == "primary"))
-            originals = {q.id: (q.sql, q.result_hash, q.source_id)
-                         for q in s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids)))}
+            queries = list(s.scalars(select(QueryExecution).where(QueryExecution.id.in_(exp.query_ids))))
+            originals = {q.id: (q.sql, q.result_hash, q.source_id) for q in queries}
+            receipts = [{"query_id": q.id, "role": "primary", "query_hash": sql_hash(q.executed_sql or q.sql),
+                         "result_hash": q.result_hash, "fingerprint": q.fingerprint, "rows": q.row_count} for q in queries]
             finding, spec_d, stat_d, narrative_source = ins.finding, dict(h.spec), dict(exp.result), ins.narrative_source
-            statement = h.statement
+            statement, title, draft, prior_caveats = h.statement, ins.title, dict(ins.evidence_bundle or {}), list(ins.caveats or [])
+            origin, iteration, parent = h.origin, h.iteration, h.parent_id
+            recorded_manifest = dict(s.get(AnalysisRun, ctx.run.id).data_manifest or {})
+            prior = prior_claim(s, ctx.workspace.id, ctx.run.id, spec_d)
         spec = with_constraints(AnalysisSpec.model_validate(spec_d), ctx.run.constraints)
         primary_family = narrative_family(narrative_source)  # before any rewrite below: who wrote the claim
         run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
@@ -91,16 +110,30 @@ def verify_insights(ctx: RunContext) -> dict:
         checks.append({"check": "significance_after_bh", "passed": p_adj is not None and p_adj < alpha, "detail": f"q={p_adj} alpha={alpha}"})
         checks.append({"check": "effect_size", "passed": bool(stat_d.get("supported")),
                        "detail": f"{stat_d.get('effect_label')}={stat_d.get('effect_size')}"})
-        checks.append(representative_population(ctx, spec.asset))
+        population = representative_population(ctx, spec.asset)
+        checks.append(population)
         overreach = bool(CAUSAL.search(finding))
         if overreach:
-            _, finding = template_text(stat_d, spec_d)
+            title, finding = template_text(stat_d, spec_d)
             narrative_source = "template"
         checks.append({"check": "no_overreach", "passed": True, "detail": "causal wording rewritten to association" if overreach else "associational wording"})
+        # ---- Evaluate (P4-03): the final wording binds to the typed facts; the data version held still
+        facts = [Fact.model_validate(f) for f in (draft.get("claim") or {}).get("facts") or []]
+        binding = bind_finding(spec_d, stat_d, facts, title, finding)
+        checks.append({"check": "fact_binding", "passed": bool(facts) and binding.ok,
+                       "detail": ((f"{len(binding.mentions)} number(s) bound to {len(facts)} facts" if binding.ok
+                                   else "; ".join(binding.problems[:4])) if facts else "no typed facts recorded")})
+        with session_scope() as s:
+            entry = current_entry(s, spec.asset, ctx.scope.asset_sources.get(spec.asset))
+        recorded = DataManifest.model_validate(recorded_manifest).entry(spec.asset) if recorded_manifest else None
+        moved = manifest_changed(recorded, entry) if recorded is not None else None
+        checks.append({"check": "data_version_stable", "passed": recorded is not None and moved is None,
+                       "detail": moved or ("no data-version manifest recorded for this run" if recorded is None else
+                                           f"{entry.mode} {entry.version_basis} version {(entry.version or 'unversioned')[:12]}")})
         dq = [q.get("message") for q in quality if q.get("severity") in ("warning", "critical") and
               any(c in str(q.get("column") or "") for c in [d.get("column") for d in (spec_d.get("outcome") or {}, spec_d.get("segment") or {}) if d])]
         # ---- Verify: reproducibility
-        reproducible, repro_detail = True, []
+        reproducible, repro_detail = bool(originals), [] if originals else ["no query records: nothing to re-run"]
         for qid, (sql, original_hash, source_id) in originals.items():
             try:
                 # Same budgeted, tool-gated path as every other run statement (P4-C02); no cache, or
@@ -169,7 +202,34 @@ def verify_insights(ctx: RunContext) -> dict:
             conf -= 0.05
         if contradiction:
             caveats_extra.append(f"Contrasts with {', '.join(contradiction)} on the same outcome/segment.")
+        # ---- Evidence bundle (P4-03): dimensions, missing-evidence refusal, discovery vs confirmation
+        hl = stat_d.get("highlights") or {}
+        pair = next((f for f in facts if f.primary), None)
+        top = hl.get("top_segment", hl.get("top_driver"))
+        direction = pair.direction if pair is not None else None
+        method_impl = methods.get(spec.method) if spec.method in methods.names() else None
+        confirmation = confirm(verified=deterministic_ok, origin=origin, top=top, direction=direction, prior=prior,
+                               current=recorded or entry, holdout=(stat_d.get("details") or {}).get("holdout"))
+        bundle = assemble(
+            spec=spec_d, stat=stat_d, second=_dump(second.stat) if second is not None else None, facts=facts,
+            binding=binding, rev_checks=checks, receipts=receipts, manifest=recorded_manifest, entry=recorded or entry,
+            population=population, caveats=list(dict.fromkeys(prior_caveats + caveats_extra)), confirmation=confirmation,
+            replicated=deterministic_ok and is_replication(origin, prior, recorded or entry, top),
+            reproducible=reproducible, review_score=None, family_size=int(stat_d.get("bh_family_size") or 0),
+            alpha=alpha, origin=origin, iteration=iteration, parent=parent,
+            claim_meta={"subject": top, "baseline": hl.get("baseline_segment"), "direction": direction,
+                        "metric": (spec_d.get("outcome") or {}).get("label") or (spec_d.get("outcome") or {}).get("column"),
+                        "spec_hash": spec_hash(spec_d), "title": title, "text": finding,
+                        "rendered_from": narrative_source},
+            optional=tuple(getattr(method_impl, "evidence_optional", ()) or ()),
+            predictive=isinstance(hl.get("holdout_roc_auc"), int | float))
+        if bundle.validation.missing_evidence:
+            deterministic_ok = False
+            ctx.say(f"REV {code}: refused, missing evidence: {', '.join(bundle.validation.missing_evidence)}.", kind="decision")
+        checks.append({"check": "evidence_complete", "passed": not bundle.validation.missing_evidence,
+                       "detail": ", ".join(bundle.validation.missing_evidence) or "all required dimensions present"})
         conf = max(0.0, min(0.99, conf)) if deterministic_ok else min(conf, 0.4)
+        bundle.review_score.value = round(conf, 3)
         verification = {"reason": reason, "evaluate": checks, "verify": {
             "reproducible": reproducible, "second_method": _dump(second.stat) if second else None,
             "independent_model": {"model": review_model, "review": review} if isinstance(review, dict) else {"unavailable": review_model},
@@ -185,6 +245,10 @@ def verify_insights(ctx: RunContext) -> dict:
             ins.confidence = round(conf, 3)
             ins.caveats = list(dict.fromkeys((ins.caveats or []) + caveats_extra))
             ins.status = "verified" if deterministic_ok else "failed_verification"
+            ins.title = title[:200]
+            ins.evidence_bundle = bundle.model_dump(mode="json")
+            ins.validation = bundle.validation.state
+            ins.data_version = (bundle.data.get("manifest") or {}).get("version") or ins.data_version
             if second is not None:
                 vexp = Experiment(id=new_id("exp"), workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=ins.hypothesis_id,
                                   method=spec.method, params={"verification_of": code}, result=_dump(second.stat),
@@ -195,9 +259,11 @@ def verify_insights(ctx: RunContext) -> dict:
                 h = s.get(Hypothesis, ins.hypothesis_id)
                 h.status = "inconclusive"
             emit(ctx.workspace.id, "insight.verified", {"code": code, "verified": deterministic_ok, "confidence": ins.confidence,
+                                                        "validation": bundle.validation.state, "label": bundle.validation.label,
                                                         "failed_checks": [c["check"] for c in checks if not c["passed"]]},
                  run_id=ctx.run.id, session=s)
         (verified_codes if deterministic_ok else failed_codes).append(code)
-        ctx.say(f"REV {code}: {'VERIFIED' if deterministic_ok else 'FAILED'} (confidence {conf:.2f}); "
+        ctx.say(f"REV {code}: {'VERIFIED' if deterministic_ok else 'FAILED'} ({bundle.validation.state}; review score "
+                f"{conf:.2f}, uncalibrated); "
                 + ", ".join(f"{c['check']}={'ok' if c['passed'] else 'fail'}" for c in checks), kind="decision")
     return {"verified": verified_codes, "failed": failed_codes}

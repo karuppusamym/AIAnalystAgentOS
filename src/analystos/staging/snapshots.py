@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from analystos.connectors import sampling
 from analystos.connectors.base import DiscoveredAsset
-from analystos.core.ids import utcnow
+from analystos.core.ids import new_id, utcnow
 
 CHECK = "representative_population"
 
@@ -33,7 +33,12 @@ def stage_asset(loader: Any, connector: Any, source_id: str, asset: DiscoveredAs
         info["snapshot"] = sampling.snapshot_record(spec=spec, rows_staged=rows, cap=cap, truncated=rows >= cap,
                                                     source_total_rows=None, total_basis="unavailable")
         info["truncated"] = info["snapshot"]["truncated"]
+    # Data-version identity (P4-03): a load id per staging, and the content fingerprint the loader computed
+    # over the rows, so a re-stage of identical data keeps its version and changed data gets a new one.
     info["snapshot"]["staged_at"] = utcnow().isoformat()
+    info["snapshot"]["load_id"] = new_id("load")
+    if info.get("content_fingerprint"):
+        info["snapshot"]["content_fingerprint"] = info["content_fingerprint"]
     return info
 
 

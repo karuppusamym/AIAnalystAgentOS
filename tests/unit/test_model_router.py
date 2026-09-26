@@ -51,7 +51,7 @@ def test_fallback_to_next_model_on_transient_error():
         return UpstreamUnavailable("503") if len(seen) == 1 else chat_json({"x": 1}, model=p["model"])
 
     resp = make(FakeTransport(chat=chat)).complete_json("planning", "s", "u")
-    assert seen == ["anthropic/claude-sonnet-5", "openai/gpt-5.4"] and resp.model == "openai/gpt-5.4"
+    assert seen == ["openai/gpt-5.4-mini", "google/gemini-3.5-flash"] and resp.model == "google/gemini-3.5-flash"
 
 
 def test_workspace_allowlist_narrowing_fails_closed():

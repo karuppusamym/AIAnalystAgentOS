@@ -13,7 +13,14 @@ from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Feedback, Hypothesis, Insight, User
 from analystos.events.bus import emit
 from analystos.governance.audit import audit
-from analystos.governance.policy import evaluate, get_workspace, require_role, resolve_scope
+from analystos.governance.policy import (
+    evaluate,
+    get_workspace,
+    load_in_workspace,
+    require_role,
+    resolve_scope,
+    scoped_loader,
+)
 from analystos.runtime.context import default_router, workspace_call_ctx
 from analystos.runtime.engine import apply_replan
 from analystos.workflows.orchestrator import signal_run, start_run
@@ -65,17 +72,16 @@ def create_run(user: User, workspace_id: str, *, objective: str | None, source_i
     return run
 
 
-def get_run_for(session, user: User, run_id: str, minimum: str = "viewer") -> AnalysisRun:
-    run = session.get(AnalysisRun, run_id)
-    if run is None:
-        raise NotFound(f"run {run_id} not found")
-    require_role(session, user, run.workspace_id, minimum)
-    return run
+@scoped_loader
+def get_run_for(session, user: User, run_id: str, minimum: str = "viewer", workspace_id: str | None = None) -> AnalysisRun:
+    """A run the caller may see at `minimum`; with `workspace_id` (a path's) it must also belong there."""
+    return load_in_workspace(session, AnalysisRun, run_id, workspace_id, user=user, minimum=minimum, label="run")
 
 
-def control(user: User, run_id: str, action: str) -> AnalysisRun:
+@scoped_loader
+def control(user: User, run_id: str, action: str, workspace_id: str | None = None) -> AnalysisRun:
     with session_scope() as s:
-        run = get_run_for(s, user, run_id, "analyst")
+        run = get_run_for(s, user, run_id, "analyst", workspace_id)
         if run.status in TERMINAL:
             raise Conflict(f"run is {run.status}")
         if action == "pause":
@@ -211,7 +217,7 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
                            request_hash=None, error=exc.message[:500])
         return {**out, "refused": exc.message}
     try:
-        resp = router.complete("feedback_interpretation", messages, ctx=ctx, json_output=True)
+        resp = router.complete("feedback_interpretation", messages, ctx=ctx, json_output=True, validate=_valid_feedback)
     except Exception:
         return out
     data = resp.data if isinstance(resp.data, dict) else {}
@@ -231,13 +237,32 @@ def _interpret_redirect(run: AnalysisRun, text: str) -> dict[str, Any]:
             "summary": data.get("summary") or text, "interpreted_by": resp.model}
 
 
+def _valid_feedback(resp: Any) -> str | None:
+    """Escalation check (schema): an object whose filters, when present, validate as filters."""
+    data = resp.data
+    if not isinstance(data, dict):
+        return "answer is not an object"
+    filters = data.get("filters") or []
+    if not isinstance(filters, list):
+        return "filters is not a list"
+    ok = 0
+    for f in filters:
+        try:
+            Filter.model_validate({**f, "origin": "user_redirect"})
+            ok += 1
+        except Exception:
+            continue
+    return None if ok or not filters else f"none of {len(filters)} filters passed schema validation"
+
+
+@scoped_loader
 def submit_feedback(user: User, run_id: str, *, text: str, kind: str | None = None, target_type: str | None = None,
-                    target_id: str | None = None) -> dict[str, Any]:
+                    target_id: str | None = None, workspace_id: str | None = None) -> dict[str, Any]:
     from analystos.decisions import Question, decision_service
     from analystos.llm.jev import CONSEQUENTIAL_INSTRUCTIONS
 
     with session_scope() as s:
-        run = get_run_for(s, user, run_id, "analyst")
+        run = get_run_for(s, user, run_id, "analyst", workspace_id)
         s.flush()  # persist changes before detaching (expunged objects are not flushed)
         s.expunge(run)
     decisions = decision_service(default_router())

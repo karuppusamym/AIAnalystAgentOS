@@ -10,18 +10,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
-from analystos.core.errors import NotFound
 from analystos.db.models import AnalysisRun, Insight, User
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role, scoped_loader
 
 router = APIRouter(prefix="/api", tags=["evidence"])
 
 
-def _run(session: Session, workspace_id: str, run_id: str) -> AnalysisRun:
-    run = session.get(AnalysisRun, run_id)
-    if run is None or run.workspace_id != workspace_id:
-        raise NotFound("run not found")
-    return run
+@scoped_loader
+def _run(session: Session, user: User, workspace_id: str, run_id: str, minimum: str = "viewer") -> AnalysisRun:
+    return load_in_workspace(session, AnalysisRun, run_id, workspace_id, user=user, minimum=minimum, label="run")
 
 
 @router.get("/insights/{insight_id}/attested")
@@ -29,10 +26,7 @@ def attested(insight_id: str, user: User = Depends(current_user), session: Sessi
     """The verified finding as an OKF v0.2 Attested Computation (document text and frontmatter)."""
     from analystos.knowledge.attested import attested_from_insight
 
-    ins = session.get(Insight, insight_id)
-    if ins is None:
-        raise NotFound("insight not found")
-    require_role(session, user, ins.workspace_id, "viewer")
+    ins = load_in_workspace(session, Insight, insight_id, user=user, label="insight")
     ac = attested_from_insight(session, ins)
     return {"path": ac.path, "frontmatter": ac.frontmatter(), "document": ac.render()}
 
@@ -43,8 +37,7 @@ def attest_run_findings(workspace_id: str, run_id: str, user: User = Depends(cur
     from analystos.governance.audit import audit
     from analystos.knowledge.attested import write_findings
 
-    require_role(session, user, workspace_id, "editor")
-    _run(session, workspace_id, run_id)
+    _run(session, user, workspace_id, run_id, "editor")
     out = write_findings(session, run_id, author=f"human:{user.id}")
     audit(f"user:{user.id}", "knowledge.findings_attested", workspace_id=workspace_id, run_id=run_id, target=run_id,
           details={"written": out["written"], "kept_curated": out["kept_curated"], "revision": out["revision"]}, session=session)
@@ -56,8 +49,7 @@ def run_openlineage(workspace_id: str, run_id: str, user: User = Depends(current
     """OpenLineage RunEvents (START and COMPLETE/FAIL) for every governed query of the run."""
     from analystos.evidence.openlineage import events_for_run
 
-    require_role(session, user, workspace_id, "viewer")
-    _run(session, workspace_id, run_id)
+    _run(session, user, workspace_id, run_id)
     return events_for_run(session, run_id, workspace_id=workspace_id)
 
 

@@ -66,6 +66,21 @@ class BudgetExceeded(AnalystOSError):
     code, http_status = "budget_exceeded", 429
 
 
+class SpendCapReached(BudgetExceeded):
+    """A hard spend cap (platform daily or workspace monthly) would be exceeded by this call's
+    reserved estimate. The call is not sent; the caller takes its deterministic path. `details`
+    carries cap, spent, limit, estimate and the remedy the UI shows."""
+
+    code = "spend_cap_reached"
+
+
+class SpendCountersUnavailable(BudgetExceeded):
+    """The atomic spend counters (Redis) are unreachable, so a reservation cannot be proven within
+    the caps: billable model calls fail closed until they return."""
+
+    code, http_status, retryable = "spend_counters_unavailable", 503, True
+
+
 class ModelRouteUnavailable(AnalystOSError):
     """No allowed provider could serve a model profile. Fail closed: never route elsewhere silently."""
 
@@ -90,11 +105,51 @@ class LLMDisabled(ModelRouteUnavailable):
     code, retryable = "llm_disabled", False
 
 
+class EscalationUnavailable(LLMDisabled):
+    """A caller asked for the large tier after a validation failure, but the purpose's escalation
+    policy is `never`/`always_large`, the profile has no large tier, or the run was downgraded."""
+
+    code = "escalation_unavailable"
+
+
 class EgressBlocked(ModelRouteUnavailable):
     """The model transport refused a host that is not a configured provider endpoint (or, on an
     air-gapped install, not an internal one). A configuration error, never retried."""
 
     code, retryable = "egress_blocked", False
+
+
+class ModelKeyMissing(ModelRouteUnavailable):
+    """The provider needs an API key and the process environment has none (`details.env`). The key is
+    read from this process's environment only, so the API and worker processes each need it."""
+
+    code, retryable = "no_api_key", False
+
+
+class ModelPolicyBlocked(ModelRouteUnavailable):
+    """The workspace provider list or the air-gapped install excludes every model of the profile."""
+
+    code, retryable = "policy_blocked", False
+
+
+class ModelResidencyBlocked(ModelRouteUnavailable):
+    """No model of the profile has a known region matching the workspace data residency."""
+
+    code, retryable = "residency_blocked", False
+
+
+class ModelOutputInvalid(ModelRouteUnavailable):
+    """Every attempt answered, but not with the JSON the purpose needs."""
+
+    code, retryable = "invalid_output", True
+
+
+class ModelUnavailable(AnalystOSError):
+    """A step that needs a model got no usable answer. `details.reason` names the one cause (mode off,
+    no API key, provider cooldown, policy, residency, approval, budget or cap, context size, invalid
+    output), so the caller can say exactly what to fix instead of "no model route"."""
+
+    code, http_status = "model_unavailable", 503
 
 
 class ContextOverBudget(AnalystOSError):

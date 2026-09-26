@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import admin_user, current_user, db
 from analystos.api.serialize import rows
-from analystos.core.errors import InvalidInput, NotFound
+from analystos.core.errors import InvalidInput
 from analystos.db.models import DecisionRecord, Feedback, Insight, User
 from analystos.decisions import calibration
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace
 
 router = APIRouter(prefix="/api", tags=["decisions"])
 
@@ -68,10 +68,7 @@ def set_backend_state(purpose: str, backend: str, body: BackendStateIn, admin: U
 @router.post("/insights/{insight_id}/outcome")
 def finding_outcome(insight_id: str, body: FindingOutcomeIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Accept or dismiss a finding (a rejection goes through run feedback, which also replans)."""
-    ins = session.get(Insight, insight_id)
-    if ins is None:
-        raise NotFound("insight not found")
-    require_role(session, user, ins.workspace_id, "analyst")
+    ins = load_in_workspace(session, Insight, insight_id, user=user, minimum="analyst", label="insight")
     labelled = calibration.record_signal(session, f"finding.{body.signal}", f"insight:{ins.id}", user_id=user.id,
                                          workspace_id=ins.workspace_id)
     audit(f"user:{user.id}", f"insight.{body.signal}", workspace_id=ins.workspace_id, run_id=ins.run_id, target=ins.id,
@@ -91,10 +88,7 @@ def correct_feedback(feedback_id: str, body: CorrectionIn, user: User = Depends(
     submit the feedback again with an explicit kind to act on it."""
     from analystos.services.runs import FEEDBACK_KINDS
 
-    fb = session.get(Feedback, feedback_id)
-    if fb is None:
-        raise NotFound("feedback not found")
-    require_role(session, user, fb.workspace_id, "analyst")
+    fb = load_in_workspace(session, Feedback, feedback_id, user=user, minimum="analyst", label="feedback")
     if body.kind not in FEEDBACK_KINDS:
         raise InvalidInput(f"kind must be one of {sorted(FEEDBACK_KINDS)}")
     fb.data = {**(fb.data or {}), "corrected_kind": body.kind, "corrected_by": user.id}

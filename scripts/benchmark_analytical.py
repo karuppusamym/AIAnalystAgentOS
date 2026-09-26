@@ -31,8 +31,8 @@ sys.path.insert(0, str(ROOT))  # the evaluation harness lives outside the produc
 LIMITS = """## Scope and limits
 
 * Planted effects are sized clearly above the verdict layer's materiality thresholds (skills/stats.py), so recall
-  here is recall for material effects; power close to the thresholds is covered by tests/benchmarks/test_analytical_benchmarks.py,
-  not by this report.
+  here is recall for material effects; power close to the thresholds, per-method null behaviour and selection effects
+  are measured by scripts/benchmark_methods.py (evaluation/method_checks.py, P4-03), not by this report.
 * The component tier reads raw p-values, so it also reports test calibration (share of null hypotheses with raw p < α,
   expected ≈ α). The platform tier scores what a real run stored (verified insights and tested hypotheses).
 * A run with a live or local model (`--models live`) is a separate dated report; a model changes which hypotheses are
@@ -93,6 +93,11 @@ def render(results: dict, args: argparse.Namespace, problems: list[str]) -> str:
             lines.append(f"| {d} | {row['replicates']} | {row['verified']} | {_fmt(row['precision'])} | {_fmt(row['recall'])} "
                          f"({row['planted_found']}/{row['planted_total']}) | {_fmt(row['fdr'])} | {_fmt(row['null_fdr'])} | "
                          f"{row['null_tests']} | {_fmt(row['null_raw_rate'])} | {row['seconds']} |")
+        if s.by_method:
+            lines += ["", "| Method (P4-03) | tested | verified | precision | null tests | raw p<α on nulls | null FDR |",
+                      "|---|---|---|---|---|---|---|"]
+            lines += [f"| {m} | {r['tested']} | {r['verified']} | {_fmt(r['precision'])} | {r['null_tests']} | "
+                      f"{_fmt(r['null_raw_rate'])} | {_fmt(r['null_fdr'])} |" for m, r in s.by_method.items()]
         lines += ["", "Missed planted effects: " + ("; ".join(s.missed) if s.missed else "none") + ".",
                   "", "False verified findings: " + ("; ".join(s.false_findings) if s.false_findings else "none") + "."]
         if s.incomplete:

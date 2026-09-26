@@ -16,6 +16,7 @@ reconstructed and re-executed offline with `analystos.llm.replay.ReplayTransport
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -32,7 +33,12 @@ from analystos.core.errors import (
     ApprovalRequired,
     BudgetExceeded,
     EgressBlocked,
+    EscalationUnavailable,
     LLMDisabled,
+    ModelKeyMissing,
+    ModelOutputInvalid,
+    ModelPolicyBlocked,
+    ModelResidencyBlocked,
     ModelRouteUnavailable,
     ProviderQuotaExhausted,
     UpstreamUnavailable,
@@ -97,6 +103,49 @@ class ModelResponse:
     attempts: int = 1
     cached: bool = False
     cached_input_tokens: int = 0  # prompt tokens the provider served from its prompt cache (P4-T04)
+    escalated_from: str | None = None  # the small-tier model whose answer failed validation (cheap first, escalate)
+    escalation_reason: str | None = None
+    validation_error: str | None = None  # the caller's `validate` rejected this (final) answer; not cached
+
+
+@dataclass
+class _Call:
+    """What one chat call carries through its tiers."""
+
+    purpose: str
+    ctx: CallContext
+    profile_name: str
+    profile: ProfileConfig
+    rung: str
+    base_url: str
+    key: str
+    safe_messages: list[dict[str, Any]]
+    request: dict[str, Any]
+    request_hash: str
+    json_output: bool
+    max_tokens: int
+    input_estimate: int
+    validate: Callable[[ModelResponse], str | None] | None
+
+
+@dataclass
+class _Rejected:
+    """A first-tier answer that failed deterministic validation (or was not JSON): escalate."""
+
+    model: str
+    reason: str
+    attempts: int
+    response: ModelResponse | None = None
+
+
+def _failed_validation(validate: Callable[[ModelResponse], str | None] | None, response: ModelResponse) -> str | None:
+    if validate is None:
+        return None
+    try:
+        why = validate(response)
+    except Exception as exc:  # a validator that cannot read the answer has rejected it
+        why = f"unreadable answer ({type(exc).__name__}: {exc})"
+    return str(why)[:300] if why else None
 
 
 @dataclass
@@ -117,13 +166,18 @@ class UsageSink(Protocol):
                request: dict | None = None, response: dict | None = None, answered_by: str | None = None,
                cost_source: str | None = None) -> None:
         """`request`/`response` are the redacted replay payloads (see analystos.llm.replay);
-        `answered_by` is the ladder rung, `cost_source` provider | price_table@<v> | missing_price | none."""
+        `answered_by` is the ladder rung, `cost_source` provider | price_table@<v> | missing_price | none.
+        Optional keywords, passed only when set: `reservation` (settle it to cost_usd), `escalated_from` and
+        `escalation_reason` (a large-tier call made because a small-tier answer failed validation)."""
 
     def check_budget(self, ctx: CallContext, purpose: str) -> None:
         """Raise BudgetExceeded when the run/workspace budget is spent."""
 
     def remaining_fraction(self, ctx: CallContext) -> float:
         """Share of the run's budget still available (1.0 when unknown)."""
+
+    # Optional: reserve(*, ctx, purpose, model, estimate_usd) -> reservation (hard spend caps; raises
+    # BudgetExceeded) and note_cooldown(provider, seconds, reason). The router calls them when present.
 
 
 class NullSink:
@@ -196,13 +250,25 @@ _PROVIDER_COOLDOWN: dict[str, float] = {}  # provider -> monotonic time the cool
 
 
 def _cooling_down(provider: str) -> bool:
+    return cooldown_left(provider) is not None
+
+
+def cooldown_left(provider: str) -> float | None:
+    """Seconds until a provider that refused for credits (HTTP 402) is tried again, or None."""
     until = _PROVIDER_COOLDOWN.get(provider)
     if until is None:
-        return False
-    if time.monotonic() >= until:
+        return None
+    left = until - time.monotonic()
+    if left <= 0:
         _PROVIDER_COOLDOWN.pop(provider, None)
-        return False
-    return True
+        return None
+    return left
+
+
+def _quota_exhausted(provider: str, message: str) -> ProviderQuotaExhausted:
+    left = cooldown_left(provider)
+    return ProviderQuotaExhausted(message, details={"provider": provider, "status": 402,
+                                                    "retry_in_s": int(left + 0.999) if left is not None else None})
 
 
 def cached_prompt_tokens(usage: dict | None) -> int:
@@ -377,30 +443,58 @@ class ModelRouter:
 
     # ------------------------------------------------------------------ routing
     def candidates(self, purpose: str, ctx: CallContext) -> tuple[str, ProfileConfig, list[str]]:
+        """The purpose's first tier: the small models (cheap first), or under `always_large` the large tier
+        followed by the small one."""
         llm = self.settings
         override = llm.routing_overrides.get(purpose)
         if override and override in self.config.profiles:
             profile_name, profile = override, self.config.profiles[override]
         else:
             profile_name, profile = self.config.profile_for(purpose)
-        return self._resolve(profile_name, profile, ctx)
+        profile_name, profile, models = self._resolve(profile_name, profile, ctx)
+        policy = self.escalation_policy(purpose)
+        if policy == "always_large" or (not models and policy != "never"):
+            # always_large: Sonnet first. A workspace allowlist that admits only large models: they are the tier.
+            large = self._large_tier(profile_name, profile, ctx)
+            if large:
+                models = large + [m for m in models if m not in large]
+        return profile_name, profile, models
+
+    def escalation_policy(self, purpose: str) -> str:
+        """never | on_validation_failure | always_large: admin `llm.escalation`, else models.yaml."""
+        return self.settings.escalation.get(purpose) or self.config.escalation_for(purpose)
+
+    def escalation_tier(self, purpose: str, ctx: CallContext, profile_name: str, profile: ProfileConfig,
+                        first: list[str]) -> list[str]:
+        """The large models a validation failure of the first tier may escalate to ([] = none)."""
+        if self.escalation_policy(purpose) != "on_validation_failure":
+            return []
+        return [m for m in self._large_tier(profile_name, profile, ctx) if m not in first]
+
+    def _large_tier(self, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> list[str]:
+        models = self.settings.profile_escalation_models.get(profile_name) or profile.escalation_models
+        return self._allowed(list(models), profile, ctx)
 
     def _resolve(self, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> tuple[str, ProfileConfig, list[str]]:
         """Admin profile models, then platform allowlist - disabled models, workspace allowlist, family exclusions."""
         llm = self.settings
         if llm.profile_models.get(profile_name):
             profile = profile.model_copy(update={"models": list(llm.profile_models[profile_name])})
+        return profile_name, profile, self._allowed(profile.models, profile, ctx)
+
+    def _allowed(self, candidates: list[str], profile: ProfileConfig, ctx: CallContext) -> list[str]:
+        llm = self.settings
         allowed = set(self.config.allowlist) - set(llm.disabled_models)
         if ctx.allowed_models:
             allowed &= set(ctx.allowed_models)
         excluded = set(profile.exclude_families) | set(ctx.exclude_families)
-        models = [m for m in profile.models if m in allowed and family(m) not in excluded]
+        models = [m for m in candidates if m in allowed and family(m) not in excluded]
         if self._policy_block(profile, ctx):
-            models = []
-        elif ctx.data_residency:
+            return []
+        if ctx.data_residency:
             want = ctx.data_residency.strip().lower()
             models = [m for m in models if (self.config.region_of(m, profile.provider) or "").strip().lower() == want]
-        return profile_name, profile, models
+        return models
 
     def _policy_block(self, profile: ProfileConfig, ctx: CallContext) -> str | None:
         if self.air_gapped:
@@ -414,24 +508,57 @@ class ModelRouter:
         return None
 
     def _no_route(self, purpose: str, profile_name: str, profile: ProfileConfig, ctx: CallContext) -> ModelRouteUnavailable:
-        reason = self._policy_block(profile, ctx)
-        if reason is None and ctx.data_residency:
-            reason = (f"no model of profile {profile_name} has a known region matching the workspace data_residency "
-                      f"'{ctx.data_residency}' (unknown regions fail closed)")
-        return ModelRouteUnavailable(f"no allowed model for purpose '{purpose}' (profile {profile_name})"
-                                     + (f": {reason}" if reason else ""))
+        """Why a profile has no model, as its own error class: the workspace provider list (or the
+        air-gapped install), the data-residency filter, or the model allowlists."""
+        head = f"no allowed model for purpose '{purpose}' (profile {profile_name})"
+        details = {"purpose": purpose, "profile": profile_name, "provider": profile.provider}
+        blocked = self._policy_block(profile, ctx)
+        if blocked is not None:
+            return ModelPolicyBlocked(f"{head}: {blocked}", details={**details, "allowed_providers": ctx.allowed_providers})
+        if ctx.data_residency:
+            unfiltered = dataclasses.replace(ctx, data_residency=None)
+            if self._resolve(profile_name, profile, unfiltered)[2]:
+                return ModelResidencyBlocked(
+                    f"{head}: no model of profile {profile_name} has a known region matching the workspace data_residency "
+                    f"'{ctx.data_residency}' (unknown regions fail closed)", details={**details, "data_residency": ctx.data_residency})
+        return ModelRouteUnavailable(f"{head}: every model is excluded by the platform or workspace model allowlist",
+                                     details=details)
+
+    def unavailable(self, purpose: str, ctx: CallContext | None = None) -> ModelRouteUnavailable | None:
+        """Why `available()` is False, as the error `complete()` would raise (not raised): mode off,
+        no route (policy, residency, allowlist), no API key in this process, or a 402 cooldown.
+        None when the purpose is available."""
+        ctx = ctx or CallContext()
+        if self.mode(purpose) == "off":
+            return LLMDisabled(f"model use for '{purpose}' is turned off by the administrator", details={"purpose": purpose})
+        try:
+            profile_name, profile, models = self.candidates(purpose, ctx)
+        except KeyError:
+            return ModelRouteUnavailable(f"no model profile is configured for purpose '{purpose}'", details={"purpose": purpose})
+        if not models:
+            return self._no_route(purpose, profile_name, profile, ctx)
+        try:
+            self._provider(profile)
+        except ModelRouteUnavailable as exc:
+            return exc
+        if _cooling_down(profile.provider):
+            return _quota_exhausted(profile.provider, f"provider '{profile.provider}' refused for credits (HTTP 402); "
+                                                      f"deterministic path until the cooldown ends")
+        return None
 
     def _within_cost(self, purpose: str, profile_name: str, profile: ProfileConfig, models: list[str], ctx: CallContext,
-                     *, input_tokens: int, output_tokens: int, request_hash: str, request: dict) -> list[str]:
+                     *, input_tokens: int, output_tokens: int, request_hash: str, request: dict,
+                     required: bool = True) -> list[str]:
         """Drop models whose pre-call estimate exceeds the workspace approval threshold. When none
-        remain the call needs an approval: raise ApprovalRequired instead of calling silently.
+        remain the call needs an approval: raise ApprovalRequired instead of calling silently
+        (`required=False`, for an optional escalation tier: return [] instead).
         Models without price metadata cannot be proven below the limit and require approval."""
         limit = ctx.expensive_model_approval_usd
         if limit is None:
             return models
         estimates = {m: self.config.estimate_cost(m, input_tokens, output_tokens) for m in models}
         within = [m for m in models if estimates[m] is not None and estimates[m] <= limit]
-        if within:
+        if within or not required:
             return within
         priced = [m for m in models if estimates[m] is not None]
         cheapest = min(priced, key=lambda m: estimates[m]) if priced else models[0]
@@ -470,7 +597,8 @@ class ModelRouter:
             return provider.url(), ""
         key = self.api_key_lookup(provider.api_key_env)
         if not key:
-            raise ModelRouteUnavailable(f"no API key for provider '{profile.provider}' (set {provider.api_key_env})")
+            raise ModelKeyMissing(f"no API key for provider '{profile.provider}' (set {provider.api_key_env})",
+                                  details={"provider": profile.provider, "env": provider.api_key_env})
         return provider.url(), key
 
     def _chat(self, profile: ProfileConfig, base_url: str, key: str, payload: dict, timeout: float) -> dict:
@@ -481,22 +609,66 @@ class ModelRouter:
             return self.transport.chat(base_url=base_url, api_key=key, payload=payload, timeout=timeout)
         return adapter_for(provider).chat(self.transport, provider, key or None, payload, timeout)
 
+    # ------------------------------------------------------------------ spend reservations
+    def _reserve(self, ctx: CallContext, purpose: str, profile_name: str, profile: ProfileConfig, model: str, *,
+                 input_tokens: int, output_tokens: int, request_hash: str | None, request: dict | None) -> Any:
+        """Reserve the call's estimated cost under the hard spend caps before it is sent (sinks without
+        `reserve` - tests, replay - have no caps). A refusal is recorded as a refused call and raised."""
+        reserve = getattr(self.sink, "reserve", None)
+        if reserve is None:
+            return None
+        estimate = self.config.reservation_estimate(model, input_tokens, output_tokens)
+        try:
+            return reserve(ctx=ctx, purpose=purpose, model=model, estimate_usd=estimate)
+        except BudgetExceeded as exc:
+            self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
+                             status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                             request_hash=request_hash, error=exc.message[:500], tokens_saved=input_tokens,
+                             request=request, answered_by="rules", cost_source="none")
+            raise
+
+    def _record(self, reservation: Any = None, escalation: tuple[str, str] | None = None, **kw: Any) -> None:
+        """sink.record plus the optional fields (reservation to settle; escalated_from/escalation_reason)."""
+        if reservation is not None:
+            kw["reservation"] = reservation
+        if escalation is not None:
+            kw["escalated_from"], kw["escalation_reason"] = escalation
+        self.sink.record(**kw)
+
     # ------------------------------------------------------------------ chat
     def complete(self, purpose: str, messages: list[dict[str, str]], *, ctx: CallContext | None = None,
-                 json_output: bool = False, max_tokens: int | None = None) -> ModelResponse:
+                 json_output: bool = False, max_tokens: int | None = None,
+                 validate: Callable[[ModelResponse], str | None] | None = None,
+                 escalate: str | None = None, escalated_from: str | None = None) -> ModelResponse:
+        """Chat completion, cheap first. `validate` is the caller's deterministic check of an answer
+        (None = usable, else the reason it is not); an unparseable JSON answer always fails it. Under the
+        purpose's `on_validation_failure` policy a failed first-tier answer is re-asked once of the large
+        tier, recorded with escalated_from/escalation_reason. `escalate` asks the large tier directly
+        because a check further downstream failed (e.g. SQL the gateway still rejects after repairs);
+        EscalationUnavailable when the policy or profile has no large tier."""
         ctx = ctx or CallContext()
         if self.mode(purpose) == "off":
             raise LLMDisabled(f"model use for '{purpose}' is turned off by the administrator")
         profile_name, profile, models = self.candidates(purpose, ctx)
+        escalation = self.escalation_tier(purpose, ctx, profile_name, profile, models)
         llm = self.settings
         if profile.provider != "typesafe" and profile_name != "low_cost" and not profile.exclude_families \
                 and "low_cost" in self.config.profiles \
                 and getattr(self.sink, "remaining_fraction", lambda _c: 1.0)(ctx) < llm.downgrade_below_budget_fraction:
             # Budget nearly spent: finish the run on the cheapest profile instead of failing it. Same
-            # allowlists and exclusions as any call; never for independent-family verification.
+            # allowlists and exclusions as any call; never for independent-family verification, and no
+            # escalation to the large tier.
             low_name, low, downgraded = self._resolve("low_cost", self.config.profiles["low_cost"], ctx)
             if downgraded:
-                profile_name, profile, models = low_name, low, downgraded
+                profile_name, profile, models, escalation = low_name, low, downgraded, []
+        stage: tuple[str, str] | None = None
+        if escalate is not None:
+            if not escalation:
+                raise EscalationUnavailable(
+                    f"'{purpose}' cannot escalate after '{escalate[:120]}': escalation policy "
+                    f"{self.escalation_policy(purpose)}, no further large-tier model for profile {profile_name}",
+                    details={"purpose": purpose, "policy": self.escalation_policy(purpose)})
+            models, escalation, stage = escalation, [], (escalated_from or "caller", escalate[:200])
         if not models:
             raise self._no_route(purpose, profile_name, profile, ctx)
         rung = self.config.model_rung(profile_name)
@@ -515,9 +687,17 @@ class ModelRouter:
                              status="refused", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
                              request_hash=request_hash, error=f"prompt ~{estimate} tokens > limit {llm.max_prompt_tokens}",
                              tokens_saved=estimate, request=request, answered_by="rules", cost_source="none")
-            raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}")
+            raise LLMDisabled(f"prompt for '{purpose}' is ~{estimate} tokens, above the admin limit {llm.max_prompt_tokens}",
+                              details={"oversize": True, "prompt_tokens": estimate, "limit": llm.max_prompt_tokens})
+        out_tokens = max_tokens or profile.max_tokens
         models = self._within_cost(purpose, profile_name, profile, models, ctx, input_tokens=estimate,
-                                   output_tokens=max_tokens or profile.max_tokens, request_hash=request_hash, request=request)
+                                   output_tokens=out_tokens, request_hash=request_hash, request=request)
+        if escalation:  # a large model above the approval threshold is simply not an escalation target
+            escalation = self._within_cost(purpose, profile_name, profile, escalation, ctx, input_tokens=estimate,
+                                           output_tokens=out_tokens, request_hash=request_hash, request=request, required=False)
+        call = _Call(purpose=purpose, ctx=ctx, profile_name=profile_name, profile=profile, rung=rung, base_url=base_url,
+                     key=key, safe_messages=safe_messages, request=request, request_hash=request_hash,
+                     json_output=json_output, max_tokens=out_tokens, input_estimate=estimate, validate=validate)
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
             cache_key = ResponseCache.key(purpose, models, {"m": normalize_messages(safe_messages), "json": json_output,
@@ -525,79 +705,129 @@ class ModelRouter:
                                           knowledge_version=ctx.knowledge_version)
             hit = self.cache.get(cache_key)
             if hit:
+                cached = ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
+                                       cached=True)
+                why = _failed_validation(validate, cached)
                 self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=hit["model"],
                                  status="cache_hit", attempt=0, latency_ms=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
-                                 request_hash=request_hash, error=None,
+                                 request_hash=request_hash, error=f"cached answer failed validation: {why}"[:500] if why else None,
                                  tokens_saved=int(hit.get("input_tokens", 0)) + int(hit.get("output_tokens", 0)),
                                  request=request, response={"model": hit["model"], "text": redact(hit["text"]), "cached": True},
                                  answered_by="cache", cost_source="none")
-                return ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
-                                     cached=True)
+                if why is None or not escalation:
+                    cached.validation_error = why
+                    return cached
+                models, escalation, stage = escalation, [], (hit["model"], f"cached answer: {why}"[:200])
         if _cooling_down(profile.provider):
-            raise ProviderQuotaExhausted(f"provider '{profile.provider}' refused for credits recently; "
-                                         f"deterministic path until the cooldown ends")
+            raise _quota_exhausted(profile.provider, f"provider '{profile.provider}' refused for credits recently; "
+                                                     f"deterministic path until the cooldown ends")
+        outcome = self._run_tier(call, models, stage=stage, can_escalate=bool(escalation))
+        if isinstance(outcome, _Rejected):
+            log.info("escalating %s from %s to the large tier: %s", purpose, outcome.model, outcome.reason)
+            try:
+                outcome_large = self._run_tier(call, escalation, stage=(outcome.model, outcome.reason[:200]),
+                                               can_escalate=False, attempts_before=outcome.attempts)
+            except ModelRouteUnavailable:
+                if outcome.response is None:
+                    raise
+                outcome.response.validation_error = outcome.reason
+                return outcome.response  # the large tier is down: the caller validates and degrades
+            outcome = outcome_large
+        assert isinstance(outcome, ModelResponse)
+        if cache_key and not outcome.validation_error:
+            self.cache.set(cache_key, {"text": outcome.text, "data": outcome.data, "model": outcome.model,
+                                       "input_tokens": outcome.input_tokens, "output_tokens": outcome.output_tokens},
+                           llm.cache_ttl_hours * 3600)
+        return outcome
+
+    def _run_tier(self, call: _Call, models: list[str], *, stage: tuple[str, str] | None, can_escalate: bool,
+                  attempts_before: int = 0) -> ModelResponse | _Rejected:
+        """Try `models` in order with bounded retries. A transient failure retries / falls back within the
+        tier; a validation failure (unparseable JSON, `validate` says no) returns _Rejected when the caller
+        may escalate, else retries as before (JSON) or returns the answer marked invalid (validate)."""
+        c = call
         last_error: Exception | None = None
-        attempt = 0
+        attempt = attempts_before
         for model in models:
             for retry in range(self.max_retries + 1):
                 attempt += 1
-                wire = wire_messages(safe_messages, cache_control=self.config.prompt_cache(model))
-                payload: dict[str, Any] = {"model": model, "messages": wire, "temperature": profile.temperature,
-                                           "max_tokens": max_tokens or profile.max_tokens, "usage": {"include": True}}
-                if json_output:
+                wire = wire_messages(c.safe_messages, cache_control=self.config.prompt_cache(model))
+                payload: dict[str, Any] = {"model": model, "messages": wire, "temperature": c.profile.temperature,
+                                           "max_tokens": c.max_tokens, "usage": {"include": True}}
+                if c.json_output:
                     payload["response_format"] = {"type": "json_object"}
+                reservation = self._reserve(c.ctx, c.purpose, c.profile_name, c.profile, model, input_tokens=c.input_estimate,
+                                            output_tokens=c.max_tokens, request_hash=c.request_hash, request=c.request)
                 started = time.perf_counter()
+                base = {"ctx": c.ctx, "purpose": c.purpose, "profile": c.profile_name, "provider": c.profile.provider,
+                        "request_hash": c.request_hash, "request": c.request, "answered_by": c.rung}
                 try:
-                    body = self._chat(profile, base_url, key, payload, profile.timeout_seconds)
-                    text = ((body.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                    usage = body.get("usage") or {}
-                    latency = round((time.perf_counter() - started) * 1000)
-                    data = None
-                    if json_output:
-                        data = parse_json_text(text)  # JSONDecodeError -> next attempt
-                    answered_model = str(body.get("model") or model)
-                    in_tok, out_tok = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
-                    cost, cost_source = self._cost(answered_model if answered_model in self.config.models else model,
-                                                   usage, in_tok, out_tok)
-                    response = ModelResponse(text=text, data=data, model=answered_model, provider=profile.provider,
-                                             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost, latency_ms=latency,
-                                             attempts=attempt, cached_input_tokens=cached_prompt_tokens(usage))
-                    self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=response.model,
-                                     status="ok", attempt=attempt, latency_ms=latency, input_tokens=response.input_tokens,
-                                     output_tokens=response.output_tokens, cost_usd=response.cost_usd,
-                                     request_hash=request_hash, error=_price_error(cost_source, response.model, self.config),
-                                     request=request, response={"model": response.model, "text": redact(text), "usage": usage},
-                                     answered_by=rung, cost_source=cost_source)
-                    if cache_key:
-                        self.cache.set(cache_key, {"text": text, "data": data, "model": response.model,
-                                                   "input_tokens": response.input_tokens, "output_tokens": response.output_tokens},
-                                       llm.cache_ttl_hours * 3600)
-                    return response
-                except (UpstreamUnavailable, json.JSONDecodeError, ValueError) as exc:
+                    body = self._chat(c.profile, c.base_url, c.key, payload, c.profile.timeout_seconds)
+                except (UpstreamUnavailable, ModelRouteUnavailable, ValueError) as exc:
                     last_error = exc
-                    self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
-                                     status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
-                                     request=request, answered_by=rung, cost_source="none")
-                    log.warning("model call failed purpose=%s model=%s attempt=%s: %s", purpose, model, attempt, exc)
+                    self._record(reservation, stage, **base, model=model, status="error", attempt=attempt,
+                                 latency_ms=round((time.perf_counter() - started) * 1000), input_tokens=0, output_tokens=0,
+                                 cost_usd=0.0, error=str(exc)[:500], cost_source="none")
+                    if isinstance(exc, ProviderQuotaExhausted):  # 402: no model behind this provider will work either
+                        _PROVIDER_COOLDOWN[c.profile.provider] = time.monotonic() + PROVIDER_COOLDOWN_SECONDS
+                        note = getattr(self.sink, "note_cooldown", None)
+                        if note is not None:
+                            note(c.profile.provider, PROVIDER_COOLDOWN_SECONDS, str(exc)[:300])
+                        log.warning("provider %s refused for credits; cooling down %ss", c.profile.provider,
+                                    PROVIDER_COOLDOWN_SECONDS)
+                        raise _quota_exhausted(c.profile.provider, exc.message) from exc
+                    if isinstance(exc, ModelRouteUnavailable):  # 4xx: this model will not work; try the next model
+                        break
+                    log.warning("model call failed purpose=%s model=%s attempt=%s: %s", c.purpose, model, attempt, exc)
                     if retry < self.max_retries:
                         time.sleep(min(0.5 * 2**retry, 4))
-                except ProviderQuotaExhausted as exc:  # 402: no model behind this provider will work either
-                    self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
-                                     status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
-                                     request=request, answered_by=rung, cost_source="none")
-                    _PROVIDER_COOLDOWN[profile.provider] = time.monotonic() + PROVIDER_COOLDOWN_SECONDS
-                    log.warning("provider %s refused for credits; cooling down %ss", profile.provider, PROVIDER_COOLDOWN_SECONDS)
-                    raise
-                except ModelRouteUnavailable as exc:  # 4xx: this model will not work; try next model
-                    last_error = exc
-                    self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=model,
-                                     status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
-                                     input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
-                                     request=request, answered_by=rung, cost_source="none")
-                    break
-        raise ModelRouteUnavailable(f"all models failed for purpose '{purpose}': {last_error}")
+                    continue
+                latency = round((time.perf_counter() - started) * 1000)
+                text = ((body.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                usage = body.get("usage") or {}
+                answered_model = str(body.get("model") or model)
+                in_tok, out_tok = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+                cost, cost_source = self._cost(answered_model if answered_model in self.config.models else model,
+                                               usage, in_tok, out_tok)
+                spent = {"input_tokens": in_tok, "output_tokens": out_tok, "cost_usd": cost, "cost_source": cost_source,
+                         "latency_ms": latency}
+                data = None
+                if c.json_output:
+                    try:
+                        data = parse_json_text(text)
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        # Billed all the same: the tokens and cost of the unusable answer are recorded.
+                        last_error = exc
+                        self._record(reservation, stage, **base, **spent, model=answered_model, status="error",
+                                     attempt=attempt, error=f"invalid_json: {exc}"[:500])
+                        if can_escalate:
+                            return _Rejected(model=answered_model, reason=f"invalid_json: {exc}"[:200], attempts=attempt)
+                        log.warning("model answer unparseable purpose=%s model=%s attempt=%s: %s", c.purpose, model, attempt, exc)
+                        if retry < self.max_retries:
+                            time.sleep(min(0.5 * 2**retry, 4))
+                        continue
+                response = ModelResponse(text=text, data=data, model=answered_model, provider=c.profile.provider,
+                                         input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost, latency_ms=latency,
+                                         attempts=attempt, cached_input_tokens=cached_prompt_tokens(usage),
+                                         escalated_from=stage[0] if stage else None,
+                                         escalation_reason=stage[1] if stage else None)
+                why = _failed_validation(c.validate, response)
+                recorded_error = _price_error(cost_source, response.model, self.config)
+                if why is not None and can_escalate:
+                    self._record(reservation, stage, **base, **spent, model=response.model, status="error", attempt=attempt,
+                                 error=f"validation: {why}"[:500],
+                                 response={"model": response.model, "text": redact(text), "usage": usage})
+                    return _Rejected(model=response.model, reason=f"validation: {why}"[:200], attempts=attempt,
+                                     response=response)
+                response.validation_error = why
+                self._record(reservation, stage, **base, **spent, model=response.model, status="ok", attempt=attempt,
+                             error=recorded_error or (f"validation: {why}"[:500] if why else None),
+                             response={"model": response.model, "text": redact(text), "usage": usage})
+                return response
+        if isinstance(last_error, (json.JSONDecodeError, ValueError)):
+            raise ModelOutputInvalid(f"no model returned valid output for purpose '{c.purpose}': {last_error}",
+                                     details={"purpose": c.purpose, "attempts": attempt})
+        raise ModelRouteUnavailable(f"all models failed for purpose '{c.purpose}': {last_error}")
 
     def complete_json(self, purpose: str, system: str, user: str, *, ctx: CallContext | None = None,
                       max_tokens: int | None = None) -> ModelResponse:
@@ -638,7 +868,12 @@ class ModelRouter:
                                                             "cached": True}, answered_by="cache", cost_source="none")
                 return DecisionResponse(answers=hit["answers"], model=hit["model"], cached=True)
         last_error: Exception | None = None
+        in_estimate = estimate_tokens(json.dumps(request, default=str))
         for attempt in range(1, self.max_retries + 2):
+            # typed answers are a few tokens; the profile's max_tokens would over-reserve by orders of magnitude
+            reservation = self._reserve(ctx, purpose, profile_name, profile, models[0], input_tokens=in_estimate,
+                                        output_tokens=min(profile.max_tokens, 256), request_hash=request_hash,
+                                        request=request)
             started = time.perf_counter()
             try:
                 body = self.transport.decide(base_url=base_url, api_key=key,
@@ -655,7 +890,7 @@ class ModelRouter:
                                                usage, in_tok, out_tok)
                 result = DecisionResponse(answers=answers, model=answered_model, cost_usd=cost, latency_ms=latency,
                                           input_tokens=in_tok, output_tokens=out_tok)
-                self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=result.model,
+                self._record(reservation, ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=result.model,
                                  status="ok", attempt=attempt, latency_ms=latency, input_tokens=result.input_tokens,
                                  output_tokens=result.output_tokens, cost_usd=result.cost_usd, request_hash=request_hash,
                                  error=_price_error(cost_source, result.model, self.config),
@@ -667,7 +902,7 @@ class ModelRouter:
                 return result
             except (UpstreamUnavailable, ModelRouteUnavailable) as exc:
                 last_error = exc
-                self.sink.record(ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=models[0],
+                self._record(reservation, ctx=ctx, purpose=purpose, profile=profile_name, provider=profile.provider, model=models[0],
                                  status="error", attempt=attempt, latency_ms=round((time.perf_counter() - started) * 1000),
                                  input_tokens=0, output_tokens=0, cost_usd=0.0, request_hash=request_hash, error=str(exc)[:500],
                                  request=request, answered_by="decision", cost_source="none")

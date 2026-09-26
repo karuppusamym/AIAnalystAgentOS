@@ -294,6 +294,38 @@ def complete_from_run(run_id: str) -> None:
         _finish(srun_id, "failed", {"run_id": run_id}, error=f"run {status}: {summary.get('error') or ''}".strip())
 
 
+DEMO_PREFIX = "[demo] "  # name prefix of schedules/monitors an evidence or demo script creates
+
+
+def is_demo(name: str, config: dict | None) -> bool:
+    """Demo items are marked by the scripts that create them: `config.demo = true` and a "[demo] " name."""
+    return bool((config or {}).get("demo")) or (name or "").startswith(DEMO_PREFIX.strip())
+
+
+def disable_demo(session: Session, *, include_all: bool = False, workspace_id: str | None = None,
+                 dry_run: bool = False, actor: str = "cli") -> dict[str, Any]:
+    """Disable the schedules and monitors demo/evidence scripts created (or, with `include_all`, every
+    enabled one), so a dev stack stops spending model credit on them. Disabled, not deleted: history,
+    alerts and series stay; re-enable in the UI. Audited."""
+    out: dict[str, list[dict[str, str]]] = {"schedules": [], "monitors": []}
+    for model, key in ((Schedule, "schedules"), (Monitor, "monitors")):
+        stmt = select(model).where(model.enabled.is_(True))
+        if workspace_id:
+            stmt = stmt.where(model.workspace_id == workspace_id)
+        for item in session.scalars(stmt):
+            if include_all or is_demo(item.name, item.config):
+                out[key].append({"id": item.id, "workspace_id": item.workspace_id, "name": item.name})
+                if not dry_run:
+                    item.enabled = False
+                    if isinstance(item, Schedule):
+                        item.next_run_at = None
+    if not dry_run and (out["schedules"] or out["monitors"]):
+        audit(actor, "schedules.demo_disabled", target=workspace_id or "all",
+              details={"include_all": include_all, "schedules": [x["id"] for x in out["schedules"]],
+                       "monitors": [x["id"] for x in out["monitors"]]}, session=session)
+    return {"dry_run": dry_run, "include_all": include_all, **out}
+
+
 def nightly_calibration() -> None:
     """Decision calibration (P4-T09) once a day, whichever scheduler process gets the advisory lock."""
     from analystos.decisions.calibration import maybe_run_nightly

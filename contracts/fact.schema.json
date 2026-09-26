@@ -1,0 +1,167 @@
+{
+  "additionalProperties": false,
+  "description": "One number a finding may quote, bound to what it measures. `value` is in `unit` exactly as the\nstatistic produced it (a rate is a `fraction` 0..1; its percent rendering is derived).",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "level",
+        "comparison",
+        "change",
+        "share",
+        "count",
+        "statistic"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "metric": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metric"
+    },
+    "value": {
+      "title": "Value",
+      "type": "number"
+    },
+    "unit": {
+      "enum": [
+        "fraction",
+        "percent",
+        "points",
+        "ratio",
+        "count",
+        "hours",
+        "days",
+        "minutes",
+        "seconds",
+        "value",
+        "coefficient",
+        "probability"
+      ],
+      "title": "Unit",
+      "type": "string"
+    },
+    "subject": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Subject"
+    },
+    "dimension": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dimension"
+    },
+    "baseline": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Baseline"
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "higher",
+            "lower",
+            "increase",
+            "decrease",
+            "equal"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Direction"
+    },
+    "window": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Window"
+    },
+    "method": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Method"
+    },
+    "query_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Query Ids",
+      "type": "array"
+    },
+    "result_hashes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Result Hashes",
+      "type": "array"
+    },
+    "primary": {
+      "default": false,
+      "title": "Primary",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "role",
+    "kind",
+    "value",
+    "unit"
+  ],
+  "title": "Fact",
+  "type": "object"
+}

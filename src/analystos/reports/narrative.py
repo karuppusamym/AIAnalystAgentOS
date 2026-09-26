@@ -78,8 +78,10 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 def _md_insight(i: ReportInsight, kind: str, with_evidence: bool) -> list[str]:
     status = "verified" if i.verified else "unverified"
     tag = f" [{i.change.upper()}]" if i.change else ""
-    out = [f"### {md_escape(i.code)} - {md_escape(i.title)}{tag}", "",
-           f"_{status}, confidence {C.confidence_pct(i.confidence)}_", "", md_escape(i.finding), ""]
+    evidence = i.evidence_label()
+    line = (f"_{status}, {evidence}, review score {C.confidence_pct(i.confidence)} (uncalibrated)_" if evidence
+            else f"_{status}, confidence {C.confidence_pct(i.confidence)}_")
+    out = [f"### {md_escape(i.code)} - {md_escape(i.title)}{tag}", "", line, "", md_escape(i.finding), ""]
     if i.caveats:
         out += ["Caveats:"] + [f"- {md_escape(c)}" for c in i.caveats] + [""]
     if with_evidence and i.evidence_queries:
@@ -236,7 +238,12 @@ def _badge(text: str, cls: str) -> str:
 
 def _html_insight(i: ReportInsight, kind: str, with_evidence: bool) -> str:
     badges = _badge("verified" if i.verified else "unverified", "ok" if i.verified else "muted")
-    badges += " " + _badge(f"confidence {C.confidence_pct(i.confidence)}", "muted")
+    evidence = i.evidence_label()
+    if evidence:
+        badges += " " + _badge(evidence, "muted" if i.validation != "confirmed" or i.stale else "ok")
+        badges += " " + _badge(f"review score {C.confidence_pct(i.confidence)} (uncalibrated)", "muted")
+    else:
+        badges += " " + _badge(f"confidence {C.confidence_pct(i.confidence)}", "muted")
     if i.change:
         badges += " " + _badge(i.change, "chg")
     parts = [f'<article class="finding"><h3><span class="code">{esc(i.code)}</span> {esc(i.title)}</h3>',

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from analystos.api.deps import current_user, db, streaming_user
+from analystos.api.deps import StreamAuth, current_user, db, stream_guard, streaming_auth
 from analystos.db.base import session_scope
 from analystos.db.models import User
 from analystos.services import ask as ask_svc
@@ -73,18 +73,24 @@ def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(curr
 
 
 @router.post("/ask/threads/{thread_id}/turns")
-async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, user: User = Depends(streaming_user)):
+async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: StreamAuth = Depends(streaming_auth)):
     """Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
-    events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned."""
+    events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
+    A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access."""
     from analystos.events.stream import run_blocking
+
+    user = auth.user
+
+    def load(session: Session, caller: User) -> object:
+        return ask_svc._thread_for(session, caller, thread_id)
 
     def check() -> None:
         with session_scope() as s:
-            ask_svc._thread_for(s, s.merge(user), thread_id)
+            load(s, s.merge(user))
 
     await run_blocking(check)  # an unknown thread is a 404 before any stream opens
     if "text/event-stream" in request.headers.get("accept", ""):
-        return StreamingResponse(ask_svc.stream_turn(user, thread_id, body.question, body.parameters),
+        return StreamingResponse(ask_svc.stream_turn(user, thread_id, body.question, body.parameters, guard=stream_guard(auth, load)),
                                  media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     import anyio
 

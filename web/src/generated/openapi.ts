@@ -184,6 +184,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/models/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Models Health
+         * @description Per provider: key present in this process (never the key), last success, cooldown, today's spend vs
+         *     the daily cap. `?probe=1` sends one tiny billable request per provider to verify credits.
+         */
+        get: operations["models_health_api_admin_models_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/prompts": {
         parameters: {
             query?: never;
@@ -515,6 +536,7 @@ export interface paths {
          * Ask Turn
          * @description Ask in a thread. With `Accept: text/event-stream` the plain-language stages stream as `stage`
          *     events, then `turn` (the persisted answer or refusal) and `end`; otherwise the turn is returned.
+         *     A streamed turn ends with `expired` or `revoked` (and nothing after) if the caller loses access.
          */
         post: operations["ask_turn_api_ask_threads__thread_id__turns_post"];
         delete?: never;
@@ -1434,6 +1456,8 @@ export interface paths {
          * Events
          * @description Persisted event stream as Server-Sent Events. Reconnect with ?after_id=<last id> (or Last-Event-ID).
          *     Database reads run in worker threads; new events arrive by Redis nudge (polling only as a fallback).
+         *     The caller is re-authorized while the stream is open: when the token expires or access is lost the
+         *     stream ends with an `expired` or `revoked` event and sends nothing after it.
          */
         get: operations["events_api_workspaces__workspace_id__analysis__run_id__events_get"];
         put?: never;
@@ -3967,6 +3991,40 @@ export interface operations {
     models_api_admin_models_get: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    models_health_api_admin_models_health_get: {
+        parameters: {
+            query?: {
+                probe?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;

@@ -14,7 +14,7 @@ from analystos.api.deps import admin_user, current_user, db
 from analystos.api.serialize import row
 from analystos.db.base import session_scope
 from analystos.db.models import McpServer, User
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.mcp import client as mcp_client
 from analystos.mcp import grants as mcp_grants
 
@@ -78,17 +78,20 @@ def list_servers(workspace_id: str, user: User = Depends(current_user), session:
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/allow")
 def allow_server(workspace_id: str, server_id: str, body: AllowIn, user: User = Depends(current_user),
                  session: Session = Depends(db, scope="function")):
+    load_in_workspace(session, McpServer, server_id, workspace_id, user=user, label="MCP server")
     return _server_out(mcp_client.set_allowed(session, user, workspace_id, server_id, body.allowed))
 
 
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/refresh")
 def refresh_server(workspace_id: str, server_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    load_in_workspace(session, McpServer, server_id, workspace_id, user=user, label="MCP server")
     return _server_out(mcp_client.refresh_tools(session, user, workspace_id, server_id))
 
 
 @router.post("/workspaces/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}/classify")
 def classify_tool(workspace_id: str, server_id: str, tool_name: str, body: ClassifyIn, user: User = Depends(current_user),
                   session: Session = Depends(db, scope="function")):
+    load_in_workspace(session, McpServer, server_id, workspace_id, user=user, label="MCP server")
     return _server_out(mcp_client.classify_tool(session, user, workspace_id, server_id, tool_name, body.side_effect))
 
 

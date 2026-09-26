@@ -22,7 +22,7 @@ from analystos.db.models import (
     User,
 )
 from analystos.governance.audit import audit
-from analystos.governance.policy import require_role
+from analystos.governance.policy import load_in_workspace, require_role
 from analystos.llm.config import load_models_config
 from analystos.tools.registry import list_tools
 
@@ -63,8 +63,9 @@ def context_entity(entry_id: str, user: User = Depends(current_user), session: S
     owner = e.workspace_id if e is not None else (doc.workspace_id if doc is not None else None)
     if e is None and doc is None:
         raise NotFound("context entry not found")
-    if owner:
-        require_role(session, user, owner, "viewer")
+    if owner:  # a workspace's entry or document: the caller's role there decides (404 otherwise)
+        load_in_workspace(session, ContextEntry if e is not None else KnowledgeDocument, entry_id, user=user,
+                          label="context entry")
     view = get_entry(session, owner, entry_id) if owner else None
     if view is None:  # a platform-pack document: visible to every workspace
         from analystos.knowledge.entries import doc_entry
@@ -158,11 +159,22 @@ def models(_: User = Depends(current_user)):
     router_ = default_router()
     effective = {}
     for purpose in cfg.routing:
-        profile, _, models = router_.candidates(purpose, CallContext())
+        profile, profile_cfg, models = router_.candidates(purpose, CallContext())
         effective[purpose] = {"profile": profile, "models": models, "mode": router_.mode(purpose), "ladder": router_.ladder(purpose),
                               "available": router_.available(purpose), "deterministic_path": purpose in DETERMINISTIC_CAPABLE,
-                              "decision_model": cfg.profiles[cfg.routing[purpose]].provider == "typesafe"}
+                              "decision_model": cfg.profiles[cfg.routing[purpose]].provider == "typesafe",
+                              "escalation": router_.escalation_policy(purpose),
+                              "escalation_models": router_.escalation_tier(purpose, CallContext(), profile, profile_cfg, models)}
     return {**cfg.public_view(), "effective": effective, "available": {p: v["available"] for p, v in effective.items()}}
+
+
+@router.get("/admin/models/health")
+def models_health(probe: bool = False, _: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
+    """Per provider: key present in this process (never the key), last success, cooldown, today's spend vs
+    the daily cap. `?probe=1` sends one tiny billable request per provider to verify credits."""
+    from analystos.services.model_health import health
+
+    return health(session, probe=probe)
 
 
 class SettingsPatch(BaseModel):
@@ -242,6 +254,21 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
     def bucket() -> dict:
         return {"calls": 0, "answered": 0, "tokens_used": 0, "tokens_saved": 0, "cost_usd": 0.0}
 
+    # Cheap first, escalate: calls the large tier made because a small-tier answer failed validation,
+    # by purpose and reason, and the small-tier calls whose answers were rejected (the cost of escalating).
+    escalations: dict[str, dict] = {}
+    for purpose, model, reason, n, cost in session.execute(
+            select(ModelCall.purpose, ModelCall.model, ModelCall.escalation_reason, func.count(),
+                   func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
+            .where(ModelCall.created_at >= since, ModelCall.escalated_from.is_not(None), ModelCall.status.in_(("ok", "error")))
+            .group_by(ModelCall.purpose, ModelCall.model, ModelCall.escalation_reason)).all():
+        e = escalations.setdefault(purpose, {"calls": 0, "cost_usd": 0.0, "by_model": {}, "by_reason": {}})
+        e["calls"] += n
+        e["cost_usd"] += float(cost)
+        e["by_model"][model] = e["by_model"].get(model, 0) + n
+        kind = (reason or "unknown").split(":", 1)[0]
+        e["by_reason"][kind] = e["by_reason"].get(kind, 0) + n
+
     def add(b: dict, status: str, n: int, used: int, saved: int, cost: float) -> None:
         b["calls"] += n if status in ("ok", "error") else 0  # requests sent to a provider
         b["answered"] += n if status != "error" else 0  # the rung produced the answer
@@ -283,8 +310,10 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
                                .group_by(ModelCall.model)).all()
     missing = [{"model": m, "calls": n, "tokens": int(t)} for m, n, t in unpriced]
     totals["missing_price_calls"] = sum(m["calls"] for m in missing)
+    totals["escalations"] = sum(e["calls"] for e in escalations.values())
+    totals["escalation_cost_usd"] = round(sum(e["cost_usd"] for e in escalations.values()), 6)
     return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung, "by_model": by_model,
-            "missing_price": missing, "prices_version": load_models_config().prices_version,
+            "escalations": escalations, "missing_price": missing, "prices_version": load_models_config().prices_version,
             "cost_complete": not missing}
 
 

@@ -68,6 +68,8 @@ class ReplicateScore:
     seconds: float = 0.0
     run_id: str | None = None
     status: str = "COMPLETED"  # platform tier: how the run ended
+    # per analysis method (P4-03 method-specific evaluation): tested / null_tests / null_raw_significant
+    tested_by_method: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def fdp(self) -> float:
@@ -213,9 +215,13 @@ def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None
     for t in tested:
         spec_d = t["spec"].model_dump(mode="json")
         truth, _ = classify(ds, spec_d, _top(t["stat"]), t["stat"].highlights)
+        per = score.tested_by_method.setdefault(spec_d["method"], {"tested": 0, "null_tests": 0, "null_raw_significant": 0})
+        per["tested"] += 1
         if truth == "false":
             score.null_tests += 1
             score.null_raw_significant += int(t["stat"].p_value is not None and t["stat"].p_value < ALPHA)
+            per["null_tests"] += 1
+            per["null_raw_significant"] += int(t["stat"].p_value is not None and t["stat"].p_value < ALPHA)
         if not (t["stat"].supported and t.get("q") is not None and t["q"] < ALPHA):
             continue
         if not verify_analysis(t["spec"], run_sql, t["stat"], alpha=ALPHA).agrees:
@@ -249,6 +255,28 @@ class Summary:
     missed: list[str] = field(default_factory=list)
     false_findings: list[str] = field(default_factory=list)
     incomplete: list[str] = field(default_factory=list)  # platform runs that did not complete
+    by_method: dict[str, dict[str, Any]] = field(default_factory=dict)  # P4-03: per analysis method
+
+
+def by_method(scores: list[ReplicateScore]) -> dict[str, dict[str, Any]]:
+    """Per-method verified findings, precision, null calibration and FDR under the global null (the mean,
+    over global-null replicates, of that method's false-discovery proportion)."""
+    names = sorted({m for r in scores for m in r.tested_by_method} | {f.method for r in scores for f in r.findings})
+    out: dict[str, dict[str, Any]] = {}
+    for m in names:
+        tested = sum(r.tested_by_method.get(m, {}).get("tested", 0) for r in scores)
+        null_tests = sum(r.tested_by_method.get(m, {}).get("null_tests", 0) for r in scores)
+        raw = sum(r.tested_by_method.get(m, {}).get("null_raw_significant", 0) for r in scores)
+        found = [f for r in scores for f in r.findings if f.method == m]
+        tp, fp = sum(f.truth == "true" for f in found), sum(f.truth == "false" for f in found)
+        null_reps = [r for r in scores if not r.effects]
+        fdp = [sum(f.truth == "false" for f in r.findings if f.method == m) /
+               max(sum(f.truth in ("true", "false") for f in r.findings if f.method == m), 1) for r in null_reps]
+        out[m] = {"tested": tested, "verified": len(found), "true_positive": tp, "false_positive": fp,
+                  "precision": round(tp / (tp + fp), 4) if tp + fp else None, "null_tests": null_tests,
+                  "null_raw_rate": round(raw / null_tests, 4) if null_tests and any(r.tier == "component" for r in scores) else None,
+                  "null_fdr": round(sum(fdp) / len(fdp), 4) if fdp else 0.0}
+    return out
 
 
 def summarize(scores: list[ReplicateScore], tier: str) -> Summary:
@@ -281,7 +309,8 @@ def summarize(scores: list[ReplicateScore], tier: str) -> Summary:
                    fdr=overall["fdr"], null_fdr=overall["null_fdr"], null_tests=overall["null_tests"],
                    null_raw_rate=overall["null_raw_rate"], planted_found=overall["planted_found"],
                    planted_total=overall["planted_total"], by_domain=by_domain, missed=missed, false_findings=false,
-                   incomplete=[f"{s.domain} seed {s.seed}: {s.status} ({s.run_id})" for s in scores if s.status != "COMPLETED"])
+                   incomplete=[f"{s.domain} seed {s.seed}: {s.status} ({s.run_id})" for s in scores if s.status != "COMPLETED"],
+                   by_method=by_method(scores))
 
 
 def check(summary: Summary, thresholds: dict[str, float] = THRESHOLDS) -> list[str]:
@@ -295,6 +324,9 @@ def check(summary: Summary, thresholds: dict[str, float] = THRESHOLDS) -> list[s
         problems.append(f"{summary.tier}: FDR {summary.fdr} > nominal α {thresholds['fdr_max']}")
     if summary.null_fdr > thresholds["null_fdr_max"]:
         problems.append(f"{summary.tier}: FDR under the global null {summary.null_fdr} > {thresholds['null_fdr_max']}")
+    for m, row in summary.by_method.items():  # P4-03: the bound holds per method, not only on average
+        if row["null_fdr"] > thresholds["null_fdr_max"]:
+            problems.append(f"{summary.tier}: {m} FDR under the global null {row['null_fdr']} > {thresholds['null_fdr_max']}")
     return problems
 
 
@@ -324,12 +356,17 @@ def _wait(run_id: str, timeout: float) -> str:
     return "TIMEOUT"
 
 
-def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None = None, timeout: float = 1200) -> ReplicateScore:
+def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None = None, timeout: float = 1200,
+                 source: str = "csv") -> ReplicateScore:
     """One benchmark dataset through the real platform: Parquet upload -> file source -> discovery ->
     staged snapshot (loader) -> run (every query through QueryGateway) -> verified insights. Needs the
     control-plane database and the analytics plane; the orchestrator is whatever ANALYSTOS_ORCHESTRATOR
     says (`local` in CI). Whether models answer is decided by the environment (no key = the rule path)
-    and the platform settings, exactly as in production."""
+    and the platform settings, exactly as in production.
+
+    `source="duckdb"` uploads the dataset as a DuckDB database file instead and registers it with
+    the pushdown opt-in (`execution_mode: pushdown`): nothing is staged, and every statement of the
+    run executes in the DuckDB engine on the file (read-only), through the same gateway (DEX-001)."""
     from sqlalchemy import select
 
     from analystos.core.config import get_settings
@@ -352,9 +389,19 @@ def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None 
         s.flush()
         folder = settings.upload_dir / ws.id
         folder.mkdir(parents=True, exist_ok=True)
-        ds.frame.to_parquet(folder / f"{ds.table}.parquet", index=False)
-        src = register_source(s, admin, ws.id, kind="csv", name=f"{domain} benchmark",
-                              config={"path": f"{ws.id}/{ds.table}.parquet"}, secret_ref=None)
+        if source == "duckdb":
+            import duckdb
+
+            con = duckdb.connect(str(folder / f"{ds.table}.duckdb"))
+            con.register("frame", ds.frame)
+            con.execute(f'CREATE TABLE "{ds.table}" AS SELECT * FROM frame')
+            con.close()
+            src = register_source(s, admin, ws.id, kind="duckdb", name=f"{domain} benchmark (DuckDB)",
+                                  config={"path": f"{ws.id}/{ds.table}.duckdb", "execution_mode": "pushdown"}, secret_ref=None)
+        else:
+            ds.frame.to_parquet(folder / f"{ds.table}.parquet", index=False)
+            src = register_source(s, admin, ws.id, kind="csv", name=f"{domain} benchmark",
+                                  config={"path": f"{ws.id}/{ds.table}.parquet"}, secret_ref=None)
         s.flush()
         ws_id, src_id = ws.id, src.id
         s.expunge(admin)

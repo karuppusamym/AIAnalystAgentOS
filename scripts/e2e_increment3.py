@@ -125,6 +125,7 @@ def main() -> int:
         routing.get("verification", {}).get("mode") == "always"
     ev["settings"] = {"base_version": base_version, "modes": {p: r.get("mode") for p, r in routing.items()}}
 
+    demo_items: list[str] = []
     try:
         # 3. workspace + an uploaded SQLite database registered as a source
         ws = admin.post("/api/workspaces", {"name": f"Retail orders (SQLite) {started:%Y%m%d-%H%M}", "objective": OBJECTIVE,
@@ -218,22 +219,33 @@ def main() -> int:
         ev["token_savings"] = sav
 
         # 10. forecast-deviation monitor + scheduled crawl
-        mon = analyst.post(f"/api/workspaces/{wid}/monitors", {"name": "Weekly orders vs forecast", "kind": "forecast_deviation",
-                                                              "config": {"metric": "record_count", "grain": "week", "z": 2.5}})
+        # Demo items are marked ("[demo] ", config.demo) and disabled in `finally` below.
+        mon = analyst.post(f"/api/workspaces/{wid}/monitors", {"name": "[demo] Weekly orders vs forecast",
+                                                              "kind": "forecast_deviation",
+                                                              "config": {"metric": "record_count", "grain": "week", "z": 2.5,
+                                                                         "demo": True}})
+        demo_items.append(f"/api/monitors/{mon['id']}")
         mres = analyst.post(f"/api/monitors/{mon['id']}/evaluate")
         check["12_forecast_monitor_evaluated"] = "expected" in (mres.get("result") or mres) or "expected" in json.dumps(mres)
-        sch = analyst.post(f"/api/workspaces/{wid}/schedules", {"name": "Nightly catalog crawl", "kind": "crawl", "cron": "17 2 * * *",
-                                                               "timezone": "UTC", "config": {"mode": "incremental"}})
+        sch = analyst.post(f"/api/workspaces/{wid}/schedules", {"name": "[demo] Nightly catalog crawl", "kind": "crawl",
+                                                               "cron": "17 2 * * *", "timezone": "UTC",
+                                                               "config": {"mode": "incremental", "demo": True}})
+        demo_items.append(f"/api/schedules/{sch['id']}")
         srun = analyst.post(f"/api/schedules/{sch['id']}/run")
         check["13_scheduled_crawl_succeeded"] = srun["status"] == "succeeded" and bool(srun["result"]["crawls"])
         ev["monitor"], ev["scheduled_crawl"] = mres, srun
     finally:
-        # 11. restore the platform settings that were in force before the evidence run
+        # 11. demo schedules/monitors off (they would keep firing, and calling models, on this stack)
+        for path in demo_items:
+            status, _ = analyst.call("PATCH", path, {"enabled": False}, expect=True)
+            print(f"disabled demo item {path} (HTTP {status}); leftovers: `analystos schedules disable-demo`")
+        # 12. restore the platform settings that were in force before the evidence run ("balanced" is the
+        # default; max_quality would leave every purpose on the large model tier)
         hist = admin.get("/api/admin/settings/history")
         if base_version:
             admin.post("/api/admin/settings/rollback", {"version": base_version, "note": "restore after increment-3 evidence"})
         else:
-            admin.post("/api/admin/settings/preset", {"preset": "max_quality", "note": "restore defaults after increment-3 evidence"})
+            admin.post("/api/admin/settings/preset", {"preset": "balanced", "note": "restore defaults after increment-3 evidence"})
         ev["settings"]["history_top"] = hist[:3]
 
     out = Path(args.out)

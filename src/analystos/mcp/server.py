@@ -121,7 +121,9 @@ def _tool_finding_evidence(principal: G.ClientPrincipal, ws: str, args: dict[str
         return {"id": ins.id, "run_id": ins.run_id, "code": ins.code, "title": ins.title, "finding": ins.finding,
                 "status": ins.status, "verified": ins.verified, "confidence": ins.confidence,
                 "population_size": ins.population_size, "caveats": ins.caveats, "evidence": ins.evidence,
-                "verification": ins.verification, "queries": queries}
+                "verification": ins.verification, "queries": queries,
+                # P4-03: discovery/confirmed state, staleness and the typed evidence bundle
+                "validation": ins.validation, "stale": ins.stale_since is not None, "evidence_bundle": ins.evidence_bundle}
 
 
 def _tool_validate_sql(principal: G.ClientPrincipal, ws: str, args: dict[str, Any]) -> dict[str, Any]:
