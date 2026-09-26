@@ -18,6 +18,11 @@ def test_owner_can_disable_and_reactivate_workspace(control_db):
                            json={"name": "Lifecycle API", "objective": "Measure lifecycle behavior"})
         assert made.status_code == 200
         ws_id = made.json()["id"]
+        mapped = client.get("/api/capabilities", headers=headers, params={"kind": "Agent", "workspace_id": ws_id})
+        assert mapped.status_code == 200
+        metadata = next(a for a in mapped.json()["capabilities"] if a["id"] == "agent.metadata")
+        assert "metadata.read" in metadata["bindings"]["tools"]
+        assert any(c["id"] == "skill.relationship_detection" for c in metadata["bindings"]["capabilities"])
 
         disabled = client.patch(f"/api/workspaces/{ws_id}", headers=headers, json={"status": "disabled"})
         assert disabled.status_code == 200 and disabled.json()["status"] == "disabled"

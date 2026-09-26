@@ -110,7 +110,7 @@ def list_(user: User = Depends(current_user), session: Session = Depends(db, sco
     summaries = _summaries(session, ws_svc.list_workspaces(session, user))
     roles = {} if user.is_admin or not summaries else dict(session.execute(
         select(WorkspaceMember.workspace_id, WorkspaceMember.role).where(
-            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))))
+            WorkspaceMember.user_id == user.id, WorkspaceMember.workspace_id.in_([w["id"] for w in summaries]))).all())
     return [{**w, "role": "owner" if user.is_admin else roles.get(w["id"])} for w in summaries]
 
 
@@ -131,8 +131,9 @@ def patch(workspace_id: str, body: WorkspacePatch, user: User = Depends(current_
 
 @router.delete("/workspaces/{workspace_id}")
 def delete(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Archive and disable. This route does not erase stored or published data."""
     ws_svc.delete_workspace(session, user, workspace_id)
-    return {"deleted": True}
+    return {"deleted": True, "archived": True, "purged": False}
 
 
 @router.put("/workspaces/{workspace_id}/policy")

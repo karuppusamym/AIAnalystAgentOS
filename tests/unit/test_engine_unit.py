@@ -11,13 +11,14 @@ from sqlalchemy import select
 from analystos.core.errors import InvalidInput, RunCancelled
 from analystos.core.ids import utcnow
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Approval, RunEvent, RunTask
+from analystos.db.models import AnalysisRun, Approval, RunEvent, RunTask, Workspace
 from analystos.runtime import engine
 
 
 def _run(*tasks: tuple, status: str = "READY", control: str = "run", plan_version: int = 1) -> str:
     """tasks: (key, status, depends_on[, input])."""
     with session_scope() as s:
+        s.add(Workspace(id="ws_1", name="Engine tests", created_by="usr_1", status="active", settings={}))
         s.add(AnalysisRun(id="run_1", workspace_id="ws_1", objective="find the drivers of SLA breaches", status=status,
                           plan={"steps": []}, plan_version=plan_version, scope={"hash": "h"}, instructions=[], constraints={},
                           control=control, requested_by="usr_1", summary={}, origin={}))
