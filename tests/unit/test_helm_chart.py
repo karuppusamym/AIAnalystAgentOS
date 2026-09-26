@@ -88,7 +88,7 @@ def test_air_gapped_render_locks_egress_and_switches_models():
     assert config["ANALYSTOS_MODELS_CONFIG"] == "/app/config/models.airgapped.yaml"
     assert config["ANALYSTOS_LOCAL_LLM_URL"].startswith("http://vllm")
     assert config["ANALYSTOS_ENV"] == "production"
-    policy = next(iter(_kind(docs, "NetworkPolicy").values()))
+    policy = _kind(docs, "NetworkPolicy")["t-analystos-egress"]  # the release-wide one; isolated pools have their own
     assert "Egress" in policy["spec"]["policyTypes"]
     cidrs = [b["ipBlock"]["cidr"] for rule in policy["spec"]["egress"] for b in rule.get("to", []) if "ipBlock" in b]
     assert cidrs == ["10.0.0.0/8"]
@@ -216,3 +216,47 @@ def test_small_render_has_one_worker_and_no_pdbs():
     env = deployments["t-analystos-worker-all"]["spec"]["template"]["spec"]["containers"][0]["env"]
     assert {"name": "ANALYSTOS_WORKER_QUEUES", "value": "all"} in env
     assert not _kind(docs, "PodDisruptionBudget") and not _kind(docs, "HorizontalPodAutoscaler")
+
+
+def test_isolated_pools_are_opt_in_in_the_default_values():
+    """P7-06: compute-py / compute-ml are declared isolated and deploy nothing until replicas > 0."""
+    pools = _values()["workers"]
+    assert {n for n, p in pools.items() if p.get("isolated")} == {"compute-py", "compute-ml"}
+    assert all(pools[n]["replicas"] == 0 for n in ("compute-py", "compute-ml"))
+
+
+@needs_helm
+def test_isolated_pools_get_no_credentials_and_their_own_network_policy():
+    default = _render()
+    assert not [n for n in _kind(default, "Deployment") if n.endswith(("compute-py", "compute-ml"))]
+    assert "t-analystos-isolated-pools" not in _kind(default, "NetworkPolicy")
+    assert _kind(default, "ConfigMap")["t-analystos-config"]["data"]["ANALYSTOS_ISOLATED_POOLS"] == ""
+
+    docs = _render("values-ha.yaml")
+    config = _kind(docs, "ConfigMap")["t-analystos-config"]["data"]
+    assert set(config["ANALYSTOS_ISOLATED_POOLS"].split(",")) == {"compute-py", "compute-ml"}
+    assert config["ANALYSTOS_WORKER_ARTIFACT_URL"] == "http://t-analystos-api:8000"
+    for pool in ("compute-py", "compute-ml"):
+        dep = _kind(docs, "Deployment")[f"t-analystos-worker-{pool}"]
+        pod = dep["spec"]["template"]
+        container = pod["spec"]["containers"][0]
+        assert pod["metadata"]["labels"]["analystos.io/isolated"] == "true"
+        assert "envFrom" not in container  # neither the ConfigMap nor the Secret
+        assert {e["name"] for e in container["env"]} == {
+            "ANALYSTOS_WORKER_QUEUES", "ANALYSTOS_WORKER_ARTIFACT_URL", "ANALYSTOS_TEMPORAL_ADDRESS",
+            "ANALYSTOS_TEMPORAL_NAMESPACE", "ANALYSTOS_TEMPORAL_QUEUE_PREFIX", "ANALYSTOS_ENV"}
+        assert container["securityContext"]["readOnlyRootFilesystem"] is True
+        assert [v["name"] for v in pod["spec"]["volumes"]] == ["tmp"]
+    policies = _kind(docs, "NetworkPolicy")
+    iso = policies["t-analystos-isolated-pools"]["spec"]
+    assert iso["podSelector"]["matchLabels"]["analystos.io/isolated"] == "true" and iso["ingress"] == []
+    peers = [rule["to"] for rule in iso["egress"]]
+    assert {"podSelector": {"matchLabels": {"app.kubernetes.io/instance": "t", "app.kubernetes.io/component": "api"}}} in peers[1]
+    assert peers[2] == [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "temporal"}}}]
+    assert not [b for rule in iso["egress"] for b in rule["to"] if "ipBlock" in b]
+    release = policies["t-analystos-egress"]["spec"]["podSelector"]
+    assert {"key": "analystos.io/isolated", "operator": "NotIn", "values": ["true"]} in release["matchExpressions"]
+    # an isolated pool without a Temporal egress rule does not render
+    r = subprocess.run([HELM, "template", "t", str(CHART), "--set", "workers.compute-py.replicas=1"], capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode != 0 and "isolatedPools.temporalEgress" in r.stderr

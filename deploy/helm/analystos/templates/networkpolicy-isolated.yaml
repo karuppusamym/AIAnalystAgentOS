@@ -1,0 +1,41 @@
+{{- if include "analystos.isolatedPools" . }}
+# Isolated compute pools (ADR-0022, P7-06): always rendered when a pool is deployed, whatever
+# networkPolicy.enabled says. No ingress. Egress to cluster DNS, the API pods (the artifact store) and
+# the Temporal frontend (isolatedPools.temporalEgress) only: no Postgres, Redis, Superset, model API or
+# internet. The release-wide policy (networkpolicy.yaml) excludes these pods, so the two never add up.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "analystos.fullname" . }}-isolated-pools
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      analystos.io/isolated: "true"
+  policyTypes: [Egress, Ingress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: api
+      ports:
+        - {protocol: TCP, port: {{ .Values.api.port }}}
+    {{- if not .Values.isolatedPools.temporalEgress }}
+    {{- fail "isolatedPools.temporalEgress must name the Temporal frontend (NetworkPolicy peers) when an isolated pool is deployed" }}
+    {{- end }}
+    - to:
+        {{- toYaml .Values.isolatedPools.temporalEgress | nindent 8 }}
+      ports:
+        - {protocol: TCP, port: {{ .Values.isolatedPools.temporalPort }}}
+{{- end }}

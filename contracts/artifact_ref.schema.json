@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "description": "An immutable artifact in the store. Content-addressed: the same bytes in a workspace are the same artifact.",
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "version": {
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "content_hash": {
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "media_type": {
+      "default": "application/octet-stream",
+      "title": "Media Type",
+      "type": "string"
+    },
+    "bytes": {
+      "minimum": 0,
+      "title": "Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "artifact_id",
+    "kind",
+    "content_hash",
+    "bytes"
+  ],
+  "title": "ArtifactRef",
+  "type": "object"
+}

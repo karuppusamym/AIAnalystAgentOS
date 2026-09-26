@@ -29,6 +29,8 @@ workers:
   publish: null
   crawl: null
   elt: null
+  compute-py: null     # isolated pools (P7-06) are not part of the small install
+  compute-ml: null
   all:
     queues: all
     replicas: 1
