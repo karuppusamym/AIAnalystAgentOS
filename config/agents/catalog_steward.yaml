@@ -43,3 +43,4 @@ spec:
     approval_for_publish: true
     max_iterations: 1
   phase: increment3
+  output_contract: []  # crawls write catalog rows through the crawler service, not agent outputs

@@ -167,13 +167,29 @@ def get_state(run_id: str) -> dict:
     replans, controls and finish_run as before."""
     with session_scope() as s:
         try:
-            return _decide(s, s.get(AnalysisRun, run_id), locked=False)
+            run, disabled = _run_and_workspace(s, run_id, lock=False)
+            return _decide(s, run, locked=False, workspace_disabled=disabled)
         except _NeedsLock:
             s.expire_all()
-            return _decide(s, s.get(AnalysisRun, run_id, with_for_update=True), locked=True)
+            run, disabled = _run_and_workspace(s, run_id, lock=True)
+            return _decide(s, run, locked=True, workspace_disabled=disabled)
 
 
-def _decide(s, run: AnalysisRun, *, locked: bool) -> dict:
+def _run_and_workspace(s, run_id: str, *, lock: bool) -> tuple[AnalysisRun, bool]:
+    """The run and whether its workspace is disabled, in one statement (the loop's query budget,
+    P4-S02). A missing workspace row (unit fixtures) is not disabled."""
+    q = (select(AnalysisRun, Workspace.status, Workspace.deleted_at)
+         .outerjoin(Workspace, Workspace.id == AnalysisRun.workspace_id).where(AnalysisRun.id == run_id))
+    if lock:
+        q = q.with_for_update(of=AnalysisRun)
+    row = s.execute(q).one_or_none()
+    if row is None:
+        return None, False  # type: ignore[return-value]
+    run, status, deleted_at = row
+    return run, status is not None and (status != "active" or deleted_at is not None)
+
+
+def _decide(s, run: AnalysisRun, *, locked: bool, workspace_disabled: bool = False) -> dict:
     def change() -> None:
         if not locked:
             raise _NeedsLock
@@ -181,7 +197,7 @@ def _decide(s, run: AnalysisRun, *, locked: bool) -> dict:
     run_id = run.id
     if run.status in RUN_TERMINAL:
         return {"terminal": True, "status": run.status}
-    if _workspace_disabled(s, run.workspace_id):
+    if workspace_disabled:
         return {"control": "cancel"}
     if run.control == "cancel":
         return {"control": "cancel"}
@@ -310,13 +326,13 @@ def execute_task(run_id: str, key: str, services: Services | None = None) -> dic
             producing_plan.reset(plan_token)
         with session_scope() as s:
             task = s.scalar(select(RunTask).where(RunTask.run_id == run_id, RunTask.key == key).with_for_update())
-            run = s.get(AnalysisRun, run_id)
+            run, ws_disabled = _run_and_workspace(s, run_id, lock=False)  # one statement, as before (P4-S02)
             if task is None:
                 return {"status": "discarded"}
             if task.claim_version != claim:
                 # a later attempt retook the claim (this one timed out or was released); its result stands
                 return {"status": "superseded"}
-            if _workspace_disabled(s, run.workspace_id):
+            if ws_disabled:
                 task.status, task.output, task.error, task.finished_at = "CANCELLED", {}, "workspace disabled", utcnow()
                 return {"status": "CANCELLED", "error": "workspace disabled"}
             if run.plan_version != version or task.plan_version != version:

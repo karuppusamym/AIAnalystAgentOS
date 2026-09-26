@@ -287,9 +287,11 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
                     catalog: list[dict[str, Any]] | None = None, knowledge: Iterable[KnowledgeItem] = (),
                     header: dict[str, Any] | None = None, reference_text: str | None = None,
                     limit_chars: int | None = None, min_relevance: float = 0.15,
-                    generic_terms: Iterable[str] = ()) -> CompiledContext:
+                    generic_terms: Iterable[str] = (), knowledge_chars: int | None = None) -> CompiledContext:
     """Select the prompt context for one call. Raises ContextOverBudget when `required` (plus the
-    minimal catalog when the profile has one) cannot fit, instead of silently cutting it."""
+    minimal catalog when the profile has one) cannot fit, instead of silently cutting it.
+    `knowledge_chars` (the calling agent's `knowledge.budget_chars`, FND-006) caps the characters all
+    knowledge sections together may add; items past it are omitted with that reason."""
     budget = min(profile.max_chars, limit_chars) if limit_chars else profile.max_chars
     header = dict(header or {})
     query = terms(objective) | terms(reference_text)
@@ -346,6 +348,7 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
     # knowledge sections: primary ones in profile order, then the supplementary ones (memory and
     # other providers), each of those capped at its share of the budget: best first, whole items
     order = _fill_order(profile)
+    before_knowledge = used()
     for section in order:
         if section not in scored:
             continue
@@ -367,8 +370,9 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
                 omitted.append({"section": section, "id": item.id, "name": item.name, "reason": "section item cap"})
                 continue
             body[section].append(rendered)
-            if used() > min(budget, cap):
-                reason = "budget" if used() > budget else "section share"
+            over_agent = knowledge_chars is not None and used() - before_knowledge > knowledge_chars
+            if used() > min(budget, cap) or over_agent:
+                reason = "budget" if used() > budget else "section share" if used() > cap else "agent knowledge budget"
                 body[section].pop()
                 omitted.append({"section": section, "id": item.id, "name": item.name, "reason": reason})
                 continue

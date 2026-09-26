@@ -15,7 +15,7 @@ from analystos.contracts.analysis import AnalysisSpec, Derivation
 from analystos.contracts.bi import ChartSpec, DashboardSpec, MetricDef
 from analystos.core.errors import AnalystOSError
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight
+from analystos.db.models import AnalysisRun, Artifact, Hypothesis, Insight, by_code
 from analystos.methods.base import ChartIntent
 from analystos.runtime.context import RunContext
 
@@ -85,10 +85,12 @@ def design(ctx: RunContext) -> dict:
     ds, content = dataset_def(ctx.run.id)
     with session_scope() as s:
         metrics = {a.name: MetricDef.model_validate(a.content) for a in s.scalars(
-            select(Artifact).where(Artifact.run_id == ctx.run.id, Artifact.type == "metric"))}
+            select(Artifact).where(Artifact.run_id == ctx.run.id, Artifact.type == "metric")
+            .order_by(Artifact.created_at, Artifact.name))}
         verified = [(i.code, i.title, AnalysisSpec.model_validate(h.spec)) for i, h in s.execute(
             select(Insight, Hypothesis).join(Hypothesis, Insight.hypothesis_id == Hypothesis.id)
-            .where(Insight.run_id == ctx.run.id, Insight.status == "verified").order_by(Insight.confidence.desc())).all()]
+            .where(Insight.run_id == ctx.run.id, Insight.status == "verified")
+            .order_by(Insight.confidence.desc(), *by_code(Insight.code))).all()]
     cols = {c["name"]: c for c in ds.columns}
     charts: list[ChartSpec] = []
     kpi_order = ["record_count"] + [n for n in metrics if n.endswith("_rate")] + [n for n in metrics if n.startswith("median_")] + \
@@ -162,7 +164,7 @@ def design(ctx: RunContext) -> dict:
     ops_keys = trends[1:] + findings + [k for k in ("heat_dow_hour", "dist_hours", "detail_table") if k in by_key]
     with session_scope() as s:
         verified_rows = list(s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
-                                       .order_by(Insight.confidence.desc())))
+                                       .order_by(Insight.confidence.desc(), *by_code(Insight.code))))
         summary = "\n".join(f"- **{i.title}** — {i.finding} _(confidence {i.confidence:.0%}, {i.code})_" for i in verified_rows[:5])
     dashboards = []
     for audience, keys, title in (("executive", exec_keys, "Executive overview"), ("operational", ops_keys, "Operations deep-dive")):
@@ -210,7 +212,7 @@ def load_bundle_parts(run_id: str) -> dict[str, Any]:
         run = s.get(AnalysisRun, run_id)
         arts = list(s.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type.in_(["metric", "chart", "dashboard"]),
                                                      current_plan_filter(run))
-                              .order_by(Artifact.created_at)))
+                              .order_by(Artifact.created_at, Artifact.name)))
         return {"metrics": [MetricDef.model_validate(a.content) for a in arts if a.type == "metric"],
                 "charts": [ChartSpec.model_validate(a.content) for a in arts if a.type == "chart"],
                 "dashboards": [DashboardSpec.model_validate(a.content) for a in arts if a.type == "dashboard"],

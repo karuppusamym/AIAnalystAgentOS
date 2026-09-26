@@ -105,8 +105,9 @@ SKILLS: list[dict[str, Any]] = [
        "dashboards.choose_native_filters"),
     # engineering
     _s("python_sandbox", "engineering",
-       "Run allow-listed numeric Python in an isolated, resource-limited subprocess (defense in depth, not a "
-       "security boundary).", "analystos.sandbox.runner.run_python", runtime="sandbox"),
+       "Run allow-listed numeric Python in an isolated child (sandbox container or namespaces: no network, "
+       "read-only filesystem, resource limits); refused when isolation is unavailable.",
+       "analystos.sandbox.runner.run_python", runtime="sandbox"),
 ]
 
 def get_skill(skill_id: str) -> dict[str, Any]:

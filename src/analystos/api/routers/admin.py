@@ -9,7 +9,7 @@ from analystos.api.deps import admin_user, current_user, db
 from analystos.api.serialize import rows
 from analystos.context import service as ctx_svc
 from analystos.contracts.registry import AgentSpec, SkillSpec, ToolSpec
-from analystos.core.errors import NotFound
+from analystos.core.errors import InvalidInput, NotFound
 from analystos.db.models import (
     AgentDefinition,
     AuditEvent,
@@ -116,30 +116,56 @@ def patch_tool(tool_id: str, body: EnabledPatch, admin: User = Depends(admin_use
     return {**t.spec, "enabled": t.enabled}
 
 
+_MANIFEST_ONLY = ("an agent's contract is its kind: Agent capability manifest (config/agents/*.yaml or a pack); "
+                  "edit or add the manifest and POST /api/admin/capabilities/reload")
+
+
+def _agent_view(spec: AgentSpec, row: AgentDefinition | None) -> dict:
+    """What the admin API shows for an agent (FND-006): the manifest-derived AgentSpec, plus the row's
+    platform-wide `enabled` switch (no row = enabled, as the runtime treats it)."""
+    return {**spec.model_dump(mode="json", by_alias=True), "enabled": row.enabled if row is not None else True}
+
+
 @router.get("/agents")
 def agents(_: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    return [{**a.spec, "enabled": a.enabled} for a in session.scalars(select(AgentDefinition).order_by(AgentDefinition.id))]
+    """Every registered agent, derived from its current manifest (never from the cached row spec).
+    A row left from an agent whose manifest is gone is listed as `source: orphan` (it cannot run)."""
+    from analystos.capabilities import registry
+    from analystos.capabilities.agents import to_agent_spec
+
+    rows = {a.id: a for a in session.scalars(select(AgentDefinition))}
+    specs = {s.id: s for s in (to_agent_spec(m) for m in registry.current().list("Agent"))}
+    out = [_agent_view(specs[i], rows.get(i)) for i in sorted(specs)]
+    for i in sorted(set(rows) - set(specs)):
+        out.append({**AgentSpec.model_validate(rows[i].spec).model_dump(mode="json", by_alias=True), "source": "orphan",
+                    "enabled": rows[i].enabled})
+    return out
 
 
 @router.post("/agents")
-def register_agent(body: dict, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
-    spec = AgentSpec.model_validate(body)
-    session.merge(AgentDefinition(id=spec.id, version=spec.version, spec=spec.model_dump(), enabled=False))
-    audit(f"user:{admin.id}", "agent.registered", target=spec.id, session=session)
-    return {"id": spec.id, "enabled": False}
+def register_agent(body: dict, admin: User = Depends(admin_user)):
+    """Refused: an AgentSpec is a view of a manifest, so registering one on its own would fork the contract."""
+    raise InvalidInput(_MANIFEST_ONLY, details={"reason": "manifest_only"})
 
 
 @router.patch("/agents/{agent_id}")
 def patch_agent(agent_id: str, body: EnabledPatch, admin: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
+    """Only the platform-wide `enabled` switch is editable here; the contract comes from the manifest."""
+    from analystos.capabilities.agents import contract_for
+
+    if body.spec:
+        raise InvalidInput(_MANIFEST_ONLY, details={"reason": "manifest_only"})
+    spec = contract_for(None, agent_id)
     a = session.get(AgentDefinition, agent_id)
-    if a is None:
+    if spec is None:
         raise NotFound("agent not found")
+    if a is None:  # a pack agent has no row until an admin sets its switch
+        a = AgentDefinition(id=agent_id, version=spec.version, spec=spec.model_dump(mode="json", by_alias=True), enabled=True)
+        session.add(a)
     if body.enabled is not None:
         a.enabled = body.enabled
-    if body.spec:
-        a.spec = AgentSpec.model_validate({**a.spec, **body.spec}).model_dump()
     audit(f"user:{admin.id}", "agent.updated", target=agent_id, details=body.model_dump(), session=session)
-    return {**a.spec, "enabled": a.enabled}
+    return _agent_view(spec, a)
 
 
 @router.get("/skills")

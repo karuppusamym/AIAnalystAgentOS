@@ -205,7 +205,11 @@ def main() -> int:
     ev["model_usage"] = {"model_calls": console["cost"]["model_calls"], "jev_calls": console["cost"]["jev_calls"],
                          "failed_calls": console["cost"]["failed_calls"], "cost_usd": console["cost"]["usd"],
                          "purposes": sorted({c["purpose"] for c in console["model_calls"]})}
-    check["jev_decisioning_used"] = console["cost"]["jev_calls"] > 0
+    # Deterministic rungs answer first (spec v3 §4.1), so a run may bill no model at all; what must hold is
+    # that every decision the run took is recorded with the rung that answered it.
+    ev["model_usage"]["by_rung"] = console["cost"].get("by_rung")
+    decided = {c["purpose"] for c in console["model_calls"]}
+    check["decisions_recorded_with_rung"] = {"hypothesis_priority", "chart_selection"} <= decided and bool(console["cost"].get("by_rung"))
     del outsider_ws
 
     # Report

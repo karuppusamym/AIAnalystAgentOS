@@ -218,7 +218,7 @@ def test_get_state_locks_only_to_change_state(sqlite_db, monkeypatch):
     again under the run's row lock."""
     _run(("a", "COMPLETED", []), ("b", "RUNNING", []), ("c", "NEW", ["a"]), status="RUNNING")
     passes, real = [], engine._decide
-    monkeypatch.setattr(engine, "_decide", lambda s, run, *, locked: passes.append(locked) or real(s, run, locked=locked))
+    monkeypatch.setattr(engine, "_decide", lambda s, run, *, locked, **kw: passes.append(locked) or real(s, run, locked=locked, **kw))
     assert engine.get_state("run_1") == {"ready": ["c"]}
     assert passes == [False]
     with session_scope() as s:

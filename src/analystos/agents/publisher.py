@@ -153,6 +153,7 @@ def publish(ctx: RunContext) -> dict:
         raise ApprovalRequired("artifacts changed after approval; a new approval is required")
     ctx.check_control()
     bundle = PublishBundle.model_validate(payload)
+    ctx.check_output("publication", payload)  # the agent's output contract (FND-006), before the side effect
     key = f"{ctx.run.id}:{approval.payload_hash[:32]}"
     with session_scope() as s:
         pub = s.scalar(select(Publication).where(Publication.idempotency_key == key))

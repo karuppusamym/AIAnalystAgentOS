@@ -316,7 +316,7 @@ A read-only governance review of the build, Ask and self-hosting merges found no
 | M2: a capability invoke approval was usable by any workspace member | `requested_by` is in the hashed payload, so only the requester can execute it. | `test_an_approval_runs_only_for_the_user_who_requested_it` |
 | M3: a build did not re-check scope at execution | `execution_scope_check` re-validates every rendered model and the dataset SQL against the requester's current scope, right after `verify_for_execution`. | `test_gateway_rechecks_the_data_scope_at_execution` |
 | M4: the default builder password could be provisioned in production | `check_builder_credentials` refuses a missing or default password outside dev. The builder URL is added to the chart's required secrets. | `test_build_targets_guard.py` |
-| M5: sandbox children had network access in a default Helm install | The chart defaults to `sandboxNetwork: require`, so code refuses to run rather than run networked. A fallback is logged on every run. | `test_isolate_fallback_is_logged_and_recorded`, helm-gated render test |
+| M5: sandbox children had network access in a default Helm install | Superseded by P4-02 (2026-09-26): `ANALYSTOS_SANDBOX_ISOLATION=auto|container|process|off`, fail closed when no backend isolates; Helm default `process` (`sandbox/isolation.py`) | `test_sandbox_isolation.py` (hostile probes on process and container backends) |
 | m1–m11 | Invoke gate runs before approval use; editor role for side effects; Azure internal only with `private_link`; Bedrock endpoint egress check; OIDC byte compare, exact issuer and admin only for SSO-created accounts; `AttributeRule` needs a condition; explain hides out-of-scope relations; runbook notes | per-finding unit and integration tests |
 
 Compatibility: a stored workspace policy with an attribute rule whose `require` is empty now fails validation on load (m9).
@@ -337,3 +337,34 @@ The owner reported roughly $10 of OpenRouter credit spent in a day, mostly on So
 | Precise Ask refusals | `agents/common.ModelOutcome`, `services/ask.MODEL_REFUSALS`, web refusal card | `test_ask_model_refusals.py` (one per reason) | "no model route" is now `no_api_key`, `provider_cooldown` (with seconds left), `cap_reached`, and so on |
 | Deterministic Ask rules | `agents/ask_rules.py`, `skills/sqlbuild.aggregate_query`, the pack-declared `ask_distributions` | `test_ask_rules.py`, Ask benchmark | Off-tier accuracy 0.495 → 0.619 with no model; 0 confident wrong, 0 leaks (`evidence/2026-09-26-ask-benchmark-off-rules.md`) |
 | Connection pooling | `db/pools.py`, PgBouncer (compose `pooled`, Helm) | `test_db_pools.py`, `test_semantic_concurrent_saves.py` | 50/50 concurrent runs (`evidence/load-s05-runs-20260926.md`) |
+
+## 2026-09-26 — FND-006 agent contract: manifest is the only source; knowledge and output contract enforced
+
+| Capability | Code | Coverage | Measured |
+|---|---|---|---|
+| `AgentSpec` reconciled with the manifest | `capabilities/agents.to_agent_spec`/`contract_for`, `tools/registry.sync_agent_definitions`/`get_agent_spec`, `api/routers/admin.py` (`GET /api/agents` from manifests; `POST`/`PATCH` with `spec` refused `manifest_only`), `capabilities` reload refreshes the row cache | `test_agent_contract.py::test_every_agent_view_field_equals_its_manifest`, `::test_admin_api_and_rows_derive_from_the_manifest_never_the_row` (a hand-edited row never leaks) | All 18 built-in agents: every view field equals its manifest |
+| Knowledge contract | `AgentKnowledge` (`sections`/`purposes`, `budget_chars`), `agents/common.knowledge_scope`, `context/compiler.compile_context(knowledge_chars=)` | `::test_an_agent_only_receives_its_declared_knowledge_sections` (undeclared sections neither loaded nor compiled; no block = no knowledge), `::test_the_agent_knowledge_budget_caps_the_knowledge_sections` | — |
+| Output contract | `AgentOutputDecl` (`contract:<module>.<Model>` or JSON Schema), `enforce_output` in `artifacts/registry.save_artifact` and `RunContext.check_output` (hypothesis, experiment, insight, publication); load-time checks in `capabilities/validation.py` | `::test_enforce_output_refuses_undeclared_and_off_schema_outputs`, `::test_agent_artifacts_are_checked_against_the_contract_before_they_are_written` (nothing refused is written), `::test_bound_contract_governs_the_run`, `::test_hypotheses_off_the_contract_are_dropped_with_their_reason`, `::test_bad_contract_declarations_fail_the_load` | — |
+
+Verification on 2026-09-26, merged with `origin/claude/gracious-knuth-ievauj` 35781ac:
+- Unit suite: 2127 passed, 7 skipped. `ruff` clean.
+- Web: build passes, vitest 188 passed.
+- Integration: 228 passed, 12 skipped, 2 failed. Neither failure is caused by FND-006:
+  - `test_duckdb_engine_run` (result-hash determinism) fails identically on base 35781ac.
+  - `test_workspace_list_counts` depends on test order and passes when run alone; its writes use `run_id=None`, which the output contract does not check.
+- No migration: `agent_definition.spec` is JSON.
+
+## 2026-09-26 — Combined head: run determinism, re-embed pool, final test pass, $1-capped live run
+
+| Capability | Code | Coverage | Measured |
+|---|---|---|---|
+| Identical runs build identical datasets, KPIs and chart previews | `db/models.by_code` on run-scoped Hypothesis/Insight reads (critic, insight, investigator, sql_agent, supervisor, visualization); `artifacts/registry.save_artifact` gives each artifact its own `created_at`; explicit orders in `governance/policy.resolve_scope`, registry replay, profiling histograms | `tests/unit/test_run_ordering.py`, `test_skills_profiling_quality.py`; `tests/integration/test_duckdb_engine_run.py` | Passed 4 runs in a row (previously failed on shared `created_at` ties) |
+| Re-embed does not break other pooled connections | `knowledge/index._use_provider` disposes the engine pool once the retype commits | `test_knowledge_pack.py::test_reembed_changes_dimension_and_rebuilds_the_hnsw_index` | 3/3 green (previously flaky in the full suite) |
+| Deterministic rungs first; the model is used only when rules cannot answer | `config/models.yaml` ladders; `scripts/e2e_demo.py` check `decisions_recorded_with_rung` (replaces `jev_decisioning_used`, which wrongly required a billed decision call) | [`evidence/e2e-20260926-060649.md`](evidence/e2e-20260926-060649.md) 26/26; [`evidence/ask-live-20260926.md`](evidence/ask-live-20260926.md) | Full scenario: 0 billed calls, 35,825 tokens saved. Ask SQL generation: `gpt-5.4-mini`, $0.00265, no escalation |
+
+Final pass on the combined head (determinism fix, FND-006 and the re-embed fix):
+- `ruff`: clean.
+- Unit suite: all passed.
+- Integration, first run: one failure, `test_workspace_list_counts`. It depends on test order: it passed when run alone and in the second full run.
+- Integration, second run: one failure, the re-embed test. It is fixed above.
+- Web: build passes, vitest 188 passed, Playwright 59 passed.

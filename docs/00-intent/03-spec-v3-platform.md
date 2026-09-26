@@ -222,8 +222,17 @@ named `behaviours` a playbook step can select) keeps a Python behaviour. Enforce
 (tool gate), `model_purpose`/`model_purposes` (the only purposes `llm_json` routes for the agent),
 `budget` (`llm_calls`, `usd`, `queries`, `max_steps`, per task execution), `policies` (tighten the
 workspace policy: `pii_access`, `max_iterations`, `max_rows_extract`), `default_actions` (the rule
-path for `off`/`auto`) and `output`. Not implemented yet: `knowledge`, `output_contract` and the
-eval-set publishing gate.
+path for `off`/`auto`) and `output`. Not implemented yet: the eval-set publishing gate.
+
+**As implemented (FND-006, 2026-09-26).** `knowledge` (`sections`, or `purposes` as written above, plus
+an optional `budget_chars`) limits the knowledge sections the context compiler puts in the agent's
+prompts; an agent that declares none gets none. `output_contract` is a list of `{type, schema}`: the
+artifact or run-record types the agent may persist, each checked against a `contract:<module>.<Model>`
+or an inline JSON Schema just before the write. An undeclared type, or content that fails its schema,
+raises `OutputContractViolation` and nothing is written. The investigator's `hypothesis:
+contract:analysis.AnalysisSpec` drops an invalid spec and records the reason. `AgentSpec` is now a view
+derived from the manifest, and `GET /api/agents` shows that view. See
+[`docs/20-contracts/03-agent-contract.md`](../20-contracts/03-agent-contract.md).
 
 ### 3.5 Analysis methods as plugins (changes v2 §7)
 

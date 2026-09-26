@@ -26,11 +26,15 @@ config:
   corsOrigins: https://analystos.example.com
   orchestrator: temporal
   graphEnabled: false                # Neo4j is an optional projection (spec v3 §8)
-  # Sandbox children (python.execute) in an empty network namespace. `require` (default) refuses to run
-  # the sandbox where the node cannot create one (typical under RuntimeDefault seccomp without
-  # unprivileged user namespaces), so a child never silently has the pod's network. `isolate` falls
-  # back to a networked child (logged, network_isolated=false): only with networkPolicy.enabled.
-  sandboxNetwork: require            # require | isolate | off
+  # Python sandbox (python.execute) isolation, P4-02. `process` (default): every child gets fresh
+  # mount/network/PID/IPC/UTS namespaces inside the worker pod (the pod is the outer container): no
+  # network, read-only root with a tmpfs scratch, private /proc, rlimits incl. processes, no capabilities.
+  # Where the node cannot create namespaces (RuntimeDefault seccomp blocks unshare(2) without user
+  # namespaces) the sandbox is REFUSED and /api/health reports checks.sandbox.available=false; give the
+  # pool that runs it a seccomp profile allowing unshare (workers.<pool>.podSecurityContext) or gVisor.
+  # `container` needs a Docker socket (not in pods); `off` is development only and refused when env is
+  # production.
+  sandboxIsolation: process          # process | auto | container | off
   extra: {}                          # any other ANALYSTOS_* setting, e.g. {ANALYSTOS_QUERY_MAX_ROWS: "20000"}
 
 secrets:
@@ -150,6 +154,7 @@ workers:
     pdb: {enabled: true, minAvailable: 1}
   compute:             # CPU-bound statistics in a process pool
     queues: compute
+    # podSecurityContext: {}   # e.g. a Localhost seccomp profile that allows unshare(2) for the sandbox
     replicas: 2
     resources:
       requests: {cpu: "2", memory: 3Gi}
@@ -209,8 +214,8 @@ ingress:
 
 networkPolicy:
   # Forced on when airGapped.enabled. Off by default only because the chart cannot know the CIDRs of the
-  # external Postgres / Redis / model APIs; with sandboxNetwork=isolate turn it on (egress: DNS, the
-  # release's pods, airGapped.allowedEgressCidrs), else the sandbox fallback has the pod's network.
+  # external Postgres / Redis / model APIs; turn it on to bound the pods' own egress (DNS, the release's
+  # pods, airGapped.allowedEgressCidrs). Sandbox children never have the pod's network (sandboxIsolation).
   enabled: false
 
 serviceAccount:

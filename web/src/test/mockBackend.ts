@@ -623,7 +623,8 @@ function manifestFor(id: string): CapabilityManifest | null {
 }
 
 const AGENTS: AgentSpec[] = [{ id: "planner", version: "1.0", name: "Planner", description: "Plans analyses", capabilities: [], skills: [],
-  tools: [], model_profile: "chat", phase: "plan", verification_required: false, enabled: true }];
+  tools: [], model_profile: "chat", phase: "plan", knowledge: { sections: ["glossary"], budget_chars: null },
+  output_contract: [{ type: "narrative", schema: null }], enabled: true }];
 const TOOLS: ToolSpec[] = [{ tool_id: "sql.query", name: "SQL query", version: "1.0", description: "Governed SQL", category: "data", risk: "low",
   approval_policy: "none", side_effects: "none", runtime: "python", min_role: "analyst", enabled: true }];
 const SKILLS: SkillSpec[] = [{ id: "stats.mann_whitney", category: "statistics", description: "Two-sample test", tools: [], deterministic: true, enabled: true }];

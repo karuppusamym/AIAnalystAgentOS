@@ -35,3 +35,9 @@ spec:
     approval_for_publish: true
     max_iterations: 1
   phase: mvp
+  output_contract:
+    - type: transformation
+      schema:
+        type: object
+        required: [kind, project_name, project_hash, files]
+        properties: {kind: {const: dbt_project}, project_name: {type: string}, files: {type: object}}

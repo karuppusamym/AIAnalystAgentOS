@@ -315,8 +315,10 @@ def test_ask_answers_from_the_verified_query_registry(world, monkeypatch):
         assert bad.status_code == 422
         assert len(transport.chat_calls) == 1
 
-        # 4. A different question misses and falls back to the model path.
-        miss = api.post(f"/api/workspaces/{ws}/ask", headers=headers, json={"question": "What is the median reopen count per caller?"})
+        # 4. A different question misses the registry and the rules (a filter and wording they cannot
+        # resolve), so it falls back to the model path. Simple shapes are answered by rules since 2026-09-26.
+        miss = api.post(f"/api/workspaces/{ws}/ask", headers=headers,
+                        json={"question": "Which callers reopened incidents after an escalation last quarter?"})
         assert miss.json()["answered_by"] == "model" and len(transport.chat_calls) == 2
 
         # 5. A verified finding can be promoted too, and its question then answers from the registry.

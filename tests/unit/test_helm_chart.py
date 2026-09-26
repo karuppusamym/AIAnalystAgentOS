@@ -108,23 +108,24 @@ def test_oidc_values_render_the_mapping_and_require_the_issuer():
 
 def test_defaults_keep_governance_boundaries():
     """M1/M4/M5: no clearance comes from the IdP, the builder login is a required secret, and a default
-    install never runs a sandbox child with the pod's network (require, or a NetworkPolicy)."""
+    install never runs a sandbox child unisolated (P4-02: process isolation, refused where unavailable)."""
     from analystos.security.oidc import platform_controlled
 
     values = _values()
     mapping = yaml.safe_load(values["oidc"]["mapping"])
     assert not [a for a in mapping.get("attributes") or {} if platform_controlled(a)]
     assert "ANALYSTOS_ANALYTICS_BUILDER_URL" in (CHART / "values.yaml").read_text()
-    assert values["config"]["sandboxNetwork"] == "require" or values["networkPolicy"]["enabled"]
+    assert values["config"]["sandboxIsolation"] == "process"
+    assert _values("values-airgapped.yaml")["config"]["sandboxIsolation"] != "off"
     assert values["workers"]["elt"]["replicas"] == 0  # dbt is not in the app image
-    notes = (CHART / "templates" / "NOTES.txt").read_text()  # isolate without a NetworkPolicy is called out
-    assert "WITH the pod's network" in notes and "networkPolicy.enabled" in notes
+    notes = (CHART / "templates" / "NOTES.txt").read_text()  # `off` is called out, and where to check status
+    assert "WITH the pod's network" in notes and "checks.sandbox" in notes
 
 
 @needs_helm
 def test_default_render_requires_sandbox_isolation():
     config = _kind(_render(), "ConfigMap")["t-analystos-config"]["data"]
-    assert config["ANALYSTOS_SANDBOX_NETWORK"] == "require"
+    assert config["ANALYSTOS_SANDBOX_ISOLATION"] == "process"
 
 
 def test_pool_values_match_the_settings_defaults_and_pgbouncer_is_off():
