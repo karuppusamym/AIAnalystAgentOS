@@ -224,3 +224,38 @@ def test_a_void_verdict_refuses_the_merge(thread):
     with pytest.raises(PolicyDenied) as exc:
         branches.merge(thread["analyst"], WS, fork["branch"]["id"], MergeIn())
     assert "void" in exc.value.message
+
+
+def test_a_run_is_ingested_as_plan_method_and_claim_steps(world):  # noqa: F811
+    from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight
+    from analystos.evidence.verification import Dependency, record_verdict
+
+    spec = {"method": "rate_by_segment", "asset": "sales.orders", "outcome": {"type": "is_true", "column": "late"},
+            "segment": {"type": "column", "column": "state"}}
+    with session_scope() as s:
+        s.add(AnalysisRun(id="run_1", workspace_id=WS, objective="Why are orders late?", status="COMPLETED",
+                          requested_by="usr_analyst", plan={}, plan_version=1, scope={}, origin={"type": "user"}))
+        s.add(Hypothesis(id="hyp_1", workspace_id=WS, run_id="run_1", code="H-1", statement="State drives lateness", spec=spec,
+                         status="supported"))
+        s.add(Experiment(id="exp_1", workspace_id=WS, run_id="run_1", hypothesis_id="hyp_1", method="rate_by_segment",
+                         result={"n": 120, "statistic": 4.2, "p_value": 0.01}, query_ids=["qry_a"], role="primary"))
+        s.add(Insight(id="ins_1", workspace_id=WS, run_id="run_1", hypothesis_id="hyp_1", code="I-1", title="Open orders are late",
+                      finding="Across 120 orders, open orders are late more often.", status="verified", verified=True))
+        s.flush()
+        record_verdict(s, workspace_id=WS, run_id="run_1", subject_type="insight", subject_id="ins_1", verdict="verified",
+                       checks=[{"check": "numbers", "passed": True}], verifier="rev.v1",
+                       dependencies=[Dependency("query", "hyp_1", "v-hyp")])
+    out = steps_svc.ingest_run(world["analyst"], WS, "run_1")
+    assert [s["kind"] for s in out["steps"]] == ["plan", "method", "claim"]
+    plan, method, claim = out["steps"]
+    assert method["depends_on"] == [plan["id"]] and claim["depends_on"] == [method["id"]]
+    assert claim["verification_record"]["verdict"] == "verified"
+    carried = {(d["kind"], d["ref"]) for d in claim["verification_record"]["dependencies"]}
+    assert ("query", "hyp_1") in carried and ("query", f"step:{method['id']}") in carried
+    again = steps_svc.ingest_run(world["analyst"], WS, "run_1")["steps"]
+    assert [s["id"] for s in again] == [x["id"] for x in out["steps"]]
+    edited = steps_svc.edit(world["analyst"], method["id"], StepEdit(spec={"analysis_spec": {**spec, "segment": {
+        "type": "column", "column": "amount"}}}), expected_version=1, runtime=FakeRuntime([]))
+    assert edited["step"]["version"] == 2 and edited["step"]["status"] == "ok"
+    assert edited["rerun"][0]["id"] == claim["id"] and edited["rerun"][0]["status"] == "ok"  # "120" binds to n
+    assert _record(claim["verification_record"]["record_id"]).state == "VOID"
