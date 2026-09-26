@@ -334,7 +334,7 @@ def memory(session: Session, user: User, workspace_id: str, query: str, *, limit
 
     if not (query or "").strip():
         raise InvalidInput("give a query to retrieve memory for")
-    scope = resolve_scope(session, session.merge(user), workspace_id)
+    scope = resolve_scope(session, session.merge(user), workspace_id, minimum_role="viewer")
     hits = search(session, workspace_id, query, limit=limit * 2)
     visible = [h for h in hits if in_scope(h, scope)]
     brief = [a.model_dump(mode="json") for a in assertions_of(head(session, workspace_id))

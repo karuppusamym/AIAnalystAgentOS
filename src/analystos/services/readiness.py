@@ -68,7 +68,7 @@ class _Ctx:
         self.job = job_kinds.get(body.job_kind)
         self.brief_row = brief_svc.head(session, workspace_id)
         self.brief = brief_svc.assertions_of(self.brief_row)
-        self.scope = resolve_scope(session, session.merge(user), workspace_id)
+        self.scope = resolve_scope(session, session.merge(user), workspace_id, minimum_role="viewer")
         constraint = brief_svc.effective(self.brief, "constraints", "source_scope")
         self.allowed = set(constraint.value) if constraint is not None and isinstance(constraint.value, list) else None
         requested = list(dict.fromkeys(body.assets))

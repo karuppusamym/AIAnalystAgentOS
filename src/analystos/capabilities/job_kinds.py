@@ -121,7 +121,7 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
     explicit = enablement.overrides(session, workspace_id)
     role = "owner" if getattr(user, "is_admin", False) else (member_role(session, user, workspace_id) or "viewer")
     try:
-        assets = resolve_scope(session, user, workspace_id).assets
+        assets = resolve_scope(session, user, workspace_id, minimum_role="viewer").assets
     except Exception:  # noqa: BLE001 - an unresolvable scope is a reason, not a crash
         assets = []
     out = []
