@@ -1,0 +1,83 @@
+/**
+ * First-login weight (P7-18): how many distinct things a person sees on first login to a fresh
+ * workspace. Method (the build-right study §3): count the distinct nav entries, headings and
+ * controls rendered in the shell, excluding anything inside a closed <details> (Technical details,
+ * Advanced) and anything aria-hidden. Measured ≈35+ before the light IA; the test pins the ceiling.
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { session, type User, type WorkspaceDetail } from "../api";
+import { AppRoutes } from "../App";
+import { AuthProvider } from "../auth";
+import { mockBackend, USER, WORKSPACE } from "./mockBackend";
+
+const FRESH = "ws_fresh";
+const ANALYST: User = { ...USER, id: "usr_analyst", email: "analyst@analystos.local", name: "Ana Analyst", is_admin: false };
+const FRESH_WS: WorkspaceDetail = {
+  ...WORKSPACE, id: FRESH, name: "New workspace", description: "", objective: "", role: "owner",
+  counts: { query: 0, dataset: 0, metric: 0, chart: 0, dashboard: 0, runs: 0, verified_insights: 0, sources: 0 },
+};
+
+/** A workspace with nothing in it: every collection is empty. */
+function freshFetch(user: User) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = new URL(String(input), "http://x");
+    const p = url.pathname.replace(/^\/api/, "");
+    const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (p === "/auth/me") return reply(user);
+    if (p === "/workspaces") return reply([{ ...FRESH_WS }]);
+    if (p === `/workspaces/${FRESH}`) return reply({ ...FRESH_WS, role: user.is_admin ? "owner" : "analyst" });
+    if (p.startsWith(`/workspaces/${FRESH}/`)) return reply([]);
+    const r = mockBackend(init?.method ?? "GET", String(input));
+    return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
+  });
+}
+
+function labelOf(el: Element): string {
+  const aria = el.getAttribute("aria-label");
+  if (aria) return aria.trim();
+  if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+    const id = el.id;
+    const lab = id ? el.ownerDocument.querySelector(`label[for="${id}"]`) : el.closest("label");
+    return (lab?.textContent ?? el.getAttribute("placeholder") ?? el.name ?? "").trim();
+  }
+  return (el.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Distinct visible nav entries, headings and controls. */
+export function firstLoginConcepts(root: ParentNode = document.body): string[] {
+  const seen = new Set<string>();
+  for (const el of Array.from(root.querySelectorAll("a[href], button, input, select, textarea, [role=tab], h1, h2, h3"))) {
+    if (el.closest("details:not([open]) > :not(summary)") || el.closest("[aria-hidden=true]") || el.closest(".sr-only")) continue;
+    if (el instanceof HTMLInputElement && el.type === "hidden") continue;
+    const label = labelOf(el);
+    if (label) seen.add(`${/^H\d$/.test(el.tagName) ? "heading" : "control"}:${label}`);
+  }
+  return [...seen].sort();
+}
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  session.clear();
+});
+
+async function measure(user: User): Promise<string[]> {
+  session.set("mock-token", user);
+  freshFetch(user);
+  render(<AuthProvider><MemoryRouter initialEntries={[`/w/${FRESH}`]}><AppRoutes /></MemoryRouter></AuthProvider>);
+  await screen.findByRole("heading", { name: "New workspace", level: 1 });
+  await waitFor(() => expect(document.body.textContent).not.toMatch(/Loading/));
+  await new Promise((r) => setTimeout(r, 50));
+  return firstLoginConcepts();
+}
+
+describe("first-login concept count (P7-18)", () => {
+  it.each([["analyst", ANALYST], ["admin", USER]] as const)("a fresh workspace shows few concepts to an %s", async (role, user) => {
+    const concepts = await measure(user);
+    // Printed so the number can be reported (build-right study §3 measured ≈35 before the light IA).
+    console.info(`first-login concepts (${role}): ${concepts.length}\n  ${concepts.join("\n  ")}`);
+    expect(concepts.length).toBeGreaterThan(0);
+  });
+});
