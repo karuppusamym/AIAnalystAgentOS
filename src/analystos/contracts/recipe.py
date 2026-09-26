@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 import sqlglot
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
@@ -41,6 +42,8 @@ RESERVED_PREFIXES = ("aos_", "__")  # compiler-internal columns (row numbers, ga
 Cardinality = Literal["one_to_one", "many_to_one", "one_to_many", "many_to_many"]
 Severity = Literal["fail", "warn", "drop"]
 SchemaPolicy = Literal["evolve", "warn", "strict"]
+DeletePolicy = Literal["reconcile", "soft", "ignore"]
+SOFT_DELETE_COLUMN = "aos_deleted_at"  # appended to a `deletes: soft` table; NULL while the key exists upstream
 
 # ---------------------------------------------------------------------------------------- types
 _TEXT = {"TEXT", "VARCHAR", "CHAR", "NCHAR", "NVARCHAR", "NAME", "BPCHAR", "STRING"}
@@ -316,11 +319,77 @@ Node = Annotated[SourceNode | SelectNode | FilterNode | CastNode | DeriveNode | 
                  AggregateNode | WindowNode | UnionNode | OutputNode, Field(discriminator="op")]
 
 
+_ISO_DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
+_SHORT_DURATION = re.compile(r"^(\d+)\s*([smhd])$")
+
+
+def parse_duration(value: Any) -> int:
+    """Seconds from an int, `90s | 15m | 2h | 1d` or an ISO 8601 duration (`PT15M`, `P1DT2H`)."""
+    if isinstance(value, bool):
+        raise ValueError("a duration is seconds, 15m, 2h, 1d or an ISO 8601 duration")
+    if isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError("a duration cannot be negative")
+        return int(value)
+    text = str(value or "").strip()
+    if text.isdigit():
+        return int(text)
+    m = _SHORT_DURATION.match(text.lower())
+    if m:
+        return int(m[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m[2]]
+    m = _ISO_DURATION.match(text.upper())
+    if m and text.upper() not in ("P", "PT"):
+        d, h, mi, s = (int(x or 0) for x in m.groups())
+        return d * 86400 + h * 3600 + mi * 60 + s
+    raise ValueError(f"{value!r} is not a duration (seconds, 15m, 2h, 1d or ISO 8601 like PT15M)")
+
+
+class BackfillRange(_Model):
+    """The watermark range a backfill or replay covers; `start` alone bounds the initial load."""
+
+    start: datetime | None = None
+    end: datetime | None = None
+
+    @model_validator(mode="after")
+    def _ordered(self) -> BackfillRange:
+        if self.start and self.end and self.end < self.start:
+            raise ValueError("backfill end is before its start")
+        return self
+
+
+class Incremental(_Model):
+    """Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a
+    staged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.
+
+    A window is `[last watermark - late_window, high watermark]`, the high watermark measured once before
+    reading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key
+    wins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`
+    removes keys the source no longer has on a scheduled full reconcile, `soft` stamps them in
+    `aos_deleted_at`, `ignore` keeps them."""
+
+    watermark: str
+    key: list[str] = Field(min_length=1)
+    late_window: Annotated[int, BeforeValidator(parse_duration)] = 0  # seconds re-read behind the watermark
+    deletes: DeletePolicy = "reconcile"
+    reconcile_every_hours: int = Field(default=168, ge=1, le=24 * 366)  # the scheduled full reconcile (weekly)
+    max_delete_pct: float = Field(default=50.0, ge=0, le=100)  # a reconcile deleting more refuses (source outage guard)
+    source: str | None = None  # recipes: the source node whose watermark drives the window
+    backfill: BackfillRange | None = None
+
+    @field_validator("key")
+    @classmethod
+    def _keys(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("a key column is listed twice")
+        return v
+
+
 class Recipe(_Model):
     kind: Literal["Recipe"] = "Recipe"
     name: str
     description: str = ""
     nodes: list[Node] = Field(min_length=2)
+    incremental: Incremental | None = None
 
     @field_validator("name")
     @classmethod
@@ -545,6 +614,8 @@ def validate_recipe(recipe: Recipe | dict[str, Any]) -> ValidatedRecipe:
         schemas[node.id] = derived
     if not recipe.nodes or not any(isinstance(n, OutputNode) for n in recipe.nodes):
         problems.append("a recipe needs at least one output node")
+    if recipe.incremental is not None and not problems:
+        problems += incremental_problems(recipe, schemas)
     for n in recipe.nodes:
         if not isinstance(n, OutputNode) and n.id not in consumed:
             problems.append(f"node {n.id} ({n.op}) is not read by any node: remove it or route it to an output")
@@ -796,3 +867,71 @@ def _derive(node: Any, schemas: dict[str, list[Column]], exprs: dict, where: str
 
     problems.append(f"{where}: unsupported node")
     return []
+
+
+def incremental_source(recipe: Recipe, schemas: dict[str, list[Column]]) -> str | None:
+    """The source node whose watermark drives an incremental recipe (declared, or the only one with it)."""
+    inc = recipe.incremental
+    if inc is None:
+        return None
+    if inc.source:
+        return inc.source
+    having = [n.id for n in recipe.nodes if isinstance(n, SourceNode)
+              and any(c.name == inc.watermark for c in schemas.get(n.id, []))]
+    return having[0] if len(having) == 1 else None
+
+
+def incremental_problems(recipe: Recipe, schemas: dict[str, list[Column]]) -> list[str]:
+    """An incremental recipe re-computes only the rows of the window and merges them on the key, which is
+    exact only when every output row depends on window rows of one key alone. So: one output; the
+    watermark is a temporal or numeric column of one source; nothing between that source and the output
+    aggregates, windows or de-duplicates across keys; joins read it on their left side (a window of
+    the right side would turn matched rows into unmatched ones); the key is a set of output columns."""
+    inc = recipe.incremental
+    assert inc is not None
+    where = "incremental"
+    problems: list[str] = []
+    outputs = [n for n in recipe.nodes if isinstance(n, OutputNode)]
+    if len(outputs) != 1:
+        problems.append(f"{where}: an incremental recipe has exactly one output (it has {len(outputs)})")
+    nodes = {n.id: n for n in recipe.nodes}
+    src_id = incremental_source(recipe, schemas)
+    if src_id is None:
+        candidates = [n.id for n in recipe.nodes if isinstance(n, SourceNode)
+                      and any(c.name == inc.watermark for c in schemas.get(n.id, []))]
+        problems.append(f"{where}: name the source node with `source` ({len(candidates)} sources declare "
+                        f"{inc.watermark})" if candidates else
+                        f"{where}: no source declares the watermark column {inc.watermark}")
+        return problems
+    if not isinstance(nodes.get(src_id), SourceNode):
+        return [*problems, f"{where}: {src_id} is not a source node"]
+    wm_type = {c.name: c.type for c in schemas[src_id]}.get(inc.watermark)
+    if wm_type is None:
+        problems.append(f"{where}: source {src_id} has no column {inc.watermark}")
+    elif family(wm_type) not in ("temporal", "numeric"):
+        problems.append(f"{where}: the watermark {inc.watermark} is {wm_type}; it must be a timestamp, date or number")
+    reach = {src_id}
+    for n in recipe.nodes:
+        if not any(i in reach for i in n.inputs()):
+            continue
+        reach.add(n.id)
+        w = f"{where}: node {n.id} ({n.op})"
+        if isinstance(n, (AggregateNode, WindowNode)):
+            problems.append(f"{w} computes across rows of several keys; it cannot run on a window (use a full "
+                            "refresh recipe, or aggregate downstream of the incremental output)")
+        elif isinstance(n, UnionNode) and n.distinct:
+            problems.append(f"{w} is a distinct union; a window cannot de-duplicate against rows outside it")
+        elif isinstance(n, DedupeNode) and set(n.keys) != set(inc.key):
+            problems.append(f"{w} de-duplicates on {n.keys}, not on the incremental key {inc.key}")
+        elif isinstance(n, JoinNode) and n.right in reach:
+            problems.append(f"{w} reads the incremental source on its right side; a window would drop matches")
+    for o in outputs:
+        cols = {c.name for c in (o.output_schema or [])}
+        missing = [k for k in inc.key if k not in cols]
+        if missing:
+            problems.append(f"{where}: key column {', '.join(missing)} is not a column of output {o.name}")
+        if o.keys and set(o.keys) != set(inc.key):
+            problems.append(f"{where}: the key {inc.key} differs from output {o.name}'s keys {o.keys}")
+        if SOFT_DELETE_COLUMN in cols:
+            problems.append(f"{where}: {SOFT_DELETE_COLUMN} is reserved for soft deletes")
+    return problems
