@@ -28,6 +28,10 @@ x-app-env: &app-env
   SERVICENOW_PASSWORD: ${SERVICENOW_PASSWORD:-admin}
   ANALYSTOS_JWT_SECRET: ${ANALYSTOS_JWT_SECRET:-dev-only-change-me-please-32bytes!!}
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  # Python sandbox isolation (P4-02). These containers have no Docker socket and, under Docker's default
+  # seccomp profile, cannot create namespaces: the sandbox is refused here (fail closed; /api/health
+  # checks.sandbox). Run the worker on the host for `process`/`container` isolation, or set `off` (dev only).
+  ANALYSTOS_SANDBOX_ISOLATION: ${ANALYSTOS_SANDBOX_ISOLATION:-auto}
 
 services:
   postgres:
@@ -182,6 +186,17 @@ services:
     depends_on: [api, temporal]
     restart: unless-stopped
     command: ["analystos", "worker"]
+
+  # Image for ANALYSTOS_SANDBOX_ISOLATION=container (P4-02): build it with
+  #   docker compose --profile sandbox build sandbox
+  # A worker next to Docker then runs each sandboxed execution as `docker run --network none --read-only`
+  # of this image (see src/analystos/sandbox/isolation.py). It never runs as a service.
+  sandbox:
+    image: analystos-sandbox:latest
+    build: {context: ./deploy/sandbox}
+    profiles: ["sandbox"]
+    network_mode: none
+    entrypoint: ["python3", "-c", "pass"]
 
   scheduler:
     build: {context: ., dockerfile: deploy/docker/Dockerfile}

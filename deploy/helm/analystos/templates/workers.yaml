@@ -2,7 +2,7 @@
        ANALYSTOS_WORKER_QUEUES set to its queue(s), so every pool scales on its own. */ -}}
 {{- range $name, $pool := .Values.workers }}
 {{- $component := printf "worker-%s" $name }}
-{{- $ctx := dict "root" $ "component" $component }}
+{{- $ctx := dict "root" $ "component" $component "podSecurityContext" $pool.podSecurityContext }}
 ---
 apiVersion: apps/v1
 kind: Deployment

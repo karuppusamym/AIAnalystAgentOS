@@ -14,7 +14,7 @@ data:
   ANALYSTOS_WEB_URL: {{ .Values.config.webUrl | quote }}
   ANALYSTOS_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   ANALYSTOS_GRAPH_ENABLED: {{ .Values.config.graphEnabled | quote }}
-  ANALYSTOS_SANDBOX_NETWORK: {{ .Values.config.sandboxNetwork | quote }}
+  ANALYSTOS_SANDBOX_ISOLATION: {{ .Values.config.sandboxIsolation | quote }}
   ANALYSTOS_AIR_GAPPED: {{ .Values.airGapped.enabled | quote }}
   {{- with .Values.database.pools }}
   ANALYSTOS_DB_POOL_MODE: {{ .mode | quote }}

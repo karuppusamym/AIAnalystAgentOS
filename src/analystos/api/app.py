@@ -119,4 +119,16 @@ def health():
 
     for name, fn in (("postgres", pg), ("redis", redis_), ("neo4j", neo), ("temporal", temporal), ("superset", superset), ("models", models)):
         check(name, fn)
+
+    # P4-02: the Python sandbox's isolation, as the gate sees it. Not ok = sandboxed code is refused
+    # (or, in `off` mode, runs unisolated: development only).
+    try:
+        from analystos.sandbox.isolation import status
+
+        st = status()
+        checks["sandbox"] = {"ok": st.available and st.isolated, "mode": st.mode, "backend": st.backend,
+                             "available": st.available, "isolated": st.isolated, "enforced": st.enforced,
+                             "detail": st.detail}
+    except Exception as exc:  # noqa: BLE001 - health never raises
+        checks["sandbox"] = {"ok": False, "available": False, "error": str(exc)[:200]}
     return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "checks": checks}

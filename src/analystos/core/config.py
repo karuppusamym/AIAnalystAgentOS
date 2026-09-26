@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # Per-workspace NOLOGIN roles (<prefix><workspace id>) hold SELECT on that workspace's staged
     # schemas; the reader identity only reaches them via SET ROLE, so it cannot read across workspaces.
     analytics_workspace_role_prefix: str = "analystos_r_"
+    # BI logins (P4-02): one LOGIN role per workspace (<prefix><workspace id>) that Superset connects as;
+    # a member of that workspace's reader role only, so BI SQL cannot SET ROLE into another workspace.
+    # Its password is derived from analytics_bi_secret (falls back to jwt_secret), never stored.
+    analytics_bi_role_prefix: str = "analystos_bi_"
+    analytics_bi_secret: str | None = None
     # Write path (P4-E06, spec v3 §7.4): a third analytics identity used only by the BuildGateway. It
     # reaches per-workspace NOLOGIN build roles (<prefix><workspace id>) by SET ROLE; each holds CREATE
     # on that workspace's designated target schemas only and reads its staged schemas through the
@@ -128,9 +133,22 @@ class Settings(BaseSettings):
 
     sandbox_timeout_seconds: int = 60
     sandbox_memory_mb: int = 1024
-    # Network namespace for sandbox children: isolate = best effort (recorded), require = refuse to run
-    # when the OS does not allow it, off = inherit the host network (development only).
-    sandbox_network: str = "isolate"
+    # Isolation of sandbox children (P4-02, sandbox/isolation.py): container = docker run per execution
+    # (no network, read-only root, cgroup limits); process = namespaces + read-only root + rlimits in the
+    # worker; auto = container when its image is present, else process; none available = refused.
+    # off = rlimits only, development only (refused when env is production).
+    sandbox_isolation: Literal["auto", "container", "process", "off"] = "auto"
+    sandbox_container_image: str = "analystos-sandbox:latest"
+    sandbox_container_python: str = "python3"
+    sandbox_container_runtime: str | None = None  # e.g. runsc (gVisor) where installed
+    sandbox_container_startup_seconds: float = 5.0  # added to the wall clock for `docker run` start-up
+    sandbox_cpus: float = 1.0
+    sandbox_pids_limit: int = Field(default=64, ge=4)
+    sandbox_scratch_mb: int = Field(default=64, ge=1)
+    # Hidden from process-mode children (secrets on the worker's filesystem); /run/secrets and
+    # /var/run/secrets (service-account tokens) are always masked.
+    sandbox_masked_paths: list[str] = Field(default_factory=lambda: [
+        "/root", "/etc/analystos", "/etc/ssl/private", str(REPO_ROOT / ".env"), str(REPO_ROOT / "var")])
 
     servicenow_mock_url: str = "http://localhost:8090"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"

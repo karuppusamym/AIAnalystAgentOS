@@ -251,8 +251,12 @@ def router(fake: FakeSuperset):
         yield mock
 
 
-def publisher() -> SupersetPublisher:
-    return SupersetPublisher(base_url=BASE, username="admin", password="admin",
+def bi_login(workspace_id: str) -> tuple[str, str]:
+    return f"analystos_bi_{workspace_id}", f"pw-{workspace_id}"
+
+
+def publisher(login=bi_login) -> SupersetPublisher:
+    return SupersetPublisher(base_url=BASE, username="admin", password="admin", bi_login=login,
                              analytics_sqlalchemy_uri="postgresql+psycopg2://analystos_reader:reader@postgres:5432/analytics")
 
 
@@ -322,20 +326,34 @@ def test_network_error_maps_to_upstream_unavailable():
 
 # -- publish ------------------------------------------------------------------------------------
 
-def test_database_connects_as_the_workspace_reader_role(router, fake):
-    """P4-C03: the reader login holds no grant on staged schemas; each workspace's Superset database
-    switches to that workspace's role at connect time, and older databases are moved over."""
+def test_database_connects_as_the_workspace_bi_login(router, fake):
+    """P4-02: each workspace's Superset database connects as that workspace's BI login (a member of
+    its reader role only), never as the shared reader that can SET ROLE into every workspace; legacy
+    databases (shared reader + ``-c role=``) and rotated passwords are moved over on the next publish."""
     from sqlalchemy.engine import make_url
 
     res = publisher().publish(make_bundle(), idempotency_key="k-role")
-    url = make_url(fake.databases[res.external_ids["database"]]["sqlalchemy_uri"])
-    assert (url.username, url.host, url.database) == ("analystos_reader", "postgres", "analytics")
-    assert url.query["options"] == "-c role=analystos_r_ws_unit"
-    legacy = fake.databases[res.external_ids["database"]]
-    legacy["sqlalchemy_uri"] = "postgresql+psycopg2://analystos_reader:XXXXXXXXXX@postgres:5432/analytics"
-    db_id, created = publisher().ensure_database("ws_unit")
-    assert (db_id, created) == (legacy["id"], False)
-    assert make_url(fake.databases[db_id]["sqlalchemy_uri"]).query["options"] == "-c role=analystos_r_ws_unit"
+    db = fake.databases[res.external_ids["database"]]
+    url = make_url(db["sqlalchemy_uri"])
+    assert (url.username, url.password, url.host, url.database) == ("analystos_bi_ws_unit", "pw-ws_unit", "postgres", "analytics")
+    assert "options" not in url.query
+    assert json.loads(db["extra"])["aos_bi_login"] and json.loads(db["extra"])["allows_virtual_table_explore"]
+    puts = len([c for c in fake.calls if c[0] == "PUT" and c[1].endswith(f"/database/{db['id']}")])
+    assert publisher().ensure_database("ws_unit") == (db["id"], False)  # unchanged: no rewrite
+    assert len([c for c in fake.calls if c[0] == "PUT" and c[1].endswith(f"/database/{db['id']}")]) == puts
+    db["sqlalchemy_uri"] = "postgresql+psycopg2://analystos_reader:XXXXXXXXXX@postgres:5432/analytics?options=-c%20role%3Dr"
+    assert publisher().ensure_database("ws_unit") == (db["id"], False)
+    assert make_url(db["sqlalchemy_uri"]).username == "analystos_bi_ws_unit" and "options" not in make_url(db["sqlalchemy_uri"]).query
+    publisher(lambda ws: (f"analystos_bi_{ws}", "rotated")).ensure_database("ws_unit")
+    assert make_url(db["sqlalchemy_uri"]).password == "rotated"
+
+
+def test_publisher_without_a_bi_login_refuses_to_create_a_database(router, fake):
+    p = SupersetPublisher(base_url=BASE, username="admin", password="admin",
+                          analytics_sqlalchemy_uri="postgresql+psycopg2://analystos_reader:reader@postgres:5432/analytics")
+    with pytest.raises(InvalidInput, match="BI login"):
+        p.ensure_database("ws_unit")
+    assert not fake.databases
 
 
 def test_publish_creates_everything(router, fake):
@@ -346,7 +364,7 @@ def test_publish_creates_everything(router, fake):
     db = fake.databases[ids["database"]]
     assert db["database_name"] == "AnalystOS Analytics (ws_unit)"
     assert db["expose_in_sqllab"] is False and db["allow_dml"] is False
-    assert db["sqlalchemy_uri"].startswith("postgresql+psycopg2://analystos_reader")
+    assert db["sqlalchemy_uri"].startswith("postgresql+psycopg2://analystos_bi_ws_unit")
 
     ds = fake.datasets[ids["datasets"]["incidents"]]
     assert ds["table_name"] == "aos_ws_unit_incidents" and ds["schema"] == "src_publishtest"
