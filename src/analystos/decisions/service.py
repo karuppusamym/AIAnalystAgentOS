@@ -6,7 +6,8 @@ calibration downgraded, and let the purpose's authority class decide what the an
 * Model backends (`jev`, `llm_structured`) run under one deadline per decision (default 3 s) and a
   circuit breaker per backend; a timeout, error or open circuit falls through to the next backend and
   the reason is recorded on the decision (a JEV outage lands on `rules`, visibly).
-* `rules` and `local_classifier` run inline: deterministic, local, never timed out.
+* `rules` and `local_classifier` run inline: deterministic, local, never timed out. They are the only
+  backends on an air-gapped install (`ANALYSTOS_AIR_GAPPED`): `jev` and `llm_structured` drop out.
 * `escalate_only` / `bounded_stop` purposes start with `rules`; the rule's answer is the baseline
   (or the minimum-work check) and no model answer can go below it.
 * Every decision is stored with its options, enforced answer, raw proposal, probabilities, latency,
@@ -36,6 +37,7 @@ from analystos.llm.router import CallContext, ModelRouter
 log = get_logger(__name__)
 _EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="decision")
 DETERMINISTIC_BACKENDS = ("rules",)
+AIR_GAPPED_BACKENDS = ("rules", "local_classifier")  # nothing that needs a model endpoint (spec v3 §8)
 
 
 def default_store(router: ModelRouter) -> DecisionStore:
@@ -62,6 +64,8 @@ class DecisionService:
         if self.router.mode(spec.name) == "auto":
             # the purpose's ladder is deterministic-first (P4-T01/T02): the rule before any other backend
             order = [b for b in order if b in DETERMINISTIC_BACKENDS] + [b for b in order if b not in DETERMINISTIC_BACKENDS]
+        if getattr(self.router, "air_gapped", False):
+            order = [b for b in order if b in AIR_GAPPED_BACKENDS]
         down = self.store.downgraded()
         removed = [b for b in order if b != "rules" and (spec.name, b) in down]
         return [b for b in order if b not in removed], removed

@@ -63,14 +63,14 @@ class ReadIn(BaseModel):
 
 # ---------------------------------------------------------------------------------- schedules
 @router.post("/workspaces/{workspace_id}/schedules")
-def create_schedule(workspace_id: str, body: ScheduleIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def create_schedule(workspace_id: str, body: ScheduleIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     sch = sch_svc.create_schedule(session, session.merge(user), workspace_id, **body.model_dump())
     session.flush()
     return row(sch)
 
 
 @router.get("/workspaces/{workspace_id}/schedules")
-def list_schedules(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_schedules(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     out = []
     for sch in session.scalars(select(Schedule).where(Schedule.workspace_id == workspace_id).order_by(Schedule.created_at)):
@@ -80,12 +80,12 @@ def list_schedules(workspace_id: str, user: User = Depends(current_user), sessio
 
 
 @router.patch("/schedules/{schedule_id}")
-def patch_schedule(schedule_id: str, body: SchedulePatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def patch_schedule(schedule_id: str, body: SchedulePatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return row(sch_svc.update_schedule(session, session.merge(user), schedule_id, body.model_dump()))
 
 
 @router.delete("/schedules/{schedule_id}")
-def delete_schedule(schedule_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def delete_schedule(schedule_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     sch = session.get(Schedule, schedule_id)
     if sch is None:
         raise NotFound("schedule not found")
@@ -106,20 +106,20 @@ def run_schedule_now(schedule_id: str, user: User = Depends(current_user)):
 
 # ---------------------------------------------------------------------------------- monitors
 @router.post("/workspaces/{workspace_id}/monitors")
-def create_monitor(workspace_id: str, body: MonitorIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def create_monitor(workspace_id: str, body: MonitorIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     m = mon_svc.create_monitor(session, session.merge(user), workspace_id, **body.model_dump())
     session.flush()
     return row(m)
 
 
 @router.get("/workspaces/{workspace_id}/monitors")
-def list_monitors(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_monitors(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return rows(session.scalars(select(Monitor).where(Monitor.workspace_id == workspace_id).order_by(Monitor.created_at)))
 
 
 @router.patch("/monitors/{monitor_id}")
-def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(current_user), session: Session = Depends(db)):
+def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     m = session.get(Monitor, monitor_id)
     if m is None:
         raise NotFound("monitor not found")
@@ -132,7 +132,7 @@ def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(curr
 
 
 @router.post("/monitors/{monitor_id}/evaluate")
-def evaluate_monitor(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def evaluate_monitor(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     m = session.get(Monitor, monitor_id)
     if m is None:
         raise NotFound("monitor not found")
@@ -142,7 +142,7 @@ def evaluate_monitor(monitor_id: str, user: User = Depends(current_user), sessio
 
 
 @router.get("/monitors/{monitor_id}/series")
-def monitor_series(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def monitor_series(monitor_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     m = session.get(Monitor, monitor_id)
     if m is None or m.kind == "data_quality":
         raise NotFound("metric monitor not found")
@@ -153,7 +153,7 @@ def monitor_series(monitor_id: str, user: User = Depends(current_user), session:
 
 # ---------------------------------------------------------------------------------- alerts
 @router.get("/workspaces/{workspace_id}/alerts")
-def list_alerts(workspace_id: str, status: str | None = None, user: User = Depends(current_user), session: Session = Depends(db)):
+def list_alerts(workspace_id: str, status: str | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(Alert).where(Alert.workspace_id == workspace_id)
     if status:
@@ -162,7 +162,7 @@ def list_alerts(workspace_id: str, status: str | None = None, user: User = Depen
 
 
 @router.post("/alerts/{alert_id}/{action}")
-def alert_action(alert_id: str, action: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def alert_action(alert_id: str, action: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     a = session.get(Alert, alert_id)
     if a is None:
         raise NotFound("alert not found")
@@ -192,18 +192,18 @@ def alert_action(alert_id: str, action: str, user: User = Depends(current_user),
 
 # ---------------------------------------------------------------------------------- notifications
 @router.get("/notifications")
-def notifications(unread: bool = False, user: User = Depends(current_user), session: Session = Depends(db)):
+def notifications(unread: bool = False, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return [{**row(n), "read": user.id in (n.read_by or [])} for n in note_svc.list_for(session, user, unread_only=unread)]
 
 
 @router.post("/notifications/read")
-def read_notifications(body: ReadIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def read_notifications(body: ReadIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return {"marked": note_svc.mark_read(session, user, body.ids)}
 
 
 # ---------------------------------------------------------------------------------- reports
 @router.post("/workspaces/{workspace_id}/reports")
-def create_report(workspace_id: str, body: ReportIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def create_report(workspace_id: str, body: ReportIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "analyst")
     run_id = body.run_id or session.scalar(select(AnalysisRun.id).where(
         AnalysisRun.workspace_id == workspace_id, AnalysisRun.status == "COMPLETED").order_by(AnalysisRun.finished_at.desc()))
@@ -217,7 +217,7 @@ def create_report(workspace_id: str, body: ReportIn, user: User = Depends(curren
 
 
 @router.get("/artifacts/{artifact_id}/download")
-def download(artifact_id: str, format: str = "pdf", user: User = Depends(current_user), session: Session = Depends(db)):
+def download(artifact_id: str, format: str = "pdf", user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Download to the requesting user (audited). Sending outside the platform would need an approval."""
     art = session.get(Artifact, artifact_id)
     if art is None or art.type != "report":

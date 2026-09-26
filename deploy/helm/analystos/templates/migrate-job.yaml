@@ -1,0 +1,33 @@
+{{- if .Values.migrations.enabled }}
+# Schema migration + seed (registries, packs' knowledge, bootstrap admin) before pods of the new
+# version start. Alembic takes a lock, so a concurrent run of the same Job is harmless.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "analystos.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "analystos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- include "analystos.podCommon" (dict "root" . "component" "migrate") | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "analystos.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c", "analystos migrate && analystos seed"]
+          {{- include "analystos.appEnv" . | nindent 10 }}
+      volumes:
+        {{- include "analystos.appVolumes" . | nindent 8 }}
+{{- end }}

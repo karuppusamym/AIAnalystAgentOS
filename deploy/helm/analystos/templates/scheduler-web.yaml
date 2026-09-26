@@ -1,0 +1,168 @@
+{{- $sched := dict "root" . "component" "scheduler" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analystos.fullname" . }}-scheduler
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}  # claim-then-execute: extra replicas never double-fire
+  selector:
+    matchLabels:
+      {{- include "analystos.selector" $sched | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analystos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "analystos.podCommon" $sched | nindent 6 }}
+      containers:
+        - name: scheduler
+          image: {{ include "analystos.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["analystos", "scheduler"]
+          {{- include "analystos.appEnv" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+      volumes:
+        {{- include "analystos.appVolumes" . | nindent 8 }}
+{{- include "analystos.pdb" (dict "root" . "component" "scheduler" "pdb" .Values.scheduler.pdb) }}
+{{- $web := dict "root" . "component" "web" "podSecurityContext" (dict "runAsNonRoot" true "runAsUser" 101 "runAsGroup" 101 "seccompProfile" (dict "type" "RuntimeDefault")) }}
+---
+# The web image's nginx.conf proxies to the compose host `api`; here the upstream is this release's API Service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "analystos.fullname" . }}-web-nginx
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+        client_max_body_size 210m;
+        location = /healthz { access_log off; default_type text/plain; return 200 "ok\n"; }
+        location /api/ {
+            proxy_pass http://{{ include "analystos.fullname" . }}-api:{{ .Values.api.service.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_request_buffering off;
+            proxy_read_timeout 1h;
+            proxy_send_timeout 1h;
+            add_header X-Accel-Buffering no;
+        }
+        location /assets/ { expires 1y; add_header Cache-Control "public, immutable"; try_files $uri =404; }
+        location / {
+            add_header Cache-Control "no-cache";
+            add_header X-Content-Type-Options nosniff;
+            add_header Referrer-Policy same-origin;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analystos.fullname" . }}-web
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "analystos.selector" $web | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analystos.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- include "analystos.podCommon" $web | nindent 6 }}  {{- /* nginx user 101 in nginx:alpine */}}
+      containers:
+        - name: web
+          image: {{ include "analystos.webImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8080}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - {name: nginx-conf, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
+            - {name: cache, mountPath: /var/cache/nginx}
+            - {name: run, mountPath: /var/run}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      volumes:
+        - name: nginx-conf
+          configMap: {name: {{ include "analystos.fullname" . }}-web-nginx}
+        - {name: cache, emptyDir: {}}
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "analystos.fullname" . }}-web
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.web.service.type }}
+  selector:
+    {{- include "analystos.selector" $web | nindent 4 }}
+  ports:
+    - {name: http, port: {{ .Values.web.service.port }}, targetPort: http}
+{{- include "analystos.pdb" (dict "root" . "component" "web" "pdb" .Values.web.pdb) }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "analystos.fullname" . }}
+  labels:
+    {{- include "analystos.labels" . | nindent 4 }}
+  annotations:
+    # SSE: long reads and no buffering on the API paths
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "analystos.fullname" . }}-web
+                port: {name: http}
+{{- end }}

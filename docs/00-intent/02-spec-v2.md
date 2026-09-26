@@ -11,6 +11,12 @@ agents, plans, methods, model calls, knowledge, engines and the UI are built: §
 §13 and §15 here. It builds on the increment-3 additions in §10.1 and §11. Every principle,
 invariant and verification rule in this document still holds.
 
+**2026-09-25 design extension:** [Workspace-adaptive data team](03-workspace-data-team-spec.md)
+defines future analyst, engineering and ML workflows, [workbench UX](../10-architecture/02-workbench-ux.md)
+and [API evolution](../20-contracts/02-workbench-api.md). These are implementation targets, not
+current capabilities. Sections below describe the existing prototype unless explicitly marked
+as a target; P4–P6 in the tracker govern delivery.
+
 ---
 
 ## 1. The problem, restated from first principles
@@ -77,7 +83,7 @@ publication and evidence inspectable for every KPI and finding.
 
 | v1 | v2 | Why |
 |---|---|---|
-| ~15 deployable services (§57) | **Modular monolith, three process roles** (api, worker, web) + infrastructure | Service boundaries are package boundaries with contracts; splitting processes before load demands it multiplies failure modes without adding safety. ADR-0001 |
+| ~15 deployable services (§57) | **Modular monolith** (api, worker, web; scheduler added in increment 2) + infrastructure | Service boundaries are package boundaries with contracts; splitting processes before load demands it multiplies failure modes without adding safety. ADR-0001 |
 | Free-form SQL agent on the critical path | **Closed analysis vocabulary** compiled to SQL; free-form SQL only for ad-hoc "Ask", still gateway-validated | Reproducibility and injection resistance. ADR-0002 |
 | "REV agent verifies" | **Verified = deterministic checks pass**; independent model family and JEV only adjust confidence | v1 §28 itself says agreement ≠ truth; v2 makes it mechanical |
 | Model router by task | Router by **purpose → profile → allowlisted models**, plus **JEV decision purposes** | Typed decisions with probabilities are auditable; chat completions are not. ADR-0006 |
@@ -303,7 +309,8 @@ stores external ids per artifact, supports update-in-place, rollback, and dashbo
 
 ## 13. Persistence, lineage, memory (v1 §29–§31, §44)
 
-Postgres is the system of record (29 tables, Alembic-managed). Neo4j is a rebuildable projection
+Postgres is the system of record (Alembic-managed; the original 29-table schema is extended by
+subsequent migrations). Neo4j is a rebuildable projection
 of `lineage_edge` + `relationship`. Semantic memory = `context_entry` with pgvector embeddings
 (deterministic local hashing embeddings; no data leaves for embedding). Episodic memory = run
 summaries written as `episode` entries and retrieved by later runs.
@@ -348,3 +355,20 @@ environment; read-only; visible limits. Controlled-pilot and production gates ar
 3. Model allowlist and residency requirements per tenant.
 4. Whether Level-4 autonomy should ever permit unattended publication (requires the adversarial
    false-approval evaluation in v1 §56.4 first).
+
+## 19. Next design boundary: workspace-adaptive workflows
+
+The [design review](../60-delivery/04-design-review.md) identifies trust, API consistency, UX and
+workflow gaps. The target specification adds versioned business semantics, capability/readiness
+checks, typed analysis/ML/pipeline work orders, differentiated evidence and total-resource budgets.
+The existing six-method AnalysisSpec remains supported. New operations use the same gateway,
+policy, durable runtime, artifact registry and approvals; source mutation remains denied.
+
+The current `verified` badge describes the checks in §8, not causality, calibrated confidence,
+or future predictive performance. P4-03 introduces versioned evidence dimensions and fact bindings
+before stronger claims. The Phase-1 requirement for at least three findings applies to the planted
+demo fixture; arbitrary user data may correctly yield no supported findings. Never optimize a
+production run for a required count of discoveries.
+
+Release scope expands only after the [evaluation gates](../60-delivery/05-evaluation-plan.md)
+pass for that task/data envelope. Historical evidence and current limitations remain visible.

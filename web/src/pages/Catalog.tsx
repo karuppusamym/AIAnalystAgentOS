@@ -1,10 +1,17 @@
-import { Fragment, useEffect, useId, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useState, type FormEvent } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { to } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
-import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card } from "../components/ui";
+import { KpiEditor } from "../components/KpiEditor";
+import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card, Tabs } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
+
+// The studio's other tabs load on demand (the force-graph renderer among them), keeping the main bundle small.
+const KnowledgeDocs = lazy(() => import("../components/KnowledgeDocs").then((m) => ({ default: m.KnowledgeDocs })));
+const ReviewQueue = lazy(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
+const SemanticGraph = lazy(() => import("../components/SemanticGraph").then((m) => ({ default: m.SemanticGraph })));
+const KnowledgeTransfer = lazy(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
 
 /** Who wrote a description: the source system, a rule, a model, or a person (a person always wins). */
 export const ORIGIN_LABELS: Record<string, { label: string; tone: string; title: string }> = {
@@ -22,9 +29,59 @@ export function OriginBadge({ origin }: { origin: string | null | undefined }) {
 
 const EDITOR_ROLES = new Set(["editor", "owner"]);
 
+type StudioTab = "catalog" | "documents" | "review" | "graph" | "metrics" | "transfer";
+const TABS: { id: StudioTab; label: string }[] = [
+  { id: "catalog", label: "Catalog" }, { id: "documents", label: "Documents" }, { id: "review", label: "Review queue" },
+  { id: "graph", label: "Semantic graph" }, { id: "metrics", label: "Metrics" }, { id: "transfer", label: "Import & export" },
+];
+
+/**
+ * Knowledge → Knowledge studio (P4-U04): one screen, six tabs, inside the 20-screen budget. The
+ * crawled catalog; the OKF documents of every pack the workspace sees (the workspace pack editable);
+ * the review queue of AI and learning-loop drafts; the semantic graph (governed solid, inferred
+ * dashed); the Ossie metrics editor (the same KPI editor as Build); and bundle import/export.
+ */
 export function CatalogPage() {
   const { wsId = "" } = useParams();
+  const [params, setParams] = useSearchParams();
+  const tab = (TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "catalog") as StudioTab;
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  const canEdit = EDITOR_ROLES.has(ws.data?.role ?? "");
+  const set = useCallback((patch: Record<string, string | null>) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "") next.delete(k);
+        else next.set(k, v);
+      }
+      return next;
+    });
+  }, [setParams]);
+  const switchTab = (t: StudioTab) => setParams(t === "catalog" ? {} : { tab: t });
+
+  return (
+    <div className="page">
+      <PageHeader title="Knowledge studio"
+        subtitle={<>The catalog, the workspace&apos;s knowledge documents and their review, the semantic model and its metrics. Crawl sources on
+          the <Link to={to.sources(wsId)}>Sources</Link> page.</>} />
+      <Tabs value={tab} onChange={switchTab} tabs={TABS} />
+      <div className="tab-panel">
+        <Suspense fallback={<Loading />}>
+          {tab === "catalog" && <CatalogTab wsId={wsId} canEdit={canEdit} />}
+          {tab === "documents" && <KnowledgeDocs wsId={wsId} params={params} set={set} />}
+          {tab === "review" && <ReviewQueue wsId={wsId} canDecide={canEdit}
+            onOpenDocument={(path) => setParams({ tab: "documents", path })} />}
+          {tab === "graph" && <SemanticGraph wsId={wsId} />}
+          {tab === "metrics" && <KpiEditor wsId={wsId} selected={params.get("kpi")} onSelect={(k) => set({ kpi: k })} />}
+          {tab === "transfer" && <KnowledgeTransfer wsId={wsId} canEdit={canEdit}
+            onBrowse={(packId) => setParams({ tab: "documents", pack: packId })} />}
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function CatalogTab({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
   const [draftQ, setDraftQ] = useState("");
   const [q, setQ] = useState("");
   const [domain, setDomain] = useState("");
@@ -41,7 +98,6 @@ export function CatalogPage() {
     }));
   }, [list.data]);
   const [open, setOpen] = useState<string | null>(null);
-  const canEdit = EDITOR_ROLES.has(ws.data?.role ?? "");
 
   const search = (e: FormEvent) => {
     e.preventDefault();
@@ -51,10 +107,8 @@ export function CatalogPage() {
     list.setData((prev) => prev?.map((x) => (x.id === a.id ? { ...x, ...a } : x)));
 
   return (
-    <div className="page">
-      <PageHeader title="Catalog"
-        subtitle={<>Every crawled table with its business meaning, role, grain and sensitive columns. Crawl sources on
-          the <Link to={to.sources(wsId)}>Sources</Link> page.</>} />
+    <div className="stack">
+      <p className="muted small">Every crawled table with its business meaning, role, grain and sensitive columns.</p>
       <Card>
         <form className="form-inline catalog-filters" onSubmit={search} role="search" aria-label="Search the catalog">
           <label className="inline-field">

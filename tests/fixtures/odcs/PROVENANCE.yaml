@@ -1,0 +1,8 @@
+# Official ODCS example used as a positive conformance fixture (P4-K04). Not hand-written.
+official-full-example-v3.2.0.odcs.yaml:
+  upstream: https://github.com/bitol-io/open-data-contract-standard @ tag v3.2.0 (f0bdad95346905d500be5ef4b2c2d9b1d95223b7)
+  path: docs/examples/all/full-example.odcs.yaml
+  retrieved: 2026-09-25
+  sha256: 7a82af5da8d18962031c3a01b2706b6991dce7bd111e5fb9e0a3b214739e1031
+  license: Apache-2.0
+  modifications: none

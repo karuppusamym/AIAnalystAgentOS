@@ -62,6 +62,7 @@ MAX_TOOLS = 200
 MAX_DESCRIPTION_CHARS = 1000
 MAX_SCHEMA_CHARS = 20_000
 RESULT_MAX_CHARS = 8_000
+RESULT_MAX_CHARS_CEILING = 48_000  # a server's `result_max_chars` config may raise the default up to this (knowledge tools)
 DEFAULT_MAX_CALLS_PER_RUN = 50
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
@@ -200,8 +201,13 @@ def _screen_value(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def screen_result(result: Any) -> dict[str, Any]:
-    """CallToolResult -> capped, screened dict. Only text and structured content survive."""
+def screen_result(result: Any, max_chars: int = RESULT_MAX_CHARS, *, lift_json: bool = False) -> dict[str, Any]:
+    """CallToolResult -> capped, screened dict. Only text and structured content survive.
+
+    `lift_json` (server config `lift_json_blocks`): a server that returns its structured answer as a
+    fenced ```json text block (Atlas's knowledge tools do) has that block parsed into structured
+    content *before* screening, so it is screened value by value instead of being flattened, and
+    removed from the text."""
     import json
 
     texts: list[str] = []
@@ -212,15 +218,25 @@ def screen_result(result: Any) -> dict[str, Any]:
         else:
             omitted.append(str(getattr(block, "type", "unknown")))
     raw = "\n".join(texts)
-    flags = ["injection_removed"] if has_injection(raw) else []
-    text = screen_text(raw, max_chars=RESULT_MAX_CHARS)
     structured = getattr(result, "structured_content", None)
-    truncated = len(raw) > RESULT_MAX_CHARS
+    if lift_json and structured is None:
+        blocks = list(re.finditer(r"```json\s*\n(.*?)\n```", raw, re.S))
+        if blocks:
+            try:
+                lifted = json.loads(blocks[-1].group(1))
+            except ValueError:
+                lifted = None
+            if isinstance(lifted, dict):
+                structured = lifted
+                raw = (raw[:blocks[-1].start()] + raw[blocks[-1].end():]).strip()
+    flags = ["injection_removed"] if has_injection(raw) else []
+    text = screen_text(raw, max_chars=max_chars)
+    truncated = len(raw) > max_chars
     if structured is not None:
         if has_injection(json.dumps(structured, default=str)) and "injection_removed" not in flags:
             flags.append("injection_removed")
         structured = _screen_value(structured)
-        if len(json.dumps(structured, default=str)) > RESULT_MAX_CHARS:
+        if len(json.dumps(structured, default=str)) > max_chars:
             structured, truncated = None, True
     return {"is_error": bool(getattr(result, "is_error", False)), "text": text, "structured": structured,
             "omitted_content": omitted, "truncated": truncated, "flags": flags}
@@ -268,7 +284,7 @@ def register_server(session: Session, user: User, workspace_id: str, *, name: st
         raise InvalidInput(f"transport {transport!r} is not supported (use one of {', '.join(TRANSPORTS)})")
     if session.scalar(select(McpServer.id).where(McpServer.workspace_id == workspace_id, McpServer.name == name)):
         raise Conflict(f"an MCP server named {name} is already registered in this workspace")
-    cfg = {k: v for k, v in (config or {}).items() if k in ("max_calls_per_run", "timeout_seconds")}
+    cfg = {k: v for k, v in (config or {}).items() if k in ("max_calls_per_run", "timeout_seconds", "result_max_chars", "lift_json_blocks")}
     srv = McpServer(id=new_id("mcps"), workspace_id=workspace_id, name=name, url=_validate_url(url), transport=transport,
                     secret_ref=_validate_secret_ref(secret_ref), status="registered", allowed=False, config=cfg,
                     tools=[], classifications={}, created_by=user.id)
@@ -524,7 +540,9 @@ def invoke_tool(session_factory: Callable[[], Any], user: User, workspace_id: st
     status, out, error = "ok", None, None
     try:
         result = _call_remote(server_snapshot, call)
-        out = screen_result(result)
+        result_chars = int((server_snapshot.config or {}).get("result_max_chars") or RESULT_MAX_CHARS)
+        out = screen_result(result, max(1_000, min(result_chars, RESULT_MAX_CHARS_CEILING)),
+                            lift_json=bool((server_snapshot.config or {}).get("lift_json_blocks")))
         if out["is_error"]:
             status, error = "error", "mcp_tool_error: " + out["text"][:300]
         return {"status": status, "capability": cap, "side_effect": side, "result": out}

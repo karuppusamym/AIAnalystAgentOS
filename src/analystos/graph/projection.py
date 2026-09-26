@@ -19,7 +19,8 @@ LABELS = {"objective": "BusinessObjective", "run": "AnalysisRun", "hypothesis": 
           "metric": "Metric", "chart": "Chart", "dashboard": "Dashboard", "artifact": "Artifact", "source": "SourceSystem",
           "agent": "Agent", "tool": "Tool", "user": "User", "approval": "Decision", "publication": "Publication",
           "profile": "Artifact", "quality_report": "Artifact", "context_package": "Artifact", "plan": "Artifact",
-          "semantic_model": "SemanticModel", "feedback": "Feedback"}
+          "semantic_model": "SemanticModel", "feedback": "Feedback", "transformation": "Artifact",
+          "build_job": "BuildJob"}
 
 
 NEIGHBOURHOOD_LIMIT = 200

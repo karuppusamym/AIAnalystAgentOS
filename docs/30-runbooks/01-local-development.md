@@ -25,7 +25,7 @@ step → queue map is `src/analystos/workflows/queues.py`; slots, executor and t
 `config/task_queues.yaml`. `analystos worker --queues analysis,compute` (or `ANALYSTOS_WORKER_QUEUES`)
 serves a subset; compose runs one `worker-<pool>` service per pool, so
 `docker compose up -d --scale worker-compute=4` scales statistics alone. Helm sizing:
-`deploy/helm/values.workers.yaml`.
+`deploy/helm/analystos` (Helm chart, one Deployment per pool).
 
 **Neo4j is optional and off by default** (`ANALYSTOS_GRAPH_ENABLED=false`): lineage and the table
 neighbourhood in context packages come from Postgres (`lineage_edge`, `relationship`). To run the

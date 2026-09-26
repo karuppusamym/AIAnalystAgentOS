@@ -1,4 +1,4 @@
-import { INSIGHT, RUN, WS } from "../src/test/mockBackend";
+import { BUILD_NEW, BUILD_PREV, INSIGHT, RUN, THREAD_NEW, WS } from "../src/test/mockBackend";
 import { axeViolations, expect, signIn, test } from "./fixtures";
 
 test.describe("five-journey IA", () => {
@@ -29,10 +29,11 @@ test.describe("five-journey IA", () => {
     await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
 
-    // Knowledge: the increment-3 catalog now lives here.
-    await nav.getByRole("group", { name: "Knowledge" }).getByRole("link", { name: "Catalog" }).click();
+    // Knowledge: the increment-3 catalog is the first tab of the knowledge studio.
+    await nav.getByRole("group", { name: "Knowledge" }).getByRole("link", { name: "Knowledge studio" }).click();
     await expect(page).toHaveURL(`/w/${WS}/knowledge/catalog`);
-    await expect(page.getByRole("heading", { name: "Catalog", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Knowledge studio", level: 1 })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Catalog", selected: true })).toBeVisible();
     await expect(page.getByText("Incidents").first()).toBeVisible();
 
     // Operate: platform settings (admin), reached through the command palette.
@@ -70,6 +71,43 @@ test.describe("five-journey IA", () => {
   });
 });
 
+test.describe("Ask (P4-U02)", () => {
+  test("ask → promote to monitor → investigate", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("How many P1 incidents per assignment group?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const answer = page.getByRole("article", { name: "Question 1" });
+    await expect(answer.getByText("P1 incidents by assignment group.")).toBeVisible();
+    await expect(answer.getByRole("list", { name: "Provenance" }).getByText("Validated by the query gateway")).toBeVisible();
+    await expect(answer.getByRole("img", { name: /bar chart/ })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`thread=${THREAD_NEW}`));
+
+    const inspector = page.getByRole("complementary", { name: "Answer inspector" });
+    await inspector.getByRole("tab", { name: "Decision" }).click();
+    await expect(inspector.getByText(/ask_route: generate — decided by rule/)).toBeVisible();
+
+    const promote = answer.getByRole("region", { name: "Promote this answer" });
+    await promote.getByRole("button", { name: "Monitor this" }).click();
+    await promote.getByLabel("Every").selectOption("month");
+    await promote.getByRole("button", { name: "Create monitor" }).click();
+    await expect(promote.getByText(/Monitor "P1 incidents per assignment group" created/)).toBeVisible();
+
+    await promote.getByRole("button", { name: "Investigate why" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("a vague question gets the clarify refusal with its remedy", async ({ page }) => {
+    await signIn(page, `/w/${WS}/ask`);
+    await page.getByLabel("Question").fill("what about it?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const turn = page.getByRole("article", { name: "Question 1" });
+    await expect(turn.getByText("The question needs more detail")).toBeVisible();
+    await expect(turn.getByRole("button", { name: "Rephrase the question" })).toBeVisible();
+  });
+});
+
 test.describe("investigation board (P4-U03)", () => {
   test("board → why trust this → reject a finding → redirect by chat", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/investigate/${RUN}`);
@@ -97,6 +135,133 @@ test.describe("investigation board (P4-U03)", () => {
     await page.getByLabel("Message").fill("Focus on the Network group");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.getByText(/Focus on the Network group\./)).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
+test.describe("build (P4-U05)", () => {
+  test("plan build → diff and dry run → approval in the inbox → approved → status", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/build/studio?tab=builds`);
+    await expect(page.getByRole("tab", { name: "dbt builds", selected: true })).toBeVisible();
+    const jobs = page.getByRole("list", { name: "Build jobs" });
+    await expect(jobs.getByRole("listitem")).toHaveCount(1);
+
+    // Plan: the elt_build run generates and dry-runs the project, then asks for an approval.
+    const plan = page.getByRole("form", { name: "Plan a build" });
+    await expect(plan.getByLabel("Target schema")).toHaveValue("aos_mart");
+    await plan.getByRole("button", { name: "Plan build" }).click();
+    await expect(jobs.getByRole("listitem")).toHaveCount(2);
+
+    // Review: the files against the previous job for this target, the dry run and the estimate.
+    await expect(page.getByText(`Compared with job ${BUILD_PREV}`)).toBeVisible();
+    await expect(page.getByText("1 added, 2 modified, 0 removed")).toBeVisible();
+    await expect(page.getByLabel("Diff of models/p1_incidents.sql")).toContainText("+where priority = '1'");
+    await expect(page.getByLabel("Estimate")).toContainText("4,210");
+    await expect(page.getByText("fails: dropped")).toBeVisible();
+    const steps = page.getByRole("list", { name: "Build status" });
+    await expect(steps.locator("li[aria-current=step]")).toContainText("waiting for an approver in the inbox");
+    await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+
+    // Approve: in the approvals inbox, bound to the payload hash like every other side effect.
+    await page.getByRole("link", { name: "Review in the approvals inbox" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/operate/approvals`);
+    const card = page.locator("article.approval", { hasText: "Build with dbt" });
+    await expect(card.getByText("postgres:analytics/aos_mart")).toBeVisible();
+    await expect(card.getByText("risk: high")).toBeVisible();
+    await card.getByLabel("Reason").fill("diff reviewed");
+    await card.getByRole("button", { name: "Approve" }).click();
+    await expect(card).toHaveCount(0); // decided: it leaves the Pending tab
+    await page.getByRole("tab", { name: "All" }).click();
+    await expect(card.locator(".badge", { hasText: "approved" })).toBeVisible();
+
+    // Status: back in Build, the resumed run has built the tables.
+    const nav = page.getByRole("navigation", { name: "Main" });
+    await nav.getByRole("group", { name: "Build" }).getByRole("link", { name: "Studio" }).click();
+    await page.getByRole("tab", { name: "dbt builds" }).click();
+    await jobs.getByRole("listitem").first().getByRole("button").click();
+    await expect(page).toHaveURL(new RegExp(`job=${BUILD_NEW}`));
+    await expect(page.getByRole("heading", { name: "Result" })).toBeVisible();
+    await expect(page.getByText("success: 2")).toBeVisible();
+    await expect(steps.locator("li.step-done")).toHaveCount(4);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("KPI editor: live validation, propose, separation of duties", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/build/studio?tab=kpis`);
+    const form = page.getByRole("form", { name: "Propose a KPI" });
+    await form.getByLabel("Name", { exact: true }).fill("p1_count");
+    await form.getByLabel("Expression").fill("priority");
+    await expect(form.getByText("not an aggregate expression")).toBeVisible();
+    await form.getByLabel("Expression").fill("COUNT(*)");
+    await expect(form.getByText(/well-formed aggregate/)).toBeVisible();
+    await form.getByRole("button", { name: "Propose KPI" }).click();
+    await expect(form.getByText(/waits for an approver who is not you/)).toBeVisible();
+    await expect(page.getByText(/You proposed this version/)).toBeVisible();
+
+    await page.getByRole("list", { name: "KPIs" }).getByRole("button", { name: /mttr hours/ }).click();
+    await page.getByRole("button", { name: "Approve v2" }).click();
+    await expect(page.getByRole("button", { name: "Approve v2" })).toHaveCount(0);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
+test.describe("knowledge studio (P4-U04)", () => {
+  test("review an AI suggestion → approve into the pack → ask → it is a receipt on the Evidence tab", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/knowledge/catalog?tab=review`);
+    await expect(page.getByRole("tab", { name: "Review queue", selected: true })).toBeVisible();
+
+    // Review: the model's draft with each field's confidence and provenance.
+    const draft = page.getByRole("article", { name: "Draft: Reopen rate" });
+    await expect(draft.getByRole("meter", { name: "Confidence" }).first()).toHaveAttribute("aria-valuenow", "55");
+    await expect(draft.getByText("crawl-enrich-v2")).toBeVisible();
+    await expect(draft.getByText("openrouter/auto").first()).toBeVisible();
+
+    // Publish: approve it; the batch is one workspace-pack revision.
+    await page.getByLabel("Select Reopen rate").check();
+    await page.getByRole("button", { name: "Approve selected (1)" }).click();
+    await expect(page.getByText(/Workspace pack revision 2: 1 approved, 0 rejected/)).toBeVisible();
+    await expect(draft).toHaveCount(0);
+    await page.getByRole("button", { name: "Open glossary/reopen-rate.md" }).click();
+    await expect(page.getByRole("heading", { name: "Reopen rate", level: 2 })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Verified by" })).toContainText("human:usr_admin");
+
+    // Ask: the approved document is in the context of the answer, as a receipt.
+    const nav = page.getByRole("navigation", { name: "Main" });
+    await nav.getByRole("group", { name: "Ask" }).getByRole("link", { name: "Ask" }).click();
+    await page.getByLabel("Question").fill("What is the reopen rate for P1 incidents?");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(page.getByRole("article", { name: "Question 1" })).toBeVisible();
+    const inspector = page.getByRole("complementary", { name: "Answer inspector" });
+    await inspector.getByRole("tab", { name: "Evidence" }).click();
+    const receipt = inspector.getByRole("list", { name: "Context receipts" }).getByRole("listitem").filter({ hasText: "Reopen rate" });
+    await expect(receipt).toContainText("glossary/reopen-rate.md#definition");
+    await expect(receipt.getByText("reviewed", { exact: true })).toBeVisible();
+
+    // …and the receipt opens its document in the studio.
+    await receipt.getByRole("link", { name: "Open Reopen rate in the knowledge studio" }).click();
+    await expect(page).toHaveURL(/tab=documents/);
+    await expect(page.getByRole("heading", { name: "Reopen rate", level: 2 })).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("edit a document's trust fields as a new revision; platform packs stay read-only", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`);
+    const card = page.locator("section.card", { has: page.getByRole("heading", { name: "P1", level: 2 }) });
+    await expect(card.getByText("human-reviewed")).toBeVisible();
+    await card.getByRole("button", { name: "Edit" }).click();
+    const form = page.getByRole("form", { name: "Edit glossary/p1.md" });
+    await form.getByLabel("Status").selectOption("deprecated");
+    await form.getByLabel(/Mark as reviewed by me/).check();
+    await form.getByLabel("Reason for this revision").fill("P1 renamed to critical");
+    await form.getByRole("button", { name: "Save revision" }).click();
+    const history = page.getByRole("list", { name: "Revisions of this document" });
+    await expect(history.getByText(/P1 renamed to critical/)).toBeVisible();
+    await expect(card.getByText("deprecated")).toBeVisible();
+
+    await page.getByLabel("Pack").selectOption({ label: "Platform knowledge · platform (read-only)" });
+    await page.getByRole("button", { name: /SLA breach/ }).click();
+    await expect(page.getByText(/platform pack is read-only/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
     expect(api.unmatched).toEqual([]);
   });
 });
@@ -150,9 +315,18 @@ test.describe("operate (P4-U06, P4-U07)", () => {
 const SCREENS: [string, string, RegExp][] = [
   ["Home", `/w/${WS}`, /What changed/],
   ["Ask", `/w/${WS}/ask`, /SQL console/],
+  ["Ask · thread", `/w/${WS}/ask?thread=ask_old`, /How many P1 incidents per week/],
   ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
   ["Knowledge", `/w/${WS}/knowledge/catalog`, /One row per incident/],
+  ["Knowledge · documents", `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
+  ["Knowledge · review queue", `/w/${WS}/knowledge/catalog?tab=review`, /crawl-enrich-v2/],
+  ["Knowledge · semantic graph", `/w/${WS}/knowledge/catalog?tab=graph`, /Governed \(/],
+  ["Knowledge · metrics", `/w/${WS}/knowledge/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
+  ["Knowledge · import & export", `/w/${WS}/knowledge/catalog?tab=transfer`, /Push to a git remote/],
   ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
+  ["Build · dbt build", `/w/${WS}/build/studio?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
+  ["Build · KPIs", `/w/${WS}/build/studio?tab=kpis&kpi=mttr_hours`, /Approve v2/],
+  ["Build · dashboards", `/w/${WS}/build/studio?tab=dashboards&dashboard=art_dash`, /P1 MTTR by assignment group/],
   ["Operate", `/w/${WS}/operate/approvals`, /Publish dashboards/],
   ["Operate · settings", "/operate/settings", /Purpose/],
   ["Operate · usage", "/operate/usage", /Spend by rung not reported/],

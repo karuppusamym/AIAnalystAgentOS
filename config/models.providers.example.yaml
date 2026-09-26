@@ -1,0 +1,76 @@
+# Example: direct providers instead of (or next to) OpenRouter (P4-S04, spec v3 §8 "Model providers").
+# Copy to your own file and point ANALYSTOS_MODELS_CONFIG at it. Keys are never written here: each
+# provider names the environment variable (a Kubernetes secret in the Helm chart) that holds its key.
+extends: models.yaml
+
+providers:
+  openrouter:
+    kind: chat
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  typesafe:
+    kind: decision
+    base_url: https://openrouter.ai/api/alpha/decisions
+    api_key_env: OPENROUTER_API_KEY
+  anthropic:                     # Anthropic Messages API, direct
+    kind: chat
+    type: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    region: us
+  azure:                         # Azure OpenAI: deployments per model, api-version pinned
+    kind: chat
+    type: azure_openai
+    base_url: https://my-resource.openai.azure.com
+    base_url_env: AZURE_OPENAI_ENDPOINT
+    api_key_env: AZURE_OPENAI_API_KEY
+    api_version: "2025-04-01-preview"
+    region: eu
+    deployments:
+      openai/gpt-5.4: gpt-54-prod
+      openai/gpt-5.4-mini: gpt-54-mini-prod
+  bedrock:                       # needs boto3; AWS credentials from the standard chain (IRSA, instance role)
+    kind: chat
+    type: bedrock
+    base_url: https://bedrock-runtime.eu-central-1.amazonaws.com
+    aws_region: eu-central-1
+    region: eu
+    model_map:
+      anthropic/claude-sonnet-5: anthropic.claude-sonnet-5-v1:0
+
+profiles:
+  reasoning_strong:
+    provider: anthropic
+    models: [anthropic/claude-sonnet-5, anthropic/claude-opus-5]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 120
+  coding:
+    provider: anthropic
+    models: [anthropic/claude-sonnet-5]
+    temperature: 0.0
+    max_tokens: 2500
+    timeout_seconds: 90
+  analytical_reasoning:
+    provider: anthropic
+    models: [anthropic/claude-sonnet-5]
+    temperature: 0.2
+    max_tokens: 4000
+    timeout_seconds: 120
+  low_cost:
+    provider: azure
+    models: [openai/gpt-5.4-mini]
+    temperature: 0.2
+    max_tokens: 2000
+    timeout_seconds: 60
+  independent_model_family:
+    provider: azure
+    models: [openai/gpt-5.4-mini, openai/gpt-5.4]
+    temperature: 0.0
+    max_tokens: 2000
+    timeout_seconds: 90
+    exclude_families: [anthropic]
+  decision:
+    provider: typesafe
+    models: [typesafe/jev-1.13]
+    timeout_seconds: 20

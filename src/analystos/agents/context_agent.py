@@ -12,7 +12,8 @@ def load_context(ctx: RunContext) -> dict:
 
     def retrieve():
         with session_scope() as s:
-            return build_context_package(s, ctx.workspace.id, ctx.run.objective, ctx.scope.assets, notes)
+            return build_context_package(s, ctx.workspace.id, ctx.run.objective, ctx.scope.assets, notes,
+                                         user=ctx.user, run_id=ctx.run.id)
 
     package = ctx.tools().invoke("context.search", {"objective": ctx.run.objective, "assets": ctx.scope.assets}, retrieve)
     # Term resolution: map glossary entries that name columns in scope.

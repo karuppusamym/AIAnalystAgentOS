@@ -158,6 +158,17 @@ Each of those passes changed the investigator (see tracker P3 findings).
 | Investigator breadth | `agents/investigator.py` | role playbook, outcome-diverse selection, driver-model deduplication, KPI × dimension continuation tests | ✅ 3/3 planted, 0 false | Continuation is one dimension per outcome per round |
 | Increment-3 UI | `web/src/pages/{Catalog,AdminSettings}.tsx`, `components/CrawlPanel.tsx` | 26 new vitest tests (76 total) | smoke incl. Catalog | Column-level curation not in the UI |
 
+## 2026-09-25 — Design review and next delivery scope
+
+The [design review](04-design-review.md) inspected spec v2, architecture/ADRs, the existing
+tracker/readiness/evidence, the UI screen map and relevant API, service, contract and verification
+code. The resulting target design covers workspace semantics, UI/API evolution, ML, engineering,
+evidence and evaluation. P4–P6 in the tracker contain the implementation acceptance criteria.
+
+This is documentary evidence only. No runtime capability, test count, connector certification
+or release-readiness promotion is added. Existing live runs were not repeated. Validation for
+this change checks changed Markdown links, code fences, tracker IDs/status consistency and diff
+whitespace; application tests and browser execution are not part of this documentation change.
 ## 2026-09-25 — Increment 4, wave 0 (plus X05–X08 and U01)
 
 Same environment. Built in parallel streams, merged with re-chained migrations
@@ -261,3 +272,51 @@ cost gate is unchanged (7 and 3 calls).
 | Metric approval workflow | `semantic/service.py`, `governance/approvals.py` (`ALWAYS_SEPARATE_DUTIES`) | `test_semantic_layer.py` | ✅ deterministic run: run 1 refused at publish, approved, run 2 publishes (37 s) | Semantic-model structure versions have no approve endpoint |
 | dbt 1.12 import/export | `semantic/dbt.py` | `test_semantic_ossie.py` fixtures from real `dbt parse` | ✅ by hand (dbt-core 1.12.0 + metricflow 0.213.0) | dbt is not in the project environment; metricflow mangles percent KPIs (export warns) |
 | Publish gate on approved metrics | `semantic/service.gate_bundle`, `build_bundle` | `test_semantic_ossie.py`, `test_semantic_layer.py` | ✅ | Existing workspaces default to off; new ones on |
+
+## 2026-09-25 — Increment 4, waves 4–6: build, Ask, self-hosting, evaluation (E04–E06, U02, S04, V01)
+
+Migrations 0017 → 0020 (build gateway) → 0021 (Ask threads) → 0023 (user identity); up/down/up verified.
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| BuildGateway write identity | `build/gateway.py`, `build/targets.py`, `deploy/postgres/01-init.sql` | `test_elt_build.py` (Postgres refuses non-target, source and `public` writes; approval tamper/expiry) | ✅ | Postgres analytics engine only |
+| dbt builder playbook | `build/project.py`, `build/runner.py`, `build/lineage.py`, `playbooks/elt_build.v1.yaml` | `test_build_project.py`, `test_elt_build.py` | ✅ dbt Core 1.12.5, 20,000 rows, 3/3 tests (`evidence/elt-build-dbt-20260925.md`) | dbt lives in a separate venv (`ANALYSTOS_DBT_EXECUTABLE`), not in the worker image; tables only (no incremental) |
+| dlt vs staged loader | `scripts/spike_dlt_vs_staged.py`, ADR-0016 | — | ✅ measured | Static mock data |
+| Ask threads, stages, decisions, promote | `services/ask.py`, `api/routers/ask.py`, `agents/sql_agent.py` | `test_ask_threads.py`, `test_ask_threads_api.py`, vitest, Playwright | — | Tool rung unused; dashboard promote creates an approved chart, not a Superset publish |
+| Capability invoke | `capabilities/invoke.py` | `test_ask_threads*.py` | — | Methods run only inside investigations |
+| Paste-SQL explain | `QueryGateway.explain` | `test_ask_threads_api.py` | — | Postgres plans only |
+| Model providers + air-gapped egress guard | `llm/providers.py`, `config/models.airgapped.yaml` | `test_model_providers.py` | ❌ no local model run | Bedrock against a double |
+| OIDC SSO + ABAC | `security/oidc.py`, `governance/policy.py` | `test_oidc_abac.py`, `test_oidc_sso.py` (fake IdP) | ❌ | No real IdP login yet |
+| Sandbox network isolation | `sandbox/` | sandbox tests | ✅ | Falls back to not isolated under the chart's default seccomp; NetworkPolicy is the boundary |
+| Helm chart, offline bundle | `deploy/helm/analystos`, `scripts/bundle_images.sh` | `test_helm_chart.py` (skips without helm) | — | helm not in CI |
+| Analytical benchmark | `evaluation/`, `scripts/benchmark_analytical.py` | CI `--check` (precision/recall ≥ 0.90, FDR ≤ α) | ✅ deterministic + platform tiers (`evidence/2026-09-25-analytical-benchmark-*.md`) | No live-model report; effects well above materiality |
+
+## 2026-09-25 — Increment 4, wave 3 knowledge and wave 4 engines (K01, K02, K09, K10, E01, E03)
+
+Migration 0018 (knowledge packs) now follows 0023. The chain is 0017 → 0020 → 0021 → 0023 → 0018, and it has been checked up, down and up.
+
+| Capability | Code | Automated coverage | Live | Limitation |
+|---|---|---|---|---|
+| OKF knowledge packs, revisions, index | `knowledge/{okf,store,index,platform}.py` | `test_knowledge_okf.py`, `test_knowledge_pack.py` (reindex identity, HNSW, isolation) | ✅ seeded platform pack (27 documents) | `ts_rank_cd`, not BM25 |
+| OKF / Atlas bundle import and export | `knowledge/bundle.py` | real Atlas-exported sample, byte-identical round trip | — | No export API route |
+| Context providers | `knowledge/providers.py`, `mcp/client.py` | MCP SDK server + MOCK fixture | ❌ no live Atlas | External results not in prompts yet |
+| Embedding providers, re-embed | `knowledge/embeddings.py`, `scripts/benchmark_embeddings.py` | benchmark evidence | — | Default model chosen on the benchmark set |
+| Engine protocol, multi-dialect validator | `engines/`, `gateway/dialects.py` | `test_gateway_dialects.py` (286 cases) | ❌ no warehouse instance | Snowflake/BigQuery/Databricks/Trino stay staged |
+| Federated cross-source runs | `QueryGateway._execute_federated`, `skills/federation.py` | `test_federation.py`, `test_cross_source_runs.py` | ✅ Postgres + DuckDB file | Not yet a playbook step; no filter pushdown per leg |
+
+Evidence: `evidence/2026-09-25-knowledge-k01-k10.md`, `evidence/engines-federation-20260925.md`.
+
+### 2026-09-25 — governance review of the wave 4–6 merges, and fixes
+
+A read-only governance review of the build, Ask and self-hosting merges found no blockers, 5 major findings and 11 minor ones. All are fixed, each with a test.
+
+| Finding | Fix | Test |
+|---|---|---|
+| M1: an IdP claim could grant PII clearance (widening scope; any string was truthy) | Platform-controlled attributes (`*clearance*`, `is_admin`, `sso_managed`) are never mapped or synced from the IdP. Clearance counts only when it is the boolean `True`. | `test_idp_claims_never_grant_pii_clearance`, `test_idp_claims_never_grant_or_revoke_pii_clearance` |
+| M2: a capability invoke approval was usable by any workspace member | `requested_by` is in the hashed payload, so only the requester can execute it. | `test_an_approval_runs_only_for_the_user_who_requested_it` |
+| M3: a build did not re-check scope at execution | `execution_scope_check` re-validates every rendered model and the dataset SQL against the requester's current scope, right after `verify_for_execution`. | `test_gateway_rechecks_the_data_scope_at_execution` |
+| M4: the default builder password could be provisioned in production | `check_builder_credentials` refuses a missing or default password outside dev. The builder URL is added to the chart's required secrets. | `test_build_targets_guard.py` |
+| M5: sandbox children had network access in a default Helm install | The chart defaults to `sandboxNetwork: require`, so code refuses to run rather than run networked. A fallback is logged on every run. | `test_isolate_fallback_is_logged_and_recorded`, helm-gated render test |
+| m1–m11 | Invoke gate runs before approval use; editor role for side effects; Azure internal only with `private_link`; Bedrock endpoint egress check; OIDC byte compare, exact issuer and admin only for SSO-created accounts; `AttributeRule` needs a condition; explain hides out-of-scope relations; runbook notes | per-finding unit and integration tests |
+
+Compatibility: a stored workspace policy with an attribute rule whose `require` is empty now fails validation on load (m9).

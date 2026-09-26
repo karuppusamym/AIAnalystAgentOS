@@ -121,12 +121,11 @@ function FindingCard({ insight: i, wsId, runId, readOnly, onChanged, onTrust }: 
 
   const accept = async () => {
     try {
-      await api.feedback(wsId, runId, { text: `Accepted finding ${i.code}: ${i.title}`, kind: "accept", target_type: "insight", target_id: i.id });
+      await api.findingOutcome(i.id, "accept");
       setSignal({ kind: "accepted" });
     } catch (err) {
-      // Backend gap: FEEDBACK_KINDS has no "accept" yet (services/runs.py), so the server refuses it.
-      if (err instanceof ApiError && (err.status === 400 || err.status === 422)) {
-        setSignal({ kind: "refused", message: "This server does not record accept signals yet; nothing was changed." });
+      if (err instanceof ApiError && (err.status === 400 || err.status === 403 || err.status === 422)) {
+        setSignal({ kind: "refused", message: err.message });
       } else {
         act.setError(err instanceof Error ? err.message : String(err));
       }

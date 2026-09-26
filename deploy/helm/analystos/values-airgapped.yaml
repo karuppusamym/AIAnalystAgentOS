@@ -1,0 +1,23 @@
+# Air-gapped overlay (P4-S04, spec v3 §8): images from the internal registry the offline bundle was
+# loaded into (scripts/bundle_images.sh), no OpenRouter / TypeSafe, a local OpenAI-compatible model
+# server (vLLM or Ollama), DecisionService on rules / local_classifier, egress locked by NetworkPolicy.
+#   helm install analystos deploy/helm/analystos -f values-ha.yaml -f values-airgapped.yaml \
+#     --set image.registry=registry.internal:5000 --set airGapped.localModel.url=http://vllm.llm.svc:8000/v1
+image:
+  registry: registry.internal:5000
+  pullPolicy: IfNotPresent
+
+airGapped:
+  enabled: true                      # ANALYSTOS_AIR_GAPPED=true + config/models.airgapped.yaml
+  localModel:
+    url: http://vllm.llm.svc:8000/v1 # ANALYSTOS_LOCAL_LLM_URL overrides the provider base_url
+  allowedEgressCidrs:                # replace with your data-centre ranges (DBs, Temporal, Superset, IdP, sources, model server)
+    - 10.0.0.0/8
+
+config:
+  sandboxNetwork: isolate
+
+oidc:
+  # An on-prem IdP (Keycloak, ADFS, Entra ID via private link) works unchanged; its JWKS is fetched from
+  # the discovery document, or mount a static JWKS and set config.extra.ANALYSTOS_OIDC_JWKS_FILE.
+  enabled: false

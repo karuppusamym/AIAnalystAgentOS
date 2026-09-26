@@ -12,6 +12,8 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -23,12 +25,15 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from analystos.db.base import Base
 
 EMBEDDING_DIM = 256
+# Knowledge-index vectors (P4-K10): the column is created at this dimension; `analystos knowledge
+# reembed` retypes it when the configured provider needs another (knowledge/embeddings.py).
+KNOWLEDGE_EMBEDDING_DIM = 256
 JSON = JSONB
 
 
@@ -45,6 +50,23 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # ABAC inputs (department, pii_clearance)
+    created_at: Mapped[datetime] = _ts()
+
+
+class UserIdentity(Base):
+    """An external identity (OIDC issuer + subject) linked to a local user (SEC-001). Memberships the
+    IdP's groups granted are remembered so a later login can revoke exactly those, never a manual grant."""
+
+    __tablename__ = "user_identity"
+    __table_args__ = (UniqueConstraint("issuer", "subject"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), index=True)
+    issuer: Mapped[str] = mapped_column(String(500))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    managed_memberships: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)  # workspace id -> role granted by SSO
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -174,7 +196,8 @@ class ContextEntry(Base):
 
     __tablename__ = "context_entry"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)  # null = global
+    # Platform-wide knowledge lives in the read-only `platform` knowledge pack (P4-K01), never here.
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     kind: Mapped[str] = mapped_column(String(30))  # term | definition | metric | rule | note | episode | dashboard
     name: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
@@ -184,6 +207,169 @@ class ContextEntry(Base):
     trusted: Mapped[bool] = mapped_column(Boolean, default=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgePack(Base):
+    """An OKF v0.2 knowledge pack: the system of record for knowledge (P4-K01, ADR-0013). `platform`
+    (exactly one, no workspace, read-only), `workspace` (a workspace's own) or `imported` (an Atlas
+    or other OKF bundle, read-only, replaced only by re-import). Content is its revisions."""
+
+    __tablename__ = "knowledge_pack"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "slug"),
+        CheckConstraint("(kind = 'platform') = (workspace_id IS NULL)", name="ck_knowledge_pack_platform_scope"),
+        Index("uq_knowledge_pack_platform_slug", "slug", unique=True, postgresql_where="workspace_id IS NULL"),
+    )
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True, nullable=True)
+    kind: Mapped[str] = mapped_column(String(20))  # platform | workspace | imported
+    slug: Mapped[str] = mapped_column(String(120))
+    title: Mapped[str] = mapped_column(String(300), default="")
+    read_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    okf_version: Mapped[str] = mapped_column(String(10), default="0.2")
+    okf_spec_revision: Mapped[str] = mapped_column(String(64))
+    okf_spec_sha256: Mapped[str] = mapped_column(String(64))
+    okf_root: Mapped[str] = mapped_column(String(200), default="")  # bundle root inside the pack ("bundle" for Atlas)
+    head_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    git_remote: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    git_branch: Mapped[str] = mapped_column(String(120), default="main")
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # importer / provider configuration
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class KnowledgeObject(Base):
+    """Content-addressed file bytes of a pack (sha256 of the bytes). Immutable; shared by revisions."""
+
+    __tablename__ = "knowledge_object"
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgeRevision(Base):
+    """One immutable revision of a pack: the full {path: sha256} file map, who and why."""
+
+    __tablename__ = "knowledge_revision"
+    __table_args__ = (UniqueConstraint("pack_id", "number"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    parent_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    author: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    origin: Mapped[str] = mapped_column(String(30))  # seed | migration | user | okf_import | crawler | learning
+    files: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    content_digest: Mapped[str] = mapped_column(String(64))
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # conformance, import report, remote commit
+    created_at: Mapped[datetime] = _ts()
+
+
+class KnowledgeDocument(Base):
+    """Index (rebuildable from the pack): one OKF concept document of a pack's head revision."""
+
+    __tablename__ = "knowledge_document"
+    __table_args__ = (UniqueConstraint("pack_id", "path"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # deterministic: pack + path
+    pack_id: Mapped[str] = mapped_column(ForeignKey("knowledge_pack.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)  # NULL = platform pack
+    revision: Mapped[int] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(String(500))
+    concept_id: Mapped[str] = mapped_column(String(500))
+    type: Mapped[str] = mapped_column(String(120), index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)  # term | metric | rule | ... | document (entries.doc_kind)
+    title: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="stable")
+    trust_tier: Mapped[str] = mapped_column(String(30), default="unverified")
+    stale_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frontmatter: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    body: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+
+
+class KnowledgeSection(Base):
+    """Index: one top-level section of a document, with its full-text vector and embedding."""
+
+    __tablename__ = "knowledge_section"
+    __table_args__ = (
+        UniqueConstraint("document_id", "anchor"),
+        Index("ix_knowledge_section_tsv", "tsv", postgresql_using="gin"),
+        Index("ix_knowledge_section_embedding_hnsw", "embedding", postgresql_using="hnsw",
+              postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # deterministic: document + anchor
+    document_id: Mapped[str] = mapped_column(ForeignKey("knowledge_document.id", ondelete="CASCADE"), index=True)
+    pack_id: Mapped[str] = mapped_column(String(40), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    anchor: Mapped[str] = mapped_column(String(200))
+    heading: Mapped[str] = mapped_column(String(500), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    search_text: Mapped[str] = mapped_column(Text, default="")
+    tsv = mapped_column(TSVECTOR, Computed("to_tsvector('english', coalesce(search_text, ''))", persisted=True))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(KNOWLEDGE_EMBEDDING_DIM), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class KnowledgeLink(Base):
+    """Index: the link graph (§6.1 links are untyped directed edges)."""
+
+    __tablename__ = "knowledge_link"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pack_id: Mapped[str] = mapped_column(String(40), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    source_path: Mapped[str] = mapped_column(String(500))
+    raw: Mapped[str] = mapped_column(String(2000))
+    kind: Mapped[str] = mapped_column(String(20))  # internal | external | fragment | invalid
+    target_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class KnowledgeIndexState(Base):
+    """What the index was built from: per pack the indexed revision (`pack:<id>`), plus the embedding
+    provider (`embedding`), so `refresh` finds stale packs and queries embed with the index's provider."""
+
+    __tablename__ = "knowledge_index_state"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class KnowledgeSuggestion(Base):
+    """A knowledge draft waiting for review (P4-K07/K08): proposed by a model (crawler enrichment) or
+    by the learning loop (an accepted finding, an approved KPI, a user correction). Every field
+    carries its own value, confidence and provenance. Nothing here reaches a prompt: an approval
+    writes the document into the workspace pack (a revision), a rejection writes negative
+    knowledge there instead. `subject` names what the draft is about (`asset:<id>`, `insight:<id>`,
+    `metric:<name>@v<n>`, `feedback:<id>`, ...)."""
+
+    __tablename__ = "knowledge_suggestion"
+    __table_args__ = (UniqueConstraint("workspace_id", "subject", "content_hash", name="uq_knowledge_suggestion_content"),
+                      Index("ix_knowledge_suggestion_queue", "workspace_id", "status", "created_at"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))  # term|definition|metric|rule|note|attested_computation|table_description|negative
+    subject: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(300))
+    path: Mapped[str] = mapped_column(String(500))  # the workspace-pack path an approval writes
+    fields: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {name: {value, confidence, provenance}}
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)  # the least confident field
+    origin: Mapped[str] = mapped_column(String(60))  # crawler.enrichment | learning.finding | learning.metric | learning.feedback
+    proposed_by: Mapped[str] = mapped_column(String(80))  # model:<id> | process:<name> | user:<id>
+    batch: Mapped[str | None] = mapped_column(String(80), nullable=True)  # crawl run, run, request that produced it
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|approved|rejected|superseded
+    content_hash: Mapped[str] = mapped_column(String(64))
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int | None] = mapped_column(Integer, nullable=True)  # workspace-pack revision the decision wrote
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AgentDefinition(Base):
@@ -956,3 +1142,101 @@ class RegisteredHypothesis(Base):
     times_verified: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BuildTarget(Base):
+    """A schema the workspace owner designated for builds (P4-E06). The BuildGateway writes nowhere
+    else: its per-workspace build role holds CREATE on these schemas only, and sources stay read-only."""
+
+    __tablename__ = "build_target"
+    __table_args__ = (UniqueConstraint("workspace_id", "engine", "schema_name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    engine: Mapped[str] = mapped_column(String(80))  # postgres:analytics
+    schema_name: Mapped[str] = mapped_column(String(63))
+    build_role: Mapped[str] = mapped_column(String(63))  # NOLOGIN role the builder login SETs for this workspace
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    provisioning: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class BuildJob(Base):
+    """One generated dbt project and its execution (P4-E04): the project files and their hash, the dry
+    run and cost estimate, the approval that covers it, the rollback plan, the harvested manifest,
+    run results and OpenLineage events. Provenance: dataset/metrics -> transformation -> job -> tables."""
+
+    __tablename__ = "build_job"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str] = mapped_column(String(40), index=True)  # the elt_build run
+    source_run_id: Mapped[str] = mapped_column(String(40), index=True)  # the run whose dataset and KPIs are built
+    artifact_id: Mapped[str | None] = mapped_column(String(40), nullable=True)  # the `transformation` artifact
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    engine: Mapped[str] = mapped_column(String(80))
+    runner: Mapped[str] = mapped_column(String(40), default="dbt-core")
+    target_schema: Mapped[str] = mapped_column(String(63))
+    project_name: Mapped[str] = mapped_column(String(120))
+    project_files: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    project_hash: Mapped[str] = mapped_column(String(64))
+    plan_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    relations: Mapped[list[str]] = mapped_column(JSON, default=list)  # schema.relation the job creates or replaces
+    dry_run: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    estimate: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    rollback: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="planned")  # planned|awaiting_approval|running|succeeded|failed|refused
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # harvested summary of target/manifest.json
+    run_results: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    openlineage: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    log_tail: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ------------------------------------------------------------------------------ Ask threads (P4-U02)
+class AskThread(Base):
+    """A persisted Ask conversation. Private to its creator; the workspace scopes what it can read."""
+
+    __tablename__ = "ask_thread"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(String(40), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AskTurn(Base):
+    """One question and its governed answer or refusal. `stages` are the plain-language steps streamed
+    while it ran; `decision` and `model_call` rows of the turn carry `task_id = id` (the inspector's
+    Decision tab); `promotions` records what the answer became (verified query, metric, monitor, run)."""
+
+    __tablename__ = "ask_turn"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("ask_thread.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    user_id: Mapped[str] = mapped_column(String(40))
+    seq: Mapped[int] = mapped_column(Integer, default=1)
+    question: Mapped[str] = mapped_column(Text)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | answered | needs_input | clarify | refused
+    route: Mapped[str | None] = mapped_column(String(30), nullable=True)  # ask_route decision: verified_query | tool | generate | decline
+    answered_by: Mapped[str | None] = mapped_column(String(20), nullable=True)  # registry | model
+    refusal: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # {kind, message, remedy, details}
+    sql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chart: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    verified_query: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    attempts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    stages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # summaries; full rows in `decision`
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    promotions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _ts()

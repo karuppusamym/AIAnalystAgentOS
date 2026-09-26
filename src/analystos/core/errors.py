@@ -90,6 +90,13 @@ class LLMDisabled(ModelRouteUnavailable):
     code, retryable = "llm_disabled", False
 
 
+class EgressBlocked(ModelRouteUnavailable):
+    """The model transport refused a host that is not a configured provider endpoint (or, on an
+    air-gapped install, not an internal one). A configuration error, never retried."""
+
+    code, retryable = "egress_blocked", False
+
+
 class ContextOverBudget(AnalystOSError):
     """The mandatory part of a prompt's context alone exceeds the purpose's budget (context
     compiler, P4-T03). Callers take the deterministic path and record the refusal; the context is

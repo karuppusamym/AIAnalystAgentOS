@@ -20,6 +20,9 @@ STEP_WORKLOADS: dict[str, str] = {
     "test:": "compute",
     "publish_request": "publish",
     "publish": "publish",
+    # elt_build.v1 (P4-E04): dbt parse/estimate and the approved dbt build run on the elt pool
+    "elt_plan": "elt",
+    "elt_run": "elt",
 }
 
 

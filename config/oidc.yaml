@@ -1,0 +1,28 @@
+# OIDC single sign-on: IdP groups -> AnalystOS roles and ABAC attributes (P4-S04, SEC-001..003).
+# Only read when ANALYSTOS_OIDC_ISSUER and ANALYSTOS_OIDC_CLIENT_ID are set; the client secret, if the
+# IdP needs one, is ANALYSTOS_OIDC_CLIENT_SECRET (environment / Kubernetes secret, never this file).
+#
+# The IdP authenticates; this file bounds what its groups may grant. Memberships granted here are
+# re-synchronised at every SSO login (a removed group revokes the membership it granted); memberships an
+# owner added by hand are never touched.
+
+# Members of these groups are platform administrators (SSO-created users lose it when the group goes).
+platform_admin_groups: []
+#  - analystos-admins
+
+# Group -> role in a workspace (by id or by name). The highest role any of a user's groups grants wins.
+workspace_roles: []
+#  - {group: itsm-analysts, workspace: "ITSM operations", role: analyst}
+#  - {group: itsm-approvers, workspace: "ITSM operations", role: approver}
+#  - {group: finance-owners, workspace: ws_finance, role: owner}
+
+# ID-token claims copied onto the user as ABAC attributes (workspace policy `attribute_rules` reads them).
+# `groups` is always copied. Attributes only narrow a scope: platform-controlled attributes (`pii_clearance`,
+# any `*clearance*`, `sso_managed`, `is_admin`) cannot be mapped here -- the file is refused -- because a
+# clearance is a grant only an administrator gives on the user record.
+attributes:
+  department: department
+  region: region
+
+# When true, a user whose groups map to nothing cannot sign in at all.
+require_group: false

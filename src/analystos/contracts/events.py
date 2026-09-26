@@ -13,8 +13,16 @@ EVENT_TYPES = {
     "crawl.started", "crawl.completed", "crawl.failed", "schema.changed", "settings.updated",
     "mcp.server.refreshed", "mcp.tool_called", "agent.action", "verified_query.promoted", "verified_query.updated",
     "hypothesis_registry.updated",
+    # Write path (P4-E04/E06): build targets and dbt build jobs
+    "build_target.provisioned", "build.planned", "build.started", "build.completed", "build.failed", "build.refused",
     "semantic.model.updated", "semantic.metric.proposed", "semantic.metric.approved", "semantic.metric.rejected",
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
+    "ask.answered", "ask.promoted", "capability.invoked",
+    "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
+    # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches
+    "knowledge.suggestion_proposed", "knowledge.suggestions_reviewed",
+    # Crawler sources and facet-level failure (P4-K06)
+    "crawl.facet_failed", "knowledge.ingested",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

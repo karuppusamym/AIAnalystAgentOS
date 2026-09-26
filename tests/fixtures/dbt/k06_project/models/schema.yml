@@ -1,0 +1,26 @@
+version: 2
+models:
+  - name: stg_incident
+    description: Cleaned incidents, one row per incident.
+    tags: [staging]
+    columns:
+      - name: number
+        description: Incident number.
+        data_tests: [unique, not_null]
+      - name: priority
+        description: Priority label, 1 - Critical to 4 - Low.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['1 - Critical', '2 - High', '3 - Moderate', '4 - Low']
+      - name: caller_email
+        description: Caller email address.
+        tags: [pii]
+  - name: fct_incident_sla
+    description: SLA attainment by priority and assignment group.
+    columns:
+      - name: sla_rate
+        description: Share of incidents resolved within SLA.
+      - name: incidents
+        description: Number of incidents.
+        data_tests: [not_null]

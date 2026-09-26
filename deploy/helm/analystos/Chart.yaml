@@ -1,0 +1,10 @@
+apiVersion: v2
+name: analystos
+description: Context2AI AnalystOS - governed analytics agent OS (API, Temporal worker pools, scheduler, web)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords: [analytics, agents, temporal, self-hosted]
+# No subcharts: Postgres (pgvector), Redis, Temporal and Superset are external in production
+# (spec v3 §8 "Database topology": separate instances for control plane, analytics, Temporal, Superset).

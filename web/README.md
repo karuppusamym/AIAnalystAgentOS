@@ -142,6 +142,10 @@ has a "Table view" disclosure.
 
 ## Known gaps
 
+The next interaction design is [Workspace workbench](../docs/10-architecture/02-workbench-ux.md),
+with implementation tracked under P4-07, P5-03 and P6-03. It is a target design; the screen map
+above continues to describe the shipped UI.
+
 - There is no user-management screen. `POST /api/users` exists, but the spec does not require one here.
 - Hypothesis editing (`PATCH /api/hypotheses/{id}`) is in the client but has no UI yet.
   Feedback and redirect cover the steering flow.

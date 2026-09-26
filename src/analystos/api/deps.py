@@ -14,6 +14,9 @@ from analystos.security.auth import decode_token
 
 
 def db() -> Iterator[Session]:
+    """Request session, committed before the response is sent: callers declare it with
+    `scope="function"` so a 200 means the write is durable (a revoked credential, a decided
+    approval) and a failed commit is an error response, not a silent loss after the reply."""
     session = SessionLocal()
     try:
         yield session
@@ -37,7 +40,7 @@ def _authenticate(session: Session, authorization: str | None, x_correlation_id:
     return user
 
 
-def current_user(authorization: str | None = Header(default=None), session: Session = Depends(db),
+def current_user(authorization: str | None = Header(default=None), session: Session = Depends(db, scope="function"),
                  x_correlation_id: str | None = Header(default=None)) -> User:
     return _authenticate(session, authorization, x_correlation_id)
 

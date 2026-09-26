@@ -20,11 +20,11 @@ from functools import partial
 from typing import Any
 
 import anyio
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from analystos.core.errors import AnalystOSError, Forbidden, InvalidInput, NotFound, Unauthenticated
 from analystos.db.base import session_scope
-from analystos.db.models import Artifact, ContextEntry, Insight, QueryExecution, User
+from analystos.db.models import Artifact, Insight, QueryExecution, User
 from analystos.governance.audit import audit
 from analystos.governance.policy import require_role, resolve_scope
 from analystos.mcp import grants as G
@@ -159,11 +159,13 @@ def parse_uri(uri: str | None) -> tuple[str | None, str | None, str | None]:
     return parts[0], parts[1], parts[2]
 
 
-def _context_q(ws: str, metric: bool):
-    q = select(ContextEntry).where(or_(ContextEntry.workspace_id == ws, ContextEntry.workspace_id.is_(None)),
-                                   ContextEntry.trusted.is_(True))
-    q = q.where(ContextEntry.kind == "metric") if metric else q.where(ContextEntry.kind.notin_(["metric", "episode"]))
-    return q.order_by(ContextEntry.name).limit(MAX_RESOURCES_PER_KIND)
+def _context_entries(s: Any, ws: str, metric: bool) -> list[Any]:
+    """Trusted knowledge the workspace sees: its own entries and its packs' documents (P4-K01)."""
+    from analystos.knowledge.entries import visible_entries
+
+    rows = (visible_entries(s, ws, kinds=["metric"], trusted_only=True) if metric
+            else visible_entries(s, ws, exclude_kinds=["metric", "episode"], trusted_only=True))
+    return sorted(rows, key=lambda e: (e.name, e.id))[:MAX_RESOURCES_PER_KIND]
 
 
 def list_resource_rows(principal: G.ClientPrincipal) -> list[dict[str, Any]]:
@@ -173,7 +175,7 @@ def list_resource_rows(principal: G.ClientPrincipal) -> list[dict[str, Any]]:
         for ws in sorted(principal.grants):
             require_role(s, user, ws, "viewer")
             for kind, metric in (("knowledge", False), ("metrics", True)):
-                for e in s.scalars(_context_q(ws, metric)):
+                for e in _context_entries(s, ws, metric):
                     out.append({"uri": f"{URI_SCHEME}{ws}/{kind}/{e.id}", "name": e.name, "description": f"{e.kind}: {e.body[:160]}"})
             for m in s.scalars(select(Artifact).where(Artifact.workspace_id == ws, Artifact.type == "metric",
                                                       Artifact.status == "published").limit(MAX_RESOURCES_PER_KIND)):
@@ -195,10 +197,13 @@ def read_resource_doc(principal: G.ClientPrincipal, uri: str) -> dict[str, Any]:
     with session_scope() as s:
         require_role(s, _service_user(s, principal), ws, "viewer")
         if kind in ("knowledge", "metrics"):
-            e = s.get(ContextEntry, rid)
-            if e is not None and e.workspace_id in (ws, None) and e.trusted and (e.kind == "metric") == (kind == "metrics"):
-                return {"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms,
-                        "mapped_columns": e.mapped_columns, "origin": e.origin}
+            from analystos.knowledge.entries import get_entry
+
+            e = get_entry(s, ws, rid)
+            if e is not None and e.trusted and e.kind != "episode" and (e.kind == "metric") == (kind == "metrics"):
+                return {"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": list(e.synonyms),
+                        "mapped_columns": list(e.mapped_columns), "origin": e.origin,
+                        **({"path": e.path, "sha256": e.sha256} if e.path else {})}
             if kind == "metrics":
                 a = s.get(Artifact, rid)
                 if a is not None and a.workspace_id == ws and a.type == "metric" and a.status == "published":

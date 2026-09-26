@@ -85,11 +85,19 @@ export interface StreamOptions {
   signal: AbortSignal;
   onMessage: (m: SSEMessage) => void;
   onOpen?: () => void;
+  /** POST with a JSON body (a streamed Ask turn); GET when omitted. */
+  method?: "GET" | "POST";
+  body?: unknown;
 }
 
 /** Read one SSE response to completion (or abort). Throws on non-2xx. */
-export async function readSSE({ url, headers, signal, onMessage, onOpen }: StreamOptions): Promise<void> {
-  const resp = await fetch(url, { headers: { Accept: "text/event-stream", ...headers }, signal, cache: "no-store" });
+export async function readSSE({ url, headers, signal, onMessage, onOpen, method = "GET", body }: StreamOptions): Promise<void> {
+  const init: RequestInit = { method, headers: { Accept: "text/event-stream", ...headers }, signal, cache: "no-store" };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { ...init.headers, "Content-Type": "application/json" };
+  }
+  const resp = await fetch(url, init);
   if (!resp.ok || !resp.body) {
     let message = `stream failed (${resp.status})`;
     try {

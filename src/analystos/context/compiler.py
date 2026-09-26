@@ -15,6 +15,14 @@ inputs, it builds the prompt context under the purpose profile's budget
 * it **fails visibly** (`ContextOverBudget`) when the mandatory part alone exceeds the budget; the
   caller then takes the deterministic path and records the refusal. Nothing is cut mid-JSON.
 
+Over the knowledge packs (P4-K05) the candidates are **sections**, not whole documents: the index
+ranks them (BM25 + vector, reciprocal-rank fused, one hop over the link graph) and the compiler
+fuses that rank with its own term-overlap rank, so each item is a section-level excerpt with a
+receipt naming its path, anchor and hashes. Memory — episodes, prior findings, negative knowledge —
+and other providers' results (`external`, P4-K09) are *supplementary* sections: filled only after
+the primary ones (glossary, business rules, metrics), each capped at `supplementary_share` of the
+budget and given back first, so memory can never crowd out a glossary term.
+
 The output is split for prompt caching (P4-T04): `header` is stable per workspace (workspace,
 domain packs, dialects) and goes right after the static system text; `body` is the volatile part
 and goes last. Selection is pure (`compile_context`); `load_knowledge` is the only DB access.
@@ -36,8 +44,12 @@ NO_MATCH = "NO_MATCH"
 # context_entry.kind -> compiler section. Crawler `table` entries are not listed: the catalog
 # section already carries the same structure, ranked, so they would only duplicate it.
 KIND_SECTIONS = {"term": "glossary", "definition": "glossary", "note": "glossary", "rule": "business_rules",
-                 "metric": "metrics", "episode": "episodes"}
-KNOWLEDGE_SECTIONS = ("glossary", "business_rules", "metrics", "prior_findings", "negative_knowledge", "episodes")
+                 "metric": "metrics", "episode": "episodes", "negative": "negative_knowledge",
+                 "attested_computation": "prior_findings"}
+PRIMARY_SECTIONS = ("glossary", "business_rules", "metrics")
+SUPPLEMENTARY_SECTIONS = ("external", "prior_findings", "negative_knowledge", "episodes")
+KNOWLEDGE_SECTIONS = (*PRIMARY_SECTIONS, *SUPPLEMENTARY_SECTIONS)
+RRF_K = 60
 
 _SEMANTIC_PRIORITY = {"boolean": 0, "datetime": 1, "categorical": 2, "numeric": 3, "text": 5, "id": 6}
 _STOP = {"the", "and", "for", "with", "that", "this", "from", "what", "which", "into", "over", "are", "was", "were",
@@ -82,6 +94,23 @@ class KnowledgeItem:
     source: str
     mapped_columns: tuple[str, ...] = ()
     trusted: bool = True
+    # pack sections (P4-K05): where the excerpt comes from and how the index ranked it
+    document_id: str | None = None
+    path: str | None = None
+    anchor: str | None = None
+    sha256: str | None = None  # the document's sha256 (the receipt); section_sha256 is the excerpted section's
+    section_sha256: str | None = None
+    retrieval_rank: int | None = None  # 1-based rank in the index's fused result list
+    lexical_share: float | None = None
+    via: str | None = None  # reached by one hop from this path
+
+
+@dataclass(frozen=True)
+class RankedItem:
+    item: KnowledgeItem
+    score: float  # term overlap (item_score)
+    fused: float  # reciprocal-rank fusion of the overlap rank and the index rank
+    passed: bool  # relevant enough to reach a prompt
 
 
 @dataclass
@@ -195,6 +224,64 @@ def excerpt(text: str, limit: int) -> str:
     return (cut[:space] if space > 0 else cut) + " …"
 
 
+_SENTENCE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def focused_excerpt(text: str, query: set[str], limit: int) -> str:
+    """The sentences of a section that mention the query most, in their original order, up to
+    `limit` characters; gaps are marked with …. Without a query hit it is the plain excerpt."""
+    flat = " ".join((text or "").split())
+    if len(flat) <= limit or not query:
+        return excerpt(flat, limit)
+    sentences = [s for s in _SENTENCE.split(flat) if s]
+    hits = [len(terms(s) & query) for s in sentences]
+    if not any(hits):
+        return excerpt(flat, limit)
+    chosen: set[int] = set()
+    used = 0
+    for i in sorted(range(len(sentences)), key=lambda i: (-hits[i], i)):
+        if hits[i] == 0:
+            break
+        cost = len(sentences[i]) + 3
+        if used + cost > limit:
+            continue
+        chosen.add(i)
+        used += cost
+    if not chosen:
+        return excerpt(sentences[max(range(len(sentences)), key=lambda i: (hits[i], -i))], limit)
+    out, last = [], -1
+    for i in sorted(chosen):
+        if i != last + 1:
+            out.append("…")
+        out.append(sentences[i])
+        last = i
+    if last != len(sentences) - 1:
+        out.append("…")
+    return " ".join(out)
+
+
+def rank_items(items: Iterable[KnowledgeItem], focus: set[str], in_scope: set[str], min_relevance: float) -> list[RankedItem]:
+    """Rank one section's candidates: reciprocal-rank fusion of the compiler's term-overlap rank and
+    the index's rank (BM25 + vector + one hop), ties by name then id. An item passes the relevance
+    gate on term overlap with the focus terms (generic table-name words excluded), or when it was
+    reached by one hop from a section that passed. The index rank orders candidates; it never
+    admits one on its own: its lexical match counts table-name words too, and a section admitted on
+    one table-name word alone would pull its mapped columns' tables into a SQL prompt (measured, P4-K05)."""
+    items = list(items)
+    scores = {id(i): item_score(i, focus, in_scope) for i in items}
+    by_overlap = sorted(items, key=lambda i: (-scores[id(i)], i.name, i.id))
+    overlap_rank = {id(i): n for n, i in enumerate(by_overlap, start=1) if scores[id(i)] > 0}
+    fused = {id(i): (1.0 / (RRF_K + overlap_rank[id(i)]) if id(i) in overlap_rank else 0.0)
+             + (1.0 / (RRF_K + i.retrieval_rank) if i.retrieval_rank else 0.0) for i in items}
+
+    passed = {id(i) for i in items if scores[id(i)] >= min_relevance and scores[id(i)] > 0}
+    passed_paths = {i.path for i in items if id(i) in passed and i.path}
+    ranked = [RankedItem(i, scores[id(i)], round(fused[id(i)], 8),
+                         id(i) in passed or bool(i.via and i.via in passed_paths)) for i in items]
+    ranked.sort(key=lambda r: (-r.fused, -r.score, r.item.name, r.item.id))
+    return ranked
+
+
 # ------------------------------------------------------------------------------------ compile
 def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, required: dict[str, Any],
                     catalog: list[dict[str, Any]] | None = None, knowledge: Iterable[KnowledgeItem] = (),
@@ -213,14 +300,12 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
     generic = set(generic_terms) | {w for t in catalog for w in terms(str(t.get("asset") or "").split(".")[-1])}
     focus = (query - generic) or query
 
-    # knowledge candidates, scored; matching items' mapped columns boost the column ranking
-    scored: dict[str, list[tuple[float, KnowledgeItem]]] = {s: [] for s in profile.sections if s in KNOWLEDGE_SECTIONS}
-    for item in knowledge:
-        if item.section in scored:
-            score = item_score(item, focus, in_scope)
-            if score >= min_relevance and score > 0:
-                scored[item.section].append((score, item))
-    boost = {_col_ref(c) for items in scored.values() for _, i in items for c in i.mapped_columns}
+    # knowledge candidates, ranked and gated; passing items' mapped columns boost the column ranking
+    scored: dict[str, list[RankedItem]] = {s: [] for s in profile.sections if s in KNOWLEDGE_SECTIONS}
+    for r in rank_items((i for i in knowledge if i.section in scored), focus, in_scope, min_relevance):
+        if r.passed:
+            scored[r.item.section].append(r)
+    boost = {_col_ref(c) for items in scored.values() for r in items for c in r.item.mapped_columns}
 
     receipts: list[dict[str, Any]] = []
     omitted: list[dict[str, Any]] = []
@@ -258,34 +343,40 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
         receipts.append({"id": f"asset:{t.get('asset')}", "section": "catalog", "kind": "table", "source": "catalog",
                          "columns": len(entry["columns"]), "sha256": _sha(entry)})
 
-    # knowledge sections in profile order: best score first, whole items, capped
-    for section in profile.sections:
+    # knowledge sections: primary ones in profile order, then the supplementary ones (memory and
+    # other providers), each of those capped at its share of the budget: best first, whole items
+    order = _fill_order(profile)
+    for section in order:
         if section not in scored:
             continue
-        ranked = sorted(scored[section], key=lambda si: (-si[0], si[1].name))
+        ranked = scored[section]
         if not ranked:
             body[section] = NO_MATCH
             no_match.append(section)
             continue
         body[section] = []
-        for n, (score, item) in enumerate(ranked):
-            rendered = {"id": item.id, "name": item.name, "text": excerpt(item.text, profile.item_chars)}
+        cap = (used() + int(budget * profile.supplementary_share)) if section in SUPPLEMENTARY_SECTIONS else budget
+        for n, r in enumerate(ranked):
+            item = r.item
+            rendered = {"id": item.id, "name": item.name, "text": focused_excerpt(item.text, focus, profile.item_chars)}
             if item.mapped_columns:
                 rendered["columns"] = list(item.mapped_columns)[:8]
+            if not item.trusted:
+                rendered["trusted"] = False
             if n >= profile.max_items_per_section:
                 omitted.append({"section": section, "id": item.id, "name": item.name, "reason": "section item cap"})
                 continue
             body[section].append(rendered)
-            if used() > budget:
+            if used() > min(budget, cap):
+                reason = "budget" if used() > budget else "section share"
                 body[section].pop()
-                omitted.append({"section": section, "id": item.id, "name": item.name, "reason": "budget"})
+                omitted.append({"section": section, "id": item.id, "name": item.name, "reason": reason})
                 continue
-            receipts.append({"id": item.id, "section": section, "kind": section, "name": item.name, "source": item.source,
-                             "score": score, "trusted": item.trusted, "sha256": _sha(item.text),
-                             "excerpt": len(rendered["text"]) < len(" ".join(item.text.split()))})
+            receipts.append(_receipt(section, r, rendered))
         if not body[section]:
             body[section] = NO_MATCH  # candidates existed but none fit: say so, the omitted list says why
             no_match.append(section)
+    _reorder_body(body, profile)
 
     if omitted:
         body["omitted"] = _omitted_for_model(omitted)
@@ -352,9 +443,35 @@ def _omitted_for_model(omitted: list[dict[str, Any]]) -> dict[str, Any]:
     return note
 
 
+def _fill_order(profile: PurposeProfile) -> list[str]:
+    """Primary knowledge sections first (profile order), supplementary ones after them."""
+    sections = list(profile.sections)
+    return [s for s in sections if s not in SUPPLEMENTARY_SECTIONS] + [s for s in sections if s in SUPPLEMENTARY_SECTIONS]
+
+
+def _reorder_body(body: dict[str, Any], profile: PurposeProfile) -> None:
+    """The prompt keeps the profile's section order whatever order the sections were filled in."""
+    listed = [s for s in profile.sections if s in body and s in KNOWLEDGE_SECTIONS]
+    values = {s: body.pop(s) for s in listed}
+    body.update(values)
+
+
+def _receipt(section: str, r: RankedItem, rendered: dict[str, Any]) -> dict[str, Any]:
+    item = r.item
+    out = {"id": item.id, "section": section, "kind": section, "name": item.name, "source": item.source,
+           "score": r.score, "trusted": item.trusted, "sha256": item.sha256 or _sha(item.text),
+           "excerpt": len(rendered["text"]) < len(" ".join(item.text.split()))}
+    if item.path:
+        out.update({"document_id": item.document_id, "path": item.path, "anchor": item.anchor,
+                    "section_sha256": item.section_sha256, "rank": item.retrieval_rank, "fused": r.fused})
+    if item.via:
+        out["via"] = item.via
+    return out
+
+
 def _drop_last_knowledge(body: dict[str, Any], profile: PurposeProfile, receipts: list[dict[str, Any]],
                          omitted: list[dict[str, Any]]) -> bool:
-    for section in reversed(profile.sections):
+    for section in reversed(_fill_order(profile)):
         items = body.get(section)
         if isinstance(items, list) and items:
             item = items.pop()
@@ -368,26 +485,38 @@ def _drop_last_knowledge(body: dict[str, Any], profile: PurposeProfile, receipts
 
 # ------------------------------------------------------------------------------------ knowledge
 def load_knowledge(session: Any, workspace_id: str, sections: Iterable[str], *, run_id: str | None = None,
-                   per_kind: int = 300) -> list[KnowledgeItem]:
-    """Candidate items for the requested sections: context entries (workspace + global, which
-    includes installed pack knowledge), verified findings and rejected hypotheses of *other* runs."""
-    from sqlalchemy import or_, select
+                   per_kind: int = 300, query: str | None = None, external: Iterable[dict[str, Any]] | None = None,
+                   candidates: int = 80) -> list[KnowledgeItem]:
+    """Candidate items for the requested sections: the workspace's context entries, the knowledge
+    packs it sees (the platform pack holds installed domain-pack knowledge; P4-K01), verified
+    findings and rejected hypotheses of *other* runs, and other providers' results (`external`:
+    given, or the run's context package).
 
-    from analystos.db.models import ContextEntry, Hypothesis, Insight
+    With a `query` the pack candidates are the index's section hits for it (P4-K05: BM25 + vector,
+    fused, one hop over links) — section-level, ranked, with receipts; without one, every pack
+    document of the wanted kinds as a whole entry (the P4-T03 behaviour)."""
+    from sqlalchemy import select
+
+    from analystos.db.models import Hypothesis, Insight
+    from analystos.knowledge.entries import pack_entries, workspace_rows
 
     wanted = set(sections)
     out: list[KnowledgeItem] = []
     kinds = [k for k, s in KIND_SECTIONS.items() if s in wanted]
     for kind in kinds:
         limit = 20 if kind == "episode" else per_kind
-        rows = session.scalars(select(ContextEntry).where(
-            or_(ContextEntry.workspace_id == workspace_id, ContextEntry.workspace_id.is_(None)), ContextEntry.kind == kind)
-            .order_by(ContextEntry.created_at.desc()).limit(limit))
-        for e in rows:
+        entries = workspace_rows(session, workspace_id, kinds=[kind])[:limit]
+        if not query:
+            entries += pack_entries(session, workspace_id, kinds=[kind])[:per_kind]
+        for e in entries:
             out.append(KnowledgeItem(id=e.id, section=KIND_SECTIONS[kind], name=e.name,
-                                     text=" ".join([e.body or "", *(f"({s})" for s in (e.synonyms or []))]),
-                                     source=e.origin or "user", mapped_columns=tuple(e.mapped_columns or ()),
-                                     trusted=bool(e.trusted)))
+                                     text=" ".join([e.body or "", *(f"({s})" for s in e.synonyms)]),
+                                     source=e.origin or "user", mapped_columns=tuple(e.mapped_columns),
+                                     trusted=bool(e.trusted), document_id=e.pack_id and e.id, path=e.path, sha256=e.sha256))
+    if query and kinds:
+        out.extend(pack_section_items(session, workspace_id, query, kinds, candidates=candidates))
+    if "external" in wanted:
+        out.extend(external_items(external if external is not None else _run_external(session, workspace_id, run_id)))
     if "prior_findings" in wanted:
         q = select(Insight).where(Insight.workspace_id == workspace_id, Insight.status == "verified")
         if run_id:
@@ -412,5 +541,77 @@ def load_knowledge(session: Any, workspace_id: str, sections: Iterable[str], *, 
     return out
 
 
-__all__ = ["KIND_SECTIONS", "NO_MATCH", "CompiledContext", "KnowledgeItem", "compile_context", "excerpt", "item_score",
-           "load_knowledge", "terms"]
+_GENERIC_HEADINGS = {"", "definition", "rule", "summary", "preamble"}
+
+
+def pack_section_items(session: Any, workspace_id: str, query: str, kinds: Iterable[str] | None, *,
+                       candidates: int = 80, pack_ids: Iterable[str] | None = None) -> list[KnowledgeItem]:
+    """The index's section hits for `query` over the packs this workspace sees, as compiler items."""
+    from sqlalchemy import select
+
+    from analystos.db.models import KnowledgeDocument
+    from analystos.knowledge.index import retrieve
+
+    hits = retrieve(session, workspace_id, query, limit=candidates, candidates=candidates,
+                    kinds=list(kinds) if kinds is not None else None, hop=True, pack_ids=pack_ids)
+    ext: dict[str, dict[str, Any]] = {}
+    ids = sorted({h.document_id for h in hits})
+    if ids:
+        for d in session.scalars(select(KnowledgeDocument).where(KnowledgeDocument.id.in_(ids))):
+            e = (d.frontmatter or {}).get("analystos")
+            ext[d.id] = e if isinstance(e, dict) else {}
+    out = []
+    for rank, h in enumerate(hits, start=1):
+        x = ext.get(h.document_id, {})
+        synonyms = [str(s) for s in x.get("synonyms") or [] if isinstance(s, str)]
+        name = h.title if h.heading.strip().lower() in _GENERIC_HEADINGS else f"{h.title} § {h.heading}"
+        trusted = x["trusted"] if isinstance(x.get("trusted"), bool) else h.status == "stable"
+        origin = str(x.get("origin") or (f"pack:{x['domain_pack']}" if x.get("domain_pack") else f"okf:{h.pack_slug}"))
+        out.append(KnowledgeItem(
+            id=f"{h.document_id}#{h.anchor}", section=KIND_SECTIONS.get(h.kind, "glossary"), name=name[:300],
+            text=" ".join([h.text or "", *(f"({s})" for s in synonyms)]),
+            source=origin, mapped_columns=tuple(str(c) for c in x.get("mapped_columns") or [] if isinstance(c, str)),
+            trusted=bool(trusted), document_id=h.document_id, path=h.path, anchor=h.anchor, sha256=h.document_sha256,
+            section_sha256=h.section_sha256, retrieval_rank=rank, lexical_share=h.lexical_share, via=h.via))
+    return out
+
+
+def external_items(results: Iterable[dict[str, Any]]) -> list[KnowledgeItem]:
+    """Other providers' results (P4-K09 `ProviderResult.as_dict()`) as untrusted `external` items,
+    ranked in the provider's own order; each keeps the provider's receipt (path, anchor, sha256)."""
+    out = []
+    for res in results or []:
+        if not isinstance(res, dict) or res.get("status") != "MATCHED":
+            continue
+        provider = str(res.get("provider") or "external")
+        for rank, it in enumerate(res.get("items") or [], start=1):
+            if not isinstance(it, dict) or not str(it.get("text") or "").strip():
+                continue
+            title = str(it.get("title") or it.get("path") or "")
+            heading = str(it.get("heading") or "")
+            out.append(KnowledgeItem(
+                id=f"{provider}:{it.get('path')}#{it.get('anchor')}", section="external",
+                name=(title if heading.strip().lower() in _GENERIC_HEADINGS else f"{title} § {heading}")[:300],
+                text=str(it["text"]), source=f"{provider}:{it.get('path')}", trusted=False, path=str(it.get("path") or ""),
+                anchor=str(it.get("anchor") or ""), sha256=str(it.get("sha256") or "") or None, retrieval_rank=rank))
+    return out
+
+
+def _run_external(session: Any, workspace_id: str, run_id: str | None) -> list[dict[str, Any]]:
+    """The `external` results the run's context agent already fetched: prompts reuse them rather
+    than calling a provider (an MCP tool, with its budget and screening) once per model call."""
+    if not run_id:
+        return []
+    from sqlalchemy import select
+
+    from analystos.db.models import Artifact
+
+    art = session.scalar(select(Artifact).where(Artifact.workspace_id == workspace_id, Artifact.run_id == run_id,
+                                                Artifact.type == "context_package").order_by(Artifact.created_at.desc()).limit(1))
+    ext = (art.content or {}).get("external") if art is not None else None
+    return ext if isinstance(ext, list) else []
+
+
+__all__ = ["KIND_SECTIONS", "NO_MATCH", "PRIMARY_SECTIONS", "SUPPLEMENTARY_SECTIONS", "CompiledContext", "KnowledgeItem",
+           "RankedItem", "compile_context", "excerpt", "external_items", "focused_excerpt", "item_score", "load_knowledge",
+           "pack_section_items", "rank_items", "terms"]

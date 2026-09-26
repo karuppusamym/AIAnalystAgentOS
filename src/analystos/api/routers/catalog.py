@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,7 +50,7 @@ class CrawlIn(BaseModel):
 
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/crawl")
 def start_crawl(workspace_id: str, source_id: str, body: CrawlIn, background: BackgroundTasks,
-                user: User = Depends(current_user), session: Session = Depends(db)):
+                user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     src = session.get(Source, source_id)
     if src is None or src.workspace_id != workspace_id:
         raise NotFound("source not found")
@@ -71,9 +71,57 @@ def _run_quietly(crawl_id: str, user_id: str) -> None:
         logging.getLogger(__name__).exception("background crawl %s failed", crawl_id)
 
 
+# ------------------------------------------------------------------------ crawler sources (P4-K06)
+class QueryHistoryIn(BaseModel):
+    source_ids: list[str] | None = None
+
+
+class SupersetCrawlIn(BaseModel):
+    include: list[str] | None = None  # glob patterns on dataset/chart/dashboard names
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/query-history")
+def crawl_query_history(workspace_id: str, body: QueryHistoryIn, user: User = Depends(current_user),
+                        session: Session = Depends(db, scope="function")):
+    """Mine the workspace's governed query audit for join paths, columns, filters and groupings
+    (structure only, never values) into the knowledge pack."""
+    from analystos.services import knowledge_ingest
+
+    return knowledge_ingest.query_history(session, session.merge(user), workspace_id, source_ids=body.source_ids)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/dbt-manifest")
+async def crawl_dbt_manifest(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                             session: Session = Depends(db, scope="function")):
+    """Ingest a dbt manifest.json (v12+): model and source documents, tests, lineage, catalog descriptions."""
+    from analystos.services import knowledge_ingest
+
+    data = await file.read(knowledge_ingest.MAX_MANIFEST_BYTES + 1)
+    return knowledge_ingest.ingest_dbt_manifest(session, session.merge(user), workspace_id, data)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/crawl/superset")
+def crawl_superset(workspace_id: str, body: SupersetCrawlIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Read Superset datasets, charts and dashboards (GET only) into the knowledge pack."""
+    from analystos.services import knowledge_ingest
+
+    return knowledge_ingest.superset_metadata(session, session.merge(user), workspace_id, include=body.include)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/documents")
+async def upload_knowledge_document(workspace_id: str, file: UploadFile = File(...), user: User = Depends(current_user),
+                                    session: Session = Depends(db, scope="function")):
+    """Upload a Markdown, text or PDF document; it becomes draft knowledge sections for review."""
+    from analystos.knowledge.documents import MAX_UPLOAD_BYTES
+    from analystos.services import knowledge_ingest
+
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    return knowledge_ingest.upload_document(session, session.merge(user), workspace_id, file.filename or "document", data)
+
+
 @router.get("/workspaces/{workspace_id}/crawls")
 def list_crawls(workspace_id: str, source_id: str | None = None, limit: int = 50, user: User = Depends(current_user),
-                session: Session = Depends(db)):
+                session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(CrawlRun).where(CrawlRun.workspace_id == workspace_id)
     if source_id:
@@ -82,7 +130,7 @@ def list_crawls(workspace_id: str, source_id: str | None = None, limit: int = 50
 
 
 @router.get("/crawls/{crawl_id}")
-def get_crawl(crawl_id: str, user: User = Depends(current_user), session: Session = Depends(db)):
+def get_crawl(crawl_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     r = session.get(CrawlRun, crawl_id)
     if r is None:
         raise NotFound("crawl not found")
@@ -92,7 +140,7 @@ def get_crawl(crawl_id: str, user: User = Depends(current_user), session: Sessio
 
 @router.get("/workspaces/{workspace_id}/catalog")
 def catalog(workspace_id: str, q: str = "", domain: str | None = None, role: str | None = None, include_deprecated: bool = False,
-            user: User = Depends(current_user), session: Session = Depends(db)):
+            user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Searchable catalog built by the crawler (names, business names, descriptions, role/domain)."""
     require_role(session, user, workspace_id, "viewer")
     stmt = select(SourceAsset).where(SourceAsset.workspace_id == workspace_id)
@@ -131,7 +179,7 @@ class AssetMetadataIn(BaseModel):
 
 
 @router.patch("/assets/{asset_id}/metadata")
-def curate_asset(asset_id: str, body: AssetMetadataIn, user: User = Depends(current_user), session: Session = Depends(db)):
+def curate_asset(asset_id: str, body: AssetMetadataIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """A person's curation wins over every crawler/model description from now on."""
     a = session.get(SourceAsset, asset_id)
     if a is None:
