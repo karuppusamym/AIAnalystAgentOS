@@ -6,7 +6,8 @@ Status vocabulary: **Done** (code + automated test, and live evidence where the 
 Evidence lives in the [capability register](02-capability-register.md). Phase-table IDs are spec
 v1 §60 IDs; P4–P6 are delivery IDs for the platform and workspace extensions, mapped below.
 Last reconciled: 2026-09-25, after increment 4 wave 3 evidence and the parallel workspace design
-review. The [architecture review](../70-reviews/2026-09-25-architecture-review.md) records the
+review. 2026-09-26: increment 7 and rows P5-04..06, P6-04..08 added from
+[spec v4](../00-intent/04-spec-v4-unified-data-platform.md) (one platform; Atlas and DataPilot as donors). The [architecture review](../70-reviews/2026-09-25-architecture-review.md) records the
 platform workstream; the [workspace review](04-design-review.md) records its remaining scope.
 
 ## P. Current execution queue
@@ -111,6 +112,9 @@ all Phase-4 enterprise capabilities or imply general ML/engineering support.
 | P5-01 | P1 / ML + Runtime | MLSpec, target/feature availability, immutable splits, baseline, bounded experiments and isolated compute | P4-02..06 | Not started | Leakage, grouped/time split and feature-parity cases; deterministic manifests and hard trial/resource caps |
 | P5-02 | P1 / ML + Evaluation | Untouched holdout, backtesting, uncertainty/slices, model card and registry versions | P5-01, P4-08 | Not started | Baseline and candidate evaluated on identical splits; null/no-improvement cases abstain; sealed evaluation report |
 | P5-03 | P1 / ML + UI | Experiment/model UX, approved batch scoring, label-aware performance monitoring and rollback | P5-02, P4-07, P4-09 | Not started | Live train → evaluate → approve → score → monitor workflow; duplicate scoring and rollback; schema drift/refused promotion; no silent retraining promotion |
+| P5-04 | P1 / ML | ML method pack: `ml.forecast`, `ml.classify`, `ml.regress`, `ml.cluster`, `ml.anomaly` as capabilities with `MLSpec`, allowlisted estimators, a mandatory baseline and bounded search in the isolated `compute-ml` pool ([ADR-0024](../10-architecture/adr/0024-governed-classical-ml.md)) | P5-01, P7-06 | Not started | Per method: baseline on identical splits, leakage fixtures refused, deterministic re-run from split manifest + seed, trial/resource caps enforced by the pool |
+| P5-05 | P2 / ML | Experiment records in the artifact store with MLflow file-store export; packages load only when their hash matches a platform-produced record | P5-02 | Not started | Exported run opens in MLflow; a tampered or uploaded package is refused |
+| P5-06 | P1 / ML + Agents | `ml_practitioner` declarative agent (proposes `MLSpec` targets, features and estimators only) with rules-first purposes in `config/models.yaml`; `train.v1` and `score.v1` published playbooks | P5-01, P4-04, P7-03 | Not started | Proposals validated before use; `off` mode completes from rules/defaults; no model output reaches a metric value; scoring runs only a published, pinned definition |
 
 Scope: tabular classification/regression and batch forecasts (v1 §14.5, §21.3/4). Online serving,
 deep learning and generalized causal inference remain deferred. Existing driver/forecast skills
@@ -123,9 +127,39 @@ are not reclassified as a completed ML lifecycle.
 | P6-01 | P1 / Data engineering | PipelineSpec, contracts, typed transformations, governed cross-source staging joins (INT-001..003, INT-005, TRN-001; N-4 subset) | P4-02..06 | Not started | Per-source scope/snapshot manifest, dry-run SQL, key/fanout/unmatched-row checks and reconciled virtual output |
 | P6-02 | P1 / Data engineering + Evaluation | Watermarks, late data, updates/deletes, deduplication, replay and backfill (TRN-003) | P6-01, P4-08 | Not started | Reference full rebuild equals incremental/retried output within declared tolerances; overlapping schedules and crash recovery |
 | P6-03 | P1 / Platform + UI | Dedicated managed writer, approval, atomic promotion/rollback, pipeline workbench and operational alerts (TRN-002) | P6-02, P4-07, P4-09 | Not started | Live build → test → approve → materialize → fail/recover; invalid output never replaces good version; source mutation remains denied |
+| P6-04 | P1 / Data engineering | Recipe IR and compilers: SQL per dialect through the gateway, DuckDB/Polars on a snapshot in `compute-py`, dbt emitter ported from DataPilot `pipeline_codegen/` ([ADR-0023](../10-architecture/adr/0023-transformation-recipe-ir.md)) | P6-01; P7-06 for the snapshot path | Not started | One recipe gives equal results through the SQL and DuckDB compilers on fixtures; undeclared column refs and implicit type changes rejected; emitted dbt project validates; join pre-flight refuses a violated cardinality |
+| P6-05 | P1 / Data engineering | Blocking/warning DQ gates on recipe outputs, quarantine tables and keep-last-good; ported DataPilot quality compiler and Atlas `data_quality.py` seasonal/month-end baselines | P6-04 | Not started | A failing blocking gate keeps the previous output and quarantines rows; warnings become evidence; donor tests ported and passing |
+| P6-06 | P1 / Data engineering | File ingestion (CSV/JSON/Excel/Parquet) with schema mapping and replace/append/merge load modes, ported from DataPilot `staging.py` and `file_profiles.py`, under per-workspace grants and content fingerprints | P4-01 | Not started | Load-mode tests ported; merge is idempotent on retry; the fingerprint changes only when content changes |
+| P6-07 | P1 / Data engineering | Executed column lineage from the recipe IR, plus ported Atlas `sql_lineage_parser.py`, `dbt_artifacts.py` and `dbt_column_lineage.py`; OpenLineage emit | P6-04 | Not started | Fixture recipes and a dbt manifest produce the expected column lineage; SQL literals redacted before storage |
+| P6-08 | P2 / Data engineering + Agents | `engineer` declarative agent (proposes recipe nodes and `PipelineSpec`s only); `prepare.v1` published playbook | P6-04, P7-03 | Not started | Proposals pass the IR validator before any compile; `off` mode path exists |
 
 Increment numbers indicate product sequencing, not a dependency of engineering on ML. P6 may
 move ahead of P5 when the chosen pilot's job demands it, after shared P4 foundations pass.
+
+### Increment 7 — One platform: trust core, compute seam and donor ports (spec v4, 2026-09-26)
+
+Design: [spec v4](../00-intent/04-spec-v4-unified-data-platform.md), ADR-0018..0024. Source:
+the [comparison review](../70-reviews/2026-09-26-agent-os-comparison-review.md) and the owner's
+decisions of 2026-09-26 (one platform with Atlas and DataPilot as donors; governed classical ML).
+Donor ports are **Done** only on AnalystOS tests; donor tracker status is not inherited (ADR-0018).
+Waves and exits: spec v4 §16.
+
+| ID | Priority / owner | Scope | Depends on | Status | Required acceptance evidence |
+|---|---|---|---|---|---|
+| P7-01 | P0 / Evidence | `VerificationRecord` with dependency fingerprint (query, data, semantic, method, context, model call, policy), event-driven void, nightly sweep, consumers read state; P4-03 `stale` migrates to `VOID(data)` ([ADR-0020](../10-architecture/adr/0020-verification-fingerprints.md)) | P4-03 | Not started | Editing SQL, approving a new metric version, a snapshot change, a cited glossary edit and a method version bump each void the verdict; the sweep catches an injected missed event; the publish gate and reports refuse `VOID` |
+| P7-02 | P0 / Semantics | `SemanticQuery` IR, deterministic compiler (policy filters/masks in the compiler, fan-out refusal), `governed`/`ad_hoc` label on every answer, `semantic_query` purpose with a rules rung; Atlas `semantic_diff.py` and formula signatures ([ADR-0019](../10-architecture/adr/0019-semantic-compilation.md)) | P4-05; P7-09 for multi-table metrics | Not started | Same governed question → identical SQL per model version; fan-out fixtures refused with the edge named; governed slice added to P4-V02; diff shown before approval |
+| P7-03 | P0 / Runtime | Definition versions (draft/published/retired) for playbooks, recipes, ML specs and saved analyses; triggers refuse drafts outside `dev`; schedules pin definition, metric and method versions; *upgrade available* flow ([ADR-0021](../10-architecture/adr/0021-published-versions-and-pinned-schedules.md)) | P4-06 | Not started | A pack upgrade leaves the next scheduled fire on the pinned versions; approving a new metric version shows an upgrade and does not change the next fire; a retired version blocks and notifies |
+| P7-04 | P1 / Runtime + UI | Step objects with versions; edit and re-run with downstream voiding; deterministic self-check library (empty, magnitude, truncation, grouping, fan-out, DQ); pin to tile/schedule | P7-01 | Not started | Editing a step voids dependents and keeps the old version readable; self-check fixtures caught; pinned tile re-runs the frozen query |
+| P7-05 | P1 / UI | Branching Data Thread: fork from any step, compare branches, merge into a report | P7-04 | Not started | Real-API browser journey; merged report keeps both branches' lineage |
+| P7-06 | P1 / Platform | Isolated `compute-py` and `compute-ml` pools: `TaskEnvelope`, `ArtifactRef`, scoped short-lived artifact tokens, no DB/provider secrets, egress to the artifact store only; conformance suite ([ADR-0022](../10-architecture/adr/0022-compute-worker-protocol.md)) | P4-02 | Not started | Conformance: envelope round-trip, token-scope refusal, egress refusal, budget kill, idempotent retry writes one artifact |
+| P7-07 | P0 / Evaluation | Evaluation gates: `config/eval_gates.yaml` (owner thresholds), deterministic tiers in CI per changed path, live tiers nightly/pre-release; new grounding suite (numeric clauses bound, fabricated = 0, void-on-change) | P4-V01, P4-V02 | Not started | A seeded regression fails CI; thresholds versioned; a gate result is attached to each release |
+| P7-08 | P1 / API + UI | "Why this number?": fact → step → receipt → data version → semantic version → verdict, with each link's current state | P7-01 | Not started | Every number in a fixture report resolves; a broken or voided link is shown, never hidden |
+| P7-09 | P1 / Semantics | Relationship inference and cardinality validation ported from Atlas (`relationship_intelligence.py`, `relationship_naming.py`, `composite_key_inference.py`, validation rules); `cardinality` on `SemanticRelationship`; review queue | P4-05 | Not started | Ported donor tests pass; many-to-many and composite-key fixtures detected; cardinality never set from model output |
+| P7-10 | P0 / Security | Atlas `prompt_risk.py` + `injection_defense.py` + corpus at knowledge ingest and before prompts; Atlas SQL-guard adversarial corpus added to gateway tests; `sql_redaction`/`question_redaction`; compare-and-set approval claim | — | Not started | Corpus results recorded; every corpus SQL refused by the gateway; concurrent approval claim test on Postgres |
+| P7-11 | P2 / Tools | HTTP tool capability kind with private-address/SSRF block (DataPilot `tool_runtime.py`, `jsonschema` validation); governed query-tool lifecycle through definitions; MCP handler parity | P7-03 | Not started | SSRF fixtures blocked; a draft tool is not callable over MCP; schema-invalid parameters refused |
+| P7-12 | P2 / Data science UX | Workspace notebooks (markdown, SQL, restricted Python) where each cell is a step, SQL through the gateway and Python in `compute-py`; executions versioned (DataPilot notebook runtime) | P7-04, P7-06 | Not started | No connection outside the gateway; resource bombs killed; a cell edit voids dependent verdicts |
+| P7-13 | P2 / Delivery | Port log: every ported module records `repo@commit:path` in its docstring and the capability register; licence check of each donor file | — | Not started | Register lists every port with origin; no non-permissive dependency added |
+| P7-14 | P2 / Owner | Donor parity checklists (Atlas, DataPilot) and freeze: read-only repositories with a README pointing here | P7-09..12, P6-04..07 | Not started | Owner-signed checklist per donor |
 
 ### Retained follow-ons
 
@@ -135,6 +169,10 @@ move ahead of P5 when the chosen pilot's job demands it, after shared P4 foundat
 | N-3 | Approved external email/webhook delivery | Not started | Completes SCH-003 delivery after destination authorization/retry contracts |
 | N-6-font | Bundled Unicode PDF font | Not started | Original N-6 sandbox scope moved to P4-02; font remains a report correctness gap |
 | N-7 | General entity matching (INT-004) and Trino federation (TRN-004) | Phase 2 | P6 starts with reviewed join keys and bounded staging; matching/federation need their own validation and connector evidence |
+| N-8 | Structured + unstructured evidence fusion (documents alongside query results, separate citation types) | Deferred | After P7-08; knowledge citations are already separate from quantitative evidence |
+| N-9 | What-if scenarios (parameterised `SemanticQuery`, simulated vs observed labels) | Deferred | Needs P7-02 |
+| N-10 | PPTX/DOCX report formats from verified snapshots | Deferred | HTML/PDF/XLSX exist (`services/reports.py`) |
+| N-11 | Index/optimisation advice, never auto-applied (DataPilot `index_advisor.py`) | Deferred | Later donor port |
 
 N-1, N-4 and N-5 are mapped into P4/P6 above; the platform workstream also tracks related pieces.
 

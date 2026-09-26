@@ -4,7 +4,10 @@ Context2AI AnalystOS is a governed, autonomous analytics agent OS (Python 3.11 /
 Postgres+pgvector / Temporal / Neo4j / Redis / Superset / React). Read
 [`docs/00-intent/02-spec-v2.md`](docs/00-intent/02-spec-v2.md) before changing behaviour, and
 [`docs/00-intent/03-spec-v3-platform.md`](docs/00-intent/03-spec-v3-platform.md) before starting an
-increment-4 (`P4-*`) row. The original product vision is
+increment-4 (`P4-*`) row, and [`docs/00-intent/04-spec-v4-unified-data-platform.md`](docs/00-intent/04-spec-v4-unified-data-platform.md)
+before starting a `P7-*`, `P5-04+` or `P6-04+` row. AnalystOS is the single platform; `AIDataAnalyst` (Atlas)
+and `AienginnerAgentOs` (DataPilot) are donor repositories: port behaviour and tests under AnalystOS
+contracts, never runtime calls or schemas (ADR-0018). The original product vision is
 [`Context2AI_AnalystOS_Complete_Spec.md`](Context2AI_AnalystOS_Complete_Spec.md). Reviews under
 `docs/70-reviews/` are dated evidence, not work queues.
 
@@ -71,7 +74,7 @@ Seeded users (dev only): `admin@analystos.local`, `analyst@…`, `approver@…` 
 | `config/agents/*.yaml` | agent manifests (kind Agent); every field is enforced (`capabilities/agents.py`). `entry: builtin:generic` = a YAML-only agent |
 | `src/analystos/capabilities/` | registry (discovery, validation, reload), `builtin/playbooks/*.yaml` (`investigate.v1` = the v1 plan), bindings (run keeps its versions; refs in the plan hash), per-workspace enablement + certification gate; API `/api/capabilities`, `POST /api/admin/capabilities/reload` |
 | `migrations/` | Alembic; regenerate with `alembic revision --autogenerate` after model changes |
-| `docs/` | intent (spec v2, spec v3), architecture + ADRs, runbooks, delivery tracker/register/readiness, dated reviews (`70-reviews/`) |
+| `docs/` | intent (spec v2, spec v3, spec v4), architecture + ADRs, runbooks, delivery tracker/register/readiness, dated reviews (`70-reviews/`) |
 
 ## Conventions
 
