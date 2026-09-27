@@ -300,6 +300,136 @@ def retire(session: Session, user: User, row: Definition, *, reason: str | None 
     return row
 
 
+# ------------------------------------------------------------------------------------ promotion (ADR-0021 §5)
+ENVIRONMENTS = ("dev", "test", "prod")
+
+
+def referenced_sources(spec: Any) -> list[str]:
+    """Every connection a spec names: the values of `source_id` keys and `source_ids` lists, at any depth."""
+    found: set[str] = set()
+
+    def walk(x: Any) -> None:
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k == "source_id" and isinstance(v, str):
+                    found.add(v)
+                elif k == "source_ids" and isinstance(v, list):
+                    found.update(i for i in v if isinstance(i, str))
+                else:
+                    walk(v)
+        elif isinstance(x, list):
+            for i in x:
+                walk(i)
+    walk(spec)
+    return sorted(found)
+
+
+def apply_bindings(spec: Any, sources: dict[str, str]) -> Any:
+    """The spec as it runs in this environment: each bound connection replaced (the stored spec never changes)."""
+    if not sources:
+        return spec
+    if isinstance(spec, dict):
+        out = {}
+        for k, v in spec.items():
+            if k == "source_id" and isinstance(v, str):
+                out[k] = sources.get(v, v)
+            elif k == "source_ids" and isinstance(v, list):
+                out[k] = [sources.get(i, i) if isinstance(i, str) else i for i in v]
+            else:
+                out[k] = apply_bindings(v, sources)
+        return out
+    if isinstance(spec, list):
+        return [apply_bindings(i, sources) for i in spec]
+    return spec
+
+
+def _bind_sources(session: Session, source_ws: str, target_ws: str, names: list[str],
+                  explicit: dict[str, str], current: dict[str, str]) -> dict[str, str]:
+    """Each connection of the spec -> the target environment's connection: the one given (keyed by the spec's id or
+    by the connection it is bound to in the source environment), else the connection of the same name there. It
+    must exist in the target workspace and be of the same kind (the SQL dialect must hold)."""
+    from analystos.db.models import Source
+
+    out, problems, used = {}, [], set()
+    for sid in names:
+        here = current.get(sid, sid)
+        origin = session.get(Source, here)
+        if origin is None or origin.workspace_id != source_ws:
+            problems.append(f"{sid}: not a connection of the source workspace")
+            continue
+        target = None
+        given = sid if sid in explicit else here if here in explicit else None
+        if given is not None:
+            used.add(given)
+            target = session.get(Source, explicit[given])
+            if target is None or target.workspace_id != target_ws:
+                problems.append(f"{sid}: binding {explicit[given]} is not a connection of the target workspace")
+                continue
+        else:
+            target = session.scalar(select(Source).where(Source.workspace_id == target_ws, Source.name == origin.name)
+                                    .order_by(Source.created_at).limit(1))
+            if target is None:
+                problems.append(f"{sid} ({origin.name}): no connection of that name in the target; bind it explicitly")
+                continue
+        if target.kind != origin.kind:
+            problems.append(f"{sid}: bound to a {target.kind} connection, but the definition was published against {origin.kind}")
+            continue
+        out[sid] = target.id
+    unknown = sorted(set(explicit) - used)
+    if unknown:
+        problems.append(f"bindings name connections the definition does not use: {', '.join(unknown)}")
+    if problems:
+        raise InvalidInput("the definition's connections cannot be bound in the target environment: " + "; ".join(problems),
+                           details={"problems": problems})
+    return out
+
+
+def promote(session: Session, user: User, row: Definition, target_workspace_id: str, *,
+            bindings: dict[str, str] | None = None) -> Definition:
+    """Copy a published version to the next environment (dev -> test -> prod) by content hash: the spec and its
+    hash are identical; only the connection bindings differ, stored beside it. Promoting the same content again
+    returns the version already there."""
+    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, target_workspace_id, "editor")
+    if row.status != "published":
+        raise Conflict(f"only a published version is promoted (this one is {row.status})")
+    source_env, target_env = workspace_environment(session, row.workspace_id), workspace_environment(session, target_workspace_id)
+    if source_env not in ENVIRONMENTS or target_env not in ENVIRONMENTS or \
+            ENVIRONMENTS.index(target_env) != ENVIRONMENTS.index(source_env) + 1:
+        raise Conflict(f"promotion goes one step dev -> test -> prod; this is {source_env} -> {target_env}",
+                       details={"source_environment": source_env, "target_environment": target_env})
+    spec = _validate(session, target_workspace_id, row.kind, row.key, dict(row.spec))
+    if content_hash(row.kind, spec) != row.content_hash:
+        raise Conflict(f"{row.kind} {row.key} does not validate to the same content in the target workspace "
+                       "(a reference it uses differs there); promote its dependencies first")
+    sources = _bind_sources(session, row.workspace_id, target_workspace_id, referenced_sources(spec), dict(bindings or {}),
+                            (row.bindings or {}).get("sources") or {})
+    existing = session.scalar(select(Definition).where(Definition.workspace_id == target_workspace_id,
+                                                       Definition.kind == row.kind, Definition.key == row.key,
+                                                       Definition.content_hash == row.content_hash,
+                                                       Definition.status.in_(RUNNABLE_STATUSES)).limit(1))
+    if existing is not None:
+        if ((existing.bindings or {}).get("sources") or {}) != sources:
+            raise Conflict(f"{row.kind} {row.key} with this content is already in {target_env} as v{existing.version} "
+                           "with other connection bindings", details={"definition_id": existing.id})
+        return existing
+    new = Definition(id=new_id("defn"), workspace_id=target_workspace_id, kind=row.kind, key=row.key,
+                     version=_latest_version(session, target_workspace_id, row.kind, row.key) + 1, status="published",
+                     title=row.title, spec=spec, content_hash=row.content_hash, revision=1, created_by=user.id,
+                     published_by=user.id, published_at=utcnow(), test_evidence=row.test_evidence,
+                     bindings={"environment": target_env, "sources": sources},
+                     promoted_from={"workspace_id": row.workspace_id, "definition_id": row.id, "version": row.version,
+                                    "content_hash": row.content_hash, "environment": source_env})
+    session.add(new)
+    session.flush()
+    _event(session, new, "definition.promoted", f"user:{user.id}", from_workspace=row.workspace_id,
+           from_definition=row.id, from_environment=source_env, environment=target_env, sources=sources)
+    _event(session, row, "definition.promoted", f"user:{user.id}", to_workspace=target_workspace_id, to_definition=new.id,
+           environment=target_env)
+    _refresh_pins(session, target_workspace_id)
+    return new
+
+
 def _refresh_pins(session: Session, workspace_id: str) -> None:
     from analystos.services.pins import refresh_workspace
 
@@ -340,7 +470,7 @@ def resolve(session: Session, workspace_id: str, ref: DefinitionRef | dict[str, 
     if row is not None:
         if want.content_hash and want.content_hash != row.content_hash:
             raise Conflict(f"{row.kind} {row.key} v{row.version} has content {row.content_hash[:12]}, not {want.content_hash[:12]}")
-        return ref_of(row), dict(row.spec)
+        return ref_of(row), apply_bindings(dict(row.spec), (row.bindings or {}).get("sources") or {})
     if want.kind == "playbook":
         from analystos.capabilities import registry
 

@@ -115,6 +115,22 @@ def test_draft(workspace_id: str, definition_id: str, body: DefinitionTestIn, re
     return svc.out(row)
 
 
+class DefinitionPromoteIn(BaseModel):
+    target_workspace_id: str
+    bindings: dict[str, str] | None = None  # source connection id -> target connection id (default: same name)
+
+
+@router.post("/workspaces/{workspace_id}/definitions/{definition_id}/promote", status_code=201)
+def promote(workspace_id: str, definition_id: str, body: DefinitionPromoteIn, response: Response,
+            user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Promote a published version one environment up (dev -> test -> prod, ADR-0021 §5): the target gets the same
+    spec and content hash, with its connections re-bound there (`bindings`, else by connection name)."""
+    row = _load(session, user, workspace_id, definition_id, "editor")
+    new = svc.promote(session, session.merge(user), row, body.target_workspace_id, bindings=body.bindings)
+    set_etag(response, new.revision)
+    return svc.out(new)
+
+
 @router.post("/workspaces/{workspace_id}/definitions/{definition_id}/{action}")
 def change_status(workspace_id: str, definition_id: str, action: str, body: ReasonIn, response: Response,
                   user: User = Depends(current_user), session: Session = Depends(db, scope="function"),

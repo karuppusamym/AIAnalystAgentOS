@@ -231,7 +231,9 @@ def _tool_query(principal: G.ClientPrincipal, ws: str, key: str, args: dict[str,
             if other is not None and other not in RUNNABLE_STATUSES:
                 raise PolicyDenied(f"query tool {key} has no published version ({other}): drafts are not callable over MCP")
             raise NotFound(f"query tool {key} not found")
-        spec, version = dict(row.spec), row.version
+        from analystos.services.definitions import apply_bindings
+
+        spec, version = apply_bindings(dict(row.spec), (row.bindings or {}).get("sources") or {}), row.version
     out = query_tools.run(user, ws, key, spec, {k: v for k, v in args.items() if k != "workspace_id"},
                           actor=f"mcp_client:{principal.client_id}", purpose=f"mcp.query_tool:{key}")
     out["rows"] = out["rows"][:MAX_ROWS_OUT]
