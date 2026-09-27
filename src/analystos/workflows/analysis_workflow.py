@@ -24,6 +24,7 @@ NON_RETRYABLE = ["Forbidden", "PolicyDenied", "SQLRejected", "ApprovalRequired",
                  "RunCancelled", "NotFound", "Conflict"]
 QUICK = dict(start_to_close_timeout=timedelta(minutes=2),
              retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), maximum_attempts=5))
+NUDGE_BEFORE_STATE = "nudge-cleared-before-state"  # workflow.patched id (a determinism-safe behaviour change)
 TASK_RETRY = RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2.0,
                          maximum_interval=timedelta(seconds=30), maximum_attempts=3,
                          non_retryable_error_types=NON_RETRYABLE)
@@ -45,7 +46,8 @@ class AnalysisWorkflow:
         self._nudged = True
 
     async def _wait(self, seconds: int) -> None:
-        self._nudged = False
+        if not workflow.patched(NUDGE_BEFORE_STATE):
+            self._nudged = False  # histories recorded before the fix replay as they ran
         with contextlib.suppress(asyncio.TimeoutError):
             await workflow.wait_condition(lambda: self._nudged, timeout=timedelta(seconds=seconds))
 
@@ -62,6 +64,11 @@ class AnalysisWorkflow:
         while True:
             if activities >= opts.get("max_activities", 400) or workflow.info().is_continue_as_new_suggested():
                 workflow.continue_as_new(args=[run_id, {**opts, "resumed": True}])
+            if workflow.patched(NUDGE_BEFORE_STATE):
+                # Cleared before the state is read, not when the wait starts: a nudge that lands while get_state runs
+                # (an approval right after a resume) is kept, so the wait below returns at once instead of sleeping
+                # its 300 s re-check (live 2026-09-27: a publication started five minutes after its approval).
+                self._nudged = False
             state = await workflow.execute_activity("get_state", run_id, **quick)
             activities += 1
             if state.get("terminal"):

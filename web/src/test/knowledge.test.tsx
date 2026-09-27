@@ -84,6 +84,9 @@ describe("knowledge helpers", () => {
       synonyms: { value: ["a"], confidence: 0.8, provenance: { source: "rule" } }, computation: { value: { q: 1 }, confidence: 1, provenance: {} } } } as unknown as KnowledgeSuggestion;
     expect(editableFields(s)).toEqual(["body", "synonyms"]);
     expect(editedFields(s, { body: "old", synonyms: "a, b" })).toEqual({ synonyms: ["a", "b"] });
+    const domain = { ...s, kind: "domain_candidate" } as KnowledgeSuggestion;
+    expect(editableFields(domain)).toContain("keyword");
+    expect(editedFields(domain, { keyword: "orders" })).toEqual({ keyword: "orders" });
     expect(batchDecisions(["1", "2"], "reject", " no ")).toEqual([{ id: "1", action: "reject", reason: "no" }, { id: "2", action: "reject", reason: "no" }]);
     expect(batchDecisions(["1"], "approve")).toEqual([{ id: "1", action: "approve" }]);
     expect(provenanceLine(s.fields.body.provenance).map(([k]) => k)).toEqual(["source", "model", "purpose"]);

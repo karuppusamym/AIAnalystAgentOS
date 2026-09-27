@@ -144,7 +144,7 @@ def _rewrite(request: Any, target: PinnedTarget) -> None:
 
 
 def pinned_async_transport(target: PinnedTarget, httpx_module: Any, inner: Any | None = None) -> Any:
-    """An async transport (httpx or httpx2) that only talks to ``target``'s vetted address."""
+    """An HTTPX async transport that only talks to ``target``'s vetted address."""
 
     class _Pinned(httpx_module.AsyncBaseTransport):
         def __init__(self) -> None:

@@ -41,6 +41,8 @@ test.describe("governed ML (P5-03)", () => {
     await shot(page, "f2-experiment-model-card");
 
     await exp.getByRole("button", { name: /^Request promotion of v\d+/ }).click();
+    // the approval exists once the request is confirmed; only then does the approver look
+    await expect(exp.getByRole("button", { name: "Continue with the approved request" })).toBeVisible();
     await approveAs(browser, ws!, /Promote a model version to champion/);
     await exp.getByRole("button", { name: "Continue with the approved request" }).click();
     await expect(exp.getByText(/Promoted: .* v\d+ is now the champion\./)).toBeVisible();
@@ -50,6 +52,7 @@ test.describe("governed ML (P5-03)", () => {
     await model.getByText(/^Score approved data with v\d+/).click();
     await model.getByRole("button", { name: "Prepare the scoring definition" }).click();
     await model.getByRole("button", { name: "Request approval to score" }).click();
+    await expect(model.getByRole("button", { name: "Continue with the approved request" })).toBeVisible();
     await approveAs(browser, ws!, /Score data with the champion model/);
     await model.getByRole("button", { name: "Continue with the approved request" }).click();
     await expect(page.getByText(/Scored [\d,]+ of [\d,]+ rows/)).toBeVisible({ timeout: 300_000 });

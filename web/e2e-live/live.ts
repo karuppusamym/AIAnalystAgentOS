@@ -73,7 +73,11 @@ export async function approveAs(browser: Browser, ws: string, action: RegExp, re
   const { ctx, page } = await personPage(browser, APPROVER, `/w/${ws}/operate/approvals`);
   const list = page.getByRole("complementary", { name: "Approval proposals" });
   const pending = list.getByRole("button", { name: action });
-  await expect(pending.first()).toBeVisible();
+  // the inbox loads once: a proposal made a moment ago appears on the next load, as it would for a person
+  await expect(async () => {
+    if (!(await pending.first().isVisible())) await page.reload();
+    await expect(pending.first()).toBeVisible({ timeout: 3_000 });
+  }).toPass({ timeout: 45_000 });
   const before = await pending.count();
   await pending.first().click(); // newest first: the request this journey just made
   const card = page.locator("article.approval-pending").first();

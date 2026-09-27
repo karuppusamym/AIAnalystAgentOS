@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { to } from "../routes";
 import { api, type Asset, type DiscoveredAsset, type Source, type SourceColumn } from "../api";
 import { CrawlPanel } from "../components/CrawlPanel";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
 import { crawlStatsSummary } from "../lib/crawls";
 import { fmtDate, fmtNumber, fmtPct, fmtValue } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
@@ -30,17 +30,20 @@ export function SourcesPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Sources & crawls"
-        subtitle={<>Connect sources, crawl their metadata, select what agents may analyse, and tag sensitive columns. Curate descriptions in the <Link to={to.catalog(wsId)}>Catalog</Link>.</>}
+      <PageHeader title="Sources"
+        subtitle={<>Connect a database, warehouse, application or files; choose the tables AnalystOS may read; each crawl profiles them and
+          detects changes. What the data means is curated in the <Link to={to.catalog(wsId)}>Catalog</Link>.</>}
         actions={<button type="button" className="btn btn-primary" onClick={() => setShowAdd((s) => !s)}>{showAdd ? "Close" : "Add source"}</button>} />
       {showAdd && <AddSource wsId={wsId} onAdded={() => { setShowAdd(false); reloadAll(); }} />}
       <ErrorBox error={sources.error} onRetry={sources.reload} />
       {sources.loading && !sources.data && <Loading />}
       {sources.data?.length === 0 && <EmptyState title="No sources yet">Add a database, warehouse, file or ServiceNow instance.</EmptyState>}
-      {sources.data?.map((s) => (
-        <SourceCard key={s.id} wsId={wsId} source={s} assets={(assets.data ?? []).filter((a) => a.source_id === s.id)}
-          onChanged={reloadAll} onOpenAsset={setActiveAsset} activeAsset={activeAsset} />
-      ))}
+      <div className="stack" data-tour="source-list">
+        {sources.data?.map((s) => (
+          <SourceCard key={s.id} wsId={wsId} source={s} assets={(assets.data ?? []).filter((a) => a.source_id === s.id)}
+            onChanged={reloadAll} onOpenAsset={setActiveAsset} activeAsset={activeAsset} />
+        ))}
+      </div>
       {asset && <AssetDetail asset={asset} onTagged={(col) => assets.setData((prev) => prev?.map((a) => a.id !== asset.id ? a : {
         ...a, columns: a.columns.map((c) => (c.name === col.name ? { ...c, tags: col.tags } : c)),
       }))} onClose={() => setActiveAsset(null)} />}
@@ -131,10 +134,15 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
         <StatusBadge status={source.status} />
         <button type="button" className="btn btn-sm" onClick={discover} disabled={discoverAct.busy}>{discoverAct.busy ? "Discovering…" : "Discover"}</button>
       </>}>
-      <p className="muted small">
-        {source.secret_ref ? <>Secret: <code>{source.secret_ref}</code> · </> : null}
-        Last discovered {fmtDate(source.last_discovered_at)}{source.staging_schema ? <> · staging schema <code>{source.staging_schema}</code></> : null}
-      </p>
+      <p className="muted small">Last discovered {fmtDate(source.last_discovered_at)}</p>
+      {(source.secret_ref || source.staging_schema) && (
+        <TechnicalDetails label="Connection details">
+          <p className="small">
+            {source.secret_ref ? <>Credentials read from <code>{source.secret_ref}</code> (never stored). </> : null}
+            {source.staging_schema ? <>Staged copy in schema <code>{source.staging_schema}</code>.</> : null}
+          </p>
+        </TechnicalDetails>
+      )}
       {source.last_error && <Notice tone="danger">{source.last_error}</Notice>}
       <ErrorBox error={discoverAct.error ?? selectAct.error} />
       {result && <Notice tone="success">{result}</Notice>}

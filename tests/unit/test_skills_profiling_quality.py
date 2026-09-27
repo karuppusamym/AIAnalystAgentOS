@@ -64,6 +64,20 @@ def test_profile_query_budget(profile):
     assert d["n_queries"] == profile.n_queries and d["columns"][0]["name"] == "sys_id"
 
 
+def test_sensitive_profiles_never_query_value_distributions(duck):
+    duck.calls.clear()
+    columns = [{**c, "sensitive": c["name"] in {"priority", "noise_value", "opened_at"}}
+               for c in INCIDENT_COLUMNS]
+    profile = profile_asset(duck, "itsm.incident", columns)
+    by_name = {c.name: c for c in profile.columns}
+    assert by_name["priority"].distinct > 0 and by_name["priority"].top_values == []
+    assert by_name["noise_value"].histogram == [] and by_name["noise_value"].percentiles == {}
+    assert by_name["opened_at"].monthly_counts == [] and by_name["opened_at"].min is None
+    assert not any(c["purpose"] == "profile.top_values.priority" for c in duck.calls)
+    assert not any(c["purpose"] == "profile.monthly.opened_at" for c in duck.calls)
+    assert "noise_value" not in next(c["sql"] for c in duck.calls if c["purpose"] == "profile.histograms")
+
+
 def test_histogram_rows_come_back_in_one_order(profile, duck):
     # A parallel engine (DuckDB) emits GROUP BY groups in any order; the recorded result hash must not
     # change between identical runs (DEX-001), so the statement orders its rows.

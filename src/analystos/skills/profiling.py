@@ -231,18 +231,19 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         x = col(name)
         sel += [exp.Count(this=x).as_(ident(f"c{i}_nn")),
                 exp.Count(this=exp.Distinct(expressions=[x.copy()])).as_(ident(f"c{i}_nd"))]
-        if fam == "numeric":
+        sensitive = bool(c.get("sensitive"))
+        if fam == "numeric" and not sensitive:
             xd = cast(x.copy(), "double", dialect)
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max")),
                     exp.Avg(this=xd).as_(ident(f"c{i}_mean")),
                     exp.Stddev(this=xd.copy()).as_(ident(f"c{i}_std"))]
             if dialect != "tsql":
                 sel += [percentile_cont(xd.copy(), p, dialect).as_(ident(f"c{i}_{_pkey(p)}")) for p in PERCENTILES]
-        elif fam == "datetime":
+        elif fam == "datetime" and not sensitive:
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max"))]
-        elif fam == "boolean":
+        elif fam == "boolean" and not sensitive:
             sel += [exp.Sum(this=is_true_expr(x.copy(), dialect)).as_(ident(f"c{i}_true"))]
-        else:
+        elif not sensitive:
             ln = exp.Length(this=cast(x.copy(), "text", dialect))
             blank = exp.EQ(this=exp.Trim(this=cast(x.copy(), "text", dialect)), expression=exp.Literal.string(""))
             sel += [exp.Avg(this=cast(ln, "double", dialect)).as_(ident(f"c{i}_avglen")),
@@ -260,15 +261,15 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
                            is_key=bool(c.get("is_key")), non_null=nn, null_count=n - nn,
                            null_rate=round((n - nn) / n, 6) if n else 0.0, distinct=nd,
                            distinct_ratio=round(nd / nn, 6) if nn else 0.0)
-        if fam in ("numeric", "datetime"):
+        if fam in ("numeric", "datetime") and not c.get("sensitive"):
             cp.min, cp.max = _jsonable(wide.get(f"c{i}_min")), _jsonable(wide.get(f"c{i}_max"))
-        if fam == "numeric":
+        if fam == "numeric" and not c.get("sensitive"):
             cp.mean, cp.stddev = _num(wide.get(f"c{i}_mean")), _num(wide.get(f"c{i}_std"))
             if dialect != "tsql":
                 cp.percentiles = {_pkey(p): _num(wide.get(f"c{i}_{_pkey(p)}")) for p in PERCENTILES}
-        if fam == "boolean":
+        if fam == "boolean" and not c.get("sensitive"):
             cp.true_count = int(wide.get(f"c{i}_true") or 0)
-        if fam == "text":
+        if fam == "text" and not c.get("sensitive"):
             cp.avg_length = _num(wide.get(f"c{i}_avglen"))
             ml = wide.get(f"c{i}_maxlen")
             cp.max_length = int(ml) if ml is not None else None
@@ -279,7 +280,9 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
                                                references=bool(c.get("references")), max_length=cp.max_length)
         profs.append(cp)
     by_name = {p.name: p for p in profs}
-    numeric = [p for p in profs if p.type_family == "numeric" and p.semantic_type in ("numeric",) and p.non_null > 0]
+    sensitive_names = {c["name"] for c in columns if c.get("sensitive")}
+    numeric = [p for p in profs if p.type_family == "numeric" and p.semantic_type in ("numeric",)
+               and p.non_null > 0 and p.name not in sensitive_names]
 
     # ---- 2. tsql percentiles ---------------------------------------------------------------
     if dialect == "tsql" and numeric:
@@ -346,7 +349,8 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
                 h["low"], h["high"] = _jsonable(h["low"]), _jsonable(h["high"])
 
     # ---- 4. top values for low-cardinality categorical/boolean columns -----------------------
-    cats = [p for p in profs if p.semantic_type in ("categorical", "boolean") and p.non_null > 0]
+    cats = [p for p in profs if p.semantic_type in ("categorical", "boolean") and p.non_null > 0
+            and p.name not in sensitive_names]
     cats.sort(key=lambda p: p.distinct)
     for p in cats[:MAX_CATEGORICAL_TOPN]:
         x = col(p.name)
@@ -369,7 +373,7 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
 
     # ---- 5. monthly counts per datetime column ----------------------------------------------
     for p in profs:
-        if p.semantic_type != "datetime" or p.non_null == 0:
+        if p.semantic_type != "datetime" or p.non_null == 0 or p.name in sensitive_names:
             continue
         m = trunc_expr(cast(col(p.name), "timestamp", dialect), "month", dialect)
         inner = exp.select(m.as_(ident("month"))).from_(table(asset)).where(not_null(col(p.name)))

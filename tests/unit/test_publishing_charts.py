@@ -85,6 +85,15 @@ def test_histogram_uses_dimension_or_metric_source_column():
     assert p2["column"] == "resolution_hours"
 
 
+def test_histogram_counts_only_rows_with_a_value():
+    """Superset 4.1's histogram raises on any NULL; open incidents have no resolution time (live 2026-09-27)."""
+    _, p, q = build(chart("histogram", dimension="resolution_hours", filters=["priority = '1'"]))
+    assert {"col": "resolution_hours", "op": "IS NOT NULL"} in q["filters"]
+    not_null = [f for f in p["adhoc_filters"] if f.get("operator") == "IS NOT NULL"]
+    assert len(not_null) == 1 and not_null[0]["subject"] == "resolution_hours"
+    assert any(f.get("sqlExpression") == "priority = '1'" for f in p["adhoc_filters"])  # the chart's own filters stay
+
+
 def test_scatter_time_and_bubble():
     viz, p, _ = build(chart("scatter", metric="incident_count"))
     assert viz == "echarts_timeseries_scatter" and p["x_axis"] == "opened_at"

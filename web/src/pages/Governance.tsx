@@ -193,7 +193,7 @@ function Members({ ws, onChanged }: { ws: WorkspaceDetail; onChanged: () => void
           </li>
         ))}
       </ul>
-      <form className="form form-inline" onSubmit={add}>
+      <form className="form form-inline" onSubmit={add} aria-label="Add a member">
         <label className="sr-only" htmlFor="mem-email">Email</label>
         <input id="mem-email" type="email" required placeholder="approver@analystos.local" value={email} onChange={(e) => setEmail(e.target.value)} />
         <label className="sr-only" htmlFor="mem-role">Role</label>

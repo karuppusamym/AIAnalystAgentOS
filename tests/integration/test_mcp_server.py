@@ -74,11 +74,11 @@ def _run(coro_fn):
 
 
 async def _with_client(url: str, token: str, fn, mode: str = "auto") -> Any:
-    import httpx2
+    import httpx
     from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
 
-    async with (httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http,
+    async with (httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http,
                 Client(streamable_http_client(f"{url}/mcp", http_client=http), mode=mode, cache=None) as c):
         return await fn(c)
 
