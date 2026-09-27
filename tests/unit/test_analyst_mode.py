@@ -131,7 +131,7 @@ def test_truncation_is_stated_first():
 
 def test_a_single_row_is_a_value():
     f = rf.step_facts(["incident_count"], [[42]], row_count=1)
-    assert f["values"] == {"incident_count": 42} and f["statements"] == ["incident_count: 42."]
+    assert f["values"] == {"incident_count": 42} and f["statements"] == ["Number of incidents: 42."]  # names for people, values untouched
 
 
 # ------------------------------------------------------------------------------------ series

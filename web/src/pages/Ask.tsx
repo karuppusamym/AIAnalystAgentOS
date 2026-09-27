@@ -671,7 +671,7 @@ export function AskPage() {
               <form className="form" data-tour="ask-box" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
                 <Field label="Question" htmlFor="ask-q">
                   <textarea id="ask-q" ref={questionRef} rows={2} value={question} onChange={(e) => setQuestion(e.target.value)} required
-                    placeholder="How many P1 incidents were opened per month this year?"
+                    placeholder={starters[1] ?? starters[0] ?? "What would you like to know about your data?"}
                     onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit(); }} />
                 </Field>
                 <div className="form-actions ask-actions">
@@ -698,7 +698,7 @@ export function AskPage() {
             <form className="form" onSubmit={submitSql}>
               <Field label="SQL (read-only)" htmlFor="sql" hint="Paste SQL and Explain it first: the validator and the source's plan, nothing executed. Run uses the same gateway, scope and audit as the agents.">
                 <textarea id="sql" ref={consoleRef} className="mono" rows={6} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} required
-                  placeholder="SELECT priority, COUNT(*) FROM src_xxx.incident GROUP BY 1 ORDER BY 2 DESC"
+                  placeholder={sqlExamples[1]?.sql ?? sqlExamples[0]?.sql ?? "SELECT … FROM schema.table"}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit(); }} />
               </Field>
               <div className="form-actions">

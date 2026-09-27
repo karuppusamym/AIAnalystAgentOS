@@ -258,15 +258,31 @@ def statements(f: Mapping[str, Any]) -> list[str]:
         out.append("No rows were returned.")
         return out
     if f.get("values"):
-        out += [f"{col}: {fmt_num(v)}." for col, v in f["values"].items()]
+        out += [f"{column_words(col).capitalize()}: {fmt_num(v)}." for col, v in f["values"].items()]
     else:
         for m in f["measures"][:4]:
             parts = [f"total {fmt_num(m['total'])}"] if "total" in m else []
             parts += [f"average {fmt_num(m['avg'])}", f"highest {fmt_num(m['max'])} ({m['max_label']})",
                       f"lowest {fmt_num(m['min'])} ({m['min_label']})"]
-            out.append(f"{m['column']} over {fmt_num(m['count'])} rows: " + ", ".join(parts) + ".")
+            out.append(f"{column_words(m['column']).capitalize()} over {fmt_num(m['count'])} rows: " + ", ".join(parts) + ".")
     out += [f"{d['column']}: {fmt_num(d['distinct'])} distinct values." for d in f["identifiers"]]
     return out
+
+
+def column_words(col: Any) -> str:
+    """A result column named for people: `incident_count` -> "number of incidents", `avg_resolution_hours` ->
+    "average resolution hours", other underscores as spaces. Only the name changes; values are untouched."""
+    name = str(col).strip()
+    low = name.lower()
+    for prefix, word in (("avg_", "average "), ("mean_", "average "), ("median_", "median "), ("total_", "total "),
+                         ("sum_", "total "), ("min_", "lowest "), ("max_", "highest ")):
+        if low.startswith(prefix) and len(low) > len(prefix):
+            return word + low[len(prefix):].replace("_", " ")
+    if low.endswith("_count") and len(low) > 6:
+        base = low[:-6].replace("_", " ")
+        plural = base[:-1] + "ies" if base.endswith("y") and not base.endswith(("ay", "ey", "oy", "uy")) else             base + ("es" if base.endswith(("s", "x", "ch", "sh")) else "s")
+        return f"number of {plural}"
+    return low.replace("_", " ") if "_" in low else name
 
 
 # ------------------------------------------------------------------------------------ series

@@ -485,11 +485,11 @@ def key_facts(e: dict[str, Any]) -> list[str]:
     if ser:
         per = ser.get("grain") or "period"
         if ser["direction"] == "flat":
-            trend = f"{ser['column']} is flat: the slope is under one percent of the mean"
+            trend = f"{rf.column_words(ser['column'])} is flat: the slope is under one percent of the mean"
         else:
             share = (f" ({rf.fmt_pct(ser['slope_share_of_mean'], signed=True)} of the mean)"
                      if ser.get("slope_share_of_mean") is not None else "")
-            trend = f"{ser['column']} is {ser['direction']} by {rf.fmt_num(ser['slope_per_period'], signed=True)} per {per}{share}"
+            trend = f"{rf.column_words(ser['column'])} is {ser['direction']} by {rf.fmt_num(ser['slope_per_period'], signed=True)} per {per}{share}"
         out.append(f"{trend} over {rf.fmt_num(ser['points'])} periods from {ser['first_period']} to {ser['last_period']}")
         if ser.get("anomalies"):
             a = ser["anomalies"][0]
@@ -502,18 +502,19 @@ def key_facts(e: dict[str, Any]) -> list[str]:
     if not facts.get("rows_shown"):
         return ["no rows were returned"]
     if facts.get("values"):
-        return ["; ".join(f"the {col} is {rf.fmt_num(v)}" for col, v in list(facts["values"].items())[:3])]
+        return ["; ".join(f"the {rf.column_words(col)} is {rf.fmt_num(v)}" for col, v in list(facts["values"].items())[:3])]
     measures = facts.get("measures") or []
     if measures:
         m = next((x for x in measures if not x["pre_aggregated"]), measures[0])
         hi, lo = m.get("max_label") or "one row", m.get("min_label") or "one row"
         if "total" in m:
-            out.append(f"{hi} has the highest {m['column']} ({rf.fmt_num(m['max'])}) of a total of "
+            out.append(f"{hi} has the highest {rf.column_words(m['column'])} ({rf.fmt_num(m['max'])}) of a total of "
                        f"{rf.fmt_num(m['total'])} across {rf.fmt_num(m['count'])} rows")
         else:
-            out.append(f"{hi} has the highest {m['column']} ({rf.fmt_num(m['max'])}); {lo} the lowest ({rf.fmt_num(m['min'])})")
+            out.append(f"{hi} has the highest {rf.column_words(m['column'])} ({rf.fmt_num(m['max'])}); {lo} the lowest "
+                       f"({rf.fmt_num(m['min'])})")
         if len(measures) > 1 and "total" in m:
-            out.append(f"{lo} has the lowest {m['column']} ({rf.fmt_num(m['min'])})")
+            out.append(f"{lo} has the lowest {rf.column_words(m['column'])} ({rf.fmt_num(m['min'])})")
         return out
     return [f"{rf.fmt_num(facts.get('row_count'))} rows were returned"]
 

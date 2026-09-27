@@ -12,6 +12,17 @@ import { isStaleEdit, StaleEditNotice } from "./StaleEdit";
 import { VerificationBadge, WhyState } from "./WhyNumber";
 import { CodeBlock, DataTable, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag, TechnicalDetails } from "./ui";
 
+/** Why a step has no verdict, in words (UI review P3-6: "no verdict recorded (recorded)" said nothing). */
+export function noVerdictText(kind: string, status: string): string {
+  if (status === "recorded") {
+    if (kind === "plan") return "The investigation's plan, as it ran; plans are not verified.";
+    if (kind === "method") return "A test the investigation ran; its outcome is under Statistical result, and a finding built on it carries the verdict.";
+    return "Recorded from the investigation; not verified on its own.";
+  }
+  if (status === "running" || status === "pending") return "Not verified yet: the step is still running.";
+  return `No verdict yet (${status.replace(/_/g, " ")}).`;
+}
+
 const KIND_WORDS: Record<string, string> = {
   plan: "plan", query: "query", method: "method", recipe: "recipe", train: "training", chart: "chart", claim: "claim",
 };
@@ -285,7 +296,7 @@ function StepCard({ wsId, step, role, highlight, onRevised, onFork, forking }: {
         {step.inherited && <Tag tone="info">from the parent branch</Tag>}
         {highlight && <Tag tone="warning">{highlight}</Tag>}
       </div>
-      <div className="small"><VerificationBadge state={vr} /> {!vr && <span className="muted">no verdict recorded ({step.status})</span>}</div>
+      <div className="small"><VerificationBadge state={vr} /> {!vr && <span className="muted">{noVerdictText(step.kind, step.status)}</span>}</div>
       {step.checks.length > 0 && (
         <ul className="step-checks small" aria-label={`Checks of ${step.title}`}>
           {step.checks.map((c, k) => (
