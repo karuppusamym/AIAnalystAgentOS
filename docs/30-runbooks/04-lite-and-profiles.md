@@ -11,6 +11,10 @@ One codebase and one behaviour; the profile only decides which services run and 
 | `standard` | lite + Redis, Temporal, `worker` (every queue), `scheduler` | `docker compose --env-file .env --env-file deploy/compose/standard.env up -d --build` |
 | `scale` | standard with one worker pool per queue | `docker compose --env-file .env --env-file deploy/compose/scale.env up -d --build` |
 
+For a demo, `scripts/demo.ps1` (Windows) or `scripts/demo.sh` starts the full stack (or `-Lite` / `--lite`), waits for
+health and seeds a ready workspace (`analystos demo-seed`); see [runbook 05](05-demo-walkthrough.md), which also
+covers Windows without Docker.
+
 Optional features, on top of any profile (name every profile on the command line: a `--profile` flag
 replaces `COMPOSE_PROFILES` from the env files):
 

@@ -1,0 +1,1142 @@
+{
+  "api": "http://127.0.0.1:8015",
+  "started_at": "2026-09-27T16:46:36.215425+00:00",
+  "checks": {
+    "1_any_database_kind_catalog": true,
+    "2_admin_preset_applied_at_runtime": true,
+    "3_sqlite_source_registered": true,
+    "4_crawl_semantics_and_pii": true,
+    "5_incremental_crawl_skips_unchanged": true,
+    "6_schema_drift_detected_and_curation_kept": true,
+    "7_sql_explained_without_model": true,
+    "8_analysis_on_generic_database_completed": true,
+    "9_planted_effects_found": true,
+    "10_no_false_payment_method_finding": true,
+    "11_tokens_saved_accounted": true,
+    "12_forecast_monitor_evaluated": true,
+    "13_scheduled_crawl_succeeded": true
+  },
+  "kinds": [
+    {
+      "kind": "postgres",
+      "category": "database",
+      "execution_mode": "pushdown",
+      "driver_installed": true
+    },
+    {
+      "kind": "redshift",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "mysql",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "mariadb",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "sqlserver",
+      "category": "database",
+      "execution_mode": "pushdown",
+      "driver_installed": false
+    },
+    {
+      "kind": "oracle",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "snowflake",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "bigquery",
+      "category": "warehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "databricks",
+      "category": "lakehouse",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "trino",
+      "category": "engine",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "clickhouse",
+      "category": "database",
+      "execution_mode": "staged",
+      "driver_installed": false
+    },
+    {
+      "kind": "duckdb",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "sqlite",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "servicenow",
+      "category": "api",
+      "execution_mode": "staged",
+      "driver_installed": true
+    },
+    {
+      "kind": "csv",
+      "category": "file",
+      "execution_mode": "staged",
+      "driver_installed": true
+    }
+  ],
+  "settings": {
+    "base_version": 0,
+    "modes": {
+      "planning": "auto",
+      "hypothesis_generation": "auto",
+      "follow_up_generation": "auto",
+      "sql_generation": "auto",
+      "semantic_query": "auto",
+      "sql_repair": "always",
+      "statistical_interpretation": "always",
+      "insight_narrative": "auto",
+      "semantic_modeling": "auto",
+      "dashboard_design": "auto",
+      "feedback_interpretation": "auto",
+      "summarization": "auto",
+      "pipeline_proposal": "auto",
+      "ml_spec_proposal": "auto",
+      "agent_actions": "auto",
+      "metadata_enrichment": "auto",
+      "verification": "always",
+      "hypothesis_priority": "auto",
+      "risk_check": "always",
+      "feedback_classification": "auto",
+      "chart_selection": "auto",
+      "rev_second_opinion": "always",
+      "stop_check": "auto",
+      "alert_triage": "always",
+      "ask_route": "auto",
+      "clarify_needed": "auto",
+      "metric_match": "auto",
+      "join_path_choice": "auto",
+      "decision_structured": "always",
+      "health_probe": "always"
+    },
+    "history_top": [
+      {
+        "version": 1,
+        "note": "preset token_saver",
+        "created_by": "usr_d6877b8ab76f",
+        "created_at": "2026-09-27T16:46:36.785318+00:00"
+      }
+    ]
+  },
+  "data": {
+    "orders": 24000,
+    "customers": 2500,
+    "products": 60
+  },
+  "crawl_full": {
+    "stats": {
+      "tokens_saved": 2880,
+      "model_calls": 0,
+      "discovered": 4,
+      "in_scope": 4,
+      "truncated": 0,
+      "latency_ms": 3,
+      "new": 4,
+      "changed": 0,
+      "unchanged": 0,
+      "missing": 0,
+      "deprecated": 0,
+      "renamed": 0,
+      "described_by_rules": 4,
+      "pii_columns_by_name": 2,
+      "touched": 4,
+      "relationships_declared": 3,
+      "glossary_links": 4,
+      "needs_enrichment": 0,
+      "knowledge_documents": 5,
+      "knowledge_kept_curated": 0,
+      "knowledge_revision": 1,
+      "query_history_statements": 0,
+      "graph": false,
+      "facets": {
+        "profile": {
+          "status": "ok",
+          "ms": 2
+        },
+        "relationships": {
+          "status": "ok",
+          "ms": 5
+        },
+        "glossary": {
+          "status": "ok",
+          "ms": 18
+        },
+        "enrich": {
+          "status": "ok",
+          "ms": 11
+        },
+        "knowledge": {
+          "status": "ok",
+          "ms": 79,
+          "count": 5
+        },
+        "query_history": {
+          "status": "ok",
+          "ms": 6,
+          "count": 0
+        },
+        "graph": {
+          "status": "ok",
+          "ms": 2
+        }
+      },
+      "failed_facets": []
+    },
+    "semantics": {
+      "customer": {
+        "role": "dimension",
+        "domain": "customer",
+        "grain": "one row per customer",
+        "confidence": 0.79,
+        "description_origin": "rule"
+      },
+      "orders": {
+        "role": "fact",
+        "domain": "sales",
+        "grain": "one row per order",
+        "confidence": 0.82,
+        "description_origin": "rule"
+      },
+      "product": {
+        "role": "dimension",
+        "domain": "product",
+        "grain": "one row per product",
+        "confidence": 0.79,
+        "description_origin": "rule"
+      },
+      "region": {
+        "role": "dimension",
+        "domain": "generic",
+        "grain": "one row per region",
+        "confidence": 0.69,
+        "description_origin": "rule"
+      }
+    },
+    "pii": {
+      "customer.customer_name": "person_name",
+      "customer.email": "email"
+    }
+  },
+  "crawl_incremental": {
+    "stats": {
+      "new": 0,
+      "graph": false,
+      "facets": {
+        "graph": {
+          "ms": 2,
+          "status": "ok"
+        },
+        "enrich": {
+          "ms": 2,
+          "status": "ok"
+        },
+        "profile": {
+          "ms": 721,
+          "status": "ok"
+        },
+        "glossary": {
+          "ms": 16,
+          "status": "ok"
+        },
+        "knowledge": {
+          "ms": 63,
+          "count": 0,
+          "status": "ok"
+        },
+        "query_history": {
+          "ms": 130,
+          "count": 17,
+          "status": "ok"
+        },
+        "relationships": {
+          "ms": 4,
+          "status": "ok"
+        }
+      },
+      "changed": 0,
+      "missing": 0,
+      "renamed": 0,
+      "touched": 0,
+      "in_scope": 4,
+      "profiled": 4,
+      "truncated": 0,
+      "unchanged": 4,
+      "deprecated": 0,
+      "discovered": 4,
+      "latency_ms": 3,
+      "model_calls": 0,
+      "tokens_saved": 0,
+      "failed_facets": [],
+      "glossary_links": 4,
+      "profile_errors": 0,
+      "needs_enrichment": 0,
+      "described_by_rules": 0,
+      "knowledge_revision": null,
+      "knowledge_documents": 0,
+      "pii_columns_by_name": 0,
+      "pii_columns_by_value": 0,
+      "value_sampled_assets": 4,
+      "knowledge_kept_curated": 0,
+      "relationships_declared": 0,
+      "query_history_statements": 17
+    },
+    "loaded": [
+      {
+        "asset": "src_src_67c1f2171270.customer",
+        "row_count": 2500,
+        "schema": "src_src_67c1f2171270",
+        "table": "customer",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "customer_name",
+            "type": "text"
+          },
+          {
+            "name": "email",
+            "type": "text"
+          },
+          {
+            "name": "segment",
+            "type": "text"
+          },
+          {
+            "name": "region_id",
+            "type": "bigint"
+          },
+          {
+            "name": "signup_date",
+            "type": "date"
+          }
+        ],
+        "content_fingerprint": "ad46ce5f6d7e6d59a7aae77f41f9f46d0f85f2672aaea87c63053b02ecc5557f",
+        "snapshot": {
+          "rows_staged": 2500,
+          "source_total_rows": 2500,
+          "total_rows_basis": "count",
+          "population_rows": 2500,
+          "row_cap": 1000000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-27T16:46:38.319893+00:00",
+          "load_id": "load_cff8b86ad8c3",
+          "content_fingerprint": "ad46ce5f6d7e6d59a7aae77f41f9f46d0f85f2672aaea87c63053b02ecc5557f"
+        },
+        "truncated": false
+      },
+      {
+        "asset": "src_src_67c1f2171270.orders",
+        "row_count": 24000,
+        "schema": "src_src_67c1f2171270",
+        "table": "orders",
+        "columns": [
+          {
+            "name": "order_id",
+            "type": "bigint"
+          },
+          {
+            "name": "customer_id",
+            "type": "bigint"
+          },
+          {
+            "name": "product_id",
+            "type": "bigint"
+          },
+          {
+            "name": "order_date",
+            "type": "date"
+          },
+          {
+            "name": "channel",
+            "type": "text"
+          },
+          {
+            "name": "sales_region",
+            "type": "text"
+          },
+          {
+            "name": "customer_segment",
+            "type": "text"
+          },
+          {
+            "name": "quantity",
+            "type": "bigint"
+          },
+          {
+            "name": "discount_pct",
+            "type": "double precision"
+          },
+          {
+            "name": "net_amount",
+            "type": "double precision"
+          },
+          {
+            "name": "shipping_days",
+            "type": "bigint"
+          },
+          {
+            "name": "returned",
+            "type": "boolean"
+          },
+          {
+            "name": "payment_method",
+            "type": "text"
+          }
+        ],
+        "content_fingerprint": "6089d41c72ba72c1e90c64837c92eb00c9ade4df69f6c6d230f383d350ff510c",
+        "snapshot": {
+          "rows_staged": 24000,
+          "source_total_rows": 24000,
+          "total_rows_basis": "count",
+          "population_rows": 24000,
+          "row_cap": 1000000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-27T16:46:38.887046+00:00",
+          "load_id": "load_9bdbd0190377",
+          "content_fingerprint": "6089d41c72ba72c1e90c64837c92eb00c9ade4df69f6c6d230f383d350ff510c"
+        },
+        "truncated": false
+      },
+      {
+        "asset": "src_src_67c1f2171270.product",
+        "row_count": 60,
+        "schema": "src_src_67c1f2171270",
+        "table": "product",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "category",
+            "type": "text"
+          },
+          {
+            "name": "list_price",
+            "type": "double precision"
+          }
+        ],
+        "content_fingerprint": "2bd49e4bba53fc6ea921762593ae270ce489980951deb66343d126568eec53db",
+        "snapshot": {
+          "rows_staged": 60,
+          "source_total_rows": 60,
+          "total_rows_basis": "count",
+          "population_rows": 60,
+          "row_cap": 1000000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-27T16:46:38.910872+00:00",
+          "load_id": "load_bd7378ff98d2",
+          "content_fingerprint": "2bd49e4bba53fc6ea921762593ae270ce489980951deb66343d126568eec53db"
+        },
+        "truncated": false
+      },
+      {
+        "asset": "src_src_67c1f2171270.region",
+        "row_count": 4,
+        "schema": "src_src_67c1f2171270",
+        "table": "region",
+        "columns": [
+          {
+            "name": "id",
+            "type": "bigint"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "country",
+            "type": "text"
+          }
+        ],
+        "content_fingerprint": "f069ab6c23814e70db1a579c7416f07c63ff3b18d85f26d7eb8a0a9e96ef1a37",
+        "snapshot": {
+          "rows_staged": 4,
+          "source_total_rows": 4,
+          "total_rows_basis": "count",
+          "population_rows": 4,
+          "row_cap": 1000000,
+          "truncated": false,
+          "sampling_method": "undeclared",
+          "sampling": {
+            "method": "undeclared"
+          },
+          "representative": true,
+          "staged_at": "2026-09-27T16:46:38.929357+00:00",
+          "load_id": "load_79edcc3eb988",
+          "content_fingerprint": "f069ab6c23814e70db1a579c7416f07c63ff3b18d85f26d7eb8a0a9e96ef1a37"
+        },
+        "truncated": false
+      }
+    ]
+  },
+  "crawl_drift": {
+    "stats": {
+      "new": 0,
+      "graph": false,
+      "facets": {
+        "graph": {
+          "ms": 2,
+          "status": "ok"
+        },
+        "enrich": {
+          "ms": 30,
+          "status": "ok"
+        },
+        "profile": {
+          "ms": 774,
+          "status": "ok"
+        },
+        "glossary": {
+          "ms": 19,
+          "status": "ok"
+        },
+        "knowledge": {
+          "ms": 145,
+          "count": 2,
+          "status": "ok"
+        },
+        "query_history": {
+          "ms": 179,
+          "count": 35,
+          "status": "ok"
+        },
+        "relationships": {
+          "ms": 3,
+          "status": "ok"
+        }
+      },
+      "changed": 1,
+      "missing": 0,
+      "renamed": 0,
+      "touched": 4,
+      "in_scope": 4,
+      "profiled": 4,
+      "restaged": 1,
+      "truncated": 0,
+      "unchanged": 3,
+      "deprecated": 0,
+      "discovered": 4,
+      "latency_ms": 1,
+      "model_calls": 0,
+      "tokens_saved": 2880,
+      "failed_facets": [],
+      "glossary_links": 4,
+      "profile_errors": 0,
+      "needs_enrichment": 0,
+      "described_by_rules": 3,
+      "knowledge_revision": 3,
+      "knowledge_documents": 2,
+      "pii_columns_by_name": 0,
+      "pii_columns_by_value": 0,
+      "value_sampled_assets": 4,
+      "knowledge_kept_curated": 0,
+      "relationships_declared": 0,
+      "query_history_statements": 35
+    },
+    "changes": {
+      "new": [],
+      "changed": [
+        {
+          "key": "main.orders",
+          "added": [
+            "coupon_code"
+          ],
+          "removed": [],
+          "retyped": [],
+          "fingerprint": "ffce009a4ad8a64aca2e904f747dc4e02d13e9c59a8a08d65fe74aa9435a634a",
+          "attributes_changed": false,
+          "previous_fingerprint": "544110be3e2d55fa5cbec5de856867882504607e7e82d94d1fd8593c4dcb9388"
+        }
+      ],
+      "missing": [],
+      "deprecated": [],
+      "rename_candidates": []
+    },
+    "notification": "Schema changed in Retail shop (SQLite)"
+  },
+  "explain": {
+    "accepted": "Returns channel and average of net_amount from src_src_67c1f2171270.orders, keeping rows where returned, grouped by channel, ordered by avg_value descending.",
+    "rejected": {
+      "accepted": false,
+      "code": "sql_rejected",
+      "reason": "Column src_src_67c1f2171270.customer.email is restricted by policy and cannot be referenced. Remove it from the query."
+    }
+  },
+  "analysis": {
+    "run_id": "run_0fabc04d8578",
+    "verified": [
+      "Shipping days is higher for sales region = APAC",
+      "Returned concentrates in channel = marketplace",
+      "Net amount is higher for customer segment = Enterprise",
+      "Returned is driven mainly by channel"
+    ],
+    "planted": {
+      "returns_by_channel": true,
+      "value_by_segment": true,
+      "shipping_by_region": true
+    },
+    "cost_usd": 0.0,
+    "tokens": 0,
+    "model_calls": 0,
+    "cache_hits": 0,
+    "tokens_saved": 14166,
+    "deterministic_skips": [
+      [
+        "planning",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "hypothesis_generation",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "hypothesis_priority",
+        "rule decided; no model route"
+      ],
+      [
+        "follow_up_generation",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "hypothesis_priority",
+        "rule decided; no model route"
+      ],
+      [
+        "stop_check",
+        "rule decided; no model route"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "insight_narrative",
+        "mode=auto: deterministic result used"
+      ],
+      [
+        "verification",
+        "workspace policy: independent-model verification is opt-in; deterministic REV checks decide"
+      ],
+      [
+        "verification",
+        "workspace policy: independent-model verification is opt-in; deterministic REV checks decide"
+      ],
+      [
+        "verification",
+        "workspace policy: independent-model verification is opt-in; deterministic REV checks decide"
+      ],
+      [
+        "verification",
+        "workspace policy: independent-model verification is opt-in; deterministic REV checks decide"
+      ],
+      [
+        "summarization",
+        "mode=auto: deterministic result used"
+      ]
+    ],
+    "publication": {
+      "urls": {
+        "executive": "http://localhost:8098/superset/dashboard/17/",
+        "operational": "http://localhost:8098/superset/dashboard/18/"
+      },
+      "status": "succeeded",
+      "external_ids": {
+        "charts": {
+          "detail_table": 75,
+          "trend_volume": 73,
+          "heat_dow_hour": 74,
+          "kpi_record_count": 71,
+          "kpi_avg_discount_pct": 72
+        },
+        "metrics": {
+          "aos_understand_what_drives_product_4d8578:record_count": 64,
+          "aos_understand_what_drives_product_4d8578:avg_discount_pct": 65
+        },
+        "database": 9,
+        "datasets": {
+          "aos_understand_what_drives_product_4d8578": 10
+        },
+        "dashboards": {
+          "executive": 17,
+          "operational": 18
+        },
+        "bundle_hash": "76b2e2f9069d22b332320eecabda9503b08ce8926eb4072545bcb150af09648a",
+        "idempotency_key": "run_0fabc04d8578:76b2e2f9069d22b332320eecabda9503",
+        "database_created": true
+      },
+      "publication_id": "pub_c2ff3cada50f"
+    }
+  },
+  "token_savings": {
+    "days": 1,
+    "totals": {
+      "calls": 0,
+      "tokens_used": 0,
+      "tokens_saved": 106000,
+      "cost_usd": 0.0,
+      "cache_hits": 0,
+      "deterministic_skips": 99,
+      "refused": 0,
+      "saved_share": 1.0,
+      "missing_price_calls": 0,
+      "escalations": 0,
+      "escalation_cost_usd": 0
+    },
+    "by_purpose": {
+      "metadata_enrichment": {
+        "calls": 0,
+        "answered": 3,
+        "tokens_used": 0,
+        "tokens_saved": 8640,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 3
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 3,
+            "tokens_used": 0,
+            "tokens_saved": 8640,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "feedback_interpretation": {
+        "calls": 0,
+        "answered": 1,
+        "tokens_used": 0,
+        "tokens_saved": 1500,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 1
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 1,
+            "tokens_used": 0,
+            "tokens_saved": 1500,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "feedback_classification": {
+        "calls": 0,
+        "answered": 1,
+        "tokens_used": 0,
+        "tokens_saved": 0,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 1
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 1,
+            "tokens_used": 0,
+            "tokens_saved": 0,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "planning": {
+        "calls": 0,
+        "answered": 4,
+        "tokens_used": 0,
+        "tokens_saved": 4249,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 4
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 4,
+            "tokens_used": 0,
+            "tokens_saved": 4249,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "follow_up_generation": {
+        "calls": 0,
+        "answered": 5,
+        "tokens_used": 0,
+        "tokens_saved": 24989,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 5
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 5,
+            "tokens_used": 0,
+            "tokens_saved": 24989,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "semantic_modeling": {
+        "calls": 0,
+        "answered": 3,
+        "tokens_used": 0,
+        "tokens_saved": 4652,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 3
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 3,
+            "tokens_used": 0,
+            "tokens_saved": 4652,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "rev_second_opinion": {
+        "calls": 0,
+        "answered": 7,
+        "tokens_used": 0,
+        "tokens_saved": 2800,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 7
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 7,
+            "tokens_used": 0,
+            "tokens_saved": 2800,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "hypothesis_priority": {
+        "calls": 0,
+        "answered": 9,
+        "tokens_used": 0,
+        "tokens_saved": 0,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 9
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 9,
+            "tokens_used": 0,
+            "tokens_saved": 0,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "hypothesis_generation": {
+        "calls": 0,
+        "answered": 5,
+        "tokens_used": 0,
+        "tokens_saved": 12450,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 5
+        },
+        "by_rung": {
+          "registry": {
+            "calls": 0,
+            "answered": 1,
+            "tokens_used": 0,
+            "tokens_saved": 2813,
+            "cost_usd": 0.0
+          },
+          "rules": {
+            "calls": 0,
+            "answered": 4,
+            "tokens_used": 0,
+            "tokens_saved": 9637,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "chart_selection": {
+        "calls": 0,
+        "answered": 6,
+        "tokens_used": 0,
+        "tokens_saved": 0,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 6
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 6,
+            "tokens_used": 0,
+            "tokens_saved": 0,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "insight_narrative": {
+        "calls": 0,
+        "answered": 25,
+        "tokens_used": 0,
+        "tokens_saved": 17028,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 25
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 25,
+            "tokens_used": 0,
+            "tokens_saved": 17028,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "stop_check": {
+        "calls": 0,
+        "answered": 1,
+        "tokens_used": 0,
+        "tokens_saved": 0,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 1
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 1,
+            "tokens_used": 0,
+            "tokens_saved": 0,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "summarization": {
+        "calls": 0,
+        "answered": 4,
+        "tokens_used": 0,
+        "tokens_saved": 3996,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 4
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 4,
+            "tokens_used": 0,
+            "tokens_saved": 3996,
+            "cost_usd": 0.0
+          }
+        }
+      },
+      "verification": {
+        "calls": 0,
+        "answered": 25,
+        "tokens_used": 0,
+        "tokens_saved": 25696,
+        "cost_usd": 0.0,
+        "by_status": {
+          "skipped": 25
+        },
+        "by_rung": {
+          "rules": {
+            "calls": 0,
+            "answered": 25,
+            "tokens_used": 0,
+            "tokens_saved": 25696,
+            "cost_usd": 0.0
+          }
+        }
+      }
+    },
+    "by_rung": {
+      "rules": {
+        "calls": 0,
+        "answered": 98,
+        "tokens_used": 0,
+        "tokens_saved": 103187,
+        "cost_usd": 0.0
+      },
+      "registry": {
+        "calls": 0,
+        "answered": 1,
+        "tokens_used": 0,
+        "tokens_saved": 2813,
+        "cost_usd": 0.0
+      }
+    },
+    "by_model": {},
+    "escalations": {},
+    "missing_price": [],
+    "prices_version": "2026-09-25",
+    "cost_complete": true
+  },
+  "monitor": {
+    "period": "2025-09-15",
+    "value": 82.0,
+    "points": 90,
+    "series_tail": [
+      [
+        "2025-06-30",
+        135.0
+      ],
+      [
+        "2025-07-07",
+        121.0
+      ],
+      [
+        "2025-07-14",
+        140.0
+      ],
+      [
+        "2025-07-21",
+        113.0
+      ],
+      [
+        "2025-07-28",
+        130.0
+      ],
+      [
+        "2025-08-04",
+        115.0
+      ],
+      [
+        "2025-08-11",
+        129.0
+      ],
+      [
+        "2025-08-18",
+        87.0
+      ],
+      [
+        "2025-08-25",
+        106.0
+      ],
+      [
+        "2025-09-01",
+        101.0
+      ],
+      [
+        "2025-09-08",
+        80.0
+      ],
+      [
+        "2025-09-15",
+        82.0
+      ]
+    ],
+    "alert": false,
+    "severity": "warning",
+    "expected": 78.9048,
+    "lower": 24.1342,
+    "upper": 129.3374,
+    "z": 0.1471,
+    "direction": "above",
+    "pct_change": 0.0392,
+    "forecast_method": "holt_winters",
+    "warnings": [
+      "fewer than two full seasons of 52; seasonality not modelled"
+    ],
+    "message": "Record volume was 82 for 2025-09-15; the forecast from 59 prior periods expected 78.9 (interval 24.13 to 129.3), +3.9%.",
+    "metric": "Record volume",
+    "query_id": "qry_d038580b29ae",
+    "grain": "week",
+    "excluded_future_rows": 0,
+    "dropped_incomplete_period": "2025-09-22",
+    "alert_id": null
+  },
+  "scheduled_crawl": {
+    "id": "srun_3a7e302600c7",
+    "schedule_id": "sch_927372922e24",
+    "workspace_id": "ws_eeffafa29d49",
+    "fire_key": "sch_927372922e24:manual:2026-09-27T16:47:06.414327+00:00",
+    "scheduled_for": "2026-09-27T16:47:06.414327+00:00",
+    "trigger": "manual",
+    "status": "succeeded",
+    "result": {
+      "crawls": {
+        "src_67c1f2171270": {
+          "new": 0,
+          "changed": 0,
+          "crawl_id": "crl_61027f0d0e48",
+          "profiled": null,
+          "deprecated": 0
+        }
+      }
+    },
+    "error": null,
+    "started_at": "2026-09-27T16:47:06.412625+00:00",
+    "finished_at": "2026-09-27T16:47:06.984029+00:00"
+  }
+}
