@@ -8,6 +8,7 @@ import { toneFor } from "../lib/status";
 import { to } from "../routes";
 import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
 import { VerificationBadge, voidCause, WhyNumberButton } from "./WhyNumber";
+import { methodLabel, methodsLabel } from "../lib/methods";
 
 /**
  * The live hypothesis board (P4-U03, spec v3 §9 Investigate): one column per status, each
@@ -96,9 +97,9 @@ function HypothesisCard({ hypothesis: h, findings, ...rest }: { hypothesis: Hypo
       </div>
       <p className="hyp-card-statement">{h.statement}</p>
       <p className="muted small">
-        {r?.test ?? (h.methods.join(", ") || "method pending")}
+        <span title={r?.test ?? h.methods.join(", ")}>{r?.test ? methodLabel(r.test) : (methodsLabel(h.methods) || "method pending")}</span>
         {r && <> · n <Value value={r.n} format="int" /> · q {r.p_adjusted === null || r.p_adjusted === undefined ? <Value value={null} /> : fmtP(r.p_adjusted)}
-          {r.effect_size !== null && r.effect_size !== undefined && <> · {r.effect_label ?? "effect"} {fmtNumber(r.effect_size, 3)}</>}</>}
+          {r.effect_size !== null && r.effect_size !== undefined && <> · <span title={r.effect_label ?? undefined}>{r.effect_label ? methodLabel(r.effect_label) : "effect"}</span> {fmtNumber(r.effect_size, 3)}</>}</>}
       </p>
       {h.conclusion && <p className="small">{h.conclusion}</p>}
       {findings.length > 0 && (

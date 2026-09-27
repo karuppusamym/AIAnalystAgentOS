@@ -6,6 +6,7 @@ import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading
 import { VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
 import { fmtDate, fmtMs, fmtNumber, fmtP, fmtPct, fmtValue, plural, shortHash } from "../lib/format";
 import { useAsync } from "../lib/hooks";
+import { methodLabel } from "../lib/methods";
 
 /**
  * One finding in Outputs (the finding screen): the answer, how it was checked, its numbers with
@@ -148,8 +149,8 @@ function EvidenceSection({ d }: { d: InsightDetail }) {
         return (
           <details key={e.id} className="evidence-item">
             <summary>
-              Test <span className="tag">{e.role}</span> <span className="muted small">{e.method} · {String(res.test ?? "")} · p={fmtP(res.p_value)}
-                · p_adj={fmtP(res.p_adjusted)} · {String(res.effect_label ?? "effect")}={fmtNumber(res.effect_size as number, 3)}</span>
+              Test <span className="tag">{e.role}</span> <span className="muted small">{methodLabel(e.method)} · {res.test ? methodLabel(String(res.test)) : ""} · p={fmtP(res.p_value)}
+                · p_adj={fmtP(res.p_adjusted)} · {res.effect_label ? methodLabel(String(res.effect_label)) : "effect"}={fmtNumber(res.effect_size as number, 3)}</span>
             </summary>
             <KeyValue items={[["n", fmtNumber(res.n)], ["Supported", String(res.supported ?? "—")], ["Queries", e.query_ids.join(", ") || "—"]]} />
             {groups.length > 0 && <RecordTable records={groups} maxRows={30} />}

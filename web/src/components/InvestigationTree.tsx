@@ -5,6 +5,7 @@ import { fmtNumber, fmtP, fmtValue } from "../lib/format";
 import { hypothesisIcon, toneFor } from "../lib/status";
 import { buildInvestigationTree, orphanFindings, type HypNode } from "../lib/tree";
 import { ConfidenceBar, EmptyState, RecordTable, StatusBadge, Tag } from "./ui";
+import { methodLabel, methodsLabel } from "../lib/methods";
 
 function Finding({ wsId, insight }: { wsId: string; insight: Insight }) {
   return (
@@ -40,12 +41,12 @@ function HypothesisItem({ wsId, node }: { wsId: string; node: HypNode }) {
         </summary>
         <div className="tree-hyp-body">
           <div className="chip-row small">
-            <span><span className="muted">Method:</span> {r?.test ?? (h.methods.join(", ") || "—")}</span>
+            <span><span className="muted">Method:</span> <span title={r?.test ?? h.methods.join(", ")}>{r?.test ? methodLabel(r.test) : (methodsLabel(h.methods) || "—")}</span></span>
             {r && <>
               <span><span className="muted">n=</span>{fmtNumber(r.n)}</span>
               <span><span className="muted">p=</span>{fmtP(r.p_value)}</span>
               <span><span className="muted">p_adj=</span>{fmtP(r.p_adjusted)}</span>
-              <span><span className="muted">{r.effect_label ?? "effect"}=</span>{fmtNumber(r.effect_size, 3)}</span>
+              <span><span className="muted" title={r.effect_label ?? undefined}>{r.effect_label ? methodLabel(r.effect_label) : "effect"}=</span>{fmtNumber(r.effect_size, 3)}</span>
             </>}
             <span className="muted">origin: {h.origin} · iteration {h.iteration}</span>
           </div>

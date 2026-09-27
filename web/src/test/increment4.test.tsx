@@ -145,7 +145,7 @@ describe("renderer registry", () => {
     render(<ResultView rendererId="renderer.stat_result" value={FUNNEL_RESULT} />);
     expect(screen.getByText("1,830")).toBeTruthy();
     expect(screen.getByText("0.0042")).toBeTruthy();
-    expect(screen.getByText("cramers_v")).toBeTruthy();
+    expect(screen.getByText("Cramér's V effect")).toBeTruthy(); // plain words (UI review P2-17); the code stays in the tooltip
     expect(screen.getByText("supported")).toBeTruthy();
   });
 });
