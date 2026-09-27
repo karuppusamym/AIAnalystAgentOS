@@ -5,6 +5,9 @@
 # ANALYSTOS_REDIS_URL); Superset is off (publishing uses the preview destination) until supersetUrl is set.
 # The scheduler runs inside the API process (ANALYSTOS_INPROCESS_SCHEDULER), so its Deployment scales to 0.
 # For no Temporal at all use the lite profile: orchestrator local, workers {} (the API runs every step).
+# Image: the chart runs one image for every pod, and here the API talks to Temporal and the `all` worker runs
+# the compute queue (driver model, Holt-Winters): build deploy/docker/Dockerfile with EXTRAS=standard
+# (tests/unit/test_slim_install.py keeps this consistent with the extras and compose).
 
 config:
   supersetUrl: ""                    # no `bi` profile: preview publishing; set a URL to add Superset
