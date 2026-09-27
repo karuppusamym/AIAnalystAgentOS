@@ -699,11 +699,23 @@ def _day(v: Any) -> str:
     return str(v)[:10]
 
 
+NEARLY_UNIQUE = 0.98  # distinct/non-empty at or above this (but not all distinct) reads as a code that should be unique
+
+
+def _after_today(v: Any, today: str | None = None) -> bool:
+    """A datetime profile maximum after today: future-dated rows, usually a data-entry or timezone defect."""
+    from datetime import UTC, datetime
+
+    day = _day(v)
+    return len(day) == 10 and day > (today or datetime.now(UTC).strftime("%Y-%m-%d"))
+
+
 def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = None, references: str | None = None,
-                    sensitive: bool = False, entity: str = "record") -> str:
+                    sensitive: bool = False, entity: str = "record", today: str | None = None) -> str:
     """One plain sentence: what the column means (rule role, unit, reference) and what the profile measured
-    (always present or missing in N% of rows, unique per row, N distinct values or the complete short list of
-    values, numeric/date range, share true). Values and ranges are never stated for a sensitive column."""
+    (always present or missing in N% of rows, unique per row or nearly unique with repeats counted, N distinct
+    values or the complete short list of values, numeric/date range with future dates called out, share true).
+    Values and ranges are never stated for a sensitive column."""
     role = str(sem.get("semantic_role") or "unknown")
     unit = sem.get("unit")
     if role == "foreign_key":
@@ -711,6 +723,8 @@ def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = Non
         meaning = f"Reference to {target}" + (f" ({references})" if references else "")
     else:
         meaning = _COLUMN_MEANING.get(role, "Column").format(entity=entity or "record")
+        if role in ("dimension", "code", "unknown") and (profile or {}).get("semantic_type") == "id":
+            meaning = "Identifier-like code"
         if role == "duration" and unit:
             meaning += f" in {unit}"
         elif role == "measure" and unit == "count":
@@ -731,6 +745,10 @@ def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = Non
         if isinstance(distinct, int) and non_null > 1 and not continuous:
             if distinct == non_null:
                 facts.append("unique per row" if nulls == 0 else "unique where present")
+            elif distinct / non_null >= NEARLY_UNIQUE:
+                repeats = non_null - distinct
+                facts.append(f"nearly unique: {repeats:,} value{'s' if repeats != 1 else ''} repeat{'' if repeats != 1 else 's'} "
+                             f"(check for duplicates)")
             elif not sensitive and p.get("values_complete") and p.get("values") \
                     and len(p["values"]) <= ENUM_IN_DESCRIPTION:
                 facts.append("one of " + ", ".join(str(v) for v in p["values"]))
@@ -740,6 +758,8 @@ def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = Non
             lo, hi = p.get("min"), p.get("max")
             if lo is not None and hi is not None and p.get("type_family") == "datetime":
                 facts.append(f"from {_day(lo)} to {_day(hi)}" if _day(lo) != _day(hi) else f"on {_day(lo)}")
+                if _after_today(hi, today):
+                    facts.append("some rows are dated after today")
             elif lo is not None and hi is not None and p.get("type_family") == "numeric" and role != "identifier" \
                     and role != "foreign_key":
                 facts.append(f"from {_num_text(lo)} to {_num_text(hi)}" if lo != hi else f"always {_num_text(lo)}")
@@ -755,7 +775,7 @@ def describe_table(sem: dict[str, Any], *, business_name: str, kind: str = "tabl
     main tables it references. Only facts the metadata or the profile hold."""
     role = str(sem.get("role") or "unknown")
     noun = _ROLE_PHRASE.get(role, "Table")
-    if kind != "table":
+    if kind in ("view", "materialized_view", "external_table"):  # an API endpoint or a file still reads as a table
         noun = noun.replace("table", kind.replace("_", " "))
     domain = str(sem.get("domain") or "generic")
     dom = f" in the {domain.replace('_', ' ')} domain" if domain != "generic" else ""

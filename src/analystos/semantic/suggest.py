@@ -126,13 +126,13 @@ def _table(asset: SourceAsset, cols: list[SourceColumn], approved: list[str] | N
     time_column = _time_column(cols)
     issues = []
     if pk["evidence"] == "none":
-        issues.append({"code": "no_primary_key", "message": "no declared, measured or profiled unique key"})
+        issues.append({"code": "no_primary_key", "message": "No unique key: none is declared, measured or found in the profile"})
     elif pk["unique"] is False:
-        issues.append({"code": "key_not_unique", "message": f"key {', '.join(pk['columns'])} has duplicate or missing values"})
+        issues.append({"code": "key_not_unique", "message": f"The key {', '.join(pk['columns'])} has duplicate or missing values"})
     if role in FACT_ROLES and not time_column:
-        issues.append({"code": "fact_without_time", "message": "a fact table without a date/time column cannot be trended"})
+        issues.append({"code": "fact_without_time", "message": "A fact table without a date or time column cannot be trended"})
     if not (asset.stats or {}).get("profile_meta"):
-        issues.append({"code": "not_profiled", "message": "no profile yet: keys and ranges are not measured"})
+        issues.append({"code": "not_profiled", "message": "Not profiled yet: keys and ranges are not measured"})
     confidence = float(sem.get("confidence") or 0.0)
     if pk["unique"] is True:
         confidence = min(1.0, confidence + 0.05)
@@ -227,24 +227,29 @@ def suggest(session: Session, workspace_id: str) -> dict[str, Any]:
     rels = relationships(session, workspace_id, assets)
     by_id = {t["asset_id"]: t for t in tables}
     issues: list[dict[str, Any]] = []
+    def called(t: dict[str, Any]) -> str:  # the name a person knows the table by, not its staged schema
+        return str(t.get("business_name") or t.get("name") or t["fq"])
+
     for t in tables:
-        issues += [{**i, "asset_id": t["asset_id"]} for i in t["issues"]]
+        issues += [{**i, "message": f"{called(t)}: {i['message'][:1].lower()}{i['message'][1:]}", "asset_id": t["asset_id"]}
+                   for i in t["issues"]]
     linked = {r["from"]["asset_id"] for r in rels} | {r["to"]["asset_id"] for r in rels}
     if len(tables) > 1:
         for t in tables:
             if t["asset_id"] not in linked:
-                issues.append({"code": "orphan_table", "message": f"{t['fq']} joins no other selected table",
+                issues.append({"code": "orphan_table", "message": f"{called(t)} joins no other selected table",
                                "asset_id": t["asset_id"]})
     pairs: dict[tuple[str, str], int] = defaultdict(int)
     for r in rels:
         pairs[tuple(sorted((r["from"]["asset_id"], r["to"]["asset_id"])))] += 1  # type: ignore[index]
         if r["cardinality"] == "many_to_many":
             issues.append({"code": "many_to_many_without_bridge",
-                           "message": f"{r['from']['fq']} and {r['to']['fq']} join many-to-many: additive measures would "
+                           "message": f"{called(by_id[r['from']['asset_id']])} and {called(by_id[r['to']['asset_id']])} join "
+                                      "many-to-many: additive measures would "
                                       "be multiplied; join through a bridge table", "asset_id": r["from"]["asset_id"]})
     for (a, b), n in sorted(pairs.items()):
         if n > 1:
-            issues.append({"code": "ambiguous_join", "message": f"{by_id[a]['fq']} and {by_id[b]['fq']} join on {n} different "
+            issues.append({"code": "ambiguous_join", "message": f"{called(by_id[a])} and {called(by_id[b])} join on {n} different "
                                                                 "column sets: choose one", "asset_id": a})
     stars = []
     for t in tables:

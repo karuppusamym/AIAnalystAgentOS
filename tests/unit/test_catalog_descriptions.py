@@ -101,3 +101,22 @@ def test_only_declared_or_corroborated_joins_validate_themselves():
     assert auto_validates(declared)
     assert not auto_validates({**declared, "evidence": {"source": "declared", "containment": 0.9}})  # orphans
     assert not auto_validates({**declared, "cardinality": "many_to_many"})
+
+
+def test_a_nearly_unique_code_counts_its_repeats_and_future_dates_are_called_out():
+    from analystos.skills.catalog import describe_column, describe_table
+
+    number = describe_column({"semantic_role": "dimension"}, profile={
+        "non_null": 20000, "null_count": 0, "distinct": 19985, "semantic_type": "id", "type_family": "text"})
+    assert number == "Identifier-like code; always present; nearly unique: 15 values repeat (check for duplicates)."
+    opened = describe_column({"semantic_role": "timestamp"}, profile={
+        "non_null": 10, "null_count": 0, "distinct": 10, "type_family": "datetime",
+        "min": "2025-09-01T10:00:00", "max": "2027-01-08T09:00:00"}, today="2026-09-27")
+    assert opened.endswith("from 2025-09-01 to 2027-01-08; some rows are dated after today.")
+    past = describe_column({"semantic_role": "timestamp"}, profile={
+        "non_null": 10, "null_count": 0, "distinct": 10, "type_family": "datetime",
+        "min": "2025-09-01", "max": "2026-08-31"}, today="2026-09-27")
+    assert "after today" not in past
+    api_table = describe_table({"role": "fact", "entity": "incident", "grain": "one row per incident"}, business_name="Incident",
+                               kind="api", row_count=20000)
+    assert "api" not in api_table.lower()
