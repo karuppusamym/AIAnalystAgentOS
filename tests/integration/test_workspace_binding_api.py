@@ -164,7 +164,10 @@ def _call(api, method: str, template: str, body, headers, **names):
 def _assert_denied(r, twin) -> None:
     # 404; or 403 when the caller's role in the path's own workspace is too low (decided before any lookup)
     assert r.status_code == 404 or (r.status_code == 403 and twin.status_code == 403), r.text
-    assert r.json() == twin.json(), (r.text, twin.text)  # identical to an unknown id: existence never leaks
+    # identical to an unknown id (existence never leaks), apart from the per-request id every envelope carries (P4-06)
+    body, twin_body = r.json(), twin.json()
+    assert body["error"].pop("request_id") and twin_body["error"].pop("request_id")
+    assert body == twin_body, (r.text, twin.text)
     assert SECRET not in r.text and set(r.json()) == {"error"}
 
 
