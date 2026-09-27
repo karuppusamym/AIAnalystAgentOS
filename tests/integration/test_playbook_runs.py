@@ -130,7 +130,22 @@ def _services(proposals=None, *, key: bool = True):
     from analystos.runtime.usage import DbUsageSink
 
     def chat(payload):
-        state = json.loads(payload["messages"][1]["content"])
+        # The prompt is a cached stable prefix plus a volatile message (token economy); the agent's state is
+        # every JSON object in the user messages, merged (scope in the prefix, history in the last message).
+        state: dict = {}
+        decoder = json.JSONDecoder()
+        for message in payload["messages"]:
+            text = message.get("content") if message.get("role") == "user" else None
+            i = 0
+            while isinstance(text, str) and (i := text.find("{", i)) != -1:
+                try:
+                    obj, end = decoder.raw_decode(text, i)
+                except ValueError:
+                    i += 1
+                    continue
+                if isinstance(obj, dict):
+                    state.update(obj)
+                i = end
         return chat_json(proposals(state) if proposals else {})
 
     transport = FakeTransport(chat=chat)
