@@ -106,6 +106,7 @@ class ModelResponse:
     escalated_from: str | None = None  # the small-tier model whose answer failed validation (cheap first, escalate)
     escalation_reason: str | None = None
     validation_error: str | None = None  # the caller's `validate` rejected this (final) answer; not cached
+    routed_model: str | None = None  # the allowlisted model the request was sent to (the L0 cache key)
 
 
 @dataclass
@@ -429,12 +430,13 @@ class ModelRouter:
                          error=reason[:200], tokens_saved=estimated_tokens, answered_by=rung, cost_source="none")
 
     def _cost(self, model: str, usage: dict[str, Any], input_tokens: int, output_tokens: int) -> tuple[float, str]:
-        """Provider-reported cost first, else the versioned price table; a model with neither is
-        recorded as `missing_price` (surfaced in token savings), never silently as a known $0."""
+        """Provider-reported cost first, else the versioned price table (cached prompt tokens at the
+        provider's cache-read discount); a model with neither is recorded as `missing_price`
+        (surfaced in token savings), never silently as a known $0."""
         reported = usage.get("cost")
         if reported is not None:
             return float(reported), "provider"
-        priced = self.config.estimate_cost(model, input_tokens, output_tokens)
+        priced = self.config.estimate_cost(model, input_tokens, output_tokens, cached_prompt_tokens(usage))
         if priced is not None:
             return priced, f"price_table@{self.config.prices_version}"
         log.error("no price for model %s in price table %s and the provider reported no cost; cost recorded as missing_price",
@@ -652,6 +654,7 @@ class ModelRouter:
         profile_name, profile, models = self.candidates(purpose, ctx)
         escalation = self.escalation_tier(purpose, ctx, profile_name, profile, models)
         llm = self.settings
+        tier_before = [*models, *escalation]
         if profile.provider != "typesafe" and profile_name != "low_cost" and not profile.exclude_families \
                 and "low_cost" in self.config.profiles \
                 and getattr(self.sink, "remaining_fraction", lambda _c: 1.0)(ctx) < llm.downgrade_below_budget_fraction:
@@ -698,12 +701,18 @@ class ModelRouter:
         call = _Call(purpose=purpose, ctx=ctx, profile_name=profile_name, profile=profile, rung=rung, base_url=base_url,
                      key=key, safe_messages=safe_messages, request=request, request_hash=request_hash,
                      json_output=json_output, max_tokens=out_tokens, input_estimate=estimate, validate=validate)
-        cache_key = None
+        cache_payload = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
-            cache_key = ResponseCache.key(purpose, models, {"m": normalize_messages(safe_messages), "json": json_output,
-                                                            "max": max_tokens, "t": profile.temperature}, ctx.workspace_id,
-                                          knowledge_version=ctx.knowledge_version)
-            hit = self.cache.get(cache_key)
+            cache_payload = {"m": normalize_messages(safe_messages), "json": json_output, "max": max_tokens,
+                             "t": profile.temperature}
+            # Keyed on the model that answered: any allowed model's stored answer is a hit, so a budget
+            # downgrade (another tier) or an escalation still finds what an allowed model already said.
+            hit = None
+            for candidate in dict.fromkeys([*models, *escalation, *tier_before]):
+                hit = self.cache.get(ResponseCache.key(purpose, candidate, cache_payload, ctx.workspace_id,
+                                                       knowledge_version=ctx.knowledge_version))
+                if hit:
+                    break
             if hit:
                 cached = ModelResponse(text=hit["text"], data=hit.get("data"), model=hit["model"], provider=profile.provider,
                                        cached=True)
@@ -734,8 +743,9 @@ class ModelRouter:
                 return outcome.response  # the large tier is down: the caller validates and degrades
             outcome = outcome_large
         assert isinstance(outcome, ModelResponse)
-        if cache_key and not outcome.validation_error:
-            self.cache.set(cache_key, {"text": outcome.text, "data": outcome.data, "model": outcome.model,
+        if cache_payload is not None and not outcome.validation_error:
+            self.cache.set(ResponseCache.key(purpose, outcome.routed_model or outcome.model, cache_payload, ctx.workspace_id,
+                                             knowledge_version=ctx.knowledge_version), {"text": outcome.text, "data": outcome.data, "model": outcome.model,
                                        "input_tokens": outcome.input_tokens, "output_tokens": outcome.output_tokens},
                            llm.cache_ttl_hours * 3600)
         return outcome
@@ -808,7 +818,7 @@ class ModelRouter:
                         continue
                 response = ModelResponse(text=text, data=data, model=answered_model, provider=c.profile.provider,
                                          input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost, latency_ms=latency,
-                                         attempts=attempt, cached_input_tokens=cached_prompt_tokens(usage),
+                                         attempts=attempt, cached_input_tokens=cached_prompt_tokens(usage), routed_model=model,
                                          escalated_from=stage[0] if stage else None,
                                          escalation_reason=stage[1] if stage else None)
                 why = _failed_validation(c.validate, response)
@@ -856,7 +866,7 @@ class ModelRouter:
         llm = self.settings
         cache_key = None
         if llm.cache_enabled and purpose in llm.cacheable_purposes:
-            cache_key = ResponseCache.key(purpose, models, {"s": safe_state, "q": questions}, ctx.workspace_id,
+            cache_key = ResponseCache.key(purpose, models[0], {"s": safe_state, "q": questions}, ctx.workspace_id,
                                           knowledge_version=ctx.knowledge_version)
             hit = self.cache.get(cache_key)
             if hit:
