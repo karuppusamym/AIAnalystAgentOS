@@ -393,15 +393,39 @@ def _request(session: Session, row: SemanticRelationshipCandidate) -> Approval:
     return approval
 
 
+def _same_columns(session: Session, workspace_id: str, candidate: Any) -> list[SemanticRelationshipCandidate]:
+    """Every queued candidate (any status) over exactly these columns, newest first. Compared in Python: JSON
+    column equality is not portable across the control-plane databases."""
+    rows = session.scalars(select(SemanticRelationshipCandidate).where(
+        SemanticRelationshipCandidate.workspace_id == workspace_id,
+        SemanticRelationshipCandidate.from_asset == candidate.from_asset, SemanticRelationshipCandidate.to_asset == candidate.to_asset)
+        .order_by(SemanticRelationshipCandidate.created_at.desc(), SemanticRelationshipCandidate.id.desc()))
+    return [r for r in rows if list(r.from_columns or []) == list(candidate.from_columns)
+            and list(r.to_columns or []) == list(candidate.to_columns)]
+
+
+def decided_already(session: Session, workspace_id: str, candidate: Any) -> SemanticRelationshipCandidate | None:
+    """A decision that still stands for this measurement: a rejection of the same measurement (content hash),
+    or an acceptance with the same measured cardinality. Re-queuing either would ask a person again for
+    nothing new; a changed cardinality (a join that started to fan out) is new and is queued."""
+    digest = _content_hash(candidate)
+    for r in _same_columns(session, workspace_id, candidate):
+        if r.status == "rejected" and r.content_hash == digest:
+            return r
+        if r.status == "accepted" and r.cardinality == candidate.cardinality:
+            return r
+    return None
+
+
 def record_candidate(session: Session, workspace_id: str, candidate: Any, *, source_id: str | None, origin: str,
                      proposed_by: str) -> SemanticRelationshipCandidate:
     """Store a measured candidate (skills.relationships.RelationshipCandidate) as pending, or refresh the
-    pending one with the same columns (a changed measurement re-binds its approval)."""
-    existing = session.scalar(select(SemanticRelationshipCandidate).where(
-        SemanticRelationshipCandidate.workspace_id == workspace_id, SemanticRelationshipCandidate.status == "pending",
-        SemanticRelationshipCandidate.from_asset == candidate.from_asset, SemanticRelationshipCandidate.to_asset == candidate.to_asset,
-        SemanticRelationshipCandidate.from_columns == candidate.from_columns,
-        SemanticRelationshipCandidate.to_columns == candidate.to_columns))
+    pending one with the same columns (a changed measurement re-binds its approval). A measurement a person
+    already decided (`decided_already`) is not queued again: that decided row is returned."""
+    same = _same_columns(session, workspace_id, candidate)
+    existing = next((r for r in same if r.status == "pending"), None)
+    if existing is None and (decided := decided_already(session, workspace_id, candidate)) is not None:
+        return decided
     digest = _content_hash(candidate)
     row = existing or SemanticRelationshipCandidate(
         id=new_id("relc"), workspace_id=workspace_id, from_asset=candidate.from_asset, from_columns=list(candidate.from_columns),
@@ -443,15 +467,46 @@ def discover_candidates(session: Session, user: User, workspace_id: str, *, asse
     out = []
     for source_id, group in sorted(_scope_assets(session, scope, assets).items()):
         run_sql, _ = _runner(session, user, workspace_id, source_id)
-        found = discover_relationships(run_sql, group)
+        observed = observed_joins(session, workspace_id, source_id)
+        found = discover_relationships(run_sql, group, observed=observed)
         if composite:
-            found += discover_composite_relationships(run_sql, group)
+            found += discover_composite_relationships(run_sql, group, observed=observed)
         for c in found:
-            out.append(record_candidate(session, workspace_id, c, source_id=source_id, origin="discovered",
-                                        proposed_by=user.id))
+            row = record_candidate(session, workspace_id, c, source_id=source_id, origin="discovered", proposed_by=user.id)
+            if row.status == "pending":
+                out.append(row)
     audit(f"user:{user.id}", "semantic.relationship.discovered", workspace_id=workspace_id,
           details={"candidates": len(out), "assets": assets}, session=session)
     return out
+
+
+# Statements the platform sends to measure or describe data are not evidence that people join tables.
+PLATFORM_PURPOSES = ("crawl.%", "relationships.%", "profile.%", "metadata.%", "semantic.model_check%", "quality.%")
+OBSERVED_JOIN_STATEMENTS = 2000
+
+
+def observed_joins(session: Session, workspace_id: str, source_id: str, *,
+                   limit: int = OBSERVED_JOIN_STATEMENTS) -> dict[tuple[str, str, str, str], int]:
+    """Join counts (skills/query_history, structure only) over the source's recent successful governed queries,
+    the platform's own measuring statements excluded: the OBSERVED_QUERY_JOIN evidence of an assessment."""
+    from analystos.connectors.kinds import dialect_for
+    from analystos.db.models import QueryExecution, Source
+    from analystos.skills.query_history import mine
+
+    src = session.get(Source, source_id)
+    if src is None:
+        return {}
+    stmt = select(QueryExecution.sql).where(QueryExecution.workspace_id == workspace_id, QueryExecution.source_id == source_id,
+                                            QueryExecution.status == "ok",
+                                            *[QueryExecution.purpose.notlike(p) for p in PLATFORM_PURPOSES])
+    statements = list(session.scalars(stmt.order_by(QueryExecution.created_at.desc()).limit(limit)))
+    if not statements:
+        return {}
+    try:
+        dialect = dialect_for(src.kind, src.execution_mode)
+    except Exception:  # noqa: BLE001 - an unknown kind parses as the staged dialect
+        dialect = "postgres"
+    return dict(mine(statements, dialect=dialect).joins)
 
 
 def propose_candidate(session: Session, user: User, workspace_id: str, *, from_asset: str, from_columns: list[str],

@@ -82,14 +82,42 @@ def _plural_forms(stem: str) -> list[str]:
     return forms
 
 
+BASE_PREFIXES = ("dim_", "fact_", "fct_", "stg_", "raw_", "src_")
+
+
+def _singular(word: str) -> str:
+    w = word.lower()
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    if w.endswith("s") and not w.endswith(("ss", "us", "is")) and len(w) > 3:
+        return w[:-1]
+    return w
+
+
+def table_base(name: str) -> str:
+    """The entity a table holds: modelling prefixes (dim_, fact_, stg_, raw_, src_) stripped, the last word
+    singularised: `dim_customers` -> `customer`, `stg_order_categories` -> `order_category`."""
+    s = name.split(".")[-1].lower()
+    changed = True
+    while changed:
+        changed = False
+        for p in BASE_PREFIXES:
+            if s.startswith(p) and len(s) > len(p):
+                s, changed = s[len(p):], True
+    head, _, last = s.rpartition("_")
+    return f"{head}_{_singular(last)}" if head else _singular(last)
+
+
 def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from analystos.capabilities.packs import hints
 
     key_columns = [k.lower() for k in hints().key_columns]
     by_full = {a["asset"].lower(): a for a in assets}
     by_short: dict[str, list[dict[str, Any]]] = {}
+    by_base: dict[str, list[dict[str, Any]]] = {}
     for a in assets:
         by_short.setdefault(_short(a["asset"]), []).append(a)
+        by_base.setdefault(table_base(a["asset"]), []).append(a)
 
     def cols(a: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {c["name"].lower(): c for c in a.get("columns", [])}
@@ -147,12 +175,14 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             name = c["name"].lower()
             if name.endswith("_id") and len(name) > 3:
                 stem = name[:-3]
-                for form in _plural_forms(stem):
-                    for t in by_short.get(form, []):
-                        tc = cols(t)
-                        tcol = "id" if "id" in tc else name if name in tc else target_key(t)
-                        if tcol:
-                            add(a, c, t, tc[tcol.lower()]["name"] if tcol.lower() in tc else tcol, "name_heuristic")
+                targets = [t for form in _plural_forms(stem) for t in by_short.get(form, [])]
+                # table-base match: customer_id -> dim_customers, stg_customer (prefix stripped, singular)
+                targets += [t for t in by_base.get(table_base(stem), []) if t not in targets]
+                for t in targets:
+                    tc = cols(t)
+                    tcol = "id" if "id" in tc else name if name in tc else target_key(t)
+                    if tcol:
+                        add(a, c, t, tc[tcol.lower()]["name"] if tcol.lower() in tc else tcol, "name_heuristic")
             for t in assets:
                 if t is a:
                     continue
@@ -215,8 +245,10 @@ def measure_candidate(run_sql: RunSQL, dialect: str, a: dict[str, Any], c: dict[
                   "type_cast": mismatch, "sql": [sql, u["sql"]]})
 
 
-def discover_relationships(run_sql: RunSQL, assets: list[dict[str, Any]]) -> list[RelationshipCandidate]:
-    """assets: [{"asset": "schema.table", "columns": [{name, data_type, is_key, references}], "row_count"}]."""
+def discover_relationships(run_sql: RunSQL, assets: list[dict[str, Any]], *,
+                           observed: dict[JoinKey, int] | None = None) -> list[RelationshipCandidate]:
+    """assets: [{"asset": "schema.table", "columns": [{name, data_type, is_key, references}], "row_count"}];
+    `observed`: join counts from governed query history (corroborating evidence for the assessment)."""
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
     uniq_cache: dict[tuple[str, str], dict[str, Any]] = {}
     results: list[RelationshipCandidate] = []
@@ -227,7 +259,7 @@ def discover_relationships(run_sql: RunSQL, assets: list[dict[str, Any]]) -> lis
             continue
         if cand["source"] != "declared" and found.evidence["containment"] < MIN_CONTAINMENT:
             continue
-        results.append(with_assessment(found, assets))
+        results.append(with_assessment(found, assets, observed=observed))
     results.sort(key=lambda r: (-r.confidence, r.from_asset, r.from_column))
     return results
 
@@ -435,7 +467,8 @@ def measure_columns(run_sql: RunSQL, dialect: str, from_asset: str, from_columns
 
 
 def discover_composite_relationships(run_sql: RunSQL, assets: list[dict[str, Any]], *,
-                                     keys: dict[str, list[list[str]]] | None = None) -> list[RelationshipCandidate]:
+                                     keys: dict[str, list[list[str]]] | None = None,
+                                     observed: dict[JoinKey, int] | None = None) -> list[RelationshipCandidate]:
     """Composite foreign keys between the given assets: target keys are measured (`discover_keys`) unless
     given, candidates come from same-named columns, each is measured; low containment is dropped."""
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
@@ -446,7 +479,7 @@ def discover_composite_relationships(run_sql: RunSQL, assets: list[dict[str, Any
         found = measure_columns(run_sql, dialect, cand["from"], cand["from_columns"], cand["to"], cand["to_columns"],
                                 cand["source"])
         if found is not None and found.evidence["containment"] >= MIN_CONTAINMENT:
-            out.append(with_assessment(found, assets))
+            out.append(with_assessment(found, assets, observed=observed))
     out.sort(key=lambda r: (-r.confidence, r.from_asset, r.from_columns))
     return out
 
@@ -722,16 +755,40 @@ def _declared_fk(column: dict[str, Any], assets: dict[str, dict[str, Any]]) -> D
     return None
 
 
-def facts_for(candidate: RelationshipCandidate, assets: list[dict[str, Any]]) -> RelationshipFacts:
+JoinKey = tuple[str, str, str, str]
+
+
+def join_key(left_table: str, left_column: str, right_table: str, right_column: str) -> JoinKey:
+    """An undirected join between two columns, as `skills/query_history` counts it (sorted pair, lower case)."""
+    a, b = (left_table.lower(), left_column.lower()), (right_table.lower(), right_column.lower())
+    first, second = sorted([a, b])
+    return (*first, *second)  # type: ignore[return-value]
+
+
+def observed_join_count(candidate: RelationshipCandidate, observed: dict[JoinKey, int] | None) -> int:
+    """How often query history joined the candidate's columns; for a composite key, the least-joined pair."""
+    if not observed:
+        return 0
+    counts = [observed.get(join_key(candidate.from_asset, f, candidate.to_asset, t), 0)
+              for f, t in zip(candidate.from_columns, candidate.to_columns, strict=True)]
+    return min(counts) if counts else 0
+
+
+def facts_for(candidate: RelationshipCandidate, assets: list[dict[str, Any]], *,
+              observed: dict[JoinKey, int] | None = None) -> RelationshipFacts:
     """Assessment facts for a measured candidate: declarations from the asset metadata (`is_key`,
-    `references`, `nullable`), uniqueness and containment from the candidate's measurement."""
+    `references`, `nullable`), uniqueness and containment from the candidate's measurement, and how often
+    governed query history joined these columns (`observed`, from `skills/query_history` join counts).
+    Every `is_key` column of a table together is ONE declared key (a composite primary key's parts are not
+    keys by themselves)."""
     by = {a["asset"]: a for a in assets}
     ev = candidate.evidence
 
     def side(asset: str, names: list[str], rows: int, distinct: int) -> tuple[TableFacts, list[ColumnFacts]]:
         meta = by.get(asset, {"columns": []})
         cols = {c["name"].lower(): c for c in meta.get("columns", [])}
-        keys = tuple(frozenset([c["name"]]) for c in meta.get("columns", []) if c.get("is_key"))
+        key = frozenset(c["name"] for c in meta.get("columns", []) if c.get("is_key"))
+        keys = (key,) if key else ()
         fks = tuple(fk for c in meta.get("columns", []) if (fk := _declared_fk(c, by)) is not None)
         multi = len(names) > 1
         facts = TableFacts(asset, declared_keys=keys, foreign_keys=fks, measured_rows=rows if multi else None,
@@ -746,9 +803,14 @@ def facts_for(candidate: RelationshipCandidate, assets: list[dict[str, Any]]) ->
     tgt, t_cols = side(candidate.to_asset, candidate.to_columns, int(ev.get("target_rows") or 0),
                        int(ev.get("target_distinct") or 0))
     return RelationshipFacts(source=src, target=tgt, pairs=tuple(zip(s_cols, t_cols, strict=True)),
-                             detection_rule=str(ev.get("source") or ""), containment=ev.get("containment"))
+                             detection_rule=str(ev.get("source") or ""), containment=ev.get("containment"),
+                             observed_join_count=observed_join_count(candidate, observed))
 
 
-def with_assessment(candidate: RelationshipCandidate, assets: list[dict[str, Any]]) -> RelationshipCandidate:
-    candidate.assessment = assess_relationship(facts_for(candidate, assets)).as_evidence()
+def with_assessment(candidate: RelationshipCandidate, assets: list[dict[str, Any]], *,
+                    observed: dict[JoinKey, int] | None = None) -> RelationshipCandidate:
+    candidate.assessment = assess_relationship(facts_for(candidate, assets, observed=observed)).as_evidence()
+    joins = observed_join_count(candidate, observed)
+    if joins:
+        candidate.evidence = {**candidate.evidence, "observed_joins": joins}
     return candidate
