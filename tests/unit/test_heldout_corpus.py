@@ -134,6 +134,8 @@ def test_the_engineering_and_ml_judges(corpus):
     assert R.judge_ml(null, {"status": "succeeded", "verdict": "no_improvement"}).status == "correct_abstention"
     assert R.judge_ml(leak, {"status": "succeeded", "verdict": "no_improvement"}).status == "wrong_abstention"
     assert R.judge_ml(leak, None, refused="target_derived_features").status == "correct_abstention"
+    assert R.judge_abstention(leak, "denied", "capability disabled").status == "wrong_abstention"  # not the data's fault
+    assert R.judge_abstention(ml, "denied", "capability disabled").status == "unnecessary_abstention"
 
 
 def test_metrics_report_rates_latency_and_leave_infrastructure_unpriced():

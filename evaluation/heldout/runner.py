@@ -9,9 +9,10 @@ Every task ends in exactly one status:
                            should have been refused or blocked
   incomplete               a deliver task with a partial, not wrong, output (some planted effects missed; an
                            engineering output that would not publish)
-  unnecessary_abstention   a deliver task the platform declined (no findings, refused, no improvement)
+  unnecessary_abstention   a deliver task the platform declined (no findings, refused, denied, no improvement)
   wrong_abstention         an abstain task that abstained for another reason than the rubric's (e.g. a leak that
-                           trained and found no improvement instead of being refused)
+                           trained and found no improvement instead of being refused, or a governance denial
+                           such as a disabled capability, `denied`, where the rubric expects a data refusal)
   error                    the harness or the platform raised
 
 Two tiers run the same tasks and the same judges:
@@ -161,7 +162,7 @@ class TaskResult:
     abstain_kind: str | None
     status: str
     produced: str  # output | abstained | error
-    abstained_as: str | None = None  # no_finding | refused | blocked
+    abstained_as: str | None = None  # no_finding | refused | blocked | denied (authorization / enablement)
     reason: str = ""  # why this status, in words
     detail: dict[str, Any] = field(default_factory=dict)
     seconds: float = 0.0
@@ -445,7 +446,7 @@ def _upload_workspace(name: str, objective: str, files: dict[str, tuple[list[str
 
 def run_engineering_platform(task: Task) -> TaskResult:
     from analystos.contracts.recipe import RecipeInvalid
-    from analystos.core.errors import AnalystOSError
+    from analystos.core.errors import AnalystOSError, Forbidden, PolicyDenied
     from analystos.db.base import session_scope
     from analystos.services.recipes import run_recipe, save_recipe
 
@@ -462,6 +463,8 @@ def run_engineering_platform(task: Task) -> TaskResult:
         done = run_recipe(env["admin"], rid, env["ws"], mode="materialize")
     except RecipeInvalid as exc:
         return judge_engineering(task, refused=f"validation: {'; '.join(exc.problems)[:300]}")
+    except (Forbidden, PolicyDenied) as exc:
+        return judge_abstention(task, "denied", f"{type(exc).__name__}: {exc.message[:300]}")
     except AnalystOSError as exc:
         return judge_engineering(task, refused=f"{type(exc).__name__}: {exc.message[:300]}",
                                  run_ref=(exc.details or {}).get("recipe_run_id"))
@@ -481,14 +484,15 @@ def run_engineering_platform(task: Task) -> TaskResult:
 
 def run_ml_platform(task: Task) -> TaskResult:
     from analystos.contracts.definition import DefinitionDraftIn
-    from analystos.core.errors import AnalystOSError
+    from analystos.core.errors import AnalystOSError, Forbidden, PolicyDenied
     from analystos.db.base import session_scope
     from analystos.services import definitions as defs
     from analystos.services import ml
 
     (cols, rows, _types), spec = G.ml_task(task.generator, task.seed, task.variant or "")
     table = spec["dataset"]["asset"].split(".")[1]
-    env = _upload_workspace(task.id, task.objective, {table: (cols, rows)})
+    # An ML brief implies a workspace whose owner enabled ML, as the governed-ML runbook says to.
+    env = _upload_workspace(task.id, task.objective, {table: (cols, rows)}, enable=("playbook.train",))
     spec = {**spec, "dataset": {"asset": f"{env['schema']}.{table}"}}
     try:
         with session_scope() as s:
@@ -497,6 +501,8 @@ def run_ml_platform(task: Task) -> TaskResult:
             defs.publish(s, s.merge(env["admin"]), row, row.revision)
             def_id = row.id
         out = ml.start_experiment(env["admin"], env["ws"], def_id)
+    except (Forbidden, PolicyDenied) as exc:
+        return judge_abstention(task, "denied", f"{type(exc).__name__}: {exc.message[:300]}")
     except AnalystOSError as exc:
         return judge_ml(task, None, refused=f"{type(exc).__name__}: {exc.message[:300]}",
                         run_ref=(exc.details or {}).get("experiment_id"))
