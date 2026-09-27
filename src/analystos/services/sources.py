@@ -254,6 +254,7 @@ def tag_column(session: Session, user: User, asset_id: str, column: str, tags: l
     return col
 
 
+@scoped_loader
 def curate_column(session: Session, user: User, asset_id: str, column: str, patch: dict[str, str | None]) -> SourceColumn:
     """A person's business name / description for a column: origin `user`, so no crawl or knowledge ingest
     overwrites it. Same role as column tagging; an empty string clears the value (and it stays cleared)."""
