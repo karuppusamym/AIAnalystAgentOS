@@ -178,7 +178,20 @@ def health():
         r = default_router()
         return {"chat": r.available("planning"), "jev": r.available("risk_check")}
 
-    for name, fn in (("postgres", pg), ("redis", redis_), ("neo4j", neo), ("temporal", temporal), ("superset", superset), ("models", models)):
+    def worker():
+        if settings.orchestrator != "temporal":
+            return {"enabled": False, "status": "local orchestrator: runs execute in the API process"}
+        if not checks.get("temporal", {}).get("ok"):
+            raise RuntimeError("unknown: Temporal is not reachable")
+        from analystos.workflows.orchestrator import worker_status
+
+        st = worker_status()
+        if not st["ok"]:
+            raise RuntimeError(f"no worker is polling {', '.join(st['missing'])}")
+        return {"queues": st["queues"]}
+
+    for name, fn in (("postgres", pg), ("redis", redis_), ("neo4j", neo), ("temporal", temporal), ("worker", worker),
+                     ("superset", superset), ("models", models)):
         check(name, fn)
 
     # P4-02: the Python sandbox's isolation, as the gate sees it. Not ok = sandboxed code is refused
@@ -201,5 +214,33 @@ def health():
                                 "transport": transport if pools else None}
     from analystos.core.profiles import summary
 
-    return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "installation": summary(settings),
-            "checks": checks}
+    problems = health_problems(checks)
+    return {"ok": checks["postgres"]["ok"], "degraded": bool(problems), "problems": problems,
+            "orchestrator": settings.orchestrator, "installation": summary(settings), "checks": checks}
+
+
+# What a dependency being down means for someone using the product, and how loudly to say it: the UI's
+# status banner shows `critical` and `warning`; `info` (optional features with a fallback) stays in the details.
+HEALTH_IMPACT = {
+    "postgres": ("critical", "The platform database is unreachable: nothing can be loaded or saved until it is back."),
+    "temporal": ("critical", "Temporal is unreachable: new runs cannot start and running ones wait until it is back."),
+    "worker": ("critical", "No worker is running: runs stay queued until `analystos worker` is started."),
+    "redis": ("warning", "Redis is unreachable: model calls are refused (spend caps fail closed) and live updates "
+                         "fall back to polling."),
+    "superset": ("warning", "Superset is not reachable: new publications go to the in-platform preview, and an approved "
+                            "Superset publication fails until it is back."),
+    "neo4j": ("info", "Neo4j is unreachable: lineage is served from Postgres."),
+    "sandbox": ("info", "The Python sandbox is unavailable here: Python code steps are refused; analysis runs are unaffected."),
+}
+
+
+def health_problems(checks: dict[str, dict]) -> list[dict]:
+    """Label every check up / down / off (in place) and list the down ones with their plain-language impact."""
+    problems = []
+    for name, c in checks.items():
+        c["state"] = "off" if c.get("enabled") is False else "up" if c.get("ok") else "down"
+        if c["state"] == "down":
+            severity, message = HEALTH_IMPACT.get(name, ("warning", f"{name} is not healthy."))
+            problems.append({"dependency": name, "severity": severity, "message": message,
+                             "detail": c.get("error") or c.get("detail")})
+    return problems
