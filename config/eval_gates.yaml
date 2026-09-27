@@ -8,12 +8,13 @@
 # * `blocking: false` makes a tier a report: it runs and lists what it misses, but never fails the result.
 #
 # Run: python scripts/eval_gates.py [--tiers grounding,analytical_component,cost] [--out gate-result.json]
-version: 3
+version: 4
 owner: product owner (Context2AI)
 changelog:
   - {version: 1, date: 2026-09-26, change: "initial gates: today's measured values as the regression floor (P7-07)"}
   - {version: 2, date: 2026-09-26, change: "add the ml tier (P5-01..P5-04): leakage refused, baseline parity, null abstains"}
   - {version: 3, date: 2026-09-27, change: "add the heldout tier (P4-08) as a non-blocking report with proposed thresholds; blocking tiers unchanged"}
+  - {version: 4, date: 2026-09-27, change: "heldout corpus v2 (75 tasks, P4-08 plan size): the tasks floor rises 34 -> 60; still non-blocking, thresholds unchanged"}
 
 tiers:
   # --------------------------------------------------------------- deterministic: CI on every change
@@ -66,14 +67,14 @@ tiers:
     kind: deterministic
     runs: ci
     blocking: false                           # a report until the owner confirms the thresholds (P4-08)
-    suite: "evaluation/heldout/runner.py tier component (corpus.yaml v1: 18 analysis, 8 engineering, 8 ML tasks)"
-    metrics:                                  # PROPOSED (evaluation plan §3); measured 2026-09-27: 0.85 / 0 / 1.0 / 0
+    suite: "evaluation/heldout/runner.py tier component (corpus.yaml v2: 31 analysis, 15 engineering, 16 ML, 8 governance, 5 recovery)"
+    metrics:                                  # PROPOSED (evaluation plan §3); v1 measured 2026-09-27: 0.85 / 0 / 1.0 / 0
       accepted_output_rate: {min: 0.90}       # accepted outputs / deliver tasks
       confident_wrong: {max: 0}               # a false finding, a model `improved` on a null or leak, a wrong table
       abstention_recall: {min: 1.0}           # abstain tasks that ended as the rubric requires
       errors: {max: 0}
       corpus_frozen: {min: 1.0}               # the corpus still matches corpus.lock.json
-      tasks: {min: 34}                        # the corpus may not shrink silently
+      tasks: {min: 60}                        # the corpus may not shrink below the evaluation plan's size
   ask_fake:
     kind: deterministic
     runs: ci                                  # needs Postgres: tests/integration/test_ask_benchmark.py

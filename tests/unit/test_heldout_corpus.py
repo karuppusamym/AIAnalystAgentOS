@@ -13,6 +13,7 @@ from evaluation import ml_datasets as dev_ml
 from evaluation.heldout import baseline as B
 from evaluation.heldout import generators as G
 from evaluation.heldout import runner as R
+from evaluation.heldout import scenarios as S
 
 
 @pytest.fixture(scope="module")
@@ -22,15 +23,35 @@ def corpus():
 
 def test_the_corpus_is_well_formed_and_covers_every_family(corpus):
     assert R.corpus_problems(corpus) == []
-    assert len(corpus.tasks) >= 34
+    # evaluation plan §2: at least 60 tasks, 20 analyst, 15 engineering, 15 ML, 10 unsupported / insufficient
+    assert len(corpus.tasks) >= 60
+    count = {f: sum(t.family == f for t in corpus.tasks) for f in R.FAMILIES}
+    assert count["analysis"] >= 20 and count["engineering"] >= 15 and count["ml"] >= 15, count
+    assert sum(t.expect == "abstain" for t in corpus.tasks) >= 10
     for family in R.FAMILIES:
         tasks = [t for t in corpus.tasks if t.family == family]
         assert {t.expect for t in tasks} == {"deliver", "abstain"}, family
     analysis = {t.domain for t in corpus.tasks if t.family == "analysis"}
-    assert analysis == {"itsm", "sales", "finance"}
+    assert analysis == {"itsm", "sales", "finance", "retail", "logistics", "saas_ops", "transfer"}
     for domain in analysis:
         kinds = {(t.expect, t.effects) for t in corpus.tasks if t.domain == domain}
         assert ("deliver", True) in kinds and ("abstain", False) in kinds  # planted truths and null controls
+
+
+def test_transfer_tasks_rename_every_column_and_keep_the_values(corpus):
+    """The transfer suite changes names and order only: the renamed table holds the same values."""
+    from evaluation.heldout.generators import ANALYSIS
+
+    transfer = [t for t in corpus.tasks if t.transform]
+    assert len(transfer) >= 4 and {t.domain for t in transfer} == {"transfer"}
+    for t in transfer:
+        base = ANALYSIS[t.generator](t.seed, effects=t.effects).frame
+        ds = R.analysis_dataset(t)
+        assert ds.table == t.transform["table"] and not set(base.columns) & set(ds.frame.columns), t.id
+        back = ds.frame.rename(columns={v: k for k, v in t.transform["rename"].items()})[list(base.columns)]
+        key = base.columns[0]
+        pd.testing.assert_frame_equal(back.sort_values(key).reset_index(drop=True), base.sort_values(key).reset_index(drop=True))
+        assert list(ds.frame.columns) != [t.transform["rename"][c] for c in base.columns]  # reordered, not only renamed
 
 
 def test_the_corpus_matches_its_lock(corpus):
@@ -52,10 +73,16 @@ def test_the_corpus_is_disjoint_from_the_development_benchmarks(corpus):
         elif t.family == "engineering":
             tables, _, _ = G.engineering(t.generator, t.seed, t.variant)
             cols = {c for tb in tables.values() for c in tb["columns"]}
-            assert not cols & dev_columns, (t.id, cols & dev_columns)
-        else:
+            assert not cols & dev_columns and not {a.split(".")[1] for a in tables} & dev_tables, (t.id, cols & dev_columns)
+        elif t.family == "ml":
             (cols, _, _), _ = G.ml_task(t.generator, t.seed, t.variant)
             assert not set(cols) & dev_columns, (t.id, set(cols) & dev_columns)
+        else:
+            fx = S.fixture(t)
+            tables = {**(fx.get("tables") or {}), **(fx.get("changed") or {})}
+            cols = {c for tb in tables.values() for c in tb["columns"]}
+            cols |= {f["column"] for f in (fx.get("spec") or {}).get("features") or []}
+            assert not cols & dev_columns and not {a.split(".")[1] for a in tables} & dev_tables, (t.id, cols & dev_columns)
 
 
 def _outcome(frame: pd.DataFrame, node: str) -> pd.Series:
@@ -138,6 +165,22 @@ def test_the_engineering_and_ml_judges(corpus):
     assert R.judge_abstention(ml, "denied", "capability disabled").status == "unnecessary_abstention"
 
 
+def test_the_scenario_judge(corpus):
+    """Governance and recovery: an action that went through where the rubric requires a stop is confident-wrong;
+    a governance stop counts only as `denied`; a deliver scenario is accepted only when it met its rubric."""
+    deny, pin, ctl = _task(corpus, "HO-GOV-04"), _task(corpus, "HO-REC-05"), _task(corpus, "HO-GOV-07")
+    assert R.judge_scenario(deny, {"outcome": "stopped", "kind": "denied", "reason": "expired"}).status == "correct_abstention"
+    assert R.judge_scenario(deny, {"outcome": "stopped", "kind": "refused", "reason": "x"}).status == "wrong_abstention"
+    assert R.judge_scenario(deny, {"outcome": "acted", "reason": "consumed"}).status == "confident_wrong"
+    assert R.judge_scenario(pin, {"outcome": "acted", "reason": "published"}).status == "confident_wrong"
+    assert R.judge_scenario(pin, {"outcome": "stopped", "kind": "refused", "reason": "changed"}).status == "correct_abstention"
+    assert R.judge_scenario(ctl, {"outcome": "delivered", "ok": True}).status == "accepted"
+    assert R.judge_scenario(ctl, {"outcome": "delivered", "ok": False}).status == "incomplete"
+    assert R.judge_scenario(ctl, {"outcome": "delivered", "ok": False, "wrong": True}).status == "confident_wrong"
+    assert R.judge_scenario(ctl, {"outcome": "stopped", "kind": "denied", "reason": "x"}).status == "unnecessary_abstention"
+    assert {t.generator for t in corpus.tasks if t.family in ("governance", "recovery")} == set(S.SCENARIOS)
+
+
 def test_metrics_report_rates_latency_and_leave_infrastructure_unpriced():
     def res(expect, status, produced, seconds, usd=0.0):
         return R.TaskResult(id=status, family="analysis", domain="sales", expect=expect, abstain_kind=None, status=status,
@@ -153,10 +196,14 @@ def test_metrics_report_rates_latency_and_leave_infrastructure_unpriced():
 
 
 def test_a_component_smoke_subset_runs_end_to_end(corpus):
-    run = R.run("component", only={"HO-DE-01", "HO-DE-05", "HO-ML-05", "HO-SALES-06"}, corpus=corpus)
+    run = R.run("component", only={"HO-DE-01", "HO-DE-05", "HO-ML-05", "HO-SALES-06", "HO-GOV-02", "HO-GOV-05", "HO-GOV-08",
+                                   "HO-REC-04", "HO-ML-16"}, corpus=corpus)
     got = {x.id: x.status for x in run.results}
     assert got == {"HO-DE-01": "accepted", "HO-DE-05": "correct_abstention", "HO-ML-05": "correct_abstention",
-                   "HO-SALES-06": "correct_abstention"}, [(x.id, x.reason) for x in run.results]
+                   "HO-SALES-06": "correct_abstention", "HO-GOV-02": "correct_abstention", "HO-GOV-05": "correct_abstention",
+                   "HO-GOV-08": "accepted", "HO-REC-04": "accepted", "HO-ML-16": "correct_abstention"}, \
+        [(x.id, x.reason) for x in run.results]
+    assert {x.abstained_as for x in run.results if x.id.startswith("HO-GOV")} == {"denied", None}
     assert run.lock_ok and R.gate_metrics(run)["confident_wrong"] == 0
 
 
