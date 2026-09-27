@@ -162,7 +162,12 @@ def test_verdicts_void_when_a_dependency_changes(control_db, pg_orders, monkeypa
         h.spec = {**h.spec, "min_group_size": h.spec.get("min_group_size", 30), "filters": [
             {"column": "channel", "op": "!=", "value": "__none__"}]}
         voided = V.dependency_changed(s, "query", h.id, f"step {h.code} edited", event="step.edited")
-    assert voided == [verified[edited]["record_id"]]
+        # exactly the edited finding's verdict, plus its copy on the recorded Data Thread claim step (same dependencies)
+        from analystos.db.models import VerificationRecord
+
+        subjects = {r.id: r.subject_type for r in s.scalars(select(VerificationRecord).where(VerificationRecord.id.in_(voided)))}
+    assert verified[edited]["record_id"] in voided
+    assert [rid for rid in voided if subjects[rid] != "step"] == [verified[edited]["record_id"]], subjects
     assert _records(run.id)[edited]["void_kind"] == "query"
 
     # ---- an edit to the cited glossary section (knowledge studio -> revision -> index) voids its citers
