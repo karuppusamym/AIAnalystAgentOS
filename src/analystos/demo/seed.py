@@ -1,6 +1,11 @@
-"""`analystos demo-seed`: one ready demo workspace, built through the running API.
+"""`analystos demo-seed`: the ready demo workspaces, built through the running API.
 
     analystos demo-seed [--api http://localhost:8000] [--servicenow http://localhost:8090] [--web http://localhost:5173]
+                        [--only investigation|process]
+
+Two workspaces, both by default: the investigation one (`packs/itsm/demo.yaml`: investigation, dashboards,
+file, recipe, schedule, monitor) and the process mining one (`packs/itsm/process_mining_demo.yaml`: the ServiceNow
+task activity log and the records it describes, a brief, and saved process analyses per task type).
 
 It goes through the HTTP API as the seeded users (never around it), so every governed path is the one the demo
 shows: the source is registered, discovered and loaded through the loader, the investigation runs on whatever
@@ -28,12 +33,17 @@ import yaml
 from analystos.core.config import REPO_ROOT
 
 DEMO_FILE = REPO_ROOT / "packs" / "itsm" / "demo.yaml"
+PROCESS_DEMO_FILE = REPO_ROOT / "packs" / "itsm" / "process_mining_demo.yaml"
 DONE, ACTIVE = ("COMPLETED",), ("NEW", "PLANNED", "RUNNING", "WAITING_USER", "PAUSED")
 
 
 @lru_cache
 def demo(path: Path = DEMO_FILE) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def process_demo() -> dict[str, Any]:
+    return demo(PROCESS_DEMO_FILE)
 
 
 def log(status: str, text: str) -> None:
@@ -82,8 +92,8 @@ def _assets(api: Api, wid: str, source_id: str) -> dict[str, dict]:
     return {a["name"]: a for a in api.get(f"/api/workspaces/{wid}/assets") if a.get("source_id") == source_id}
 
 
-def ensure_workspace(admin: Api) -> str:
-    spec = demo()["workspace"]
+def ensure_workspace(admin: Api, d: dict[str, Any] | None = None) -> str:
+    spec = (d or demo())["workspace"]
     ws = next((w for w in admin.get("/api/workspaces") if w["name"] == spec["name"]), None)
     if ws:
         log("exists", f"workspace {ws['id']}")
@@ -100,13 +110,14 @@ def ensure_workspace(admin: Api) -> str:
     return wid
 
 
-def ensure_source(analyst: Api, wid: str, instance_url: str) -> None:
-    spec = demo()["source"]
+def ensure_source(analyst: Api, wid: str, instance_url: str, d: dict[str, Any] | None = None) -> None:
+    spec = (d or demo())["source"]
     src = next((s for s in analyst.get(f"/api/workspaces/{wid}/sources") if s["kind"] == spec["kind"]), None)
     if src is None:
+        config = {"instance_url": instance_url, "username": spec["username"], "tables": spec["tables"],
+                  **({"page_size": spec["page_size"]} if spec.get("page_size") else {})}
         src = analyst.post(f"/api/workspaces/{wid}/sources", {
-            "kind": spec["kind"], "name": spec["name"], "secret_ref": spec["secret_ref"],
-            "config": {"instance_url": instance_url, "username": spec["username"], "tables": spec["tables"]}})
+            "kind": spec["kind"], "name": spec["name"], "secret_ref": spec["secret_ref"], "config": config})
         log("created", f"{spec['name']} source {src['id']} ({instance_url})")
     assets = _assets(analyst, wid, src["id"])
     if not assets:
@@ -121,8 +132,9 @@ def ensure_source(analyst: Api, wid: str, instance_url: str) -> None:
     log("loaded", ", ".join(f"{x['asset']} ({x.get('row_count', '?')} rows)" for x in loaded.get("loaded", [])))
 
 
-def ensure_brief(analyst: Api, wid: str) -> None:
-    wanted = demo()["brief"]
+def ensure_brief(analyst: Api, wid: str, d: dict[str, Any] | None = None) -> None:
+    d = d or demo()
+    wanted = d["brief"]
     brief = analyst.get(f"/api/workspaces/{wid}/brief")
     have = {(a["group"], a["field"]): a.get("value") for a in brief.get("assertions", []) if a.get("review_state") != "rejected"}
     ops = [{"op": "set", "assertion": a} for a in wanted if have.get((a["group"], a["field"])) != a["value"]]
@@ -138,7 +150,7 @@ def ensure_brief(analyst: Api, wid: str) -> None:
     if not any(a["key"].startswith("data_semantics.grain:") for a in brief.get("assertions", [])):
         brief = analyst.post(f"/api/workspaces/{wid}/brief/suggestions")
         log("inferred", f"brief v{brief['version']}: suggestions from the catalog")
-    tables = tuple(f".{t}" for t in demo()["source"]["select"])
+    tables = tuple(f".{t}" for t in d["source"]["select"])
     review = [{"op": "review", "key": a["key"]} for a in brief.get("assertions", [])
               if a["key"].startswith("data_semantics.grain:") and a["key"].endswith(tables) and a["review_state"] == "suggested"]
     if review:
@@ -257,6 +269,37 @@ def ensure_monitor(analyst: Api, wid: str, *, evaluate: bool) -> None:
         log("checked", f"monitor: {result.get('message', '')[:140]}")
 
 
+def ensure_process_analyses(analyst: Api, wid: str, d: dict[str, Any] | None = None) -> None:
+    """One saved process analysis per listed segment of the event log, through Work → Process's own API."""
+    spec = (d or process_demo())["process"]
+    have = {a["name"] for a in analyst.get(f"/api/workspaces/{wid}/process/analyses")}
+    todo = [a for a in spec["analyses"] if a["name"] not in have]
+    if not todo:
+        log("exists", f"{len(spec['analyses'])} saved process analyses")
+        return
+    found = analyst.get(f"/api/workspaces/{wid}/process/candidates")["candidates"]
+    cand = next((c for c in found if c["name"] == spec["table"]), None)
+    if cand is None:
+        raise SystemExit(f"{spec['table']} is not detected as an event log in workspace {wid} (is it selected and loaded?)")
+    segment = cand["segments"][0]["column"] if cand["segments"] else None
+    for a in todo:
+        body = {"asset_id": cand["asset_id"], **cand["mapping"], "save": True, "name": a["name"],
+                "filters": [{"column": segment, "op": "=", "value": a["segment"]}] if segment and a.get("segment") else []}
+        result = analyst.post(f"/api/workspaces/{wid}/process/analyze", body)
+        s = result["summary"]
+        log("saved", f"{a['name']}: {s['cases']} cases, {s['variants']} paths, "
+                     f"{round(100 * s['fitness'])}% follow the expected path")
+
+
+def ensure_process_workspace(admin: Api, analyst: Api, instance_url: str) -> str:
+    d = process_demo()
+    wid = ensure_workspace(admin, d)
+    ensure_source(analyst, wid, instance_url, d)
+    ensure_brief(analyst, wid, d)
+    ensure_process_analyses(analyst, wid, d)
+    return wid
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="analystos demo-seed", description=__doc__.split("\n\n")[0])
     ap.add_argument("--api", default=os.getenv("ANALYSTOS_API", "http://localhost:8000"))
@@ -267,26 +310,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=float, default=1200, help="seconds to wait for the investigation")
     ap.add_argument("--wait-api", type=float, default=180, help="seconds to wait for /api/health")
     ap.add_argument("--skip-investigation", action="store_true", help="everything except the investigation (and its schedule)")
+    ap.add_argument("--only", choices=("investigation", "process"), default=None,
+                    help="build one workspace: investigation (findings, dashboards) or process (process mining); default both")
     args = ap.parse_args(argv)
+    build_investigation, build_process = args.only in (None, "investigation"), args.only in (None, "process")
 
     health = wait_for_api(args.api, args.wait_api)
     worker = (health.get("checks") or {}).get("worker") or {}
-    if worker.get("state") == "down" and not args.skip_investigation:
+    if build_investigation and worker.get("state") == "down" and not args.skip_investigation:
         log("warning", f"no worker is polling ({worker.get('error')}); the investigation waits until one starts")
     admin = Api(args.api, "admin@analystos.local", args.password)
     analyst = Api(args.api, "analyst@analystos.local", args.password)
     approver = Api(args.api, "approver@analystos.local", args.password)
-    wid = ensure_workspace(admin)
-    ensure_source(analyst, wid, args.servicenow)
-    ensure_brief(analyst, wid)
-    ensure_file_and_recipe(analyst, wid)
-    if not args.skip_investigation:
-        rid = ensure_investigation(analyst, approver, wid, args.timeout)
-        ensure_schedule(analyst, wid, rid)
-    ensure_monitor(analyst, wid, evaluate=not args.skip_investigation)
+    ready: list[tuple[str, str]] = []
+    if build_process:  # quick (no worker needed), so it is ready while the investigation runs
+        log("demo", process_demo()["workspace"]["name"])
+        ready.append((process_demo()["workspace"]["name"], ensure_process_workspace(admin, analyst, args.servicenow)))
+    if build_investigation:
+        log("demo", demo()["workspace"]["name"])
+        wid = ensure_workspace(admin)
+        ensure_source(analyst, wid, args.servicenow)
+        ensure_brief(analyst, wid)
+        ensure_file_and_recipe(analyst, wid)
+        if not args.skip_investigation:
+            rid = ensure_investigation(analyst, approver, wid, args.timeout)
+            ensure_schedule(analyst, wid, rid)
+        ensure_monitor(analyst, wid, evaluate=not args.skip_investigation)
+        ready.insert(0, (demo()["workspace"]["name"], wid))
     shown = args.password if args.password == "ChangeMe123!" else "(as given)"
-    print(f"\nDemo workspace ready: {args.web.rstrip('/')}/w/{wid}\n"
-          f"  sign in as analyst@analystos.local (analysis), approver@analystos.local (approvals) or admin@analystos.local;"
+    web = args.web.rstrip("/")
+    print("\n" + "\n".join(f"Demo workspace ready: {name}: {web}/w/{wid}" for name, wid in ready)
+          + (f"\n  process mining: {web}/w/{ready[-1][1]}/work?tab=process" if build_process else "")
+          + "\n  sign in as analyst@analystos.local (analysis), approver@analystos.local (approvals) or admin@analystos.local;"
           f" password {shown}\n", flush=True)
     return 0
 

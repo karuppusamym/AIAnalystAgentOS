@@ -74,6 +74,9 @@ export const CAPABILITIES: GuideCapability[] = [
   { id: "thread", discipline: "analysis", title: "Data Thread and notebooks",
     what: "Every step is kept with its versions: edit one and what depends on it re-runs; fork, compare and merge into a report.",
     who: "Analyst", href: (ws) => to.work(ws, "thread"), needsWorkspace: true },
+  { id: "process", discipline: "analysis", title: "Process and task mining",
+    what: "Point at an activity log (a ticket's created, assigned, reassigned, resolved…): see the process map, the common paths, where cases wait, rework, cancellations, handovers and steps skipped against the expected path.",
+    who: "Analyst, process owner", href: (ws) => to.work(ws, "process"), needsWorkspace: true },
 
   // Prepare and move data
   { id: "prepare", discipline: "engineering", title: "Prepare data with recipes",

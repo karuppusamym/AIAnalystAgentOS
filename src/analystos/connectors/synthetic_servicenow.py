@@ -256,8 +256,9 @@ CHOICE_LABELS: dict[str, dict[str, dict[str, str]]] = {
 
 
 def user_display_name(sys_id: str) -> str:
-    """Deterministic display name for a (synthetic) sys_user reference."""
-    return f"User {sys_id[:6].upper()}"
+    """Deterministic display name for a (synthetic) sys_user reference: a fulfiller's name for the
+    assignee pool of the activity data, otherwise a neutral caller label."""
+    return AGENT_NAMES.get(sys_id) or f"User {sys_id[:6].upper()}"
 
 
 _ARROW_TYPES = {
@@ -530,3 +531,408 @@ def _truncate_to_seconds(table: pa.Table) -> pa.Table:
 def servicenow_tables(seed: int = DEFAULT_SEED) -> dict[str, pa.Table]:
     """Alias kept short for callers (mock server, fixtures)."""
     return generate_servicenow_data(seed)
+
+
+# =============================================================================================
+# Activity data for process and task mining: catalog tasks and a flattened activity log
+# =============================================================================================
+# The four tables above never change (tests and dated evidence depend on them): the activity data is
+# derived from them with its own random stream, so adding it leaves their bytes identical.
+#
+# `u_task_activity` is a custom table, the shape a `sys_audit` / `metric_instance` export flattens to:
+# one row per lifecycle step of a task record (incident, change_request, sc_task), with the record's
+# number, the step, when it happened, the group and person holding the record after it, the state before
+# and after, and its position in the record's history. The export covers records opened in the last six
+# months (ACTIVITY_START .. PERIOD_END, the audit retention window) and has no history for incident rows
+# carrying the injected DATA_QUALITY defects (their timestamps or group are wrong in the record, not in
+# the audit trail).
+ACTIVITY_START = datetime(2026, 3, 1)
+N_CATALOG_TASKS = 6_000
+
+INCIDENT_ACTIVITIES = ["Created", "Assigned", "Reassigned", "Work started", "On hold", "Resumed", "Resolved", "Reopened",
+                       "Closed", "Cancelled"]
+CHANGE_ACTIVITIES = ["Created", "Assessed", "Authorized", "Scheduled", "Implementation started", "Implemented", "Reviewed",
+                     "Closed", "Cancelled", "Failed"]
+# The happy path of each record type (what packs/itsm/process_models.yaml declares as the reference model).
+REFERENCE_PATHS: dict[str, list[str]] = {
+    "incident": ["Created", "Assigned", "Work started", "Resolved", "Closed"],
+    "change_request": ["Created", "Assessed", "Authorized", "Scheduled", "Implementation started", "Implemented", "Reviewed",
+                       "Closed"],
+    "sc_task": ["Created", "Assigned", "Work started", "Closed"],
+}
+
+SC_TASK_STATES = {-5: "Pending", 1: "Open", 2: "Work in Progress", 3: "Closed Complete", 4: "Closed Incomplete",
+                  7: "Closed Skipped"}
+# Catalog items and the group that fulfils them.
+CATALOG_ITEMS: list[tuple[str, str, float]] = [
+    ("New laptop", "End User Computing", 0.22),
+    ("Monitor or peripheral", "End User Computing", 0.12),
+    ("Software license", "Application Support", 0.16),
+    ("Access request", "Identity and Access", 0.18),
+    ("VPN token", "Network Operations", 0.08),
+    ("Database access", "Database Administration", 0.08),
+    ("New virtual machine", "Cloud Platform", 0.10),
+    ("Mailbox change", "Windows Operations", 0.06),
+]
+# Hardware requests wait for stock: End User Computing puts most catalog tasks on hold (GT catalog_on_hold).
+CATALOG_HOLD_P = {"End User Computing": 0.70}
+CATALOG_HOLD_P_OTHER = 0.10
+CATALOG_HOLD_MEDIAN_H = {"End User Computing": 72.0}
+CATALOG_HOLD_MEDIAN_H_OTHER = 10.0
+CATALOG_WORK_MEDIAN_H = 18.0
+CATALOG_CANCEL_P = 0.08
+CATALOG_CANCEL_BEFORE_WORK_P = 0.75
+# Network Operations bounces incidents with these partner groups (GT activity_reassignment_loops).
+PING_PONG_PARTNERS = ["Cloud Platform", "Security Operations"]
+INCIDENT_HOLD_P = 0.12
+# Changes: emergency changes often skip formal authorization (GT change_authorization_skipped); cancelled
+# database upgrades are pulled after they were scheduled, other changes at assessment (GT change_cancel_point).
+SKIP_AUTH_P = {"emergency": 0.30, "normal": 0.02, "standard": 0.02}
+CANCEL_AFTER_SCHEDULED_P = {"Database upgrade": 0.85}
+CANCEL_AFTER_SCHEDULED_P_OTHER = 0.15
+
+_FIRST = ["Priya", "James", "Aisha", "Tom", "Mei", "Carlos", "Fatima", "Lukas", "Grace", "Omar", "Sofia", "Daniel",
+          "Hannah", "Ravi", "Elena", "Kwame", "Yuki", "Liam", "Nadia", "Marco"]
+_LAST = ["Shah", "Wilson", "Khan", "Becker", "Chen", "Silva", "Ahmed", "Novak", "Okafor", "Rossi", "Kim", "Murphy",
+         "Haddad", "Iyer", "Petrov", "Mensah", "Tanaka", "Brennan", "Costa", "Larsen"]
+AGENTS_PER_GROUP = 6
+
+
+def _agent_pool(seed: int = DEFAULT_SEED) -> dict[str, list[tuple[str, str]]]:
+    """Fulfillers per group: (sys_user sys_id, display name). Names are synthetic and deterministic."""
+    pool: dict[str, list[tuple[str, str]]] = {}
+    k = 0
+    for g in GROUPS:
+        people = []
+        for _ in range(AGENTS_PER_GROUP):
+            name = f"{_FIRST[k % len(_FIRST)]} {_LAST[(k * 7 + k // len(_FIRST)) % len(_LAST)]}"
+            people.append((_sys_id(seed, "agent", k), name))
+            k += 1
+        pool[g] = people
+    return pool
+
+
+AGENT_NAMES: dict[str, str] = {sid: name for people in _agent_pool().values() for sid, name in people}
+
+GROUND_TRUTH.update({
+    "activity_reassignment_loops": {
+        "description": "In the incident activity log, Network Operations bounces tickets with Cloud Platform and Security "
+                       "Operations: the most frequent group-to-group handover pair involves Network Operations, and it has "
+                       "the highest mean number of Reassigned steps per incident.",
+        "metric": "top unordered (from, to) assignment_group handover pair; argmax mean(Reassigned per case) by final group",
+        "expected": {"top_pair_contains": "Network Operations", "top_mean_reassigned_group": "Network Operations"},
+        "tables": ["u_task_activity"],
+        "columns": ["u_task_activity.assignment_group", "u_task_activity.activity"],
+    },
+    "change_authorization_skipped": {
+        "description": "About 30% of closed emergency changes (2% of others) went from Assessed straight to Scheduled "
+                       "without the Authorized step: a conformance violation against the change reference path.",
+        "metric": "share of closed changes without an Authorized step, emergency vs other",
+        "expected": {"emergency": SKIP_AUTH_P["emergency"], "other": SKIP_AUTH_P["normal"]},
+        "tolerance": {"emergency": 0.12, "other": 0.02},
+        "tables": ["u_task_activity", "change_request"],
+        "columns": ["u_task_activity.activity", "change_request.type"],
+    },
+    "change_cancel_point": {
+        "description": "Cancelled 'Database upgrade' changes are mostly cancelled after being Scheduled (~85%); other "
+                       "cancelled changes are mostly cancelled right after assessment (~85%).",
+        "metric": "share of cancelled changes whose step before Cancelled is Scheduled, by short_description",
+        "expected": {"database_upgrade": CANCEL_AFTER_SCHEDULED_P["Database upgrade"], "other": CANCEL_AFTER_SCHEDULED_P_OTHER},
+        "tolerance": {"database_upgrade": 0.3, "other": 0.15},
+        "tables": ["u_task_activity", "change_request"],
+        "columns": ["u_task_activity.activity", "change_request.short_description"],
+    },
+    "catalog_on_hold_fulfilment": {
+        "description": "End User Computing puts ~70% of its catalog tasks On hold (awaiting stock, median 72 h) against ~10% "
+                       "elsewhere, so its median fulfilment time is more than twice that of the other groups.",
+        "metric": "share of sc_task cases with On hold, End User Computing vs others; median(closed_at - opened_at) ratio",
+        "expected": {"on_hold_share_euc": 0.70, "on_hold_share_other": 0.10, "median_ratio_min": 2.0},
+        "tolerance": {"on_hold_share_euc": 0.06, "on_hold_share_other": 0.04},
+        "tables": ["sc_task", "u_task_activity"],
+        "columns": ["sc_task.assignment_group", "sc_task.opened_at", "sc_task.closed_at", "u_task_activity.activity"],
+    },
+    "catalog_cancelled_before_work": {
+        "description": "About 8% of catalog tasks are cancelled (Closed Skipped); three quarters of them before any work "
+                       "started (the step before Cancelled is Assigned or Reassigned).",
+        "metric": "share of sc_task ending in Cancelled; share of those whose previous step is not Work started",
+        "expected": {"cancelled_share": CATALOG_CANCEL_P, "before_work_share": CATALOG_CANCEL_BEFORE_WORK_P},
+        "tolerance": {"cancelled_share": 0.02, "before_work_share": 0.08},
+        "tables": ["sc_task", "u_task_activity"],
+        "columns": ["sc_task.state", "u_task_activity.activity"],
+    },
+})
+
+DICTIONARY["sc_task"] = [
+    ("sys_id", "GUID", "Sys ID", None, 32),
+    ("number", "string", "Number", None, 40),
+    ("request_item", "string", "Request item", None, 40),
+    ("short_description", "string", "Short description", None, 160),
+    ("state", "integer", "State", None, 40),
+    ("priority", "integer", "Priority", None, 40),
+    ("assignment_group", "reference", "Assignment group", "sys_user_group", 32),
+    ("assigned_to", "reference", "Assigned to", "sys_user", 32),
+    ("opened_at", "glide_date_time", "Opened", None, 40),
+    ("closed_at", "glide_date_time", "Closed", None, 40),
+    ("reassignment_count", "integer", "Reassignment count", None, 40),
+    ("sys_updated_on", "glide_date_time", "Updated", None, 40),
+]
+DICTIONARY["u_task_activity"] = [
+    ("sys_id", "GUID", "Sys ID", None, 32),
+    ("task_type", "string", "Task type", None, 40),
+    ("task_sys_id", "document_id", "Task", None, 32),
+    ("task_number", "string", "Task number", None, 40),
+    ("activity", "string", "Activity", None, 40),
+    ("activity_at", "glide_date_time", "Activity time", None, 40),
+    ("assignment_group", "string", "Assignment group", None, 80),
+    ("assigned_to", "string", "Assigned to", None, 80),
+    ("state_before", "string", "State before", None, 40),
+    ("state_after", "string", "State after", None, 40),
+    ("sequence", "integer", "Sequence", None, 40),
+]
+TABLE_LABELS.update({"sc_task": "Catalog Task", "u_task_activity": "Task Activity"})
+CHOICE_LABELS["sc_task"] = {
+    "state": {str(k): v for k, v in SC_TASK_STATES.items()},
+    "priority": CHOICE_LABELS["incident"]["priority"],
+}
+_ARROW_TYPES["document_id"] = pa.string()
+
+
+class _Log:
+    """Column buffers of the activity log; `case()` appends one record's ordered steps."""
+
+    def __init__(self, seed: int) -> None:
+        self.seed = seed
+        self.cols: dict[str, list[Any]] = {e: [] for e, *_ in DICTIONARY["u_task_activity"]}
+
+    def case(self, task_type: str, sys_id: str, number: str, steps: list[tuple[str, np.datetime64, str | None, str | None]],
+             states: dict[str, str | None], start_state: str | None = None) -> None:
+        """steps: (activity, time, group, assignee). `states` maps an activity to the state it leaves the record
+        in (None keeps the current state)."""
+        state = start_state
+        prev_t: np.datetime64 | None = None
+        for i, (activity, t, group, person) in enumerate(steps, 1):
+            if prev_t is not None and t <= prev_t:  # strictly increasing at second precision
+                t = prev_t + np.timedelta64(1, "s")
+            prev_t = t
+            after = states.get(activity) or state
+            c = self.cols
+            c["sys_id"].append(_sys_id(self.seed, "act", len(c["sys_id"])))
+            c["task_type"].append(task_type)
+            c["task_sys_id"].append(sys_id)
+            c["task_number"].append(number)
+            c["activity"].append(activity)
+            c["activity_at"].append(t)
+            c["assignment_group"].append(group)
+            c["assigned_to"].append(person)
+            c["state_before"].append(state)
+            c["state_after"].append(after)
+            c["sequence"].append(i)
+            state = after
+
+    def table(self) -> pa.Table:
+        data = dict(self.cols)
+        data["activity_at"] = np.array(data["activity_at"], dtype="datetime64[s]").astype("datetime64[us]")
+        return pa.table({k: pa.array(v, _ARROW_TYPES[t]) for (k, t, *_), v in
+                         zip(DICTIONARY["u_task_activity"], data.values(), strict=True)},
+                        schema=arrow_schema("u_task_activity"))
+
+
+def _sec(t: Any) -> np.datetime64:
+    return np.datetime64(t, "s")
+
+
+def _midpoint(a: np.datetime64, b: np.datetime64) -> np.datetime64:
+    return a + np.timedelta64(int((b - a) / np.timedelta64(2, "s")), "s")
+
+
+def _spread(rng: np.random.Generator, start: np.datetime64, end: np.datetime64, weights: list[float]) -> list[np.datetime64]:
+    """Times of len(weights) steps inside (start, end]: gap i ~ weight_i * Exp(1), scaled so the last step lands on end."""
+    total = max(int((end - start) / np.timedelta64(1, "s")), len(weights))
+    gaps = np.asarray(weights, dtype=float) * rng.exponential(1.0, len(weights))
+    offsets = [int(round(x)) for x in np.cumsum(gaps) / gaps.sum() * total]
+    offsets[-1] = total
+    for i in range(len(offsets) - 2, -1, -1):  # strictly increasing, the last step exactly on `end`
+        offsets[i] = min(offsets[i], offsets[i + 1] - 1)
+    for i in range(len(offsets)):
+        offsets[i] = max(offsets[i], i + 1, offsets[i - 1] + 1 if i else 1)
+    return [start + np.timedelta64(x, "s") for x in offsets]
+
+
+def _chain(rng: np.random.Generator, final: str, k: int, category: str | None) -> list[str]:
+    """Groups holding a record from its first assignment to its last (k reassignments, the last one is `final`)."""
+    groups = [final]
+    for _ in range(k):
+        nxt = groups[0]
+        if final == "Network Operations":
+            options = [PING_PONG_PARTNERS[int(rng.integers(0, 2))]] if nxt == final else [final]
+        else:
+            owners = CATEGORY_GROUPS.get(category or "", GROUPS)
+            options = [g for g in owners if g != nxt] or [g for g in GROUPS if g != nxt]
+        groups.insert(0, options[int(rng.integers(0, len(options)))])
+    return groups
+
+
+@lru_cache(maxsize=2)
+def generate_activity_data(seed: int = DEFAULT_SEED) -> dict[str, pa.Table]:
+    """Return {"sc_task", "u_task_activity"}, consistent with the tables of `generate_servicenow_data(seed)`:
+    Created at opened_at, the last Resolved at resolved_at, Closed at closed_at, one Reassigned step per
+    reassignment_count, one Reopened per reopen_count, cancelled records ending in Cancelled."""
+    base = generate_servicenow_data(seed)
+    rng = np.random.default_rng(seed + 101)
+    pool = _agent_pool(seed)
+    group_name = dict(zip(base["sys_user_group"]["sys_id"].to_pylist(), base["sys_user_group"]["name"].to_pylist(), strict=True))
+    window = _sec(ACTIVITY_START)
+    end = _sec(PERIOD_END)
+    log = _Log(seed)
+
+    def person(group: str | None) -> str | None:
+        return pool[group][int(rng.integers(0, AGENTS_PER_GROUP))][1] if group else None
+
+    # --- incidents ---------------------------------------------------------------------------
+    inc_states = {"Created": "New", "Work started": "In Progress", "On hold": "On Hold", "Resumed": "In Progress",
+                  "Resolved": "Resolved", "Reopened": "In Progress", "Closed": "Closed", "Cancelled": "Canceled"}
+    inc = base["incident"].to_pydict()
+    for i in range(len(inc["sys_id"])):
+        opened, resolved, closed = inc["opened_at"][i], inc["resolved_at"][i], inc["closed_at"][i]
+        group = group_name.get(inc["assignment_group"][i]) if inc["assignment_group"][i] else None
+        if opened < ACTIVITY_START or opened > PERIOD_END or group is None or (resolved is not None and resolved < opened):
+            continue
+        k, m, state = inc["reassignment_count"][i], inc["reopen_count"][i], inc["state"][i]
+        o = _sec(opened)
+        chain = _chain(rng, group, k, inc["category"][i])
+        hold = rng.random() < INCIDENT_HOLD_P and state != 1
+        # the ordered middle steps and the relative weight of the wait before each
+        mid: list[tuple[str, float]] = [("Assigned", 0.15)] + [("Reassigned", 2.0)] * k
+        if state != 1:
+            mid.append(("Work started", 3.0))
+        if hold and state != 3:
+            mid += [("On hold", 1.5), ("Resumed", 4.0)]
+        mid += [("Resolved", 5.0), ("Reopened", 1.0)] * m
+        if resolved is not None:
+            mid.append(("Resolved", 5.0))
+            stop = _sec(resolved)
+        else:
+            if state == 3:
+                mid.append(("On hold", 1.5))
+            stop = o + np.timedelta64(int((end - o) / np.timedelta64(1, "s") * rng.uniform(0.3, 0.95)), "s")
+        times = _spread(rng, o, stop, [w for _, w in mid])
+        steps: list[tuple[str, np.datetime64, str | None, str | None]] = [("Created", o, None, None)]
+        g_i, who = -1, None
+        for (activity, _), t in zip(mid, times, strict=True):
+            if activity in ("Assigned", "Reassigned"):
+                g_i += 1
+                who = person(chain[g_i])
+            steps.append((activity, t, chain[max(g_i, 0)], who))
+        if closed is not None:
+            steps.append(("Closed", _sec(closed), group, who))
+        log.case("incident", inc["sys_id"][i], inc["number"][i], steps, inc_states)
+
+    # --- change requests ---------------------------------------------------------------------
+    chg_states = {"Created": "New", "Assessed": "Authorize", "Authorized": "Scheduled", "Scheduled": "Scheduled",
+                  "Implementation started": "Implement", "Implemented": "Review", "Failed": "Review", "Reviewed": "Review",
+                  "Closed": "Closed", "Cancelled": "Canceled"}
+    chg = base["change_request"].to_pydict()
+    lead_s = {"standard": (1 * 86400, 3 * 86400), "normal": (3 * 86400, 14 * 86400), "emergency": (2 * 3600, 12 * 3600)}
+    for i in range(len(chg["sys_id"])):
+        typ, state, code, desc = chg["type"][i], chg["state"][i], chg["close_code"][i], chg["short_description"][i]
+        start, finish = _sec(chg["start_date"][i]), _sec(chg["end_date"][i])
+        lead = int(rng.uniform(*lead_s[typ]))
+        created = start - np.timedelta64(lead, "s")
+        if created < window or finish + np.timedelta64(2, "h") > end:
+            continue
+        group = group_name[chg["assignment_group"][i]]
+        who = person(group)
+        fr = np.sort(rng.uniform(0.05, 0.95, 3))
+        at = [created + np.timedelta64(int(lead * f), "s") for f in fr]
+        steps = [("Created", created, group, who), ("Assessed", at[0], group, who)]
+        if state == 4:  # cancelled: after Scheduled for most database upgrades, at assessment otherwise
+            p = CANCEL_AFTER_SCHEDULED_P.get(desc, CANCEL_AFTER_SCHEDULED_P_OTHER)
+            if rng.random() < p:
+                steps += [("Authorized", at[1], group, who), ("Scheduled", at[2], group, who),
+                          ("Cancelled", _midpoint(at[2], start), group, who)]
+            else:
+                steps.append(("Cancelled", _midpoint(at[0], at[1]), group, who))
+            log.case("change_request", chg["sys_id"][i], chg["number"][i], steps, chg_states)
+            continue
+        if rng.random() >= SKIP_AUTH_P[typ]:
+            steps.append(("Authorized", at[1], group, who))
+        steps += [("Scheduled", at[2], group, who), ("Implementation started", start, group, who),
+                  ("Failed" if code == "unsuccessful" else "Implemented", finish, group, who)]
+        if state == 3:
+            steps += [("Reviewed", finish + np.timedelta64(int(rng.uniform(600, 3000)), "s"), group, who),
+                      ("Closed", finish + np.timedelta64(2, "h"), group, who)]
+        log.case("change_request", chg["sys_id"][i], chg["number"][i], steps, chg_states)
+
+    # --- catalog tasks -----------------------------------------------------------------------
+    n = N_CATALOG_TASKS
+    period_s = int((PERIOD_END - PERIOD_START).total_seconds())
+    items = rng.choice(len(CATALOG_ITEMS), n, p=[w for *_, w in CATALOG_ITEMS])
+    opened_s = np.sort(rng.integers(0, period_s - 3600, n))
+    sc = {e: [] for e, *_ in DICTIONARY["sc_task"]}
+    sc_states = {"Created": "Open", "Work started": "Work in Progress", "On hold": "Pending", "Resumed": "Work in Progress",
+                 "Cancelled": "Closed Skipped"}
+    group_ids = {v: k for k, v in group_name.items()}
+    for i in range(n):
+        item, owner, _ = CATALOG_ITEMS[int(items[i])]
+        o = _sec(PERIOD_START) + np.timedelta64(int(opened_s[i]), "s")
+        k = int(rng.poisson(0.35))
+        chain = _chain(rng, owner, k, None)
+        hold = rng.random() < CATALOG_HOLD_P.get(owner, CATALOG_HOLD_P_OTHER)
+        cancelled = rng.random() < CATALOG_CANCEL_P
+        before_work = rng.random() < CATALOG_CANCEL_BEFORE_WORK_P
+        work_h = CATALOG_WORK_MEDIAN_H * float(np.exp(rng.normal(0, 0.5)))
+        hold_h = CATALOG_HOLD_MEDIAN_H.get(owner, CATALOG_HOLD_MEDIAN_H_OTHER) * float(np.exp(rng.normal(0, 0.4)))
+        mid: list[tuple[str, float]] = [("Assigned", 0.2)] + [("Reassigned", 1.5)] * k
+        if cancelled:
+            mid += ([] if before_work else [("Work started", 2.0)]) + [("Cancelled", 3.0)]
+            total_h = float(rng.uniform(2, 48))
+        else:
+            mid.append(("Work started", 2.0))
+            if hold:
+                mid += [("On hold", 1.0), ("Resumed", hold_h / max(work_h, 1e-3) * 4.0)]
+            mid.append(("Closed", 4.0))
+            total_h = work_h + (hold_h if hold else 0.0)
+        stop = o + np.timedelta64(int(total_h * 3600), "s")
+        times = _spread(rng, o, stop, [w for _, w in mid])
+        steps: list[tuple[str, np.datetime64, str | None, str | None]] = [("Created", o, None, None)]
+        holders: list[str | None] = [None]  # the assignee's sys_user sys_id after each step
+        g_i, who_id = -1, None
+        for (activity, _), t in zip(mid, times, strict=True):
+            if activity in ("Assigned", "Reassigned"):
+                g_i += 1
+                who_id = pool[chain[g_i]][int(rng.integers(0, AGENTS_PER_GROUP))][0]
+            steps.append((activity, t, chain[max(g_i, 0)], AGENT_NAMES[who_id] if who_id else None))
+            holders.append(who_id)
+        n_visible = sum(1 for s in steps if s[1] <= end)
+        visible = steps[:n_visible]
+        last = visible[-1][0]
+        if last == "Closed":
+            state = 4 if rng.random() < 0.02 else 3
+        elif last == "Cancelled":
+            state = 7
+        else:
+            state = {"On hold": -5, "Work started": 2, "Resumed": 2}.get(last, 1)
+        number = f"SCTASK{10001 + i:07d}"
+        sys_id = _sys_id(seed, "sctask", i)
+        sc["sys_id"].append(sys_id)
+        sc["number"].append(number)
+        sc["request_item"].append(f"RITM{20001 + i:07d}")
+        sc["short_description"].append(item)
+        sc["state"].append(state)
+        sc["priority"].append(int(rng.choice([3, 4], p=[0.3, 0.7])))
+        sc["assignment_group"].append(group_ids[visible[-1][2]] if visible[-1][2] else None)
+        sc["assigned_to"].append(holders[n_visible - 1])
+        sc["opened_at"].append(o)
+        sc["closed_at"].append(visible[-1][1] if state in (3, 4, 7) else None)
+        sc["reassignment_count"].append(sum(1 for s in visible if s[0] == "Reassigned"))
+        sc["sys_updated_on"].append(visible[-1][1])
+        if o >= window:
+            log.case("sc_task", sys_id, number, visible,
+                     {**sc_states, "Closed": SC_TASK_STATES[state] if state in (3, 4) else "Closed Complete"})
+
+    def ts(values: list[Any]) -> pa.Array:
+        return pa.array([None if v is None else np.datetime64(v, "us").astype(datetime) for v in values], pa.timestamp("us"))
+
+    sc_table = pa.table({e: ts(sc[e]) if t == "glide_date_time" else pa.array(sc[e], _ARROW_TYPES[t])
+                         for e, t, *_ in DICTIONARY["sc_task"]}, schema=arrow_schema("sc_task"))
+    return {"sc_task": sc_table, "u_task_activity": log.table()}

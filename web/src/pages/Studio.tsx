@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun, type Run } from "../api";
+import { api, type Artifact, type ArtifactDetail, type Insight, type ProcessAnalysis, type RecipeRun, type Run } from "../api";
 import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
 import { PublishCard } from "../components/DashboardPublish";
@@ -9,6 +9,7 @@ import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
 import { MaterializationsOutput } from "../components/Pipelines";
+import { ProcessAnalysisView } from "../components/ProcessMining";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
 import { StartWorkButton } from "../components/StartWork";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
@@ -331,6 +332,8 @@ function ArtifactContent({ a, wsId }: { a: ArtifactDetail; wsId: string }) {
       return <><PublishCard wsId={wsId} artifact={a} /><DashboardPreview wsId={wsId} artifact={a} /></>;
     case "report":
       return <ReportRow wsId={wsId} report={a} />;
+    case "process_analysis":
+      return <ProcessAnalysisView wsId={wsId} analysis={{ ...(a.content as unknown as ProcessAnalysis), artifact: { id: a.id, name: a.name, version: a.version } }} />;
     case "dataset":
       return (
         <Card title="Dataset definition">

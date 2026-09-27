@@ -163,7 +163,7 @@ function withQuery(path: string, query: Record<string, string | undefined | null
 /** Tabs of the Data → Catalog & definitions screen. */
 export type DataTab = "catalog" | "contexts" | "brief" | "documents" | "review" | "metrics" | "definitions" | "transfer";
 /** Tabs of the Work screen. */
-export type WorkTab = "investigations" | "thread" | "notebooks" | "experiments" | "prepare" | "builds" | "workflows";
+export type WorkTab = "investigations" | "thread" | "notebooks" | "experiments" | "prepare" | "builds" | "workflows" | "process";
 /** Output types: one list, filtered (spec v4 §15). Metrics are not an output: they live in Data. */
 export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "model" | "table" | "other";
 

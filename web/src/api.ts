@@ -3724,6 +3724,14 @@ export const api = {
     get("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws) }) as Promise<WriterDestination[]>,
   designateDestination: (ws: string, body: Schemas["DestinationIn"]) =>
     post("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws), body }) as Promise<WriterDestination>,
+
+  // process and task mining (Work → Process)
+  processCandidates: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/process/candidates", { path: W(ws) }) as Promise<{ version: string; candidates: ProcessCandidate[] }>,
+  analyzeProcess: (ws: string, body: ProcessAnalyzeInput) =>
+    post("/api/workspaces/{workspace_id}/process/analyze", { path: W(ws), body }) as Promise<ProcessAnalysis>,
+  processAnalyses: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/process/analyses", { path: W(ws) }) as Promise<SavedProcessAnalysis[]>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)
@@ -3887,4 +3895,92 @@ export async function streamAskTurn(threadId: string, question: string, paramete
   if (failure) throw failure;
   if (!turn) throw new ApiError(0, "stream_incomplete", "The answer stream ended before the answer arrived");
   return turn;
+}
+
+// ----------------------------------------------------------------------------------- process mining
+/** api/routers/process.py: an event log detected in the catalog, with the suggested mapping. */
+export interface ProcessMapping {
+  case_column: string;
+  activity_column: string;
+  timestamp_column: string;
+  resource_column: string | null;
+}
+export interface ProcessSegmentValue {
+  value: string | number | boolean;
+  count?: number | null;
+  label?: string | null;
+  reference_path?: string[] | null;
+}
+export interface ProcessCandidate {
+  asset_id: string;
+  asset: string;
+  name: string;
+  business_name: string | null;
+  row_count: number | null;
+  role: string | null;
+  declared_by: string | null;
+  mapping: ProcessMapping;
+  segments: { column: string; values: ProcessSegmentValue[] }[];
+  score: number;
+  reasons: string[];
+  columns: string[];
+}
+export type ProcessAnalyzeInput = Schemas["ProcessAnalyzeIn"];
+export interface ProcessEdge {
+  source: string; target: string; count: number; cases: number;
+  median_hours: number | null; p90_hours: number | null; mean_hours?: number | null;
+}
+export interface ProcessVariant {
+  rank: number; activities: string[]; steps: number; cases: number; share: number; median_hours: number | null; happy_path: boolean;
+}
+export interface ProcessDeviation { kind: "missing" | "extra" | "out_of_order"; activity: string; cases: number; share: number; sentence: string }
+/** skills/process_mining.py `analyze_cases` + the router's provenance (version "process-mining/1"). */
+export interface ProcessAnalysis {
+  version: string;
+  title: string;
+  asset: { id: string; fq: string; name: string; business_name: string | null };
+  mapping: ProcessMapping;
+  filters: { column: string; op: string; value?: unknown; values?: unknown[] }[];
+  segment: string | number | boolean | null;
+  summary: {
+    cases: number; events: number; activities: number; variants: number; mean_events_per_case: number;
+    start: string; end: string; median_hours: number | null; p90_hours: number | null;
+    rework_share: number; cancelled_share: number; fitness: number; handover_share: number;
+  };
+  highlights: string[];
+  activities: { activity: string; events: number; cases: number; starts: number; ends: number }[];
+  edges: ProcessEdge[];
+  variants: { total: number; top: ProcessVariant[]; other_cases: number; other_share: number; happy_path_rank: number | null };
+  throughput: {
+    cases: number; median_hours: number | null; p90_hours: number | null; mean_hours: number | null;
+    histogram: { label: string; from_hours: number; to_hours: number | null; cases: number }[];
+    by_end_activity: { activity: string; cases: number; median_hours: number | null; p90_hours: number | null }[];
+  };
+  bottlenecks: (ProcessEdge & { weight_hours: number; sentence: string })[];
+  rework: { cases: number; share: number; activities: { activity: string; cases: number; share: number; extra_events: number }[] };
+  cancellations: {
+    activities: string[]; cases: number; share: number; median_hours_to_cancel: number | null;
+    after: { activity: string; cases: number; share: number }[]; by_resource: { resource: string; cases: number }[];
+  };
+  conformance: {
+    reference: string[]; source: string; completed_cases: number; conforming_cases: number; fitness: number;
+    excluded: { open: number; cancelled: number }; deviations: ProcessDeviation[];
+    deviating_variants: { activities: string[]; cases: number; missing: string[]; extra: string[]; out_of_order: string[] }[];
+  };
+  handovers: {
+    cases_with_handover: number; share: number;
+    pairs: { source: string; target: string; count: number; cases: number }[];
+    ping_pong: { a: string; b: string; cases: number }[];
+    resources: { resource: string; events: number; cases: number; handovers_out: number; handovers_in: number }[];
+  };
+  provenance: {
+    queries: string[]; sql: string; dialect: string; computed_at: string; method: string;
+    coverage: { events_read: number; pages: number; page_rows: number; max_events: number; truncated: boolean; split_case: boolean; note: string };
+  };
+  artifact?: { id: string; name: string; version: number };
+}
+export interface SavedProcessAnalysis {
+  id: string; name: string; version: number; created_at: string | null; updated_at: string | null;
+  asset: ProcessAnalysis["asset"] | null; segment: ProcessAnalysis["segment"]; mapping: ProcessMapping | null;
+  summary: ProcessAnalysis["summary"] | null;
 }

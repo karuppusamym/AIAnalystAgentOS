@@ -1,0 +1,26 @@
+# Reference process models for process and task mining (src/analystos/skills/process_mining.py). Domain data lives
+# here, in the pack: the core knows only "an event log has a case, an activity, a time and maybe a resource".
+#
+# `u_task_activity` is the flattened lifecycle log of ServiceNow task records (the shape a sys_audit /
+# metric_instance export flattens to): one row per step of an incident, change request or catalog task. The
+# mapping is what the Process tab pre-fills; each segment (a value of `segment_column`) has the happy path its
+# conformance check compares completed cases with.
+event_logs:
+  - table: u_task_activity
+    label: ServiceNow task activity
+    mapping:
+      case_column: task_sys_id
+      activity_column: activity
+      timestamp_column: activity_at
+      resource_column: assignment_group
+    segment_column: task_type
+    segments:
+      incident:
+        label: Incidents
+        reference_path: [Created, Assigned, Work started, Resolved, Closed]
+      change_request:
+        label: Change requests
+        reference_path: [Created, Assessed, Authorized, Scheduled, Implementation started, Implemented, Reviewed, Closed]
+      sc_task:
+        label: Catalog tasks
+        reference_path: [Created, Assigned, Work started, Closed]

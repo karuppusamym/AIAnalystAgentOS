@@ -3869,6 +3869,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/process/analyses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved Analyses
+         * @description Saved process analyses, newest first (the full content is `GET /api/artifacts/{id}`).
+         */
+        get: operations["saved_analyses_api_workspaces__workspace_id__process_analyses_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/process/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Analyze
+         * @description Analyse one event log through the gateway (as the caller: scope, masking, row filters and audit apply).
+         */
+        post: operations["analyze_api_workspaces__workspace_id__process_analyze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/process/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Candidates
+         * @description Selected tables that look like an event log, best first, with the suggested mapping.
+         */
+        get: operations["candidates_api_workspaces__workspace_id__process_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/query": {
         parameters: {
             query?: never;
@@ -6820,6 +6880,47 @@ export interface components {
         PresetIn: {
             /** Preset */
             preset: string;
+        };
+        /** ProcessAnalyzeIn */
+        ProcessAnalyzeIn: {
+            /** Activity Column */
+            activity_column: string;
+            /** Asset Id */
+            asset_id: string;
+            /** Case Column */
+            case_column: string;
+            /** Filters */
+            filters?: components["schemas"]["ProcessFilter"][];
+            /** Max Events */
+            max_events?: number | null;
+            /** Name */
+            name?: string | null;
+            /** Reference Path */
+            reference_path?: string[] | null;
+            /** Resource Column */
+            resource_column?: string | null;
+            /**
+             * Save
+             * @default false
+             */
+            save?: boolean;
+            /** Timestamp Column */
+            timestamp_column: string;
+        };
+        /** ProcessFilter */
+        ProcessFilter: {
+            /** Column */
+            column: string;
+            /**
+             * Op
+             * @default =
+             * @enum {string}
+             */
+            op?: "=" | "!=" | "in" | "not_in";
+            /** Value */
+            value?: string | number | boolean | null;
+            /** Values */
+            values?: (string | number | boolean)[] | null;
         };
         /** PromoteIn */
         PromoteIn: {
@@ -15876,6 +15977,112 @@ export interface operations {
                 };
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    saved_analyses_api_workspaces__workspace_id__process_analyses_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analyze_api_workspaces__workspace_id__process_analyze_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProcessAnalyzeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    candidates_api_workspaces__workspace_id__process_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

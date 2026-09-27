@@ -16,7 +16,8 @@ from analystos.db.models import AnalysisRun, Artifact, ArtifactVersion, LineageE
 ARTIFACT_TYPES = {"query", "profile", "quality_report", "relationship_map", "context_package", "plan", "dataset",
                   "semantic_model", "metric", "chart", "dashboard", "report", "narrative", "python_script", "ml_model",
                   "forecast", "alert", "schedule", "export", "data_quality_rule", "notebook", "transformation",
-                  "agent_output", "step_result", "ml_spec", "ml_split_manifest", "ml_trials", "ml_evaluation", "ml_model_card"}
+                  "agent_output", "step_result", "ml_spec", "ml_split_manifest", "ml_trials", "ml_evaluation", "ml_model_card",
+                  "process_analysis"}
 
 # (run_id, plan_version) of the task currently executing; set by the engine around each task.
 producing_plan: ContextVar[tuple[str, int] | None] = ContextVar("producing_plan", default=None)
