@@ -64,9 +64,10 @@ ID_NAME = re.compile(r"(^id$|_id$|^number$|^uuid$|^guid$|_key$|^key$|_uuid$|_gui
 ENUM_MAX_VALUES = 12  # a column with at most this many distinct values is enumerated in full
 ENUM_MAX_CHARS = 40  # ... when every value is at most this long
 SENSITIVE_TAGS = frozenset({"pii", "restricted", "sensitive"})
-# Facts that carry values (or a value distribution) of a column: never kept for a sensitive column.
-VALUE_FIELDS = ("top_values", "min", "max", "values", "patterns", "histogram", "percentiles", "mean", "stddev",
-                "outliers", "monthly_counts")
+# All a sensitive column's stored profile keeps: completeness and cardinality. Everything else (values, ranges,
+# histograms, percentiles, monthly buckets, lengths, shape masks) describes its values or their distribution.
+SENSITIVE_PROFILE_FIELDS = frozenset({"name", "data_type", "type_family", "semantic_type", "is_key", "non_null",
+                                      "null_count", "null_rate", "distinct", "distinct_ratio"})
 PATTERN_MAX_CHARS = 40
 PATTERN_TOP = 3
 
@@ -219,7 +220,8 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
     name, data_type and, when known, is_key / references (declared keys and foreign keys are ids). No
     enumeration is kept for a `sensitive` column."""
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
-    sensitive = {str(s).lower() for s in sensitive}
+    marked = {str(s).lower() for s in sensitive}
+    columns = [{**c, "sensitive": True} if str(c["name"]).lower() in marked else c for c in columns]
     q = _Q(run_sql, asset)
     t = table(asset)
     fams = {c["name"]: type_family(c.get("data_type", "")) for c in columns}
@@ -231,19 +233,19 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         x = col(name)
         sel += [exp.Count(this=x).as_(ident(f"c{i}_nn")),
                 exp.Count(this=exp.Distinct(expressions=[x.copy()])).as_(ident(f"c{i}_nd"))]
-        sensitive = bool(c.get("sensitive"))
-        if fam == "numeric" and not sensitive:
+        withheld = bool(c.get("sensitive"))
+        if fam == "numeric" and not withheld:
             xd = cast(x.copy(), "double", dialect)
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max")),
                     exp.Avg(this=xd).as_(ident(f"c{i}_mean")),
                     exp.Stddev(this=xd.copy()).as_(ident(f"c{i}_std"))]
             if dialect != "tsql":
                 sel += [percentile_cont(xd.copy(), p, dialect).as_(ident(f"c{i}_{_pkey(p)}")) for p in PERCENTILES]
-        elif fam == "datetime" and not sensitive:
+        elif fam == "datetime" and not withheld:
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max"))]
-        elif fam == "boolean" and not sensitive:
+        elif fam == "boolean" and not withheld:
             sel += [exp.Sum(this=is_true_expr(x.copy(), dialect)).as_(ident(f"c{i}_true"))]
-        elif not sensitive:
+        elif not withheld:
             ln = exp.Length(this=cast(x.copy(), "text", dialect))
             blank = exp.EQ(this=exp.Trim(this=cast(x.copy(), "text", dialect)), expression=exp.Literal.string(""))
             sel += [exp.Avg(this=cast(ln, "double", dialect)).as_(ident(f"c{i}_avglen")),
@@ -362,7 +364,7 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         ranked = [{"value": _jsonable(r["value"]), "count": int(r["n"]),
                    "share": round(int(r["n"]) / p.non_null, 6) if p.non_null else None} for r in rows]
         p.top_values = ranked[:top_n]
-        if p.name.lower() not in sensitive and p.type_family == "text":
+        if p.type_family == "text":
             p.values, p.values_complete = enumeration(ranked, p.distinct)
     if len(cats) > MAX_CATEGORICAL_TOPN:
         skipped = [p.name for p in cats[MAX_CATEGORICAL_TOPN:]]
@@ -433,9 +435,7 @@ def sanitize_column_profile(profile: dict[str, Any], *, sensitive: bool) -> dict
     lengths) and loses every fact that carries values or their distribution."""
     if not sensitive:
         return dict(profile)
-    out = {k: v for k, v in profile.items() if k not in VALUE_FIELDS}
-    out["values_complete"], out["sanitized"] = False, True
-    return out
+    return {k: v for k, v in profile.items() if k in SENSITIVE_PROFILE_FIELDS}
 
 
 # ------------------------------------------------------------------------------------ format patterns
