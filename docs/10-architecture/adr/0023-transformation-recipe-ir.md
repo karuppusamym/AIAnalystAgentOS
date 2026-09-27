@@ -1,6 +1,8 @@
 # ADR-0023 — Transformation recipes: one typed IR, compiled to the engine that runs it
 
-**Status:** proposed (2026-09-26, spec v4 §9; tracker P6-04..P6-07). Refines the "PipelineSpec"
+**Status:** accepted (2026-09-27; proposed 2026-09-26, spec v4 §9; tracker P6-04..P6-07). Implemented by
+P6-01..P6-08 in `contracts/recipe.py`, `recipes/` (compilers, gates, lineage, dbt), `pipelines/` and
+`services/recipes.py`. Refines the "PipelineSpec"
 of the [workspace spec](../../00-intent/03-workspace-data-team-spec.md) §5 and ADR-0014 (ELT on
 customer engines). Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §16.

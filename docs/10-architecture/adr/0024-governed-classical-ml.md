@@ -1,6 +1,8 @@
 # ADR-0024 — Governed classical ML: methods, experiment records and batch scoring inside the platform
 
-**Status:** proposed (2026-09-26, spec v4 §10; tracker P5-01..P5-06). Makes the ML scope of the
+**Status:** accepted (2026-09-27; proposed 2026-09-26, spec v4 §10; tracker P5-01..P5-06). Implemented by
+P5-01..P5-06 in `ml/` (jobs, splits, estimators, evaluation, cards) and `services/ml.py` (experiments,
+registry, approvals, scoring). Makes the ML scope of the
 [workspace spec](../../00-intent/03-workspace-data-team-spec.md) §6 concrete. Source: owner
 decision 2026-09-26 (governed classical ML; online serving and full MLOps deferred).
 
