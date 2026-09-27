@@ -2,9 +2,10 @@
 
 `WorkOrderSpec` is a routing envelope: objective, job kind, input and semantic versions, budget,
 expected outputs and validation policy around exactly one typed execution payload. `AnalysisSpec`
-is carried unchanged inside `AnalysisWork`; `PipelineSpec` (P6), `MLSpec` (P5) and `ExperimentSpec`
-are typed placeholders their rows fill in. A placeholder validates its envelope fields but is not
-executable yet: starting one is refused with `unsupported_capability`, never approximated.
+is carried unchanged inside `AnalysisWork`. `MLSpec` (P5-01) is the full governed-ML contract, but an ML
+work order stays a description: what trains is a *published* `ml_spec` definition (services/ml.py,
+playbook.train), so starting an ML work order is refused with `unsupported_capability`, as are the
+`PipelineSpec` (P6) and `ExperimentSpec` payloads, never approximated.
 
 Nothing a client sends here is proof of anything: a `scope_hash` is informational (scope is resolved
 server-side at execution), and budgets are clamped to policy by the server.
