@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.integration
-SMOKE = {"HO-SALES-01", "HO-SALES-05", "HO-DE-01", "HO-DE-04", "HO-DE-07", "HO-ML-02", "HO-ML-05"}
+SMOKE = {"HO-SALES-01", "HO-SALES-05", "HO-DE-01", "HO-DE-04", "HO-DE-07", "HO-ML-02", "HO-ML-05", "HO-GOV-02", "HO-GOV-04",
+         "HO-REC-04", "HO-REC-05"}
 
 
 def test_heldout_platform_tier(control_db):
@@ -48,3 +49,6 @@ def test_heldout_platform_tier(control_db):
         assert got["HO-DE-07"] == got["HO-ML-05"] == got["HO-SALES-05"] == "correct_abstention", got
         assert got["HO-DE-01"] == got["HO-ML-02"] == "accepted", [(x.id, x.reason) for x in platform.results]
         assert got["HO-DE-04"] == "correct_abstention", got
+        # governance stops and the pinned-snapshot refusal (fixed 2026-09-27: pushdown used to ignore the pin)
+        assert got["HO-GOV-02"] == got["HO-GOV-04"] == got["HO-REC-05"] == "correct_abstention", got
+        assert got["HO-REC-04"] == "accepted", got

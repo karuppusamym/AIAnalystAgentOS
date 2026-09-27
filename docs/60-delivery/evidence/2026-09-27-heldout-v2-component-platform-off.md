@@ -315,3 +315,14 @@ No model was called (no provider key), so model spend per accepted output is 0 b
 reported as CPU and wall seconds and is unpriced.
 
 **Not done here.** The paired practitioner baseline (humans), a live-model run (no provider key).
+
+## After the fix (added by hand, 2026-09-27)
+
+The pinned-snapshot defect was fixed in `44986f1` ("Recipes: a pinned source snapshot is never pushed down"; unit test
+`tests/unit/test_recipe_ir.py::test_a_pinned_source_is_never_pushed_down`). The platform tier was re-run at `1f0b1c1`
+for HO-REC-05 and the recipe tasks around it (`ANALYSTOS_HELDOUT_ONLY=HO-REC-05,HO-REC-01,HO-REC-02,HO-DE-01,HO-DE-07,
+HO-DE-09,HO-DE-13,HO-DE-14`, models off): HO-REC-05 is now a correct abstention (`Conflict: ... till_lines changed
+since the recipe pinned snapshot 8ecd0842a887 (now 30158aeb7dc6)`), and the seven others kept their verdicts
+(accepted, or refused for HO-DE-07). HO-REC-05 and two governance tasks joined the integration smoke set
+(`tests/integration/test_heldout_platform.py`). Because the platform changed after seeing this task, corpus v2's
+HO-REC-05 is consumed: the numbers above (pre-fix) are the v2 measurement; a fresh gate needs a rotated corpus.
