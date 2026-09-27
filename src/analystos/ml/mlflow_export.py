@@ -34,7 +34,7 @@ def _name(key: str) -> str:
     return _SAFE.sub("_", key)[:250]
 
 
-def files(view: dict[str, Any], records: dict[str, Any], package: bytes) -> dict[str, bytes]:
+def files(view: dict[str, Any], records: dict[str, Any], package: bytes, *, unpickle: bool = True) -> dict[str, bytes]:
     run_id = view["id"].replace("_", "")[:32].ljust(32, "0")
     start, end = _ms(view.get("created_at")), _ms(view.get("finished_at"))
     exp_dir = f"mlruns/{EXPERIMENT_ID}"
@@ -86,7 +86,9 @@ def files(view: dict[str, Any], records: dict[str, Any], package: bytes) -> dict
     put(f"{art}/split_manifest.json", json.dumps(records.get("ml_split_manifest"), indent=1, default=str))
     put(f"{art}/trials.json", json.dumps(trials, indent=1, default=str))
     put(f"{art}/model_card.md", (records.get("ml_model_card") or {}).get("markdown") or "")
-    pkg = pickle.loads(package)  # noqa: S301 - the caller verified the platform record and the hash
+    # With the isolated compute-ml pool the control plane never unpickles a package (P7-06): the export then
+    # carries the platform package only, without the separate sklearn flavor.
+    pkg = pickle.loads(package) if unpickle else {}  # noqa: S301 - the caller verified the platform record and the hash
     model = (records.get("ml_model") or {})
     env = model.get("environment") or {}
     libs = env.get("libraries") or {}
@@ -111,7 +113,8 @@ def files(view: dict[str, Any], records: dict[str, Any], package: bytes) -> dict
     return out
 
 
-def export_zip(buf: io.BytesIO, view: dict[str, Any], records: dict[str, Any], package: bytes) -> None:
+def export_zip(buf: io.BytesIO, view: dict[str, Any], records: dict[str, Any], package: bytes, *,
+               unpickle: bool = True) -> None:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for path, data in sorted(files(view, records, package).items()):
+        for path, data in sorted(files(view, records, package, unpickle=unpickle).items()):
             z.writestr(path, data)

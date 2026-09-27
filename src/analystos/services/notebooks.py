@@ -5,8 +5,8 @@ kept per execution); its runtime is not ported. Here a cell is an `AnalysisStep`
 container, so it inherits the step model:
 
 * **SQL** cells are `query` steps: through `QueryGateway` under the caller's scope, self-checked.
-* **Python** cells are `method` steps: restricted Python in `steps.execute_python` (the sandbox; the P7-06
-  compute pool behind the same function) on the results of the cells they read, passed in as `inputs`
+* **Python** cells are `method` steps: restricted Python in `steps.execute_python` (the isolated `compute-py`
+  pool when configured, else the sandbox, behind the same function) on the results of the cells they read, passed in as `inputs`
   (keyed by step id and by `cell<N>`). The code can open no connection: data arrives only through SQL
   cells, i.e. through the gateway.
 * **Markdown** cells are `claim` steps; when they read other cells, every number in them must bind to

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -81,8 +81,15 @@ def get_thread(thread_id: str, user: User = Depends(current_user), session: Sess
 
 
 @router.patch("/ask/threads/{thread_id}")
-def patch_thread(thread_id: str, body: AskThreadPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    return ask_svc.update_thread(session, user, thread_id, title=body.title, archived=body.archived)
+def patch_thread(thread_id: str, body: AskThreadPatch, response: Response, user: User = Depends(current_user),
+                 session: Session = Depends(db, scope="function"), if_match: str | None = Header(default=None)):
+    """Rename or archive a thread. `If-Match` (its ETag) makes a stale edit 412; old clients may omit it (P4-06)."""
+    from analystos.api.http import expected_revision, set_etag
+
+    out = ask_svc.update_thread(session, user, thread_id, title=body.title, archived=body.archived,
+                                expected_revision=expected_revision(if_match, required=False))
+    set_etag(response, out.get("revision") or 1)
+    return out
 
 
 @router.post("/ask/threads/{thread_id}/turns")
@@ -162,6 +169,17 @@ async def _settle_stream(stream, key):
 @router.get("/ask/turns/{turn_id}/inspector")
 def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return ask_svc.inspector(session, user, turn_id)
+
+
+@router.get("/ask/turns/{turn_id}/why")
+def why_turn_number(turn_id: str, number: str | None = None, column: str | None = None, row: int | None = None,
+                    user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """"Why this number?" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,
+    `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
+    every link with its current state; broken and voided links are returned, never dropped."""
+    from analystos.evidence.why import explain_ask_turn
+
+    return explain_ask_turn(session, ask_svc._turn_for(session, user, turn_id), number=number, column=column, row=row)
 
 
 @router.post("/ask/turns/{turn_id}/rerun")

@@ -2,7 +2,7 @@
   "$defs": {
     "ArtifactRef": {
       "additionalProperties": false,
-      "description": "An immutable artifact in the store. Content-addressed: the same bytes in a workspace are the same artifact.",
+      "description": "An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same\nartifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this\ntype). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step\nsnapshots stored or read as `{\"kind\": \"artifact\", \"id\": ...}` keep their shape.",
       "properties": {
         "artifact_id": {
           "title": "Artifact Id",
@@ -27,16 +27,23 @@
           "type": "string"
         },
         "bytes": {
-          "minimum": 0,
-          "title": "Bytes",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
         }
       },
       "required": [
         "artifact_id",
         "kind",
-        "content_hash",
-        "bytes"
+        "content_hash"
       ],
       "title": "ArtifactRef",
       "type": "object"
@@ -172,6 +179,54 @@
       "title": "ProbeSpec",
       "type": "object"
     },
+    "PythonCellSpec": {
+      "additionalProperties": false,
+      "description": "A notebook/step Python cell (P7-12) for `compute-py`: restricted code over the JSON input artifact named\n`inputs_artifact`, under the sandbox's static and runtime policy inside the credential-free worker.",
+      "properties": {
+        "kind": {
+          "const": "python.cell",
+          "default": "python.cell",
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 100000,
+          "title": "Code",
+          "type": "string"
+        },
+        "inputs_artifact": {
+          "title": "Inputs Artifact",
+          "type": "string"
+        },
+        "allowed_imports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Imports",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "memory_mb": {
+          "default": 1024,
+          "maximum": 65536,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "inputs_artifact"
+      ],
+      "title": "PythonCellSpec",
+      "type": "object"
+    },
     "RecipeSnapshotSpec": {
       "additionalProperties": false,
       "description": "A recipe's DuckDB statement over immutable input snapshots (ADR-0023, P6-04).",
@@ -275,6 +330,7 @@
             "mapping": {
               "conformance.probe": "#/$defs/ProbeSpec",
               "ml.job": "#/$defs/MLJobSpec",
+              "python.cell": "#/$defs/PythonCellSpec",
               "recipe.snapshot": "#/$defs/RecipeSnapshotSpec"
             },
             "propertyName": "kind"
@@ -285,6 +341,9 @@
             },
             {
               "$ref": "#/$defs/MLJobSpec"
+            },
+            {
+              "$ref": "#/$defs/PythonCellSpec"
             },
             {
               "$ref": "#/$defs/ProbeSpec"

@@ -19,6 +19,7 @@ EVENT_TYPES = {
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
     # Semantic compilation and review (P7-02, P7-09, P4-05)
     "semantic.metric.stale", "semantic.model.approved", "semantic.relationship.candidate", "semantic.relationship.validated",
+    "semantic.ownership_offered", "semantic.ownership_transferred", "semantic.ownership_declined",  # P4-05
     "ask.answered", "ask.promoted", "capability.invoked",
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
     # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches
@@ -30,8 +31,10 @@ EVENT_TYPES = {
     # Verification records (P7-01, ADR-0020): a verdict bound to its dependency fingerprint; voided when a
     # dependency changes (with its cause), swept nightly; a finding flagged wrong carries its reason
     "verification.recorded", "verification.voided", "verification.sweep_completed", "insight.flagged_wrong",
+    "verification.reverify_requested",
     # Definition lifecycle and pinned schedules (P7-03, ADR-0021)
     "definition.draft_saved", "definition.published", "definition.deprecated", "definition.retired",
+    "definition.tested", "definition.promoted",
     "schedule.upgrade_available", "schedule.upgraded", "schedule.pin_warning", "schedule.blocked", "narrative.stale",
     # Typed work orders and the dispatch outbox (P4-06)
     "work_order.created", "work_order.updated", "run.dispatched", "run.dispatch_failed",

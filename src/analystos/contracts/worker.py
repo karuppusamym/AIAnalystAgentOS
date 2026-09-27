@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from analystos.core.ids import stable_hash
 
@@ -26,14 +26,27 @@ class _Strict(BaseModel):
 
 
 class ArtifactRef(_Strict):
-    """An immutable artifact in the store. Content-addressed: the same bytes in a workspace are the same artifact."""
+    """An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same
+    artifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this
+    type). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step
+    snapshots stored or read as `{"kind": "artifact", "id": ...}` keep their shape."""
 
     artifact_id: str
     version: int = 1
     kind: str
-    content_hash: str  # sha256 of the bytes
+    content_hash: str  # sha256 of the bytes (worker) or of the canonical JSON content (registry)
     media_type: str = "application/octet-stream"
-    bytes: int = Field(ge=0)
+    bytes: int | None = Field(default=None, ge=0)  # known for worker artifacts; None for registry content
+
+    @model_validator(mode="before")
+    @classmethod
+    def _id_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "id" in data:
+            data = dict(data)
+            alias = data.pop("id")
+            if data.setdefault("artifact_id", alias) != alias:
+                raise ValueError("id and artifact_id name different artifacts")
+        return data
 
     @field_validator("content_hash")
     @classmethod
@@ -41,6 +54,11 @@ class ArtifactRef(_Strict):
         if not _HEX64.match(v):
             raise ValueError("content_hash must be a lowercase sha256 hex digest")
         return v
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def id(self) -> str:
+        return self.artifact_id
 
 
 class CapabilityRef(_Strict):
@@ -93,6 +111,18 @@ class MLJobSpec(_Strict):
     job: dict[str, Any] = Field(default_factory=dict)
 
 
+class PythonCellSpec(_Strict):
+    """A notebook/step Python cell (P7-12) for `compute-py`: restricted code over the JSON input artifact named
+    `inputs_artifact`, under the sandbox's static and runtime policy inside the credential-free worker."""
+
+    kind: Literal["python.cell"] = "python.cell"
+    code: str = Field(max_length=100_000)
+    inputs_artifact: str
+    allowed_imports: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=30, gt=0, le=3600)
+    memory_mb: int = Field(default=1024, ge=64, le=65_536)
+
+
 class ProbeSpec(_Strict):
     """Conformance probe (tests/conformance/worker): served only by a worker started with --conformance."""
 
@@ -102,7 +132,7 @@ class ProbeSpec(_Strict):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
-TaskSpec = Annotated[RecipeSnapshotSpec | MLJobSpec | ProbeSpec, Field(discriminator="kind")]
+TaskSpec = Annotated[RecipeSnapshotSpec | MLJobSpec | PythonCellSpec | ProbeSpec, Field(discriminator="kind")]
 
 
 class TaskEnvelope(_Strict):

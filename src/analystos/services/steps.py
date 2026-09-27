@@ -8,7 +8,7 @@ A step's identity (`AnalysisStep`) is stable; every execution is a new immutable
    (downstream steps, forks, pins) turn VOID with the cause (ADR-0020, event `step.edited`).
 2. **Execute** — through one `Runtime`: SQL and compiled `SemanticQuery`s through `QueryGateway`, an
    `AnalysisSpec` through `skills.analysis.run_analysis` on the gateway runner, restricted Python through
-   `execute_python` (the sandbox today; the P7-06 compute pool later) on upstream results only.
+   `execute_python` (the `compute-py` pool when configured, else the sandbox) on upstream results only.
 3. **Self-check** — `skills/selfcheck.py`. A failed check with a safe correction is applied and the
    step re-runs (at most `MAX_CORRECTIONS` rounds, each recorded); anything else flags the step.
 4. **Record** — the result snapshot as an artifact (`ArtifactRef`), the receipts, the checks, and a
@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.step import ArtifactRef, Step, StepCheck, StepEdit, StepIn
+from analystos.contracts.step import STEP_SNAPSHOT_KIND, ArtifactRef, Step, StepCheck, StepEdit, StepIn
 from analystos.core.errors import AnalystOSError, InvalidInput, NotFound, PreconditionFailed
 from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.core.logging import get_logger
@@ -69,10 +69,19 @@ class Runtime(Protocol):
     def python(self, code: str, inputs: dict[str, Any]) -> dict[str, Any]: ...
 
 
-def execute_python(code: str, inputs: dict[str, Any], *, timeout_s: float = 30, memory_mb: int = 1024) -> dict[str, Any]:
-    """The one place a step's Python runs. Today: the sandbox (`sandbox/runner.py`, isolated, rlimited,
-    no network, allow-listed numeric imports). P7-06 switches this function to the `compute-py` pool.
-    The code sees only `inputs` (upstream step results); it can reach no connection of any kind."""
+def execute_python(code: str, inputs: dict[str, Any], *, timeout_s: float = 30, memory_mb: int = 1024,
+                   workspace_id: str | None = None) -> dict[str, Any]:
+    """The one place a step's Python runs: the isolated `compute-py` pool when this installation runs it
+    (P7-06; a pool failure raises, it never falls back), otherwise the sandbox (`sandbox/runner.py`,
+    isolated, rlimited, no network, allow-listed numeric imports). Either way the code sees only `inputs`
+    (upstream step results) and can reach no connection of any kind."""
+    from analystos.workers.dispatch import pool_configured
+
+    if pool_configured("compute-py"):
+        from analystos.workers.python import run_python_isolated
+
+        return run_python_isolated(code, inputs, allowed_imports=PYTHON_IMPORTS, timeout_s=timeout_s,
+                                   memory_mb=memory_mb, workspace_id=workspace_id)
     from analystos.sandbox.runner import run_python
 
     r = run_python(code, inputs=inputs, timeout_s=timeout_s, memory_mb=memory_mb, allowed_imports=PYTHON_IMPORTS)
@@ -89,7 +98,7 @@ class GatewayRuntime:
 
         with session_scope() as s:
             self.ctx = adhoc_context(s, user, workspace_id)
-        self.user = user
+        self.user, self.workspace_id = user, workspace_id
         self.asset_sources = dict(self.ctx.scope.asset_sources)
         self.dialect = next(iter(self.ctx.scope.source_dialects.values()), "postgres")
 
@@ -137,7 +146,7 @@ class GatewayRuntime:
                 "sql": list(out.sql), "asset": a.asset}
 
     def python(self, code: str, inputs: dict[str, Any]) -> dict[str, Any]:
-        return execute_python(code, inputs)
+        return execute_python(code, inputs, workspace_id=self.workspace_id)
 
 
 def _runtime(user: User, workspace_id: str, runtime: Runtime | None) -> Runtime:
@@ -316,7 +325,8 @@ def _save_snapshot(session: Session, step: AnalysisStep, ver: AnalysisStepVersio
     art = save_artifact(session, workspace_id=step.workspace_id, type_="step_result", name=f"{step.id}@v{ver.version}",
                         content=content, creator_user=actor.removeprefix("user:") if actor.startswith("user:") else None,
                         status="final")
-    return ArtifactRef(id=art.id, version=art.version, content_hash=art.content_hash).model_dump(mode="json")
+    return ArtifactRef(artifact_id=art.id, version=art.version, kind=STEP_SNAPSHOT_KIND, content_hash=art.content_hash,
+                       media_type="application/json").model_dump(mode="json")
 
 
 def snapshot_content(session: Session, ref: dict[str, Any] | None) -> dict[str, Any]:

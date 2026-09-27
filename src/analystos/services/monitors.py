@@ -36,6 +36,9 @@ KINDS = {"metric_threshold", "metric_drift", "change_point", "forecast_deviation
 OPS = {">": lambda a, b: a > b, ">=": lambda a, b: a >= b, "<": lambda a, b: a < b, "<=": lambda a, b: a <= b}
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
 PERCENT_TOLERANCE = 1e-9
+BASELINE_SUBJECTS = ("insight", "step", "ml_experiment")
+ON_VOID_BASELINE = ("refuse", "relabel")
+BASELINE_VOID = "baseline_void"
 
 
 def condition_key(workspace_id: str, kind: str, config: dict) -> str:
@@ -62,6 +65,7 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
+    validate_baseline(session, workspace_id, config)
     if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
         from analystos.services.definitions import resolve_runnable
 
@@ -74,11 +78,66 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             audit(f"user:{user.id}", "monitor.reused", workspace_id=workspace_id, target=existing.id,
                   details={"kind": kind, "requested_name": name}, session=session)
             return existing
-    m = Monitor(id=new_id("mon"), workspace_id=workspace_id, name=name, kind=kind, config=config, enabled=True,
+    m = Monitor(id=new_id("mon"), workspace_id=workspace_id, name=name, kind=kind, config=config, enabled=True, revision=1,
                 auto_investigate=auto_investigate, created_by=user.id)
     session.add(m)
     audit(f"user:{user.id}", "monitor.created", workspace_id=workspace_id, target=m.id, details={"kind": kind}, session=session)
     return m
+
+
+# ------------------------------------------------------------------------------------ verified baselines (P7-01)
+def validate_baseline(session: Session, workspace_id: str, config: dict) -> None:
+    """`config.baseline = {subject_type, subject_id}` names the verified verdict this monitor compares with;
+    `config.on_void_baseline` says what a VOID one does: `refuse` (default) or `relabel`."""
+    from analystos.db.models import VerificationRecord
+
+    if config.get("on_void_baseline", "refuse") not in ON_VOID_BASELINE:
+        raise InvalidInput(f"config.on_void_baseline must be one of {list(ON_VOID_BASELINE)}")
+    b = config.get("baseline")
+    if b is None:
+        return
+    if not isinstance(b, dict) or b.get("subject_type") not in BASELINE_SUBJECTS or not isinstance(b.get("subject_id"), str):
+        raise InvalidInput(f"config.baseline needs subject_type in {list(BASELINE_SUBJECTS)} and a subject_id")
+    exists = session.scalar(select(VerificationRecord.id).where(VerificationRecord.workspace_id == workspace_id,
+                                                                VerificationRecord.subject_type == b["subject_type"],
+                                                                VerificationRecord.subject_id == b["subject_id"]).limit(1))
+    if exists is None:
+        raise InvalidInput(f"{b['subject_type']} {b['subject_id']} has no verification record in this workspace; a "
+                           "baseline must be a verified verdict")
+
+
+def baseline_subjects(session: Session, monitor: Monitor) -> list[tuple[str, str]]:
+    """The verdicts a monitor compares with: its declared baseline and, for ML input-drift and delayed-label
+    monitors, the champion's experiment (its reference profile and evaluation metric are the baseline)."""
+    out: list[tuple[str, str]] = []
+    b = monitor.config.get("baseline")
+    if isinstance(b, dict) and b.get("subject_type") in BASELINE_SUBJECTS and b.get("subject_id"):
+        out.append((b["subject_type"], b["subject_id"]))
+    if monitor.kind in ("ml_drift", "ml_performance") and monitor.config.get("model"):
+        from analystos.services.ml import SUBJECT, current_champion
+
+        mv = current_champion(session, monitor.workspace_id, monitor.config["model"])
+        if mv is not None and mv.experiment_id:
+            out.append((SUBJECT, mv.experiment_id))
+    return list(dict.fromkeys(out))
+
+
+def baseline_state(session: Session, monitor: Monitor) -> dict[str, Any] | None:
+    """The current verification state of every baseline the monitor compares with (None: it has none)."""
+    from analystos.evidence.verification import latest, state_of, void_cause
+
+    subjects = baseline_subjects(session, monitor)
+    if not subjects:
+        return None
+    items = []
+    for subject_type, subject_id in subjects:
+        st = state_of(latest(session, subject_type, [subject_id]).get(subject_id))
+        items.append({"subject_type": subject_type, "subject_id": subject_id, "state": st["state"], "badge": st["badge"],
+                      "record_id": st["record_id"], "void": st["void"], "cause": void_cause(st)})
+    void = [i for i in items if i["state"] == "VOID"]
+    return {"subjects": items, "void": bool(void), "cause": "; ".join(i["cause"] for i in void) or None,
+            "on_void": monitor.config.get("on_void_baseline", "refuse"),
+            "void_record_ids": [i["record_id"] for i in void]}
 
 
 def _is_fraction(value: Any) -> bool:
@@ -444,8 +503,14 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
         if monitor is None:
             raise NotFound("monitor not found")
         owner = s.get(User, monitor.created_by)
+        baseline = baseline_state(s, monitor)
         try:
-            if monitor.kind == "data_quality":
+            if baseline and baseline["void"] and baseline["on_void"] == "refuse":
+                # ADR-0020 decision 5: a monitor never compares with a VOID verdict; it says why and waits.
+                result = {"alert": False, "state": BASELINE_VOID, "baseline": baseline,
+                          "message": f"Not evaluated: the baseline verdict is void ({baseline['cause']}); re-verify "
+                                     f"record(s) {', '.join(baseline['void_record_ids'])} before this monitor compares with it."}
+            elif monitor.kind == "data_quality":
                 result = _evaluate_quality(s, owner, monitor)
             elif monitor.kind in ML_KINDS:
                 from analystos.ml.monitoring import evaluate as evaluate_ml
@@ -456,6 +521,11 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
                 result = {**_evaluate_metric(monitor, series), "metric": series["label"], "query_id": series["query_id"],
                           "grain": series["grain"], "excluded_future_rows": series["excluded_future_rows"],
                           "dropped_incomplete_period": series["dropped_incomplete_period"]}
+            if baseline and result.get("state") != BASELINE_VOID:
+                result["baseline"] = baseline
+                if baseline["void"]:  # relabel: evaluated, and every reading says what it was compared with
+                    result["baseline_void"] = True
+                    result["message"] = f"[baseline void: {baseline['cause']}] {result.get('message') or ''}".strip()
         except AnalystOSError as exc:
             monitor.state, monitor.last_evaluated_at = "error", utcnow()
             monitor.last_result = {**(monitor.last_result or {}), "error": exc.message}
@@ -466,12 +536,17 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
     alert_id = None
     if result.get("alert"):
         alert_id = _raise_alert(monitor, owner, workspace, result)
+    refused = result.get("state") == BASELINE_VOID
     with session_scope() as s:
         m = s.get(Monitor, monitor_id)
-        m.state = "alerting" if result.get("alert") else "ok"
+        m.state = BASELINE_VOID if refused else "alerting" if result.get("alert") else "ok"
         m.last_evaluated_at = utcnow()
-        m.last_result = {k: v for k, v in result.items() if k != "series_tail"} | {"series_tail": result.get("series_tail")}
-        if not result.get("alert"):
+        if refused:  # the last real reading stays; only the refusal is added
+            m.last_result = {**(m.last_result or {}), "state": BASELINE_VOID, "baseline": result["baseline"],
+                             "message": result["message"]}
+        else:
+            m.last_result = {k: v for k, v in result.items() if k != "series_tail"} | {"series_tail": result.get("series_tail")}
+        if not result.get("alert") and not refused:
             key = condition_key(m.workspace_id, m.kind, m.config)
             for a in s.scalars(select(Alert).where(or_(Alert.monitor_id == monitor_id, Alert.dedupe_key.like(f"{key}:%")),
                                                    Alert.status != "resolved")):

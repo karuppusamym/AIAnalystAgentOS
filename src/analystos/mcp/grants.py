@@ -26,6 +26,9 @@ from analystos.governance.audit import audit
 from analystos.governance.policy import get_workspace
 
 TOOLS = ("ask", "investigate", "get_finding_evidence", "validate_sql")
+# P7-11: a workspace's published query tools and tested/certified read-only HTTP tools, granted by name
+# (`query.<key>`, `http.<capability id>`) or by family (`query.*`, `http.*`)
+WORKSPACE_TOOL_PREFIXES = ("query.", "http.")
 RESOURCE_READ = "resources/read"  # quota key for resource reads
 GRANT_ROLES = ("viewer", "analyst")
 TOOL_MIN_ROLE = {"ask": "analyst", "investigate": "analyst", "validate_sql": "analyst",
@@ -35,6 +38,19 @@ DEFAULT_DAILY_QUOTA = 1000
 
 class QuotaExceeded(BudgetExceeded):
     code = "quota_exceeded"
+
+
+def is_workspace_tool(name: str) -> bool:
+    return any(name.startswith(p) and len(name) > len(p) for p in WORKSPACE_TOOL_PREFIXES)
+
+
+def min_role(tool: str) -> str:
+    return "analyst" if is_workspace_tool(tool) else TOOL_MIN_ROLE[tool]
+
+
+def grants_tool(tools: list[str], tool: str) -> bool:
+    """An exact grant, or the family wildcard for a workspace tool."""
+    return tool in tools or (is_workspace_tool(tool) and f"{tool.split('.', 1)[0]}.*" in tools)
 
 
 def hash_secret(secret: str) -> str:
@@ -98,15 +114,16 @@ def set_grant(session: Session, admin: User, client_id: str, workspace_id: str, 
     if role not in GRANT_ROLES:
         raise InvalidInput(f"an MCP grant role must be one of {', '.join(GRANT_ROLES)}")
     tools = list(dict.fromkeys(tools if tools is not None else ["get_finding_evidence"]))
-    unknown = [t for t in tools if t not in TOOLS]
+    unknown = [t for t in tools if t not in TOOLS and not is_workspace_tool(t)]
     if unknown:
-        raise InvalidInput(f"unknown MCP tools: {', '.join(unknown)} (known: {', '.join(TOOLS)})")
-    too_low = [t for t in tools if TOOL_MIN_ROLE[t] == "analyst" and role != "analyst"]
+        raise InvalidInput(f"unknown MCP tools: {', '.join(unknown)} (known: {', '.join(TOOLS)}, query.<key>, http.<id>, "
+                           "query.*, http.*)")
+    too_low = [t for t in tools if min_role(t) == "analyst" and role != "analyst"]
     if too_low:
         raise InvalidInput(f"tools {', '.join(too_low)} need an analyst grant")
     quotas = dict(quotas or {})
     for k, v in quotas.items():
-        if k not in (*TOOLS, RESOURCE_READ) or not isinstance(v, int) or v < 1:
+        if (k not in (*TOOLS, RESOURCE_READ) and not is_workspace_tool(k)) or not isinstance(v, int) or v < 1:
             raise InvalidInput(f"quota {k!r} must name a tool (or {RESOURCE_READ}) and be a positive integer")
     grant = session.scalar(select(McpGrant).where(McpGrant.client_id == client_id, McpGrant.workspace_id == workspace_id))
     if grant is None:
@@ -165,7 +182,7 @@ def check_grant(principal: ClientPrincipal, workspace_id: str | None, tool: str)
     grant = principal.grants.get(workspace_id)
     if grant is None:
         raise Forbidden(f"no grant for workspace {workspace_id}")
-    if tool != RESOURCE_READ and tool not in grant["tools"]:
+    if tool != RESOURCE_READ and not grants_tool(grant["tools"], tool):
         raise Forbidden(f"the grant for workspace {workspace_id} does not include tool {tool}")
     return grant
 

@@ -222,7 +222,7 @@ def test_the_cli_starts_an_isolated_worker_without_settings(monkeypatch):
 def test_handlers_are_bound_to_pools_and_hashed_by_source():
     from analystos.workers import handlers
 
-    assert handlers.served_by("compute-py") == ["recipe.snapshot"]
+    assert handlers.served_by("compute-py") == ["python.cell", "recipe.snapshot"]
     assert handlers.served_by("compute-ml") == ["ml.job"]
     assert "conformance.probe" in handlers.served_by("compute-ml", conformance=True)
     with pytest.raises(errors.UnsupportedCapability):
@@ -296,3 +296,84 @@ def test_the_isolated_workflow_is_registered_where_the_control_plane_runs():
     assert IsolatedTaskWorkflow.__temporal_workflow_definition.name == "IsolatedTaskWorkflow"
     assert record_task_events in BY_WORKLOAD["analysis"]
     assert all(run_isolated_task not in acts for acts in BY_WORKLOAD.values())  # only isolated workers run it
+
+
+def test_ml_compute_goes_to_compute_ml_only_when_the_pool_is_configured(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.workflows import orchestrator
+
+    calls = []
+    monkeypatch.setattr("analystos.workers.ml.run_ml_isolated", lambda job, **kw: calls.append(job) or {"iso": 1})
+    monkeypatch.setattr("analystos.ml.jobs.run_ml_job", lambda job: {"inline": True})
+    monkeypatch.setattr(get_settings(), "orchestrator", "local")
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-py")
+    assert orchestrator.run_ml_compute({"x": 1}) == {"inline": True} and not calls
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-ml")
+    assert orchestrator.run_ml_compute({"x": 1}) == {"iso": 1} and calls == [{"x": 1}]
+
+
+def test_step_python_goes_to_compute_py_only_when_the_pool_is_configured(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.services import steps
+
+    calls = []
+    monkeypatch.setattr("analystos.workers.python.run_python_isolated",
+                        lambda code, inputs, **kw: calls.append((code, kw["workspace_id"])) or {"ok": True, "iso": 1})
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-py")
+    assert steps.execute_python("result = 1", {}, workspace_id="ws1") == {"ok": True, "iso": 1}
+    assert calls == [("result = 1", "ws1")]
+    monkeypatch.setattr(get_settings(), "isolated_pools", "")
+    monkeypatch.setattr("analystos.sandbox.runner.run_python", lambda code, **kw: pytest.fail("ran") if calls[1:] else
+                        type("R", (), {"ok": True, "result": 1, "error": None, "stdout": "", "duration_ms": 1,
+                                       "timed_out": False, "isolation": "process", "network_isolated": True})())
+    assert steps.execute_python("result = 1", {})["isolation"] == "process" and len(calls) == 1
+
+
+def test_a_step_snapshot_and_a_worker_artifact_are_one_artifact_ref_type():
+    from analystos.contracts import step, worker
+
+    assert step.ArtifactRef is worker.ArtifactRef
+    assert step.Step.model_fields["result_snapshot"].annotation == worker.ArtifactRef | None
+    h = "ab" * 32
+    stored = {"kind": "artifact", "id": "art_1", "version": 2, "content_hash": h, "media_type": "application/json"}
+    ref = worker.ArtifactRef.model_validate(stored)  # a snapshot stored before the types were unified
+    assert ref.artifact_id == "art_1" and ref.bytes is None
+    dumped = ref.model_dump(mode="json")
+    assert {k: dumped[k] for k in stored} == stored and dumped["artifact_id"] == "art_1"  # old readers keep `id`
+    assert worker.ArtifactRef.model_validate(dumped) == ref
+    w = worker.ArtifactRef(artifact_id="wa_" + "0" * 32, kind="blob", content_hash=h, bytes=3)
+    assert worker.ArtifactRef.model_validate(w.model_dump()) == w and w.id == w.artifact_id
+    with pytest.raises(ValueError, match="different artifacts"):
+        worker.ArtifactRef.model_validate({**stored, "artifact_id": "art_2"})
+    with pytest.raises(ValueError):
+        worker.ArtifactRef.model_validate({**stored, "unexpected": 1})
+
+
+def test_the_ml_capability_hash_covers_the_ml_package():
+    from analystos.workers import handlers
+
+    h = handlers.HANDLERS["ml.job"]
+    assert h.target == "analystos.workers.ml:ml_job" and "analystos.ml" in h.covers
+    files = handlers._sources("ml.job", "analystos.ml")
+    assert any(p.name == "jobs.py" for p in files) and any(p.name == "tabular.py" for p in files)
+
+
+def test_with_the_ml_pool_the_control_plane_never_unpickles_a_package(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.services import ml
+
+    monkeypatch.setattr(ml, "verify_package", lambda s, ws, h: b"bytes")
+    monkeypatch.setattr(ml, "_store", lambda: pytest.fail("the control plane opened the package store to unpickle"))
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-ml")
+    with pytest.raises(errors.PolicyDenied, match="isolated compute-ml worker"):
+        ml.load_package(None, "ws", "ab" * 32)
+
+
+def test_the_mlflow_export_can_skip_unpickling():
+    from analystos.ml.mlflow_export import files
+
+    view = {"id": "mlx_1", "definition_key": "d", "definition_version": 1, "task": "classify", "package_hash": "ab" * 32,
+            "created_at": "2026-09-26T10:00:00+00:00", "finished_at": "2026-09-26T10:01:00+00:00"}
+    fs = files(view, {"ml_trials": {"trials": []}}, b"not a pickle", unpickle=False)
+    assert any(p.endswith("model/analystos_package.pkl") for p in fs)
+    assert not any(p.endswith("model/model.pkl") for p in fs)

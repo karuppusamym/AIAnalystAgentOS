@@ -3,16 +3,16 @@
 A handler is `module:function`. Two shapes:
 
 * `context`: `fn(spec: dict, ctx: JobContext) -> dict` reads inputs and writes outputs through `ctx`;
-* `pure`: `fn(job: dict) -> dict`, a pure job (P5-04 `run_ml_job`). The worker passes
+* `pure`: `fn(job: dict) -> dict`, a pure job. The worker passes
   `{**spec["job"], "inputs": {artifact_id: local path}}` and stores the returned dict as the JSON
   output `result` (so the envelope must list `required_outputs: ["result"]`).
 
-The capability hash an envelope carries is the SHA-256 of the handler module's source: a worker whose
-code differs from the control plane's refuses the task instead of running a different version.
+The capability hash an envelope carries is the SHA-256 of the handler module's source plus the modules
+(or packages) it `covers`: a worker whose code differs from the control plane's refuses the task instead
+of running a different version.
 
-Plugging in an ML job (P5-04): `register_handler("ml.job", "analystos.ml.jobs:run_ml_job", pools=("compute-ml",),
-adapter="pure")` (or change `ML_JOB_TARGET`), build a `TaskEnvelope` with `spec=MLJobSpec(job=...)` and call
-`analystos.workers.dispatch.dispatch_isolated("compute-ml", envelope)`. Nothing else in the protocol changes.
+ML jobs (P5-01) use the context adapter (`workers/ml.py`): `run_ml_job` reads and writes several files,
+which travel as artifacts in both directions.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from typing import Any
 
 from analystos.core.errors import BudgetExceeded, FeatureUnavailable, InvalidInput, UnsupportedCapability
 
-ML_JOB_TARGET = "analystos.ml.jobs:run_ml_job"
+ML_JOB_TARGET = "analystos.workers.ml:ml_job"
 EVENT_MARK = "\x1eAOS-EVENT "
 RESULT_MARK = "\x1eAOS-RESULT "
 
@@ -41,6 +41,7 @@ class Handler:
     adapter: str = "context"  # context | pure
     version: str = "1"
     conformance_only: bool = False
+    covers: tuple[str, ...] = ()  # further modules or packages whose source is part of the capability hash
 
     @property
     def module(self) -> str:
@@ -51,15 +52,17 @@ HANDLERS: dict[str, Handler] = {}
 
 
 def register_handler(kind: str, target: str, *, pools: tuple[str, ...], adapter: str = "context", version: str = "1",
-                     conformance_only: bool = False) -> Handler:
+                     conformance_only: bool = False, covers: tuple[str, ...] = ()) -> Handler:
     if adapter not in ("context", "pure"):
         raise ValueError("adapter must be context or pure")
-    HANDLERS[kind] = Handler(kind, target, tuple(pools), adapter, version, conformance_only)
+    HANDLERS[kind] = Handler(kind, target, tuple(pools), adapter, version, conformance_only, tuple(covers))
     return HANDLERS[kind]
 
 
 register_handler("recipe.snapshot", "analystos.workers.handlers:recipe_snapshot", pools=("compute-py",))
-register_handler("ml.job", ML_JOB_TARGET, pools=("compute-ml",), adapter="pure")
+register_handler("python.cell", "analystos.workers.python:python_cell", pools=("compute-py",),
+                 covers=("analystos.sandbox.runner", "analystos.sandbox._harness"))
+register_handler("ml.job", ML_JOB_TARGET, pools=("compute-ml",), covers=("analystos.ml",))
 register_handler("conformance.probe", "analystos.workers.conformance:probe", pools=("compute-py", "compute-ml"),
                  conformance_only=True)
 
@@ -81,16 +84,26 @@ def handler_hash(kind: str) -> str:
     h = HANDLERS.get(kind)
     if h is None:
         raise UnsupportedCapability(f"no isolated handler for '{kind}'")
+    digest = hashlib.sha256(f"{h.kind}\x00{h.version}\x00".encode())
+    for module in (h.module, *h.covers):
+        for path in _sources(kind, module):
+            digest.update(path.name.encode() + b"\x00")
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _sources(kind: str, module: str) -> list[Path]:
+    """The source file of a module, or every `.py` file of a package (sorted), found without importing it."""
     try:
-        spec = importlib.util.find_spec(h.module)
+        spec = importlib.util.find_spec(module)
     except (ImportError, ValueError):
         spec = None
     if spec is None or not spec.origin or not Path(spec.origin).exists():
-        raise FeatureUnavailable(f"'{kind}' jobs are unavailable: {h.module} is not installed here",
-                                 details={"kind": kind, "module": h.module})
-    digest = hashlib.sha256(f"{h.kind}\x00{h.version}\x00".encode())
-    digest.update(Path(spec.origin).read_bytes())
-    return digest.hexdigest()
+        raise FeatureUnavailable(f"'{kind}' jobs are unavailable: {module} is not installed here",
+                                 details={"kind": kind, "module": module})
+    if spec.submodule_search_locations:
+        return sorted(p for loc in spec.submodule_search_locations for p in Path(loc).rglob("*.py"))
+    return [Path(spec.origin)]
 
 
 def resolve(h: Handler) -> Any:
