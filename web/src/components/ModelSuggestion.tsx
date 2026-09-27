@@ -116,7 +116,7 @@ function SuggestionBody({ d, measured }: { d: Suggestion; measured: ModelValidat
 
       <section aria-label="Tables">
         <h3 className="h-sm">Tables</h3>
-        <div className="table-wrap">
+        <div className="table-wrap" tabIndex={0}>
           <table className="table table-compact">
             <thead><tr><th>Table</th><th>Kind</th><th>One row is</th><th>Key</th><th>Time</th><th>Measures</th><th>Open points</th></tr></thead>
             <tbody>{tables.map((t) => <TableRow key={t.asset_id} t={t} check={keyCheck.get(t.asset_id)} />)}</tbody>
@@ -127,7 +127,7 @@ function SuggestionBody({ d, measured }: { d: Suggestion; measured: ModelValidat
       <section aria-label="Joins">
         <h3 className="h-sm">Joins</h3>
         {d.relationships.length === 0 ? <p className="muted small">No joins found yet. Discover joins measures candidates on the data.</p> : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="table table-compact">
               <thead><tr><th>From</th><th>To</th><th>Cardinality</th><th>Confidence</th><th>Status</th><th>Measured</th></tr></thead>
               <tbody>
