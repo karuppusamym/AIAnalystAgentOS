@@ -146,6 +146,8 @@ class CrawlSettings(BaseModel):
     enrichment_batch_tables: int = Field(25, ge=1, le=100)
     enrichment_max_columns: int = Field(12, ge=1, le=60)
     pii_value_sampling: bool = True  # classify PII from a small sample of values (values never leave the platform)
+    profile_reuse_hours: int = Field(24, ge=0, le=24 * 365)  # a run reuses a stored profile of the same shape this young
+    profile_on_select: bool = True  # selecting tables starts a background crawl that profiles the newly selected ones
 
 
 class MonitorSettings(BaseModel):

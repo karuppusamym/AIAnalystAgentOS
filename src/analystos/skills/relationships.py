@@ -133,6 +133,10 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 return by_full[head], last
             if head in by_short and len(by_short[head]) == 1 and last in cols(by_short[head][0]):
                 return by_short[head][0], last
+            # "origin_schema.table.column": a staged copy lives in another schema; the table name still decides
+            short = parts[-2]
+            if short in by_short and len(by_short[short]) == 1 and last in cols(by_short[short][0]):
+                return by_short[short][0], last
         if parts[-1] in by_short and len(by_short[parts[-1]]) == 1:
             return by_short[parts[-1]][0], None
         return None, None

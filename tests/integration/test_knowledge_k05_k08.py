@@ -303,8 +303,9 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
         def __init__(self, text):
             self.text = text
 
-        def complete_json(self, purpose, system, user, *, ctx=None, max_tokens=None):
-            sent.append(json.loads(user))
+        def complete(self, purpose, messages, *, ctx=None, json_output=False, max_tokens=None):
+            assert messages[0]["role"] == "system" and messages[0]["cache"] is True and json_output  # a cached prefix
+            sent.append(json.loads(messages[1]["content"]))
             return SimpleNamespace(data={"tables": [{"key": "public.tbl_x1", "business_name": "Shipment exceptions",
                                                      "description": self.text, "confidence": 0.95}]}, model="m-test")
 
@@ -315,7 +316,7 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
     crawl.log = SimpleNamespace(stage=lambda *a, **k: None)
     crawl._call_ctx = lambda: None
     batch = [{"key": "public.tbl_x1", "name": "tbl_x1"}]
-    by_key = {"public.tbl_x1": {"asset_id": asset_id, "semantics": sem}}
+    by_key = {"public.tbl_x1": {"asset_id": asset_id, "semantics": sem, "describe": True}}
     text = "Shipments that missed their promised delivery date, one row per exception."
     assert crawl._enrich_batch(Router(text), batch, by_key) == 1
     with session_scope() as s:
@@ -327,11 +328,14 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
                                                    "prompt_version": "crawl-enrich-v2", "crawl_run": "crawl_test"}
         assert f["description"]["before"] == {"value": None, "origin": None}
         assert f["role"]["provenance"]["source"] == "rule" and f["role"]["confidence"] == 0.3
-        assert s.get(SourceAsset, asset_id).description == text  # placeholder filled, unreviewed
+        a = s.get(SourceAsset, asset_id)
+        # drafts never reach the catalog (or a prompt) before a person accepts them; the asset only points at one
+        assert a.description is None and a.semantics["model_description_draft"]["suggestion_id"] == row.id
         out = review(s, workspace, _admin(s), [{"id": row.id, "action": "reject", "reason": "wrong table"}])
-        assert out["rejected"][0]["catalog"] == "catalog restored"
+        assert out["rejected"][0]["catalog"] == "catalog unchanged"
         a = s.get(SourceAsset, asset_id)
         assert (a.description, a.description_origin, a.reviewed) == (None, None, False)
+        assert "model_description_draft" not in a.semantics
     # the next crawl tells the model what was rejected and never applies it again
     assert crawl._enrich_batch(Router(text), batch, by_key) == 0
     assert sent[-1]["tables"][0]["rejected"] == [text.lower()]
@@ -344,6 +348,7 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
         assert out["approved"][0]["catalog"] == "catalog updated"
         a = s.get(SourceAsset, asset_id)
         assert a.description == other and a.reviewed  # a human reviewed it: crawls never touch it again
+        assert a.description_origin == "model" and "model_description_draft" not in (a.semantics or {})
         doc = okf.parse_document(row.path, store.revision_files(s, store.workspace_pack(s, workspace))[row.path])
         assert doc.type == "Table" and doc.extension["review"]["fields"]["description"]["provenance"]["model"] == "m-test"
 
