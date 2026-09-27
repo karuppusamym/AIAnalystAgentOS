@@ -2022,8 +2022,15 @@ export interface TokenSavings {
     deterministic_skips: number;
     refused: number;
     saved_share: number;
+    /** Input tokens the provider served from its prompt cache (billed at a discount). */
+    input_tokens?: number;
+    cached_input_tokens?: number;
+    cached_input_share?: number | null;
+    cached_input_saved_usd?: number | null;
   };
   by_purpose: Record<string, TokenSavingsRow>;
+  /** Compiled context and knowledge retrieval reused instead of rebuilt, per kind and purpose. */
+  context_cache?: { shared: boolean; by_kind: Record<string, Record<string, { hits: number; misses: number; chars_reused: number }>> } | null;
   /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
   by_rung?: Record<string, RungSpend> | null;
   by_model?: Record<string, RungSpend> | null;
