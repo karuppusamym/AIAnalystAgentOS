@@ -241,7 +241,9 @@ class DecisionService:
 
     def _record_avoided_calls(self, spec: PurposeSpec, order: list[str], decided: tuple | None, attempts: list[dict],
                               ctx: CallContext | None) -> None:
-        """A rule that decided before JEV avoided a call: show it as savings when JEV could have answered."""
+        """A rule that decided before JEV avoided a call: show it as savings when JEV could have answered.
+        Without a model route (no key) the rule's decision is still entered in the run's ledger, with no
+        savings claimed, so a keyless run shows every decision and the rung that answered it."""
         if decided is None or decided[0] != "rules" or "jev" not in order or order.index("jev") < order.index("rules") \
                 or any(a["backend"] == "jev" for a in attempts):
             return
@@ -249,6 +251,8 @@ class DecisionService:
         try:
             if jev is not None and hasattr(jev, "available") and jev.available(spec.name, ctx):
                 self.router.record_skip(spec.name, ctx, estimated_tokens=400, reason="rule decided first")
+            else:
+                self.router.record_skip(spec.name, ctx, estimated_tokens=0, reason="rule decided; no model route")
         except Exception as exc:  # noqa: BLE001 - accounting only
             log.debug("skip accounting failed: %s", exc)
 

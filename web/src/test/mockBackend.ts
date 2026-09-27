@@ -5,7 +5,7 @@
  */
 import type {
   AgentSpec, Alert, Approval, Artifact, ArtifactDetail, AskInspector, AskResponse, AskThread, AskTurn, BuildDiff, BuildJob, BuildJobDetail, BuildTarget,
-  CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Hypothesis, Insight, InsightDetail, MetricValidation, ModelHealth, Monitor, ModelsView,
+  CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Health, Hypothesis, Insight, InsightDetail, MetricValidation, ModelHealth, Monitor, ModelsView,
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
@@ -18,6 +18,13 @@ export const WS = "ws_demo";
 export const RUN = "run_demo";
 export const INSIGHT = "ins_demo";
 const T = "2026-09-25T09:00:00Z";
+
+/** A healthy standard installation (GET /api/health); the status banner shows nothing for it. */
+export const HEALTH: Health = {
+  ok: true, degraded: false, problems: [], orchestrator: "temporal",
+  checks: { postgres: { ok: true, state: "up" }, temporal: { ok: true, state: "up" }, worker: { ok: true, state: "up" },
+    superset: { ok: true, state: "up" } },
+};
 
 export const USER: User = {
   id: "usr_admin", email: "admin@analystos.local", name: "Ada Admin", is_admin: true, active: true, attributes: {}, created_at: T,
@@ -744,6 +751,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     return { status: 200, body: `event: end\ndata: {"status":"COMPLETED"}\n\n`, contentType: "text/event-stream" };
   }
   const routes: [string, string, unknown][] = [
+    ["GET", "/health", HEALTH],
     ["GET", "/auth/me", USER],
     ["GET", "/auth/providers", { password: true, oidc: { enabled: false, name: "SSO", login_url: null } }],
     ["GET", "/workspaces", [WORKSPACE]],

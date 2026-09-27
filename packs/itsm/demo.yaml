@@ -1,0 +1,84 @@
+# The ITSM demo workspace `analystos demo-seed` builds (src/analystos/demo/seed.py). Domain data lives here, in the
+# pack, so the core stays domain-neutral (tests/unit/test_domain_packs.py). Not a capability manifest (no apiVersion).
+workspace:
+  name: ServiceNow Incident Intelligence (demo)
+  description: Demo workspace created by `analystos demo-seed`.
+  objective: >-
+    Analyze Incident and Change data for the last 12 months. Identify the drivers of SLA breaches, recurring
+    operational problems, teams with unusually high reassignment, and applications generating repeated critical
+    incidents. Create an executive dashboard and an operations dashboard.
+  # v1 §62 predates the approved-metric gate (P4-K03): the demo's KPIs are proposed by the run itself.
+  policy: {require_approved_metrics: false}
+
+source:
+  kind: servicenow
+  name: ServiceNow
+  secret_ref: env:SERVICENOW_PASSWORD
+  username: admin
+  tables: [incident, change_request, sys_user_group, cmdb_ci]
+  select: [incident, change_request]
+
+brief:
+  - {group: decision, field: question, value: "What drives SLA breaches on incidents, and which teams and applications need attention?"}
+  - {group: decision, field: audience, value: "Head of IT operations and the service-desk team leads"}
+  - {group: decision, field: intended_action, value: "Rebalance on-call staffing and review problem records for the worst applications"}
+  - {group: data_semantics, field: exclusion_rule, value: "Inquiry-category incidents are requests, not operational failures"}
+  - {group: time_measures, field: timezone, value: Europe/London}
+  - {group: constraints, field: freshness_tolerance_hours, value: 24}
+
+# Service-desk targets per assignment group: a small file a team lead keeps next to the ticket system.
+file:
+  source_name: Team targets (CSV)
+  filename: team_targets.csv
+  content: |
+    assignment_group,region,sla_target_hours,headcount,on_call
+    Network Operations,EMEA,8,12,yes
+    Service Desk,EMEA,24,30,no
+    Database Administration,AMER,12,6,yes
+    Application Support,AMER,16,14,yes
+    Cloud Platform,APAC,8,9,yes
+    End User Computing,APAC,48,18,no
+    Security Operations,EMEA,4,7,yes
+
+# The recipe's `source` node is filled in with the loaded file's asset and column types.
+recipe:
+  kind: Recipe
+  name: team_capacity
+  description: on-call capacity per region from the team targets file
+  nodes:
+    - {op: filter, id: on_call, input: targets, predicate: "on_call = 'yes'"}
+    - op: aggregate
+      id: per_region
+      input: on_call
+      keys: [region]
+      measures:
+        - {name: teams, func: count, type: bigint}
+        - {name: headcount, func: sum, column: headcount, type: bigint}
+        - {name: tightest_sla_hours, func: min, column: sla_target_hours, type: bigint}
+    - op: output
+      id: out
+      input: per_region
+      name: on_call_capacity
+      grain: [region]
+      keys: [region]
+      schema_policy: warn
+      schema:
+        - {name: region, type: text}
+        - {name: teams, type: bigint}
+        - {name: headcount, type: bigint}
+        - {name: tightest_sla_hours, type: bigint}
+      gates:
+        - {type: accepted_values, column: region, values: [AMER, EMEA, APAC], severity: warn}
+        - {type: range, column: headcount, min: 1, severity: fail}
+
+schedule:
+  name: Weekly incident review
+  kind: reanalysis
+  cron: "58 6 * * 1"
+  timezone: Europe/London
+  report: {kind: weekly_summary, formats: [html, pdf, xlsx]}
+
+monitor:
+  name: Weekly incident volume drift
+  kind: metric_drift
+  config: {metric: record_count, grain: week, lookback: 8, z_threshold: 3}
