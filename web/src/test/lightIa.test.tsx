@@ -7,16 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import axe from "axe-core";
-import { session, type CapabilitySummary, type Source, type User, type WorkspaceDetail } from "../api";
+import { session, type Source, type User, type WorkspaceDetail } from "../api";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth";
 import { visibleNav } from "../components/Layout";
-import { jobKindsFromCapabilities } from "../lib/jobKinds";
+import { jobKindsFromAvailability } from "../lib/jobKinds";
 import { fieldText, fieldValue, setField } from "../lib/policy";
 import { autonomyInWords } from "../lib/status";
 import { firstRunSteps, nextStep } from "../pages/WorkspaceHome";
 import { canSee, CONCEPTS, SCREENS } from "../routes";
-import { CAPABILITIES, INSIGHT, mockBackend, RUN, USER, WORKSPACE, WS } from "./mockBackend";
+import { headersOf, INSIGHT, mockBackend, RUN, USER, WORKSPACE, WS } from "./mockBackend";
+import { JOB_KINDS } from "./mockWave2";
 import { INSIGHT_VOID_ID } from "./mockWave1";
 
 type Handler = (method: string, path: string, body: string | null) => { status: number; body: unknown } | null;
@@ -27,7 +28,7 @@ function mockFetch(override?: Handler) {
     const body = typeof init?.body === "string" ? init.body : null;
     const o = override?.(method, new URL(String(input), "http://x").pathname, body);
     if (o) return new Response(JSON.stringify(o.body), { status: o.status, headers: { "Content-Type": "application/json" } });
-    const r = mockBackend(method, String(input), body);
+    const r = mockBackend(method, String(input), body, headersOf(init));
     return new Response(r.body, { status: r.status, headers: { "Content-Type": r.contentType } });
   });
 }
@@ -152,36 +153,32 @@ describe("the gear: admin screens are hidden from analysts and viewers", () => {
 });
 
 // ------------------------------------------------------------------------------------ Start work
-const cap = (id: string, kind: string, extra: Partial<CapabilitySummary> = {}): CapabilitySummary => ({
-  id, kind, version: "1", ref: id, summary: id, source: "builtin", entry: null, determinism: "deterministic", side_effect: "none", cost_class: "free",
-  certification: { status: "certified" }, autonomous_ok: true, needs_approval: false, tags: [], enabled: true, ...extra,
-});
-
-describe("Start work job kinds (from the capability registry)", () => {
-  const registry = [
-    cap("playbook.investigate", "Playbook"), cap("method.rate_by_segment", "Method", { tags: ["statistical", "segment"] }),
-    cap("method.trend", "Method", { tags: ["statistical", "time_series"] }), cap("engine.duckdb", "Engine"),
-  ];
-
-  it("derives six kinds, each enabled or disabled with a plain reason", () => {
-    const kinds = jobKindsFromCapabilities(registry, { readySources: 1, role: "editor" });
+describe("Start work job kinds (from the P4-04 endpoint)", () => {
+  it("maps the server's six kinds to actions, keeping every reason and never re-deriving availability", () => {
+    const kinds = jobKindsFromAvailability(JOB_KINDS);
     expect(kinds.map((k) => k.label)).toEqual(["Explain", "Compare", "Forecast", "Predict", "Prepare data", "Monitor"]);
     const by = Object.fromEntries(kinds.map((k) => [k.id, k]));
-    expect(by.explain.enabled && by.compare.enabled && by.prepare.enabled && by.monitor.enabled).toBe(true);
-    expect(by.forecast.reason).toBe("Needs a forecasting method, which is not installed.");
-    expect(by.predict.reason).toBe("Needs the model training playbook, which is not installed.");
+    expect([by.explain.action, by.compare.action, by.forecast.action, by.predict.action, by.prepare.action, by.monitor.action])
+      .toEqual(["investigate", "investigate", "ml", "ml", "prepare", "monitor"]);
+    expect(by.forecast.enabled).toBe(false);
+    expect(by.forecast.reasons).toEqual([expect.objectContaining({ code: "capability_unusable", remediation: expect.stringMatching(/workspace owner enables it/) })]);
+    expect(by.explain.uses).toEqual(["playbook.investigate"]);
+    expect(by.predict.readinessChecks).toContain("label_availability");
   });
 
-  it("explains disabled, uncertified, missing-extra, role and no-data reasons", () => {
-    const off = registry.map((c) => (c.id === "playbook.investigate" ? { ...c, enabled: false } : c));
-    expect(jobKindsFromCapabilities(off, { readySources: 1, role: "analyst" })[0].reason).toMatch(/turned off in this workspace/);
-    const draft = registry.map((c) => (c.id === "engine.duckdb" ? { ...c, certification: { status: "draft" } } : c));
-    expect(jobKindsFromCapabilities(draft, { readySources: 1, role: "editor" })[4].reason).toMatch(/not certified yet/);
-    const missing = registry.map((c) => (c.id === "engine.duckdb" ? { ...c, available: false, unavailable_reason: "install analystos[duckdb]" } : c));
-    expect(jobKindsFromCapabilities(missing, { readySources: 1, role: "editor" })[4].reason).toMatch(/install analystos\[duckdb\]/);
-    expect(jobKindsFromCapabilities(registry, { readySources: 1, role: "viewer" })[0].reason).toMatch(/needs analyst or above/);
-    expect(jobKindsFromCapabilities(registry, { readySources: 1, role: "analyst" })[4].reason).toMatch(/needs editor or above/);
-    expect(jobKindsFromCapabilities(registry, { readySources: 0, role: "owner" })[0].reason).toBe("Connect a source and select its tables first.");
+  it("keeps role, no-data and no-executor reasons from the server, each with its remediation", () => {
+    const blocked = JOB_KINDS.map((k) => (k.key === "prepare" ? { ...k, available: false, reasons: [
+      { code: "role", message: "Prepare data needs the editor role here; you are analyst", remediation: "Ask a workspace owner for the role." },
+      { code: "no_data", message: "no selected, ready table is in your scope", remediation: "Add a source, discover it and select its tables (Data > Sources)." },
+    ] } : k));
+    const prepare = jobKindsFromAvailability(blocked)[4];
+    expect(prepare.enabled).toBe(false);
+    expect(prepare.reasons.map((r) => r.code)).toEqual(["role", "no_data"]);
+    expect(prepare.reason).toMatch(/needs the editor role/);
+    // a disabled kind the server gives no reason for still says so rather than looking available
+    const silent = jobKindsFromAvailability([{ ...JOB_KINDS[0], available: false, reasons: [] }])[0];
+    expect(silent.enabled).toBe(false);
+    expect(silent.reason).toMatch(/did not say why/);
   });
 
   it("shows disabled kinds with their reason and never starts a pretend run; an enabled kind shows the preflight", async () => {
@@ -190,31 +187,47 @@ describe("Start work job kinds (from the capability registry)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
     const dialog = await screen.findByRole("dialog", { name: "Start work" });
     const kinds = await within(dialog).findByRole("list", { name: "Job kinds" });
-    // the mock registry has no forecasting method, training playbook or engine
-    for (const label of ["Forecast", "Predict", "Prepare data"]) {
-      const item = within(kinds).getByText(label).closest("li")!;
-      expect(within(item).queryByRole("button")).toBeNull();
-      expect(item.getAttribute("class")).toMatch(/job-kind-disabled/);
-      expect(within(item).getByText(/Needs /)).toBeTruthy();
-    }
+    // the mock server says Forecast's method is turned off here
+    const item = within(kinds).getByText("Forecast").closest("li")!;
+    expect(within(item).queryByRole("button")).toBeNull();
+    expect(item.getAttribute("class")).toMatch(/job-kind-disabled/);
+    const why = within(item).getByRole("list", { name: "Why Forecast cannot start" });
+    expect(why.textContent).toMatch(/method\.ml\.forecast is turned off in this workspace/);
+    expect(why.textContent).toMatch(/A workspace owner enables it/);
+    fireEvent.click(item);
+    expect(within(dialog).queryByRole("form")).toBeNull();
     expect(calls(f, "POST", /\/analysis$/)).toEqual([]);
-    expect(calls(f, "GET", /\/api\/capabilities\?workspace_id=ws_demo$/)).toHaveLength(1);
+    expect(calls(f, "GET", /\/api\/workspaces\/ws_demo\/capabilities$/)).toHaveLength(1);
     fireEvent.click(within(kinds).getByRole("button", { name: /Explain/ }));
     const form = await within(dialog).findByRole("form", { name: "Start explain" });
     expect(within(form).getByRole("heading", { name: "Before it starts" })).toBeTruthy();
     expect(within(form).getByText("ServiceNow")).toBeTruthy();
     expect(within(form).queryByText(/L3\b/)).toBeNull(); // autonomy in words, not codes
     expect(within(form).getByText(/Executes; publish needs approval/)).toBeTruthy();
+    // readiness: every check with its own result, no averaged score
+    const readiness = await within(form).findByRole("group", { name: "Readiness for explain" });
+    expect(within(readiness).getByText("Ready")).toBeTruthy();
+    expect(within(readiness).getByText("Advisory checks")).toBeTruthy();
+    expect(within(readiness).getByText(/staged 30 hours ago/)).toBeTruthy();
+    expect(readiness.textContent).not.toMatch(/score|%/i);
     fireEvent.click(within(form).getByRole("button", { name: "Start investigation" }));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work/investigations/${RUN}`));
     const [, init] = calls(f, "POST", /\/analysis$/)[0];
     expect(JSON.parse(String(init!.body))).toEqual({ objective: "Why are P1 resolution times rising?", source_ids: ["src_sn"] });
   });
 
-  it("Prepare data opens its panel in Work when an engine is installed (no new screen)", async () => {
-    mockFetch((method, path) => (method === "GET" && path === "/api/capabilities"
-      ? { status: 200, body: { digest: "d", capabilities: [...CAPABILITIES, cap("engine.duckdb", "Engine")].map((c) => ({ ...c, enabled: true })) } }
-      : null));
+  it("Predict opens the ML spec form in Work (no new screen)", async () => {
+    mockFetch();
+    renderAt(`/w/${WS}/work`);
+    fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
+    const kinds = await screen.findByRole("list", { name: "Job kinds" });
+    fireEvent.click(within(kinds).getByRole("button", { name: /Predict/ }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=experiments&new=predict`));
+    expect(SCREENS.length).toBeLessThanOrEqual(20);
+  });
+
+  it("Prepare data opens its panel in Work when the server says it can run (no new screen)", async () => {
+    mockFetch();
     renderAt(`/w/${WS}/work`);
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
     const kinds = await screen.findByRole("list", { name: "Job kinds" });

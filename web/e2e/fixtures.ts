@@ -6,10 +6,11 @@ import { mockBackend, resetMockState } from "../src/test/mockBackend";
 async function mockApi(page: Page): Promise<string[]> {
   const unmatched: string[] = [];
   resetMockState(); // the build journey and KPI editor change mock state; every test starts clean
-  await page.route("**/api/**", async (route) => {
+  // On the context, so a second tab (an approver's inbox) is answered by the same backend.
+  await page.context().route("**/api/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
-    const r = mockBackend(req.method(), url.pathname + url.search, req.postData());
+    const r = mockBackend(req.method(), url.pathname + url.search, req.postData(), await req.allHeaders());
     if (r.status === 404) unmatched.push(`${req.method()} ${url.pathname}`);
     await route.fulfill({ status: r.status, body: r.body, contentType: r.contentType });
   });

@@ -42,23 +42,30 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T
   return { data, error, loading, reload, setData };
 }
 
-/** Wrap an async action with busy + error state. */
+/** Wrap an async action with busy + error state; `failure` keeps the thrown value (a stale edit's 412, say). */
 export function useAction() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
   const run = useCallback(async <R,>(fn: () => Promise<R>): Promise<R | undefined> => {
     setBusy(true);
     setError(null);
+    setFailure(null);
     try {
       return await fn();
     } catch (err) {
       setError(errorMessage(err));
+      setFailure(err);
       return undefined;
     } finally {
       setBusy(false);
     }
   }, []);
-  return { busy, error, setError, run };
+  const clear = useCallback(() => {
+    setError(null);
+    setFailure(null);
+  }, []);
+  return { busy, error, setError, failure, clear, run };
 }
 
 /** True when the dark theme is in effect: the user's pinned theme, else the OS preference (tracks changes). */

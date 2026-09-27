@@ -617,7 +617,8 @@ export function AskPage() {
         </nav>
 
         <div className="stack ask-main">
-          <Card title={thread && thread.turns.length ? thread.title : "Ask a question"}>
+          <Card title={thread && thread.turns.length ? thread.title : "Ask a question"}
+            actions={thread && thread.turns.length ? <Link className="btn btn-xs btn-ghost" to={to.thread(wsId, "ask_thread", thread.id)}>Open as a Data Thread</Link> : undefined}>
             <div className="stack">
               {thread?.turns.map((t) => (
                 <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}

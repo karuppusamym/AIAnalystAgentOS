@@ -55,9 +55,12 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-export function Card({ title, actions, children, className = "" }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+/** A card; `label` names it as a region (for cards a person or a test needs to find by name). */
+export function Card({ title, actions, children, className = "", label }: {
+  title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; label?: string;
+}) {
   return (
-    <section className={`card ${className}`}>
+    <section className={`card ${className}`} aria-label={label}>
       {(title || actions) && (
         <header className="card-header">
           {title && <h2 className="card-title">{title}</h2>}

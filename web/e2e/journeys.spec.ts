@@ -99,10 +99,9 @@ test.describe("light IA (spec v4 §15)", () => {
 
 /** Top-level nav entries: job kinds and panels must never add one. */
 async function navEntries(page: Page): Promise<number> {
-  const links = page.getByRole("navigation", { name: "Main" }).getByRole("link");
-  // Count only once the nav has rendered; an early count of 0 made the comparison meaningless.
-  await expect(links.first()).toBeVisible();
-  return links.count();
+  // counted once the workspace nav is rendered (right after sign-in the page may still be on /login)
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Outputs" })).toBeVisible();
+  return page.getByRole("navigation", { name: "Main" }).getByRole("link").count();
 }
 
 test.describe("job-kind journeys without new top-level screens", () => {
@@ -165,17 +164,19 @@ test.describe("job-kind journeys without new top-level screens", () => {
     expect(api.unmatched).toEqual([]);
   });
 
-  test("ML: Predict is shown with the missing requirement and never starts a pretend run", async ({ page, api }) => {
+  test("a kind the server cannot run (Forecast) shows its reasons and remediation and never starts a pretend run", async ({ page, api }) => {
     const posts: string[] = [];
     page.on("request", (r) => { if (r.method() === "POST") posts.push(new URL(r.url()).pathname); });
     await signIn(page, `/w/${WS}`);
     const before = await navEntries(page);
     await page.getByRole("button", { name: "Start work" }).click();
     const kinds = page.getByRole("list", { name: "Job kinds" });
-    const predict = kinds.getByRole("listitem").filter({ hasText: "Predict" });
-    await expect(predict.getByText("Needs the model training playbook, which is not installed.")).toBeVisible();
-    await expect(predict.getByRole("button")).toHaveCount(0);
-    await predict.click();
+    const forecast = kinds.locator("li.job-kind").filter({ hasText: "Forecast" });
+    const why = forecast.getByRole("list", { name: "Why Forecast cannot start" });
+    await expect(why.getByText("method.ml.forecast is turned off in this workspace")).toBeVisible();
+    await expect(why.getByText(/A workspace owner enables it/)).toBeVisible();
+    await expect(forecast.getByRole("button")).toHaveCount(0);
+    await forecast.click();
     await expect(page.getByRole("dialog", { name: "Start work" })).toBeVisible();
     await expect(page.getByRole("form")).toHaveCount(0);
     expect(posts.filter((p) => p.endsWith("/analysis"))).toEqual([]);
@@ -196,6 +197,154 @@ test.describe("job-kind journeys without new top-level screens", () => {
     await expect(page).toHaveURL(`/w/${WS}/outputs`);
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     for (const path of [`/w/${WS}/outputs`, `/w/${WS}/data/catalog?tab=definitions`, `/w/${WS}/operate/schedules`]) {
+      await page.goto(path);
+      await expect(page.locator("main h1")).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, path).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+test.describe("Data Thread (P7-04, P7-05)", () => {
+  test("analyst (keyboard): open an investigation's thread → edit a step → dependents re-run, v1 stays readable → fork → compare → merge", async ({ page, api }) => {
+    await asAnalyst(page);
+    await signIn(page, `/w/${WS}/work`, ANALYST_EMAIL);
+    const before = await navEntries(page);
+    await page.getByRole("link", { name: "Data Thread of Why are P1 resolution times rising?" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=thread&container=run%3Arun_demo`);
+    const step = (name: string) => page.getByRole("listitem", { name: new RegExp(`^Step \\d+: ${name}`) });
+    const mttr = step("Mean P1 resolution hours by group");
+    await expect(mttr.getByText("verified")).toBeVisible();
+
+    // edit with the keyboard: the new version re-runs and so do the steps that read it
+    await mttr.getByRole("button", { name: /^Edit/ }).focus();
+    await page.keyboard.press("Enter");
+    const sql = mttr.getByLabel("SQL");
+    await sql.fill("SELECT assignment_group, AVG(resolution_hours) AS mttr_hours FROM stg_sn.incident WHERE priority = '1' AND close_code != 'auto' GROUP BY 1");
+    await mttr.getByRole("button", { name: "Save and re-run" }).press("Enter");
+    await expect(page.getByText(/is now version 2\. 2 steps that read it re-ran; 3 earlier verdicts are now void/)).toBeVisible();
+    await expect(step("Network is the slowest group").getByText("re-ran: flagged")).toBeVisible();
+    await mttr.getByRole("button", { name: /^Versions \(2\)/ }).click();
+    const v1 = mttr.getByRole("listitem", { name: "Version 1" });
+    await expect(v1.getByText(/Why void: edit: the step was edited to v2/)).toBeVisible();
+    await v1.getByRole("button", { name: "Show the result of v1" }).click();
+    await expect(v1.getByRole("table", { name: "Result of version 1" })).toContainText("9.4");
+
+    // fork a "what if" from the count step, compare with main side by side, merge into a report
+    await step("P1 incidents by assignment group").getByRole("button", { name: /Fork from here/ }).click();
+    await page.getByLabel("Branch name").fill("what if");
+    await page.getByRole("button", { name: "Fork", exact: true }).click();
+    await expect(page).toHaveURL(/branch=brn_whatif/);
+    await expect(step("Plan: why").getByText("from the parent branch")).toBeVisible();
+    await page.getByLabel("Compare with").selectOption({ label: "main" });
+    await page.getByRole("button", { name: "Compare side by side" }).click();
+    await expect(page.getByRole("group", { name: "Compare main with what if" })).toBeVisible();
+    await page.getByLabel("Report title").fill("P1 thread");
+    await page.getByRole("button", { name: "Merge what if into a report" }).click();
+    await expect(page.getByText(/Merged into the report "P1 thread"/)).toBeVisible();
+    // an analyst cannot pin (editor), so no Pin control is offered
+    await expect(page.getByRole("button", { name: /^Pin/ })).toHaveCount(0);
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
+/** An approver decides in the inbox in another tab (the requester's page keeps its state). */
+async function approveInInbox(page: Page, action: RegExp): Promise<void> {
+  const inbox = await page.context().newPage();
+  await inbox.goto(`/w/${WS}/operate/approvals`);
+  const card = inbox.locator("article.approval", { hasText: action });
+  await card.getByLabel("Reason").fill("reviewed");
+  await card.getByRole("button", { name: "Approve" }).click();
+  await expect(card).toHaveCount(0);
+  await inbox.close();
+}
+
+test.describe("governed ML (P5-03)", () => {
+  test("spec → evaluate → promote → score, without a new top-level screen", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/work`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Predict/ }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=experiments&new=predict`);
+
+    // spec: prefilled from the rules-first proposal, the baseline mandatory, the metric's direction stated
+    const what = page.getByRole("form", { name: "What to predict" });
+    await what.getByLabel("Table").fill("stg_sn.incident");
+    await what.getByLabel("Target column").fill("breached_sla");
+    await what.getByRole("button", { name: "Propose a spec" }).click();
+    const spec = page.getByRole("form", { name: "ML spec" });
+    await expect(spec.getByLabel("Feature 1", { exact: true })).toHaveValue("priority");
+    await expect(spec.getByRole("checkbox", { name: /dummy_prior \(baseline, always trained\)/ })).toBeDisabled();
+    await spec.getByRole("button", { name: "Save, publish and train" }).click();
+
+    // evaluate: split diagram, trials on one split with the metric direction, a consumed holdout, the card
+    const exp = page.getByRole("region", { name: "Experiment mlx_1" });
+    await expect(exp.getByRole("img", { name: /chronological split/ })).toBeVisible();
+    await expect(exp.getByRole("table", { name: /Baseline and candidates on split/ })).toContainText("higher is better");
+    await expect(exp.getByRole("note", { name: "Holdout consumed" })).toBeVisible();
+    await expect(exp.getByRole("region", { name: "Model card" })).toContainText("Intended use");
+
+    // promote: an approval decided in the inbox
+    await exp.getByRole("button", { name: "Request promotion of v2" }).click();
+    await approveInInbox(page, /Promote a model version to champion/);
+    await exp.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(exp.getByText("Promoted: p1_breach v2 is now the champion.")).toBeVisible();
+
+    // score approved data with the champion in Outputs; rejected rows are shown, not hidden in a green count
+    await page.goto(`/w/${WS}/outputs?type=model`);
+    const model = page.getByRole("region", { name: "Model p1_breach" });
+    await model.getByText("Score approved data with v2").click();
+    await model.getByRole("button", { name: "Prepare the scoring definition" }).click();
+    await model.getByRole("button", { name: "Request approval to score" }).click();
+    await approveInInbox(page, /Score data with the champion model/);
+    await model.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(page.getByText(/Scored 4,198 of 4,210 rows/)).toBeVisible();
+    await expect(page.getByText(/12 rejected rows are kept in/)).toBeVisible();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
+test.describe("pipelines (P6-03)", () => {
+  test("engineer: dry run → approve → materialize → rollback, with quarantined rows visible", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/work`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Prepare data/ }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=prepare`);
+    await page.getByRole("list", { name: "Pipelines" }).getByRole("button", { name: /p1_clean v2/ }).click();
+    const detail = page.getByRole("region", { name: "Pipeline p1_clean v2" });
+    await expect(detail.getByRole("list", { name: "Source to output" })).toContainText("aos_out.p1_clean");
+
+    await detail.getByRole("button", { name: "Dry run" }).click();
+    const run = detail.getByRole("region", { name: "Dry run prn_1" });
+    const ledger = run.getByRole("group", { name: "Rows" });
+    await expect(ledger.locator(".stat", { hasText: "Quarantined rows" })).toContainText("20");
+    await expect(ledger.locator(".stat", { hasText: "Late rows" })).toContainText("not reported");
+    await expect(run.getByRole("table", { name: "Join diagnostics" })).toBeVisible();
+    await expect(run.getByRole("table", { name: "Reconciliation" })).toContainText("hours_total");
+
+    await detail.getByRole("button", { name: "Materialize this candidate" }).click();
+    await approveInInbox(page, /Materialize a pipeline's output/);
+    await detail.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(detail.getByText(/aos_out\.p1_clean version 3 \(4,190 rows\)/)).toBeVisible();
+
+    await detail.getByRole("link", { name: "Outputs → Managed tables" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/outputs?type=table&table=p1_clean`);
+    page.once("dialog", (d) => void d.accept());
+    await page.getByRole("button", { name: "Roll back v3" }).click();
+    await expect(page.getByText(/serves version 2 again; version 3 is kept as rolled back/)).toBeVisible();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("narrow layout: the dry-run result and the thread do not scroll sideways", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIn(page, `/w/${WS}/work?tab=prepare&pipeline=pip_2`);
+    await expect(page.getByRole("region", { name: "Dry run prn_0" })).toBeVisible();
+    for (const path of [`/w/${WS}/work?tab=prepare&pipeline=pip_2`, `/w/${WS}/work?tab=thread&container=run:run_demo`,
+      `/w/${WS}/work?tab=experiments&experiment=mlx_0`, `/w/${WS}/data/catalog?tab=brief`, `/w/${WS}/outputs?type=model`]) {
       await page.goto(path);
       await expect(page.locator("main h1")).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -500,8 +649,17 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · investigations", `/w/${WS}/work`, /Why are P1 resolution times rising/],
   ["Work · investigation", `/w/${WS}/work/investigations/${RUN}`, /Why are P1 resolution times rising/],
   ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
+  ["Work · Data Thread", `/w/${WS}/work?tab=thread&container=run:run_demo`, /Mean P1 resolution hours by group/],
+  ["Work · notebook", `/w/${WS}/work?tab=notebooks&notebook=nb_1`, /No cells yet/],
+  ["Work · experiment", `/w/${WS}/work?tab=experiments&experiment=mlx_0`, /Holdout consumed/],
+  ["Work · ML spec form", `/w/${WS}/work?tab=experiments&new=predict`, /Propose a spec/],
+  ["Outputs · models", `/w/${WS}/outputs?type=model`, /each version's own holdout/],
+  ["Outputs · managed tables", `/w/${WS}/outputs?type=table`, /p1_clean__v2/],
+  ["Work · pipeline", `/w/${WS}/work?tab=prepare&pipeline=pip_2`, /Blocked: a check failed/],
+  ["Operate · models & pipelines", `/w/${WS}/operate/monitoring?tab=health`, /drift alone does not show/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
+  ["Data · brief & readiness", `/w/${WS}/data/catalog?tab=brief`, /Open questions \(2\)/],
   ["Data · documents", `/w/${WS}/data/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
   ["Data · review queue", `/w/${WS}/data/catalog?tab=review`, /crawl-enrich-v2/],
   ["Data · metrics", `/w/${WS}/data/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
