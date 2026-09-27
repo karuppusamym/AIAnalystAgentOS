@@ -164,6 +164,24 @@ describe("Outputs → Models & scoring", () => {
     expect(within(runs).getByText("12").tagName).toBe("STRONG");
   });
 
+  it("the scoring form defaults to the table the champion was trained on (live regression)", async () => {
+    // live: the input defaulted to a fixed demo name (stg_sn.incident) that was not in the workspace's scope
+    const f = mockFetch((method, path) => {
+      if (method !== "GET" || !/\/ml\/experiments\/[^/]+$/.test(path)) return null;
+      const r = mockBackend("GET", path, null, {});
+      return { status: r.status, body: { ...JSON.parse(r.body), dataset_asset: "src_src_live.incident" } };
+    });
+    renderAt(`/w/${WS}/outputs?type=model`);
+    const model = await screen.findByRole("region", { name: "Model p1_breach" });
+    fireEvent.click(within(model).getByText("Score approved data with v1"));
+    const form = within(model).getByRole("form", { name: "Score with p1_breach v1" });
+    await waitFor(() => expect((within(form).getByLabelText("Input table") as HTMLInputElement).value).toBe("src_src_live.incident"));
+    fireEvent.click(within(form).getByRole("button", { name: "Prepare the scoring definition" }));
+    await within(model).findByRole("button", { name: "Request approval to score" });
+    const created = calls(f, "POST", /\/definitions$/).map(([, i]) => bodyOf(i)).find((b) => b.kind === "ml_scoring");
+    expect(created?.spec).toMatchObject({ input: { asset: "src_src_live.incident" } });
+  });
+
   it("rolls back to the previous champion through an approval", async () => {
     mockFetch();
     for (const [p, b] of [[`/definitions`, { kind: "ml_spec", key: "p1_breach", spec: {} }], [`/definitions/defn_ml1/publish`, {}], [`/ml/experiments`, { definition: "defn_ml1" }],

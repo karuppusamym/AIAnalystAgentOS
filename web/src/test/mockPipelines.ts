@@ -4,7 +4,7 @@
  * reconciliation that asks for a materialize approval, materialization as a new table version,
  * rollback, and a blocked run and a stale destination for Operate.
  */
-import type { Materialization, Pipeline, PipelineRun } from "../api";
+import type { Materialization, Pipeline, PipelineRun, WriterDestination } from "../api";
 import { approvalStatus, requestApproval } from "./mockApprovals";
 
 const T = "2026-09-26T13:00:00Z";
@@ -84,7 +84,7 @@ export function dryRun(): PipelineRun {
   };
 }
 
-interface PipeState { pipelines: Pipeline[]; runs: PipelineRun[]; mats: Materialization[] }
+interface PipeState { pipelines: Pipeline[]; runs: PipelineRun[]; mats: Materialization[]; destinations: WriterDestination[] }
 let s: PipeState;
 
 function seed(): PipeState {
@@ -93,7 +93,8 @@ function seed(): PipeState {
     checks: [{ check: "gate", gate: "not_null:sys_id", severity: "fail", status: "failed", failed_rows: 3, ok: false }],
     reconciliation: { ...dryRun().reconciliation!, blocked: true, output_rows: 0, rejected_rows: 4207 } };
   return { pipelines: [pipe("pip_2", 2, SPEC_V2), pipe("pip_1", 1, SPEC_V1)], runs: [blocked],
-    mats: [mat("mat_2", 2, "promoted", 30, "mat_1"), mat("mat_1", 1, "superseded", 80, null, 4102)] };
+    mats: [mat("mat_2", 2, "promoted", 30, "mat_1"), mat("mat_1", 1, "superseded", 80, null, 4102)],
+    destinations: [{ id: "wdst_1", workspace_id: "ws_demo", engine: "postgres:analytics", schema_name: "aos_out", tables: null, status: "active" }] };
 }
 s = seed();
 
@@ -103,11 +104,23 @@ export function resetPipelines(): void {
 
 export function pipelineRoute(m: string, p: string, url: URL, W: string, body: Record<string, unknown>): Reply {
   if (m === "GET" && p === `${W}/pipelines`) return ok(s.pipelines);
+  if (m === "POST" && p === `${W}/pipelines`) { // services/pipelines.py save_pipeline: a new draft version of the name
+    const spec = body.spec as Record<string, unknown>;
+    const version = Math.max(0, ...s.pipelines.filter((x) => x.name === spec.name).map((x) => x.version)) + 1;
+    const row = { ...pipe(`pip_${String(spec.name)}_${version}`, version, spec, "draft"), name: String(spec.name) };
+    s.pipelines = [row, ...s.pipelines];
+    return ok(row);
+  }
   const one = new RegExp(`^${W}/pipelines/([^/]+)(/dry-run|/publish|/runs)?$`).exec(p);
   if (one) {
     const pl = s.pipelines.find((x) => x.id === one[1]);
     if (!pl) return err(404, "not_found", "pipeline not found");
     if (!one[2] && m === "GET") return ok(pl);
+    if (one[2] === "/publish" && m === "POST") {
+      const published = { ...pl, status: "published", published_at: new Date().toISOString() };
+      s.pipelines = s.pipelines.map((x) => (x.id === pl.id ? published : x));
+      return ok(published);
+    }
     if (one[2] === "/dry-run" && m === "POST") {
       const run = dryRun();
       requestApproval(MAT_APPROVAL, "pipeline_materialize", "postgres:analytics/aos_out.p1_clean", { pipeline_run_id: run.id, candidate: "cand_9f1",
@@ -140,6 +153,12 @@ export function pipelineRoute(m: string, p: string, url: URL, W: string, body: R
     s.mats = s.mats.map((x) => (x.id === cur.id ? { ...x, status: "rolled_back" } : x.id === cur.previous_id ? { ...x, status: "promoted" } : x));
     return ok(s.mats.find((x) => x.id === cur.previous_id));
   }
-  if (m === "GET" && p === `${W}/writer-destinations`) return ok([{ id: "wdst_1", workspace_id: "ws_demo", engine: "postgres:analytics", schema_name: "aos_out", tables: null, status: "active" }]);
+  if (m === "GET" && p === `${W}/writer-destinations`) return ok(s.destinations);
+  if (m === "POST" && p === `${W}/writer-destinations`) {
+    const d = { id: `wdst_${s.destinations.length + 1}`, workspace_id: "ws_demo", engine: "postgres:analytics", schema_name: String(body.schema),
+      tables: (body.tables as string[] | undefined) ?? [], status: "active" };
+    s.destinations = [...s.destinations, d];
+    return ok(d);
+  }
   return null;
 }

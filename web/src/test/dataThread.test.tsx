@@ -137,7 +137,17 @@ describe("pins need an approval bound to the frozen query (P7-04)", () => {
     renderAt(THREAD);
     const plan = await card(/Plan: why/);
     expect((within(plan).getByRole("button", { name: /^Pin/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(within(plan).getByText(/Pinning needs an ok version with an active verified verdict/)).toBeTruthy();
+    expect(within(plan).getByText(/Only a query or method step can be pinned/)).toBeTruthy();
+  });
+
+  it("a verified claim is not offered a pin the server refuses (live regression)", async () => {
+    // services/step_pins.py: "only a query step or an AnalysisSpec method step can be pinned"
+    mockFetch();
+    renderAt(THREAD);
+    const claim = await card(/Network is the slowest group/);
+    expect(within(claim).getByText("verified")).toBeTruthy();
+    expect((within(claim).getByRole("button", { name: /^Pin/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(claim).getByText(/pin the step this one reads/)).toBeTruthy();
   });
 });
 
@@ -176,6 +186,9 @@ describe("branches (P7-05): fork, compare side by side, merge into a report", ()
     fireEvent.click(screen.getByRole("button", { name: "Merge without auto-closed into a report" }));
     const merged = await screen.findByText(/Merged into the report "MTTR without auto-closed"/);
     expect(merged.textContent).toMatch(/1 left out \(flagged: failed verification\)/);
+    // live regression: the server returns a generated artifact name and `included` as a count
+    expect(merged.textContent).toMatch(/\(version 1\) with \d+ steps?[;.]/);
+    expect(merged.textContent).not.toMatch(/thread-report-/);
     expect(within(merged.closest(".alert") as HTMLElement).getByRole("link", { name: "Open it in Outputs" }).getAttribute("href"))
       .toBe(`/w/${WS}/outputs?type=report&artifact=art_thread_report`);
   });

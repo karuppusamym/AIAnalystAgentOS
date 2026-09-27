@@ -35,6 +35,15 @@ describe("Markdown", () => {
     expect(links[0].getAttribute("href")).toBe("https://x.test");
     expect(container.innerHTML).not.toContain("javascript:");
   });
+
+  it("keeps underscores inside words (a model card's names and parameters, live regression)", () => {
+    const text = "### Model card: incident_made_sla\n`gradient_boosting` with {'learning_rate': 0.1, 'max_depth': 3} against the `dummy_prior` baseline; _really_ better.";
+    const { container } = render(<Markdown text={text} />);
+    expect(container.querySelector("h1, h2, h3, h4, h5, h6")?.textContent).toBe("Model card: incident_made_sla");
+    expect(container.textContent).toContain("{'learning_rate': 0.1, 'max_depth': 3}");
+    expect([...container.querySelectorAll("code")].map((c) => c.textContent)).toEqual(["gradient_boosting", "dummy_prior"]);
+    expect([...container.querySelectorAll("em")].map((e) => e.textContent)).toEqual(["really"]);
+  });
 });
 
 describe("Login", () => {

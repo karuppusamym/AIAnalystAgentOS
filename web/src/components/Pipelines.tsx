@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, type Materialization, type Pipeline, type PipelineCheck, type PipelineRun } from "../api";
 import { diffJson, preview } from "../lib/diff";
 import { fmtDate, fmtNumber, fmtValue, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
+import { parsePolicy } from "../lib/policy";
 import { roleAtLeast, to } from "../routes";
 import { ApprovalStepper } from "./ApprovalStepper";
-import { Card, CodeBlock, DataTable, EmptyState, ErrorBox, Loading, Notice, StatusBadge, Tag, TechnicalDetails } from "./ui";
+import { Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag, TechnicalDetails } from "./ui";
 
 type Spec = {
   name?: string; recipes?: { name: string; version?: number }[]; inputs?: { asset: string; max_age_hours?: number }[];
@@ -185,7 +186,9 @@ function TransformationDiff({ current, previous }: { current: Pipeline; previous
   );
 }
 
-function PipelineDetail({ wsId, pipeline, all, role }: { wsId: string; pipeline: Pipeline; all: Pipeline[]; role: string | undefined }) {
+function PipelineDetail({ wsId, pipeline, all, role, onChanged }: {
+  wsId: string; pipeline: Pipeline; all: Pipeline[]; role: string | undefined; onChanged: () => void;
+}) {
   const runs = useAsync(() => api.pipelineRuns(wsId, pipeline.id), [wsId, pipeline.id]);
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [done, setDone] = useState<Materialization | null>(null);
@@ -200,12 +203,17 @@ function PipelineDetail({ wsId, pipeline, all, role }: { wsId: string; pipeline:
       void runs.reload();
     }
   };
+  const publish = async () => {
+    if (await act.run(() => api.publishPipeline(wsId, pipeline.id))) onChanged();
+  };
   const shown = run ?? runs.data?.[0] ?? null;
   return (
     <div className="stack" role="region" aria-label={`Pipeline ${pipeline.name} v${pipeline.version}`}>
       <div className="toolbar">
         <h3 className="h-sm">{pipeline.name} v{pipeline.version}</h3><StatusBadge status={pipeline.status} />
         {destOf(spec) && <span className="small muted">writes <code>{destOf(spec)}</code></span>}
+        {pipeline.status === "draft" && roleAtLeast(role, "editor") && (
+          <button type="button" className="btn btn-sm" onClick={() => void publish()} disabled={act.busy}>Publish</button>)}
       </div>
       <PipelineDag spec={spec} />
       <details className="card"><summary>Transformation diff</summary><div className="card-body"><TransformationDiff current={pipeline} previous={previous} /></div></details>
@@ -264,8 +272,79 @@ export function PipelinesCard({ wsId, role, selected, onSelect }: { wsId: string
           ))}
         </ul>
       )}
-      {open && list.data && <PipelineDetail key={open.id} wsId={wsId} pipeline={open} all={list.data} role={role} />}
+      {open && list.data && <PipelineDetail key={open.id} wsId={wsId} pipeline={open} all={list.data} role={role} onChanged={list.reload} />}
+      {roleAtLeast(role, "editor") && <NewPipeline wsId={wsId} onSaved={(p) => { void list.reload(); onSelect(p.id); }} />}
+      {roleAtLeast(role, "owner") && <Destinations wsId={wsId} />}
     </Card>
+  );
+}
+
+/** A PipelineSpec over published recipes, saved as a draft version (the server checks it against the recipes). */
+function NewPipeline({ wsId, onSaved }: { wsId: string; onSaved: (p: Pipeline) => void }) {
+  const id = useId();
+  const [text, setText] = useState("");
+  const act = useAction();
+  const parsed = text.trim() ? parsePolicy(text) : { value: undefined, error: undefined };
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!parsed.value) return;
+    const p = await act.run(() => api.savePipeline(wsId, parsed.value!));
+    if (p) {
+      setText("");
+      onSaved(p);
+    }
+  };
+  return (
+    <details className="advanced">
+      <summary>Advanced: new pipeline from a specification</summary>
+      <form className="form" onSubmit={save} aria-label="New pipeline">
+        <Field label="Pipeline specification (JSON)" htmlFor={`${id}-spec`}
+          hint="Published recipes, the output's keys and schema, and optionally a destination the workspace allows.">
+          <textarea id={`${id}-spec`} className="mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={!!parsed.error} />
+        </Field>
+        {parsed.error && <p className="warn-text small" role="alert">Invalid JSON: {parsed.error}</p>}
+        <ErrorBox error={act.error} />
+        <div className="form-actions"><button type="submit" className="btn btn-sm" disabled={act.busy || !parsed.value}>Save draft</button></div>
+      </form>
+    </details>
+  );
+}
+
+/** Owners allowlist the schemas the managed writer may create tables in (never a source schema). */
+function Destinations({ wsId }: { wsId: string }) {
+  const id = useId();
+  const list = useAsync(() => api.writerDestinations(wsId), [wsId]);
+  const [schema, setSchema] = useState("");
+  const [tables, setTables] = useState("");
+  const act = useAction();
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    const names = tables.split(",").map((t) => t.trim()).filter(Boolean);
+    if (await act.run(() => api.designateDestination(wsId, { schema: schema.trim(), tables: names }))) {
+      setSchema("");
+      setTables("");
+      void list.reload();
+    }
+  };
+  return (
+    <details className="advanced">
+      <summary>Destinations the writer may use ({list.data?.length ?? 0})</summary>
+      <ErrorBox error={list.error} onRetry={list.reload} />
+      {!!list.data?.length && (
+        <ul className="list compact small" aria-label="Writer destinations">
+          {list.data.map((d) => <li key={d.id} className="list-item"><code>{d.schema_name}</code>
+            <span className="muted">{d.tables?.length ? d.tables.join(", ") : "any table"}</span><StatusBadge status={d.status} /></li>)}
+        </ul>
+      )}
+      <form className="form" onSubmit={add} aria-label="Allow a destination">
+        <div className="form-row">
+          <Field label="Schema" htmlFor={`${id}-schema`}><input id={`${id}-schema`} value={schema} onChange={(e) => setSchema(e.target.value)} placeholder="aos_out" /></Field>
+          <Field label="Tables" htmlFor={`${id}-tables`} hint="Comma-separated; empty allows any table."><input id={`${id}-tables`} value={tables} onChange={(e) => setTables(e.target.value)} /></Field>
+        </div>
+        <ErrorBox error={act.error} />
+        <div className="form-actions"><button type="submit" className="btn btn-sm" disabled={act.busy || !schema.trim()}>Allow destination</button></div>
+      </form>
+    </details>
   );
 }
 
