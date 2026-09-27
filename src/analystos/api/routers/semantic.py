@@ -277,6 +277,36 @@ def governed_catalog(workspace_id: str, user: User = Depends(current_user), sess
             "datasets": seen["datasets"], "relationships": seen["relationships"], "synonyms": seen["synonyms"]}
 
 
+@router.get("/model/suggestion")
+def model_suggestion(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """A deterministic data-model suggestion over the selected tables (semantic/suggest.py): entities, keys, time
+    columns, relationships, candidate metrics, star schemas and issues. No query, no model."""
+    from analystos.semantic import suggest
+
+    require_role(session, user, workspace_id, "viewer")
+    return suggest.suggest(session, workspace_id)
+
+
+@router.post("/model/suggestion/validate")
+def validate_model_suggestion(workspace_id: str, user: User = Depends(current_user),
+                              session: Session = Depends(db, scope="function")):
+    """Measure the suggestion's keys and joins through the gateway as the caller (bounded); results persist as evidence."""
+    from analystos.semantic import suggest
+
+    require_role(session, user, workspace_id, "editor")
+    return suggest.validate(session, session.merge(user), workspace_id)
+
+
+@router.post("/model/suggestion/propose")
+def propose_model_suggestion(workspace_id: str, user: User = Depends(current_user),
+                             session: Session = Depends(db, scope="function")):
+    """The suggestion as a `proposed` structure version plus measured relationship candidates; another person decides."""
+    from analystos.semantic import suggest
+
+    require_role(session, user, workspace_id, "editor")
+    return suggest.propose(session, session.merge(user), workspace_id)
+
+
 @router.post("/relationships/discover")
 def discover_relationships(workspace_id: str, body: DiscoverIn | None = None, user: User = Depends(current_user),
                            session: Session = Depends(db, scope="function")):

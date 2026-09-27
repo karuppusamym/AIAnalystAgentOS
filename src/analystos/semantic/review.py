@@ -41,6 +41,7 @@ from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.db.models import (
     AnalysisRun,
     Approval,
+    Relationship,
     SemanticModel,
     SemanticRelationshipCandidate,
     SourceAsset,
@@ -614,6 +615,48 @@ def _dataset_for(session: Session, datasets: list[dict[str, Any]], asset: str, w
     return name, SemanticDataset(name=name, source=asset, fields=fields)
 
 
+def _asset_by_fq(session: Session, workspace_id: str, fq: str, source_id: str | None) -> SourceAsset | None:
+    schema, _, name = fq.partition(".")
+    stmt = select(SourceAsset).where(SourceAsset.workspace_id == workspace_id, SourceAsset.schema_name == schema,
+                                     SourceAsset.name == name)
+    if source_id:
+        stmt = stmt.where(SourceAsset.source_id == source_id)
+    return session.scalars(stmt.order_by(SourceAsset.id)).first()
+
+
+def sync_legacy_relationship(session: Session, row: SemanticRelationshipCandidate, *, accepted: bool) -> Relationship | None:
+    """Readiness (join_fanout), the brief (join_cardinality), the SQL agent's joins and the knowledge graph read the
+    `relationship` table: a review decision must reach it. Accepting upserts the join as validated with the measured
+    cardinality and the candidate as evidence (origin `review`); rejecting marks a matching row unvalidated."""
+    f = _asset_by_fq(session, row.workspace_id, row.from_asset, row.source_id)
+    t = _asset_by_fq(session, row.workspace_id, row.to_asset, row.source_id)
+    if f is None or t is None:
+        return None
+    rel = session.scalar(select(Relationship).where(
+        Relationship.workspace_id == row.workspace_id, Relationship.from_asset_id == f.id,
+        Relationship.from_column == row.from_columns[0], Relationship.to_asset_id == t.id,
+        Relationship.to_column == row.to_columns[0]))
+    decision = {"candidate_id": row.id, "decided_by": row.decided_by,
+                "decided_at": row.decided_at.isoformat() if row.decided_at else None}
+    if not accepted:
+        if rel is not None:
+            rel.validated = False
+            rel.evidence = {**(rel.evidence or {}), "rejected": decision}
+        return rel
+    if rel is None:
+        rel = Relationship(id=new_id("rel"), workspace_id=row.workspace_id, from_asset_id=f.id,
+                           from_column=row.from_columns[0], to_asset_id=t.id, to_column=row.to_columns[0])
+        session.add(rel)
+    measured = {k: v for k, v in (row.evidence or {}).items() if k != "sql"}
+    rel.cardinality, rel.confidence, rel.validated, rel.origin = row.cardinality, row.confidence, True, "review"
+    rel.evidence = {**{k: v for k, v in (rel.evidence or {}).items() if k not in ("rejected",)}, **measured,
+                    "candidate_id": row.id, "from_columns": list(row.from_columns), "to_columns": list(row.to_columns),
+                    "containment": row.containment, "assessment": (row.assessment or {}).get("outcome"),
+                    "validated": decision}
+    session.flush()
+    return rel
+
+
 def apply_candidate_decision(session: Session, approval: Approval) -> SemanticRelationshipCandidate:
     from analystos.artifacts.registry import link
     from analystos.governance.approvals import verify_for_execution
@@ -628,6 +671,7 @@ def apply_candidate_decision(session: Session, approval: Approval) -> SemanticRe
     row.decided_by, row.decided_at, row.reason = approval.decided_by, utcnow(), approval.reason
     if approval.status == "rejected":
         row.status = "rejected"
+        sync_legacy_relationship(session, row, accepted=False)
         audit(actor, "semantic.relationship.rejected", workspace_id=row.workspace_id, target=row.id, decision="deny",
               reasons=[approval.reason or ""], session=session)
         return row
@@ -648,6 +692,7 @@ def apply_candidate_decision(session: Session, approval: Approval) -> SemanticRe
                datasets=[d for d in (new_from, new_to) if d is not None], relationships=[relationship])
     row.status, row.relationship_name = "accepted", name
     approval.status = "executed"
+    sync_legacy_relationship(session, row, accepted=True)
     link(session, row.workspace_id, ("table", row.from_asset), "joins_to", ("table", row.to_asset))
     link(session, row.workspace_id, ("relationship_candidate", row.id), "defines", ("semantic_relationship", name))
     emit(row.workspace_id, "semantic.relationship.validated", {"relationship": name, "cardinality": row.cardinality,
