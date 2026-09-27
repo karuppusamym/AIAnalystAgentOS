@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -219,8 +219,10 @@ def discover(workspace_id: str, source_id: str, user: User = Depends(current_use
 
 
 @router.put("/workspaces/{workspace_id}/sources/{source_id}/selection")
-def select_assets(workspace_id: str, source_id: str, body: Selection, user: User = Depends(current_user)):
-    return source_svc.select_assets(user, source_id, body.assets, workspace_id)
+def select_assets(workspace_id: str, source_id: str, body: Selection, background: BackgroundTasks,
+                  user: User = Depends(current_user)):
+    # newly selected tables are profiled by a background crawl (the same mechanism as POST .../crawl)
+    return source_svc.select_assets(user, source_id, body.assets, workspace_id, schedule=background.add_task)
 
 
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/ingest")

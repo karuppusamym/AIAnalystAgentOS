@@ -154,6 +154,8 @@ def main() -> int:
 
         # 5. select + stage, then an incremental crawl with governed profiling
         sel = analyst.put(f"/api/workspaces/{wid}/sources/{src['id']}/selection", {"assets": ["orders", "customer", "product", "region"]})
+        if (sel.get("profile_crawl") or {}).get("crawl_id"):  # selection profiles the new tables in the background
+            ev["crawl_on_selection"] = wait_crawl(analyst, sel["profile_crawl"]["crawl_id"])["stats"]
         c1 = wait_crawl(analyst, analyst.post(f"/api/workspaces/{wid}/sources/{src['id']}/crawl",
                                               {"mode": "incremental", "profile": True})["id"])
         check["5_incremental_crawl_skips_unchanged"] = c1["status"] == "succeeded" and c1["stats"]["unchanged"] == 4 and \

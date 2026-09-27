@@ -667,6 +667,119 @@ def _describe(role: str, business_name: str, domain: str, grain: str, sem: list[
     return " ".join(parts)
 
 
+# --------------------------------------------------------------------------------------------
+# 4b. profile-aware rule descriptions (what a catalog reader and an agent prompt see)
+# --------------------------------------------------------------------------------------------
+_COLUMN_MEANING = {
+    "identifier": "Identifier of the {entity}", "flag": "True/false flag", "date": "Calendar date",
+    "timestamp": "Date and time", "percent": "Percentage or rate", "duration": "Duration",
+    "measure": "Numeric measure", "amount": "Monetary amount", "contact": "Contact detail",
+    "geo": "Geographic attribute", "code": "Code", "name": "Name or label", "text": "Free text",
+    "dimension": "Descriptive attribute", "unknown": "Column",
+}
+ENUM_IN_DESCRIPTION = 8  # a complete enumeration up to this long is listed in a description
+
+
+def _pct(share: float) -> str:
+    p = share * 100
+    return f"{p:.0f}%" if p >= 1 or p == 0 else "under 1%"
+
+
+def _num_text(v: Any) -> str:
+    if isinstance(v, bool) or v is None:
+        return str(v)
+    if isinstance(v, int) or (isinstance(v, float) and v.is_integer() and abs(v) < 1e15):
+        return f"{int(v):,}"
+    if isinstance(v, float):
+        return f"{v:,.4g}" if abs(v) < 1e6 else f"{v:,.0f}"
+    return str(v)
+
+
+def _day(v: Any) -> str:
+    return str(v)[:10]
+
+
+def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = None, references: str | None = None,
+                    sensitive: bool = False, entity: str = "record") -> str:
+    """One plain sentence: what the column means (rule role, unit, reference) and what the profile measured
+    (always present or missing in N% of rows, unique per row, N distinct values or the complete short list of
+    values, numeric/date range, share true). Values and ranges are never stated for a sensitive column."""
+    role = str(sem.get("semantic_role") or "unknown")
+    unit = sem.get("unit")
+    if role == "foreign_key":
+        target = sem.get("references_entity") or "another entity"
+        meaning = f"Reference to {target}" + (f" ({references})" if references else "")
+    else:
+        meaning = _COLUMN_MEANING.get(role, "Column").format(entity=entity or "record")
+        if role == "duration" and unit:
+            meaning += f" in {unit}"
+        elif role == "measure" and unit == "count":
+            meaning = "Count"
+    facts: list[str] = []
+    p = profile or {}
+    non_null, nulls = p.get("non_null"), p.get("null_count")
+    if isinstance(non_null, int) and isinstance(nulls, int) and non_null + nulls > 0:
+        rows = non_null + nulls
+        if nulls == 0:
+            facts.append("always present")
+        elif non_null == 0:
+            facts.append("always empty")
+        else:
+            facts.append(f"missing in {_pct(nulls / rows)} of rows")
+        distinct = p.get("distinct")
+        continuous = role in ("measure", "amount", "percent", "duration", "timestamp", "date")
+        if isinstance(distinct, int) and non_null > 1 and not continuous:
+            if distinct == non_null:
+                facts.append("unique per row" if nulls == 0 else "unique where present")
+            elif not sensitive and p.get("values_complete") and p.get("values") \
+                    and len(p["values"]) <= ENUM_IN_DESCRIPTION:
+                facts.append("one of " + ", ".join(str(v) for v in p["values"]))
+            else:
+                facts.append(f"{distinct:,} distinct values")
+        if not sensitive:
+            lo, hi = p.get("min"), p.get("max")
+            if lo is not None and hi is not None and p.get("type_family") == "datetime":
+                facts.append(f"from {_day(lo)} to {_day(hi)}" if _day(lo) != _day(hi) else f"on {_day(lo)}")
+            elif lo is not None and hi is not None and p.get("type_family") == "numeric" and role != "identifier" \
+                    and role != "foreign_key":
+                facts.append(f"from {_num_text(lo)} to {_num_text(hi)}" if lo != hi else f"always {_num_text(lo)}")
+            if role == "flag" and isinstance(p.get("true_count"), int) and non_null:
+                facts.append(f"true in {_pct(p['true_count'] / non_null)} of non-empty rows")
+    return meaning + ("; " + "; ".join(facts) if facts else "") + "."
+
+
+def describe_table(sem: dict[str, Any], *, business_name: str, kind: str = "table", row_count: int | None = None,
+                   key_columns: list[str] | None = None, time_column: str | None = None, time_range: tuple[Any, Any] | None = None,
+                   references: list[str] | None = None) -> str:
+    """One or two plain sentences: role, entity and domain with the grain; then row count, key, time span and the
+    main tables it references. Only facts the metadata or the profile hold."""
+    role = str(sem.get("role") or "unknown")
+    noun = _ROLE_PHRASE.get(role, "Table")
+    if kind != "table":
+        noun = noun.replace("table", kind.replace("_", " "))
+    domain = str(sem.get("domain") or "generic")
+    dom = f" in the {domain.replace('_', ' ')} domain" if domain != "generic" else ""
+    grain = sem.get("grain") or f"one row per {sem.get('entity') or 'record'}"
+    first = f"{noun} '{business_name}'{dom}, {grain}."
+    facts: list[str] = []
+    if row_count is not None:
+        facts.append(f"{row_count:,} rows")
+    if key_columns:
+        facts.append(("key " if len(key_columns) == 1 else "composite key ") + ", ".join(key_columns))
+    if time_column:
+        span = ""
+        if time_range and time_range[0] is not None and time_range[1] is not None:
+            span = f" from {_day(time_range[0])} to {_day(time_range[1])}"
+        facts.append(f"dated by {time_column}{span}")
+    links = list(dict.fromkeys(r for r in references or [] if r))
+    if links:
+        facts.append("references " + ", ".join(links[:4]) + (" and more" if len(links) > 4 else ""))
+    if not facts:
+        return first
+    second = "; ".join(facts)
+    return f"{first} {second[0].upper()}{second[1:]}."
+
+
 def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[DiscoveredAsset] | None = None,
                           reviewed_keywords: dict[str, frozenset[str]] | None = None) -> TableSemantics:
     """Business name, role, domain, grain and a factual template description for one asset.
@@ -1144,6 +1257,41 @@ def _is_sensitive(col: dict[str, Any]) -> bool:
         sens, cat = r.sensitivity, r.category
     return SENSITIVITY_ORDER.get(str(sens), 1) >= SENSITIVITY_ORDER["confidential"] or (
         cat is not None and cat != "free_text_risk")
+
+
+COLUMN_ENRICH_CONFIDENCE = 0.5  # below this the name rules did not understand the column (u_flag2, attr1)
+COLUMN_ENRICH_MAX = 8  # columns per table sent for a model description
+
+
+def column_enrichment_payload(columns: list[dict[str, Any]], *, allow_values: bool = False,
+                              limit: int = COLUMN_ENRICH_MAX) -> list[dict[str, Any]]:
+    """The columns of one table whose rule semantics are unsure, as screened model input: name, normalized type and
+    the profile's shape (null share, distinct ratio, format masks). The complete list of values is added only when
+    the workspace policy allows samples to reach a model and the column is not sensitive. Never a sensitive column,
+    never one with a person's, the source's or an accepted model description.
+
+    Each column: {"name", "data_type", "semantics", "profile", "description_origin", "sensitive"}."""
+    out: list[dict[str, Any]] = []
+    for c in columns:
+        sem = c.get("semantics") or {}
+        if c.get("sensitive") or c.get("description_origin") not in (None, "rule"):
+            continue
+        if float(sem.get("confidence") or 0.0) >= COLUMN_ENRICH_CONFIDENCE or not sem.get("semantic_role"):
+            continue
+        prof = c.get("profile") or {}
+        shape = {k: prof[k] for k in ("null_rate", "distinct_ratio") if isinstance(prof.get(k), int | float)}
+        if prof.get("patterns"):
+            shape["patterns"] = [p.get("mask") for p in prof["patterns"] if isinstance(p, dict) and p.get("mask")][:3]
+        entry: dict[str, Any] = {"name": screen_text(str(c.get("name", "")), max_chars=64),
+                                 "type": normalize_type(c.get("data_type")), "rule_role": sem.get("semantic_role")}
+        if shape:
+            entry["shape"] = shape
+        if allow_values and prof.get("values_complete") and prof.get("values"):
+            entry["values"] = [screen_text(str(v), max_chars=40) for v in prof["values"]][:12]
+        out.append(entry)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def enrichment_batches(items: list[dict[str, Any]], *, max_tables: int = 25, max_columns: int = 12,
