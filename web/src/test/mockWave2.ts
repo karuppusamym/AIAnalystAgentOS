@@ -21,7 +21,8 @@ const err = (status: number, code: string, message: string, details: Record<stri
 
 // ------------------------------------------------------------------------------------ job kinds (P4-04)
 const jk = (key: JobKindAvailability["key"], label: string, entry: JobKindAvailability["entry"], extra: Partial<JobKindAvailability> = {}): JobKindAvailability => ({
-  key, label, work_order_kind: key, available: true, reasons: [], entry, readiness_checks: ["capability", "scope", "schema_drift"], min_role: "analyst",
+  key, label, mode: key === "prepare" ? "engineering" : key === "forecast" || key === "predict" ? "ml" : "analysis",
+  work_order_kind: key, available: true, reasons: [], entry, readiness_checks: ["capability", "scope", "schema_drift"], min_role: "analyst",
   capabilities: [{ id: `playbook.${key}`, ref: `playbook.${key}@1.0.0`, kind: "Playbook", usable: true, reason: null, certification: "tested" }],
   ...extra,
 });

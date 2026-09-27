@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type ReadinessAssessment, type Source, type WorkspaceDetail } from "../api";
+import { api, type DefinitionVersion, type ReadinessAssessment, type Source, type WorkspaceDetail } from "../api";
 import { jobKindsFromAvailability, type JobKind, type JobKindId } from "../lib/jobKinds";
 import { useAction, useAsync } from "../lib/hooks";
 import { autonomyInWords } from "../lib/status";
@@ -56,7 +56,7 @@ export function StartWorkButton({ wsId, className = "btn btn-primary" }: { wsId:
 /**
  * Start work (spec v4 §15): the job kinds the server says can start here (P4-04). A kind that
  * cannot run is shown with every reason and its remediation and has no start button, so nothing
- * sends a predictably failing request. Predict and Forecast open the ML spec form in Work,
+ * sends a predictably failing request. Predict and Forecast train a published ML plan (or open the spec form in Work),
  * Prepare data its panel, Monitor a new monitor; the others an investigation with a preflight.
  */
 export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; onClose: () => void; initialKind?: JobKindId }) {
@@ -65,7 +65,7 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
   const { kinds, digest, error } = useJobKinds(wsId);
   const [draft, setDraft] = useState<Draft>(() => ({ ...loadDraft(wsId), ...(initialKind ? { kind: initialKind } : {}) }));
   const nav = useNavigate();
-  const chosen = kinds?.find((k) => k.id === draft.kind && k.enabled && k.action === "investigate");
+  const chosen = kinds?.find((k) => k.id === draft.kind && k.enabled && (k.action === "investigate" || k.action === "ml"));
 
   const update = (patch: Draft) => setDraft((d) => {
     const next = { ...d, ...patch };
@@ -83,11 +83,6 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
     if (k.action === "monitor") {
       onClose();
       nav(`${to.monitoring(wsId, { tab: "monitors" })}&new=1`);
-      return;
-    }
-    if (k.action === "ml") {
-      onClose();
-      nav(to.work(wsId, "experiments", { new: k.id }));
       return;
     }
     update({ kind: k.id, objective: draft.objective || k.objectivePrefix || ws.data?.objective || "" });
@@ -126,7 +121,11 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
             reasons: k.reasons.map((r) => r.code), readiness_checks: k.readinessChecks })) }} label="Technical details" />
         </>
       )}
-      {chosen && ws.data && sources.data && (
+      {chosen?.action === "ml" && <MLStartForm kind={chosen} wsId={wsId}
+        onBack={() => update({ kind: undefined })}
+        onNewSpec={() => { saveDraft(wsId, null); onClose(); nav(to.work(wsId, "experiments", { new: chosen.id })); }}
+        onStarted={(id) => { saveDraft(wsId, null); onClose(); nav(to.work(wsId, "experiments", { experiment: id })); }} />}
+      {chosen && chosen.action === "investigate" && ws.data && sources.data && (
         <InvestigationForm kind={chosen} ws={ws.data} sources={sources.data} draft={draft} update={update}
           onBack={() => update({ kind: undefined })}
           onChooseKind={(id) => { const k = kinds?.find((x) => x.id === id); if (k?.enabled) pick(k); }}
@@ -134,6 +133,72 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
       )}
     </Drawer>
   );
+}
+
+function mlTaskMatches(kind: JobKindId, definition: DefinitionVersion): boolean {
+  const task = definition.spec?.task;
+  return kind === "forecast" ? task === "forecast" : task === "classify" || task === "regress";
+}
+
+async function publishedMLPlans(wsId: string): Promise<DefinitionVersion[]> {
+  const result: DefinitionVersion[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await api.listDefinitions(wsId, { kind: "ml_spec", status: "published", ...(cursor ? { cursor } : {}) });
+    result.push(...await Promise.all(page.items.map((d) => api.getDefinition(wsId, d.id))));
+    cursor = page.next_cursor;
+  } while (cursor);
+  return result;
+}
+
+/** A published spec pins the dataset, target, split and budget; this form never invents a spec. */
+function MLStartForm({ kind, wsId, onBack, onNewSpec, onStarted }: {
+  kind: JobKind; wsId: string; onBack: () => void; onNewSpec: () => void; onStarted: (id: string) => void;
+}) {
+  const id = useId();
+  const defs = useAsync(() => publishedMLPlans(wsId), [wsId]);
+  const act = useAction();
+  const [selected, setSelected] = useState("");
+  const options = (defs.data ?? []).filter((d) => mlTaskMatches(kind.id, d));
+  const chosen = options.find((d) => d.id === selected);
+  const spec = chosen?.spec ?? {};
+  const dataset = spec.dataset && typeof spec.dataset === "object" ? spec.dataset as Record<string, unknown> : {};
+  const search = spec.search && typeof spec.search === "object" ? spec.search as Record<string, unknown> : {};
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!chosen) return;
+    const result = await act.run(() => api.startExperiment(wsId, chosen.id));
+    if (result) onStarted(result.id);
+  };
+  return <form className="form" onSubmit={submit} aria-label={`Start ${kind.label.toLowerCase()}`}>
+    <p className="small muted">Choose a published model plan. Training reads the approved data, checks readiness and leakage, and evaluates on held-out rows.</p>
+    <ErrorBox error={defs.error} onRetry={defs.reload} />
+    {defs.loading && !defs.data && <Loading />}
+    {defs.data && !options.length && <Notice tone="info">No published {kind.id === "forecast" ? "forecast" : "classification or regression"} plan is available yet. Write a new spec: it is proposed from your data, checked, and published before it trains.</Notice>}
+    {!!options.length && <Field label="Published model plan" htmlFor={`${id}-spec`} hint="The exact version selected here will be trained.">
+      <select id={`${id}-spec`} value={selected} onChange={(e) => setSelected(e.target.value)}>
+        <option value="">Choose a plan…</option>
+        {options.map((d) => <option key={d.id} value={d.id}>{d.title || d.key} · v{d.version}</option>)}
+      </select>
+    </Field>}
+    {chosen && <section className="preflight" aria-labelledby={`${id}-pf`}>
+      <h3 id={`${id}-pf`}>Before it starts</h3>
+      <KeyValue items={[
+        ["Task", String(spec.task || "unknown")],
+        ["Reads", String(dataset.asset || "no dataset")],
+        ["Target", String(spec.target || "not set")],
+        ["Maximum trials", String(search.max_trials ?? "platform limit")],
+        ["Maximum seconds", String(search.max_seconds ?? "platform limit")],
+        ["Version", `${chosen.key} v${chosen.version}`],
+      ]} />
+    </section>}
+    <ErrorBox error={act.error} />
+    <div className="form-actions">
+      <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
+      <button type="button" className="btn" onClick={onNewSpec}>Write a new spec</button>
+      <button type="submit" className="btn btn-primary" disabled={!chosen || act.busy}>{act.busy ? "Training and evaluating…" : "Start experiment"}</button>
+    </div>
+  </form>;
 }
 
 /** The brief and a preflight: what will be read, the limits it runs under, what needs a person, and readiness. */

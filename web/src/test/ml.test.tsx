@@ -38,6 +38,7 @@ describe("the MLSpec form", () => {
     renderAt(`/w/${WS}/work`);
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
     fireEvent.click(within(await screen.findByRole("list", { name: "Job kinds" })).getByRole("button", { name: /Predict/ }));
+    fireEvent.click(within(await screen.findByRole("form", { name: "Start predict" })).getByRole("button", { name: "Write a new spec" }));
     expect(await screen.findByRole("tab", { name: "Experiments", selected: true })).toBeTruthy();
     const form = await proposeAndFill();
     expect(bodyOf(calls(f, "POST", /\/ml\/proposals$/)[0][1])).toMatchObject({ asset: "stg_sn.incident", target: "breached_sla" });

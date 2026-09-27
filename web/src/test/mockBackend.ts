@@ -309,9 +309,11 @@ export const BUILD_APPROVAL = "apr_build";
  * KPIs proposed or decided in the editor. `resetMockState` runs before every Playwright test (and in
  * the vitest cases that change it), so no test sees another's state.
  */
-const state = { planned: false, buildApproval: "pending", proposed: [] as SemanticMetric[], decided: {} as Record<string, string> };
+const state = { planned: false, buildApproval: "pending", proposed: [] as SemanticMetric[], decided: {} as Record<string, string>,
+  workModes: ["analysis", "engineering", "ml"] as string[] };
 
 export function resetMockState(): void {
+  state.workModes = ["analysis", "engineering", "ml"];
   state.planned = false;
   state.buildApproval = "pending";
   state.proposed = [];
@@ -682,6 +684,13 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   // capability registry: list (with enablement per workspace), manifest, enable toggle, reload, run
   if (m === "GET" && p === "/capabilities") return json(capabilityList(url.searchParams.get("workspace_id")));
+  if (p === `${W}/work-modes` || p === `${W}/work-modes/preview`) {
+    const requested = requestBody ? (JSON.parse(requestBody) as { modes: string[] }).modes : state.workModes;
+    const previous = [...state.workModes];
+    if (m === "PUT" && p === `${W}/work-modes`) state.workModes = [...requested];
+    return json({ workspace_id: WS, current: m === "PUT" ? requested : previous, selected: requested,
+      capabilities: [], note: "Modes configure shortcuts and playbooks; grants remain separate." });
+  }
   const capId = /^\/capabilities\/([^/]+)$/.exec(p);
   if (m === "GET" && capId) {
     const man = manifestFor(decodeURIComponent(capId[1]));
