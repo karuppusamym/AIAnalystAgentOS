@@ -812,6 +812,35 @@ export interface AskAnalysis {
   headline_step: number;
 }
 
+export interface SuggestedTable {
+  asset_id: string; fq: string; name: string; business_name: string | null; role: string | null; entity: string | null; grain: string | null;
+  primary_key: { columns: string[]; evidence: "approved" | "declared" | "measured_unique" | "profile_unique" | "none" | string; unique: boolean | null };
+  time_column: string | null; measures: string[]; dimensions: string[]; confidence: number | null; issues: { code: string; message: string }[];
+}
+
+export interface SuggestedRelationship {
+  from: { asset_id: string; fq: string; columns: string[] }; to: { asset_id: string; fq: string; columns: string[] };
+  cardinality: string; status: "validated" | "pending" | "proposed" | string; confidence: number | null; evidence: Dict;
+  candidate_id: string | null; relationship_id?: string | null;
+}
+
+export interface ModelSuggestion {
+  generated_at: string;
+  tables: SuggestedTable[];
+  relationships: SuggestedRelationship[];
+  metrics: { name: string; label: string; expression: string; table_fq: string; reason: string }[];
+  star_schemas: { fact: string; dimensions: string[] }[];
+  issues: { code: string; message: string; asset_id?: string | null }[];
+  summary: { tables: number; facts: number; dimensions: number; relationships_validated: number; relationships_pending: number; keys_measured: number };
+}
+
+export interface ModelValidation {
+  tables: { asset_id: string; rows: number; distinct_keys: number; unique: boolean }[];
+  joins: { from: string; to: string; from_columns: string[]; to_columns: string[]; rows_before: number; rows_after: number; fans_out: boolean }[];
+  queries: number;
+  skipped: { kind: string; reason: string; [k: string]: unknown }[];
+}
+
 export interface AskThread {
   id: string;
   workspace_id: string;
@@ -3356,6 +3385,19 @@ export const api = {
   measureRelationship: (ws: string, id: string) =>
     post("/api/workspaces/{workspace_id}/semantic/relationships/candidates/{candidate_id}/measure",
       { path: { workspace_id: ws, candidate_id: id } }) as Promise<RelationshipCandidate>,
+  /** The data model suggested from the catalog, keys and measured joins (deterministic, no model). */
+  modelSuggestion: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/semantic/model/suggestion", { path: W(ws) }) as Promise<ModelSuggestion>,
+  /** Measure key uniqueness and join fan-out through the gateway, as the caller (bounded). */
+  validateModelSuggestion: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/model/suggestion/validate", { path: W(ws) }) as Promise<ModelValidation>,
+  /** Turn the suggestion into a proposed model version and queue its joins for review; a different person approves. */
+  proposeModelSuggestion: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/model/suggestion/propose", { path: W(ws) }) as
+      Promise<{ model_version: number | null; status: "proposed" | "unchanged" | string; candidates_queued: number }>,
+  /** Measure relationship candidates (single-column and composite) and queue them for review. */
+  discoverRelationships: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/relationships/discover", { path: W(ws), body: {} }) as Promise<RelationshipCandidate[]>,
   semanticModelDiff: (ws: string, version?: number) =>
     get("/api/workspaces/{workspace_id}/semantic/model/diff", { path: W(ws), query: { version } }) as Promise<SemanticModelDiff>,
   decideSemanticModel: (ws: string, version: number, decision: "approve" | "reject", reason?: string) =>

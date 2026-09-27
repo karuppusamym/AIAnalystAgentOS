@@ -172,5 +172,33 @@ export function wave1Route(m: string, p: string, ws: string, requestBody?: strin
     return ok({ ...CANDIDATE, status: p.endsWith("accept") ? "accepted" : "rejected" });
   }
   if (m === "GET" && p === `${W}/semantic/model/diff`) return ok(MODEL_DIFF);
+  if (m === "GET" && p === `${W}/semantic/model/suggestion`) return ok(MODEL_SUGGESTION);
+  if (m === "POST" && p === `${W}/semantic/model/suggestion/validate`) {
+    return ok({ tables: [{ asset_id: "ast_inc", rows: 4210, distinct_keys: 4210, unique: true }],
+      joins: [{ from: "stg_sn.incident", to: "stg_sn.sys_user_group", from_columns: ["assignment_group"], to_columns: ["sys_id"],
+        rows_before: 4210, rows_after: 4210, fans_out: false }], queries: 3, skipped: [] });
+  }
+  if (m === "POST" && p === `${W}/semantic/model/suggestion/propose`) return ok({ model_version: 3, status: "proposed", candidates_queued: 1 });
+  if (m === "POST" && p === `${W}/semantic/relationships/discover`) return ok([CANDIDATE]);
   return null;
 }
+
+/** GET …/semantic/model/suggestion: one fact, one dimension, a pending join, a gap and a candidate metric. */
+export const MODEL_SUGGESTION = {
+  generated_at: "2026-09-27T12:00:00Z",
+  tables: [
+    { asset_id: "ast_inc", fq: "stg_sn.incident", name: "incident", business_name: "Incidents", role: "fact", entity: "incident", grain: "one row per incident",
+      primary_key: { columns: ["sys_id"], evidence: "declared", unique: null }, time_column: "opened_at", measures: ["reassignment_count"],
+      dimensions: ["priority", "category"], confidence: 0.86, issues: [] },
+    { asset_id: "ast_grp", fq: "stg_sn.sys_user_group", name: "sys_user_group", business_name: "Group", role: "dimension", entity: "group", grain: null,
+      primary_key: { columns: [], evidence: "none", unique: null }, time_column: null, measures: [], dimensions: ["name"], confidence: 0.7,
+      issues: [{ code: "no_primary_key", message: "Group has no key: joins to it cannot be checked for duplicates." }] },
+  ],
+  relationships: [{ from: { asset_id: "ast_inc", fq: "stg_sn.incident", columns: ["assignment_group"] },
+    to: { asset_id: "ast_grp", fq: "stg_sn.sys_user_group", columns: ["sys_id"] }, cardinality: "many_to_one", status: "pending", confidence: 0.93,
+    evidence: {}, candidate_id: "rlc_1" }],
+  metrics: [{ name: "incident_count", label: "Incident count", expression: "COUNT(*)", table_fq: "stg_sn.incident", reason: "one row per incident" }],
+  star_schemas: [{ fact: "ast_inc", dimensions: ["ast_grp"] }],
+  issues: [{ code: "no_primary_key", message: "Group has no key: joins to it cannot be checked for duplicates.", asset_id: "ast_grp" }],
+  summary: { tables: 2, facts: 1, dimensions: 1, relationships_validated: 0, relationships_pending: 1, keys_measured: 0 },
+};

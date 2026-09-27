@@ -3,6 +3,7 @@ import { api, type DefinitionVersion, type RelationshipCandidate } from "../api"
 import { fmtDate, fmtPct, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { roleAtLeast } from "../routes";
+import { ModelSuggestion } from "./ModelSuggestion";
 import { isStaleEdit, StaleEditNotice } from "./StaleEdit";
 import { Card, EmptyState, ErrorBox, Loading, Notice, StatusBadge, TechnicalDetails } from "./ui";
 
@@ -21,8 +22,9 @@ const cols = (asset: string, columns: string[]) => `${asset}.${columns.length > 
  * other than the proposer; the server enforces both.
  */
 export function DefinitionsPanel({ wsId, role }: { wsId: string; role: string | undefined }) {
-  const [section, setSection] = useState("model");
+  const [section, setSection] = useState("suggested");
   const sections = [
+    { id: "suggested", title: "Suggested model", detail: "Facts, dimensions, keys and joins from the data" },
     { id: "model", title: "Data model", detail: "Review proposed structure and changes" },
     { id: "joins", title: "Joins to confirm", detail: "Measured relationships between tables" },
     { id: "library", title: "Saved definitions", detail: "Versioned analyses, recipes and playbooks" },
@@ -37,6 +39,7 @@ export function DefinitionsPanel({ wsId, role }: { wsId: string; role: string | 
         <p className="muted small">A source supplies data. The model defines shared meaning. Analysis contexts give that data a purpose for each investigation.</p>
       </nav>
       <div className="definition-content">
+      {section === "suggested" && <ModelSuggestion wsId={wsId} role={role} />}
       {section === "joins" && <RelationshipQueue wsId={wsId} role={role} />}
       {section === "model" && <ModelChanges wsId={wsId} role={role} />}
       {section === "library" && <Definitions wsId={wsId} role={role} />}

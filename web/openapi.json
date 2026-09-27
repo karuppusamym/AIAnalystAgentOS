@@ -17236,7 +17236,7 @@
     },
     "/api/workspaces/{workspace_id}/catalog": {
       "get": {
-        "description": "Searchable catalog built by the crawler (names, business names, descriptions, role/domain).",
+        "description": "Searchable catalog built by the crawler (names, business names, descriptions, role/domain). Three queries\nwhatever the size: assets, all their columns, their relationships (plus the brief). A column's unit and alias\nshow the brief's reviewed value when a person set one (`unit_origin: brief`), else the crawler's rule.",
         "operationId": "catalog_api_workspaces__workspace_id__catalog_get",
         "parameters": [
           {
@@ -28308,6 +28308,225 @@
           }
         },
         "summary": "Reject Model",
+        "tags": [
+          "semantic"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion": {
+      "get": {
+        "description": "A deterministic data-model suggestion over the selected tables (semantic/suggest.py): entities, keys, time\ncolumns, relationships, candidate metrics, star schemas and issues. No query, no model.",
+        "operationId": "model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Model Suggestion",
+        "tags": [
+          "semantic"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion/propose": {
+      "post": {
+        "description": "The suggestion as a `proposed` structure version plus measured relationship candidates; another person decides.",
+        "operationId": "propose_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_propose_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Propose Model Suggestion",
+        "tags": [
+          "semantic"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion/validate": {
+      "post": {
+        "description": "Measure the suggestion's keys and joins through the gateway as the caller (bounded); results persist as evidence.",
+        "operationId": "validate_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Model Suggestion",
         "tags": [
           "semantic"
         ]
