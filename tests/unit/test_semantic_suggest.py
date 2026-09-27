@@ -209,3 +209,15 @@ def test_rejecting_marks_the_join_unvalidated_and_is_not_requeued(model_world, d
         fresh = review.propose_candidate(s, s.merge(model_world["owner"]), WS, from_asset="sales.order_line",
                                          from_columns=["order_id"], to_asset="sales.orders", to_columns=["id"])
         assert fresh.id != cid and fresh.status == "pending"
+
+
+def test_an_unjoined_table_says_why_and_a_table_from_another_source_points_at_a_recipe(model_world):
+    with session_scope() as s:
+        s.delete(s.get(Relationship, "rel_lines_orders"))
+    issues = [i for i in _suggest()["issues"] if i["code"] == "orphan_table"]
+    assert sorted(i["message"] for i in issues) == ["Order Line joins no other selected table", "Orders joins no other selected table"] \
+        or all(i["message"].endswith("joins no other selected table") for i in issues)
+    with session_scope() as s:
+        s.get(SourceAsset, "ast_lines").source_id = "src_elsewhere"
+    msgs = {i["asset_id"]: i["message"] for i in _suggest()["issues"] if i["code"] == "orphan_table"}
+    assert "only selected table from its source" in msgs["ast_lines"] and "Prepare data" in msgs["ast_lines"]

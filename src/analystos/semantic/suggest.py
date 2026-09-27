@@ -235,10 +235,15 @@ def suggest(session: Session, workspace_id: str) -> dict[str, Any]:
                    for i in t["issues"]]
     linked = {r["from"]["asset_id"] for r in rels} | {r["to"]["asset_id"] for r in rels}
     if len(tables) > 1:
+        source_of = {a.id: a.source_id for a in assets}
         for t in tables:
             if t["asset_id"] not in linked:
-                issues.append({"code": "orphan_table", "message": f"{called(t)} joins no other selected table",
-                               "asset_id": t["asset_id"]})
+                own = source_of.get(t["asset_id"])
+                alone = sum(1 for x in tables if source_of.get(x["asset_id"]) == own) == 1
+                message = (f"{called(t)} is the only selected table from its source; relationships stay within one source, "
+                           "so combine it with the others in a recipe (Work → Prepare data)" if alone
+                           else f"{called(t)} joins no other selected table")
+                issues.append({"code": "orphan_table", "message": message, "asset_id": t["asset_id"]})
     pairs: dict[tuple[str, str], int] = defaultdict(int)
     for r in rels:
         pairs[tuple(sorted((r["from"]["asset_id"], r["to"]["asset_id"])))] += 1  # type: ignore[index]
