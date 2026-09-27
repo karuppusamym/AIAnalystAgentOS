@@ -24,8 +24,8 @@ export function ApprovalsPage() {
   const rows = filter === "pending" ? all.filter((a) => a.status === "pending") : all;
   return (
     <div className="page">
-      <PageHeader title="Approvals"
-        subtitle="Side effects (publish, schedule, export) wait here. Each approval is bound to a payload hash, plan hash and policy version." />
+      <PageHeader title="Approval inbox"
+        subtitle="Anything that acts outside the platform (publish, schedule, export) waits here for a person. An approval covers exactly the content shown." />
       <Tabs value={filter} onChange={setFilter} tabs={[{ id: "pending", label: "Pending" }, { id: "all", label: "All" }]} />
       <ErrorBox error={list.error} onRetry={list.reload} />
       {list.loading && !list.data && <Loading />}
@@ -39,7 +39,7 @@ export function ApprovalsPage() {
           <div key={a.id} className="stack">
             <ApprovalCard approval={a} previous={previousApproved(a, all)} currentPolicyVersion={ws.data?.policy_version}
               onDecided={(d) => setDecided((m) => ({ ...m, [d.id]: d }))} />
-            {a.run_id && <Link className="small" to={to.run(wsId, a.run_id)}>Open investigation <code>{a.run_id}</code></Link>}
+            {a.run_id && <Link className="small" to={to.run(wsId, a.run_id)}>Open the investigation</Link>}
           </div>
         ))}
       </div>

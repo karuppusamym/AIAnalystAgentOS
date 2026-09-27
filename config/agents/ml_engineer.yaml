@@ -1,0 +1,29 @@
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+# P5-06 (ADR-0024): the deterministic runner of playbook.train and playbook.score. No model calls. It reads
+# data only through the query gateway (`sql.execute`, one snapshot per step), trains only a published ml_spec,
+# and scores only a published, pinned ml_scoring definition under an approved, hash-bound approval.
+apiVersion: analystos/v1
+kind: Agent
+id: agent.ml_engineer
+version: 1.0.0
+summary: ML Engineer Agent (trains published specs, runs approved scoring)
+entry: python:analystos.ml.steps:train_step
+determinism: seeded
+side_effect: write_internal
+cost_class: compute
+certification:
+  status: tested
+  evidence: tests/integration/test_ml_governed.py
+tags: [ml]
+spec:
+  role: ML Engineer
+  goal: Train and evaluate a published MLSpec (baseline, bounded search, untouched holdout, model card) and run approved
+    batch scoring of a pinned model version into the managed output.
+  behaviours:
+    score_plan: python:analystos.ml.steps:score_plan_step
+    score: python:analystos.ml.steps:score_step
+  capabilities: ["method.ml.*"]
+  tools: [sql.execute, artifact.write]
+  budget: {llm_calls: 0, queries: 4}
+  policies: {max_rows_extract: 200000, pii_access: restricted, approval_for_publish: true, max_iterations: 1}
+  phase: mvp

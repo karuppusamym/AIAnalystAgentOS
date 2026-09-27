@@ -5,8 +5,12 @@ playbooks) and ADR-0009 (scheduling). Implemented by `contracts/definition.py`,
 `services/definitions.py` (lifecycle, `resolve_runnable`), `capabilities/binding.py` (definition ref,
 semantic, metric and method versions), `services/pins.py` (capture, status, accept) and
 `services/schedules.py` (pinned fires, blocked fires, nothing-changed verdict, stale narratives).
-Not yet done: promotion across environments (§5) and definitions for recipes/ML specs beyond
-their placeholder validators. Source: the
+Promotion across environments (§5) is `services/definitions.promote` (2026-09-27): a published
+version goes one step (workspace `settings.environment` dev → test → prod) with the identical spec and
+content hash; the connections it names (`source_id`, `source_ids`) are re-bound in the target by the
+given mapping or by connection name and kind, stored in `definition.bindings` (outside the hash) and
+applied when the version resolves; `promoted_from` records the copied version. Query tools add a
+`tested` step between draft and published (P7-11). Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §12–13.
 
 **Context.** Playbooks are versioned data (`capabilities/playbook.py`), the registry swaps immutable

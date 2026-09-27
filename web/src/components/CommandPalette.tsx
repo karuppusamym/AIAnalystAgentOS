@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Run, type Workspace } from "../api";
-import { fillPath, JOURNEYS, SCREENS, to } from "../routes";
+import { useAuth } from "../auth";
+import { AREAS, canSee, fillPath, SCREENS, to } from "../routes";
 
 export interface PaletteItem {
   id: string;
@@ -12,17 +13,20 @@ export interface PaletteItem {
   keywords?: string;
 }
 
-const JOURNEY_LABEL = Object.fromEntries(JOURNEYS.map((j) => [j.id, j.label])) as Record<string, string>;
+const AREA_LABEL = Object.fromEntries(AREAS.map((a) => [a.id, a.label])) as Record<string, string>;
 
-/** Navigable screens for the current context: global screens always, workspace screens when one is open. */
-export function screenItems(wsId: string | undefined, wsName?: string): PaletteItem[] {
-  return SCREENS.filter((s) => s.nav && (!s.workspace || wsId)).map((s) => ({
+/**
+ * Navigable screens for the current context: global screens always, workspace screens when one is
+ * open, and only the screens the person may see (the gear's admin screens are hidden otherwise).
+ */
+export function screenItems(wsId: string | undefined, wsName?: string, who: { isAdmin: boolean; role?: string | null } = { isAdmin: true }): PaletteItem[] {
+  return SCREENS.filter((s) => s.nav && (!s.workspace || wsId) && canSee(s, who)).map((s) => ({
     id: `screen:${s.id}`,
     label: s.title,
-    group: JOURNEY_LABEL[s.journey] ?? "Go to",
+    group: AREA_LABEL[s.area] ?? "Go to",
     hint: s.workspace ? wsName ?? "this workspace" : undefined,
     href: fillPath(s.path, { wsId }),
-    keywords: `${s.journey} ${s.keywords ?? ""}`,
+    keywords: `${s.area} ${s.keywords ?? ""}`,
   }));
 }
 
@@ -41,8 +45,10 @@ export function filterItems(items: PaletteItem[], query: string): PaletteItem[] 
  * listbox: arrow keys move, Enter opens, Esc closes and returns focus to where it was, and Tab
  * stays inside the dialog.
  */
-export function CommandPalette({ open, onClose, wsId }: { open: boolean; onClose: () => void; wsId?: string }) {
+export function CommandPalette({ open, onClose, wsId, role }: { open: boolean; onClose: () => void; wsId?: string; role?: string | null }) {
   const nav = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = !!user?.is_admin;
   const titleId = useId();
   const listId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -72,14 +78,14 @@ export function CommandPalette({ open, onClose, wsId }: { open: boolean; onClose
   const items = useMemo(() => {
     const ws = workspaces.find((w) => w.id === wsId);
     return [
-      ...screenItems(wsId, ws?.name),
+      ...screenItems(wsId, ws?.name, { isAdmin, role }),
       ...workspaces.map((w) => ({ id: `ws:${w.id}`, label: w.name, group: "Workspaces", href: to.workspace(w.id), keywords: "workspace" })),
       ...(wsId ? runs.map((r) => ({
         id: `run:${r.id}`, label: r.objective || r.id, group: "Recent investigations", hint: r.status,
-        href: to.run(wsId, r.id), keywords: `run ${r.id}`,
+        href: to.run(wsId, r.id), keywords: `investigation run ${r.id}`,
       })) : []),
     ];
-  }, [workspaces, runs, wsId]);
+  }, [workspaces, runs, wsId, isAdmin, role]);
   const shown = useMemo(() => filterItems(items, query), [items, query]);
   useEffect(() => setActive((a) => Math.min(a, Math.max(0, shown.length - 1))), [shown.length]);
 
@@ -124,10 +130,10 @@ export function CommandPalette({ open, onClose, wsId }: { open: boolean; onClose
   return (
     <div className="palette-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={dialogRef} className="palette" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}>
-        <h2 id={titleId} className="sr-only">Go to a screen, workspace or run</h2>
+        <h2 id={titleId} className="sr-only">Go to a screen, workspace or investigation</h2>
         <div className="palette-head">
           <input ref={inputRef} className="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls={listId}
-            aria-autocomplete="list" aria-label="Search screens, workspaces and runs" placeholder="Go to…"
+            aria-autocomplete="list" aria-label="Search screens, workspaces and investigations" placeholder="Go to…"
             aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
             value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} />
           <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>Esc<span className="sr-only"> close</span></button>

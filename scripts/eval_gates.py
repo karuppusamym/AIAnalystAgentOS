@@ -41,9 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     result = G.run_gates(tiers, gates, require_live=args.require_live)
     for name, t in result["tiers"].items():
         shown = {k: v for k, v in (t.get("metrics") or {}).items() if k in gates.tiers[name].metrics}
-        print(f"[{name}] {t['status']}" + (f" ({t['seconds']}s) {json.dumps(shown)}" if "metrics" in t else f": {t['reason']}"))
+        report = "" if gates.tiers[name].blocking else " (non-blocking report)"
+        print(f"[{name}] {t['status']}{report}" + (f" ({t['seconds']}s) {json.dumps(shown)}" if "metrics" in t else f": {t['reason']}"))
         for failure in t.get("failures", []):
-            print(f"EVAL GATE FAILED: {failure}", file=sys.stderr)
+            print(f"EVAL {'REPORT' if report else 'GATE FAILED'}: {failure}", file=sys.stderr)
     print(f"eval gates v{gates.version} (sha256 {gates.digest[:12]}): {'PASS' if result['passed'] else 'FAIL'}")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

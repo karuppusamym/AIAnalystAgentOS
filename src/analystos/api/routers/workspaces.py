@@ -23,7 +23,7 @@ from analystos.db.models import (
 )
 from analystos.events.bus import list_events
 from analystos.governance.policy import get_workspace, load_policy, require_role
-from analystos.services import file_ingest, workspace_inventory
+from analystos.services import file_ingest, workspace_inventory, workspace_modes
 from analystos.services import sources as source_svc
 from analystos.services import workspaces as ws_svc
 
@@ -39,6 +39,7 @@ class WorkspaceIn(BaseModel):
     objective: str = ""
     autonomy_level: int = 3
     policy: dict | None = None
+    work_modes: list[str] | None = None
 
 
 class WorkspacePatch(BaseModel):
@@ -48,6 +49,10 @@ class WorkspacePatch(BaseModel):
     autonomy_level: int | None = None
     settings: dict | None = None
     status: str | None = None  # active | disabled; owner only
+
+
+class WorkModesIn(BaseModel):
+    modes: list[str]
 
 
 class MemberIn(BaseModel):
@@ -102,7 +107,9 @@ def _summary(session: Session, ws) -> dict:
 
 @router.post("/workspaces")
 def create(body: WorkspaceIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    ws = ws_svc.create_workspace(session, session.merge(user), **body.model_dump())
+    ws = ws_svc.create_workspace(session, session.merge(user), **body.model_dump(exclude={"work_modes"}))
+    if body.work_modes is not None:
+        workspace_modes.apply(session, user, ws.id, body.work_modes)
     session.flush()
     return row(ws)
 
@@ -129,6 +136,29 @@ def get(workspace_id: str, user: User = Depends(current_user), session: Session 
 @router.patch("/workspaces/{workspace_id}")
 def patch(workspace_id: str, body: WorkspacePatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return row(ws_svc.update_workspace(session, user, workspace_id, body.model_dump()))
+
+
+@router.get("/workspaces/{workspace_id}/work-modes")
+def get_work_modes(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    role = require_role(session, user, workspace_id, "viewer")
+    ws = get_workspace(session, workspace_id)
+    current = workspace_modes.current(ws)
+    if role == "owner" or user.is_admin:
+        return workspace_modes.preview(session, user, workspace_id, current)
+    return {"workspace_id": workspace_id, "current": current, "selected": current, "capabilities": [],
+            "note": "Modes configure work shortcuts and playbook enablement; data grants and roles remain separate."}
+
+
+@router.post("/workspaces/{workspace_id}/work-modes/preview")
+def preview_work_modes(workspace_id: str, body: WorkModesIn, user: User = Depends(current_user),
+                       session: Session = Depends(db, scope="function")):
+    return workspace_modes.preview(session, user, workspace_id, body.modes)
+
+
+@router.put("/workspaces/{workspace_id}/work-modes")
+def put_work_modes(workspace_id: str, body: WorkModesIn, user: User = Depends(current_user),
+                   session: Session = Depends(db, scope="function")):
+    return workspace_modes.apply(session, user, workspace_id, body.modes)
 
 
 @router.delete("/workspaces/{workspace_id}")

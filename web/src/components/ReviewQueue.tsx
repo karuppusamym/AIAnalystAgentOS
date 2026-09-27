@@ -81,7 +81,7 @@ export function ReviewQueue({ wsId, canDecide, onOpenDocument }: {
       {list.loading && !list.data && <Loading />}
       {list.data && rows.length === 0 && (
         <EmptyState title={pending ? "Nothing to review" : `No ${status} drafts`}>
-          {pending ? "Crawls, accepted findings, approved KPIs and run feedback propose knowledge here." : null}
+          {pending ? "Crawls, accepted findings, approved KPIs and investigation feedback propose knowledge here." : null}
         </EmptyState>
       )}
       {pending && rows.length > 0 && !canDecide && <p className="small" role="note">Editors and owners decide drafts; you can read them.</p>}

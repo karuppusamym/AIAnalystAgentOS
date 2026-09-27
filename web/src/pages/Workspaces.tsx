@@ -1,17 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { to } from "../routes";
-import { api } from "../api";
-import { AutonomyPicker } from "../components/AutonomyPicker";
+import { api, type WorkMode } from "../api";
+import { WorkModeChoices, WorkModesSettings } from "../components/WorkModes";
 import { Card, EmptyState, ErrorBox, Field, Loading, PageHeader, Value } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
-import { AUTONOMY_LEVELS } from "../lib/status";
 import { fmtDate } from "../lib/format";
 
 export function WorkspacesPage() {
   const list = useAsync(() => api.listWorkspaces(), []);
   const [showCreate, setShowCreate] = useState(false);
   const [inspectId, setInspectId] = useState<string | null>(null);
+  const [modesId, setModesId] = useState<string | null>(null);
   const inventory = useAsync(() => inspectId ? api.workspaceInventory(inspectId) : Promise.resolve(null), [inspectId]);
   const statusAction = useAction();
   const changeStatus = async (id: string, name: string, status: "active" | "disabled") => {
@@ -24,14 +24,14 @@ export function WorkspacesPage() {
   };
   return (
     <div className="page">
-      <PageHeader title="Workspaces" subtitle="Each workspace holds sources, a policy, members, analysis runs and their evidence."
+      <PageHeader title="Workspaces" subtitle="Each workspace holds its data, members, policy, investigations and their evidence."
         actions={<button type="button" className="btn btn-primary" onClick={() => setShowCreate((s) => !s)}>
           {showCreate ? "Close" : "New workspace"}</button>} />
       {showCreate && <CreateWorkspace />}
       <ErrorBox error={list.error} onRetry={list.reload} />
       <ErrorBox error={statusAction.error} />
       {list.loading && !list.data ? <Loading /> : list.data && list.data.length === 0 ? (
-        <EmptyState title="No workspaces yet">Create one to connect a source and start an analysis.</EmptyState>
+        <EmptyState title="No workspaces yet">Create one, connect data and start work.</EmptyState>
       ) : (
         <div className="grid-cards">
           {list.data?.map((w) => (
@@ -42,10 +42,9 @@ export function WorkspacesPage() {
                 {w.description && <p className="muted clamp-2">{w.description}</p>}
                 {w.objective && <p className="small clamp-2"><strong>Objective:</strong> {w.objective}</p>}
                 <div className="chip-row small">
-                  <span className="tag tag-info">L{w.autonomy_level} · {AUTONOMY_LEVELS[w.autonomy_level]?.name ?? "?"}</span>
                   <span className="tag"><Value value={w.counts?.sources} format="int" suffix="sources" unknownLabel="sources unknown" /></span>
-                  <span className="tag"><Value value={w.counts?.runs} format="int" suffix="runs" unknownLabel="runs unknown" /></span>
-                  <span className="tag tag-success"><Value value={w.counts?.verified_insights} format="int" suffix="verified insights" unknownLabel="verified insights unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.runs} format="int" suffix="investigations" unknownLabel="investigations unknown" /></span>
+                  <span className="tag tag-success"><Value value={w.counts?.verified_insights} format="int" suffix="verified findings" unknownLabel="verified findings unknown" /></span>
                   <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix="dashboards" unknownLabel="dashboards unknown" /></span>
                 </div>
                 <p className="muted small">Created {fmtDate(w.created_at)}</p>
@@ -56,7 +55,10 @@ export function WorkspacesPage() {
                   </button>
                   <button type="button" className="btn btn-sm" aria-expanded={inspectId === w.id}
                     onClick={() => setInspectId(inspectId === w.id ? null : w.id)}>Data inventory</button>
+                  {w.status === "active" && <button type="button" className="btn btn-sm" aria-expanded={modesId === w.id}
+                    onClick={() => setModesId(modesId === w.id ? null : w.id)}>Work modes</button>}
                 </div>}
+                {modesId === w.id && <WorkModesSettings wsId={w.id} />}
                 {inspectId === w.id && <div className="stack" aria-label={`Data inventory for ${w.name}`}>
                   <ErrorBox error={inventory.error} onRetry={inventory.reload} />
                   {inventory.data?.workspace_id !== w.id && !inventory.error && <Loading />}
@@ -91,11 +93,12 @@ function CreateWorkspace() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [objective, setObjective] = useState("");
-  const [level, setLevel] = useState(3);
+  const [workModes, setWorkModes] = useState<WorkMode[]>(["analysis"]);
   const act = useAction();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective, autonomy_level: level }));
+    if (!workModes.length) return;
+    const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective, work_modes: workModes }));
     if (ws) nav(to.workspace(ws.id));
   };
   return (
@@ -107,14 +110,15 @@ function CreateWorkspace() {
         <Field label="Description" htmlFor="ws-desc">
           <input id="ws-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-        <Field label="Business objective" htmlFor="ws-obj" hint="Pre-fills new analysis runs. At least 10 characters to start a run.">
+        <Field label="Business objective" htmlFor="ws-obj" hint="Pre-fills new investigations. How much agents may do alone is set later, under Members & policy → Advanced.">
           <textarea id="ws-obj" rows={3} value={objective} onChange={(e) => setObjective(e.target.value)}
             placeholder="Why are incident resolution times increasing, and which groups drive SLA breaches?" />
         </Field>
-        <AutonomyPicker value={level} onChange={setLevel} />
+        <WorkModeChoices selected={workModes} onChange={setWorkModes} />
+        <p className="small muted">These selections enable work playbooks. Roles, data grants and approvals are configured separately.</p>
         <ErrorBox error={act.error} />
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={act.busy || !name.trim()}>{act.busy ? "Creating…" : "Create workspace"}</button>
+          <button type="submit" className="btn btn-primary" disabled={act.busy || !name.trim() || !workModes.length}>{act.busy ? "Creating…" : "Create workspace"}</button>
         </div>
       </form>
     </Card>

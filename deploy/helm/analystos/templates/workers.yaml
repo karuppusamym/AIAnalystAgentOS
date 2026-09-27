@@ -1,6 +1,9 @@
 {{- /* One Deployment per Temporal task-queue pool (P4-S01): each runs `analystos worker` with
-       ANALYSTOS_WORKER_QUEUES set to its queue(s), so every pool scales on its own. */ -}}
+       ANALYSTOS_WORKER_QUEUES set to its queue(s), so every pool scales on its own. Isolated pools
+       (`isolated: true`, ADR-0022 / P7-06) are opt-in (rendered only with replicas > 0) and get no ConfigMap
+       and no Secret: only the queue, the artifact store URL and the Temporal address. */ -}}
 {{- range $name, $pool := .Values.workers }}
+{{- if or (not $pool.isolated) (gt (int $pool.replicas) 0) }}
 {{- $component := printf "worker-%s" $name }}
 {{- $ctx := dict "root" $ "component" $component "podSecurityContext" $pool.podSecurityContext }}
 ---
@@ -12,6 +15,9 @@ metadata:
     {{- include "analystos.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $component }}
     analystos.io/task-queues: {{ $pool.queues | replace "," "_" | quote }}
+    {{- if $pool.isolated }}
+    analystos.io/isolated: "true"
+    {{- end }}
 spec:
   {{- if not (and $pool.autoscaling $pool.autoscaling.enabled) }}
   replicas: {{ $pool.replicas }}
@@ -27,6 +33,9 @@ spec:
       labels:
         {{- include "analystos.labels" $ | nindent 8 }}
         app.kubernetes.io/component: {{ $component }}
+        {{- if $pool.isolated }}
+        analystos.io/isolated: "true"
+        {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
     spec:
@@ -40,13 +49,31 @@ spec:
           command: ["analystos", "worker"]
           env:
             - {name: ANALYSTOS_WORKER_QUEUES, value: {{ $pool.queues | quote }}}
+          {{- if $pool.isolated }}
+            # Nothing else: a worker given a database, cache or provider credential refuses to start.
+            - {name: ANALYSTOS_WORKER_ARTIFACT_URL, value: {{ include "analystos.artifactUrl" $ | quote }}}
+            - {name: ANALYSTOS_TEMPORAL_ADDRESS, value: {{ $.Values.config.temporalAddress | quote }}}
+            - {name: ANALYSTOS_TEMPORAL_NAMESPACE, value: {{ $.Values.config.temporalNamespace | quote }}}
+            - {name: ANALYSTOS_TEMPORAL_QUEUE_PREFIX, value: {{ $.Values.config.temporalQueuePrefix | quote }}}
+            - {name: ANALYSTOS_ENV, value: {{ $.Values.env | quote }}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          {{- else }}
           {{- include "analystos.appEnv" $ | nindent 10 }}
+          {{- end }}
           # No HTTP probe: a worker that loses its process pool exits and is restarted; a hung activity is
           # detected by Temporal's heartbeat timeout and retried on another pod (P4-S01).
           resources:
             {{- toYaml $pool.resources | nindent 12 }}
       volumes:
+        {{- if $pool.isolated }}
+        - {name: tmp, emptyDir: {}}
+        {{- else }}
         {{- include "analystos.appVolumes" $ | nindent 8 }}
+        {{- end }}
 {{- include "analystos.pdb" (dict "root" $ "component" $component "pdb" (default (dict "enabled" false) $pool.pdb)) }}
 {{- include "analystos.hpa" (dict "root" $ "component" $component "autoscaling" $pool.autoscaling) }}
+{{- end }}
 {{- end }}

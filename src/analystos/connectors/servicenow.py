@@ -350,14 +350,11 @@ class ServiceNowConnector:
         out.sort(key=lambda f: (f["element"] != "sys_id",))
         return out
 
-    def extract(self, asset: DiscoveredAsset, *, max_rows: int) -> Iterator[pa.RecordBatch]:
+    def _prepare(self, asset: DiscoveredAsset) -> dict[str, Any]:
+        """What one extraction of `asset` requests and how its rows become Arrow batches."""
         table = asset.source_name
         if table not in self.tables:
             raise InvalidInput(f"Table {table!r} is not configured for this ServiceNow source")
-        spec = sampling.sampling_for(self.config, table, asset.name)
-        # ``full`` is bounded by the caller's (administrator's) hard limit, not the connector default
-        limit = max_rows if spec is not None and spec.method == "full" else min(max_rows, self.max_rows)
-        self.last_snapshot = None
         # Re-read the dictionary: asset metadata may have been rebuilt from the control plane,
         # which does not keep reference targets. The dictionary says which columns are raw
         # fields and which are derived display-value columns.
@@ -380,7 +377,28 @@ class ServiceNowConnector:
             src = display_of.get(c.name)
             if src and c.name not in dictionary and src not in wanted:
                 wanted.append(src)
-        fields = ",".join(wanted)
+        return {"table": table, "dictionary": dictionary, "display_of": display_of, "types": types, "schema": schema,
+                "fields": wanted}
+
+    def _batch(self, asset: DiscoveredAsset, prep: dict[str, Any], rows: list[dict[str, Any]]) -> pa.RecordBatch:
+        arrays = []
+        display_of, dictionary, types = prep["display_of"], prep["dictionary"], prep["types"]
+        for c in asset.columns:
+            if c.name in display_of and c.name not in dictionary:
+                src = display_of[c.name]
+                values = [_display(r.get(src)) for r in rows]
+            else:
+                values = [_parse_value(r.get(c.name), types[c.name]) for r in rows]
+            arrays.append(pa.array(values, type=arrow_type(types[c.name])))
+        return pa.RecordBatch.from_arrays(arrays, schema=prep["schema"])
+
+    def extract(self, asset: DiscoveredAsset, *, max_rows: int) -> Iterator[pa.RecordBatch]:
+        spec = sampling.sampling_for(self.config, asset.source_name, asset.name)
+        # ``full`` is bounded by the caller's (administrator's) hard limit, not the connector default
+        limit = max_rows if spec is not None and spec.method == "full" else min(max_rows, self.max_rows)
+        self.last_snapshot = None
+        prep = self._prepare(asset)
+        fields = ",".join(prep["fields"])
         offset = 0
         fetched = 0
         total: int | None = None
@@ -396,19 +414,11 @@ class ServiceNowConnector:
             }
             if self.display_values:
                 params["sysparm_display_value"] = "all"
-            rows, total = self._table(table, params)
+            rows, total = self._table(prep["table"], params)
             if not rows:
                 exhausted = True
                 break
-            arrays = []
-            for c in asset.columns:
-                if c.name in display_of and c.name not in dictionary:
-                    src = display_of[c.name]
-                    values = [_display(r.get(src)) for r in rows]
-                else:
-                    values = [_parse_value(r.get(c.name), types[c.name]) for r in rows]
-                arrays.append(pa.array(values, type=arrow_type(types[c.name])))
-            yield pa.RecordBatch.from_arrays(arrays, schema=schema)
+            yield self._batch(asset, prep, rows)
             fetched += len(rows)
             offset += len(rows)
             if len(rows) < page or (total is not None and offset >= total):
@@ -419,6 +429,83 @@ class ServiceNowConnector:
         self.last_snapshot = sampling.snapshot_record(
             spec=spec, rows_staged=fetched, cap=limit, truncated=truncated, source_total_rows=total,
             total_basis="x-total-count" if total is not None else "unavailable", population_rows=total)
+
+    # -- incremental (P6-02, ADR-0016) ------------------------------------------------------------
+    @staticmethod
+    def format_watermark(value: Any) -> str:
+        """A watermark as ServiceNow compares it (`YYYY-MM-DD HH:MM:SS`, the instance's UTC)."""
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(value, date):
+            return value.strftime("%Y-%m-%d 00:00:00")
+        return str(value)
+
+    def high_watermark(self, asset: DiscoveredAsset, column: str) -> datetime | None:
+        """The newest `column` value now: measured once, before any page, it is the fixed upper bound of
+        the window (the cursor does not move while the window is read)."""
+        if asset.source_name not in self.tables:
+            raise InvalidInput(f"Table {asset.source_name!r} is not configured for this ServiceNow source")
+        rows, _ = self._table(asset.source_name, {"sysparm_limit": 1, "sysparm_fields": column,
+                                                  "sysparm_query": f"{column}ISNOTEMPTY^ORDERBYDESC{column}",
+                                                  "sysparm_exclude_reference_link": "true"})
+        if not rows:
+            return None
+        return _parse_value(rows[0].get(column), "timestamp")
+
+    def _keyset(self, table: str, fields: str, filters: list[str], key: str, limit: int,
+                display: bool) -> Iterator[list[dict[str, Any]]]:
+        """Keyset pagination: the filter is fixed for the whole read and each page starts after the last
+        key of the previous one (offset stays 0). A row that changes while the window is read either keeps
+        its place or leaves the window upward (picked up by the next window); none is skipped, unlike offset
+        paging against a moving filter (the dlt spike's trap: 75 % of the rows skipped)."""
+        after: str | None = None
+        fetched = 0
+        while fetched < limit:
+            page = min(self.page_size, limit - fetched)
+            terms = [*filters, *([f"{key}>{after}"] if after is not None else []), f"ORDERBY{key}"]
+            params: dict[str, Any] = {"sysparm_fields": fields, "sysparm_limit": page, "sysparm_offset": 0,
+                                      "sysparm_query": "^".join(terms), "sysparm_exclude_reference_link": "true"}
+            if display:
+                params["sysparm_display_value"] = "all"
+            rows, _ = self._table(table, params)
+            if not rows:
+                return
+            yield rows
+            fetched += len(rows)
+            last = rows[-1].get(key)
+            after = str(last.get("value") if isinstance(last, dict) else last)
+            if len(rows) < page:
+                return
+
+    def extract_window(self, asset: DiscoveredAsset, *, watermark: str, since: Any, until: Any, key: str = "sys_id",
+                       max_rows: int) -> Iterator[pa.RecordBatch]:
+        """Rows with `since <= watermark <= until` (either bound optional), `until` fixed by the caller
+        from `high_watermark` before the read. Yields at most `max_rows + 1` rows so the caller can tell a
+        window that exceeds its cap (and refuse it) from one that fits."""
+        prep = self._prepare(asset)
+        fields = list(prep["fields"])
+        for extra in (key, watermark):
+            if extra not in fields:
+                fields.append(extra)
+        filters = []
+        if since is not None:
+            filters.append(f"{watermark}>={self.format_watermark(since)}")
+        if until is not None:
+            filters.append(f"{watermark}<={self.format_watermark(until)}")
+        for rows in self._keyset(prep["table"], ",".join(fields), filters, key, max_rows + 1, self.display_values):
+            yield self._batch(asset, prep, rows)
+
+    def extract_keys(self, asset: DiscoveredAsset, *, keys: list[str], max_rows: int) -> Iterator[pa.RecordBatch]:
+        """Every key the table holds now, for the full reconcile of deletes (keys only: small and cheap)."""
+        if asset.source_name not in self.tables:
+            raise InvalidInput(f"Table {asset.source_name!r} is not configured for this ServiceNow source")
+        if len(keys) != 1:
+            raise InvalidInput("ServiceNow tables reconcile on one key column (sys_id)")
+        key = keys[0]
+        schema = pa.schema([pa.field(key, pa.string())])
+        for rows in self._keyset(asset.source_name, key, [], key, max_rows, False):
+            values = [_parse_value(r.get(key), "text") for r in rows]
+            yield pa.RecordBatch.from_arrays([pa.array(values, type=pa.string())], schema=schema)
 
     def sqlalchemy_url(self) -> str:
         raise InvalidInput("ServiceNow sources are staged; they have no SQL endpoint")

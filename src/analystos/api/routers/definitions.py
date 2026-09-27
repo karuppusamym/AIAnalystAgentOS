@@ -99,6 +99,38 @@ def publish(workspace_id: str, definition_id: str, response: Response, user: Use
     return svc.out(row)
 
 
+class DefinitionTestIn(BaseModel):
+    arguments: dict | None = None  # default: the spec's own test arguments
+
+
+@router.post("/workspaces/{workspace_id}/definitions/{definition_id}/test")
+def test_draft(workspace_id: str, definition_id: str, body: DefinitionTestIn, response: Response,
+               user: User = Depends(current_user), session: Session = Depends(db, scope="function"),
+               if_match: str | None = Header(default=None)):
+    """Run a draft of a tested kind (a query tool) once through the gateway; on success it becomes `tested`,
+    with the evidence bound to its content hash. Publishing such a kind requires it (P7-11)."""
+    row = _load(session, user, workspace_id, definition_id, "editor")
+    row = svc.test(session, session.merge(user), row, expected_revision(if_match, required=True), arguments=body.arguments)
+    set_etag(response, row.revision)
+    return svc.out(row)
+
+
+class DefinitionPromoteIn(BaseModel):
+    target_workspace_id: str
+    bindings: dict[str, str] | None = None  # source connection id -> target connection id (default: same name)
+
+
+@router.post("/workspaces/{workspace_id}/definitions/{definition_id}/promote", status_code=201)
+def promote(workspace_id: str, definition_id: str, body: DefinitionPromoteIn, response: Response,
+            user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Promote a published version one environment up (dev -> test -> prod, ADR-0021 §5): the target gets the same
+    spec and content hash, with its connections re-bound there (`bindings`, else by connection name)."""
+    row = _load(session, user, workspace_id, definition_id, "editor")
+    new = svc.promote(session, session.merge(user), row, body.target_workspace_id, bindings=body.bindings)
+    set_etag(response, new.revision)
+    return svc.out(new)
+
+
 @router.post("/workspaces/{workspace_id}/definitions/{definition_id}/{action}")
 def change_status(workspace_id: str, definition_id: str, action: str, body: ReasonIn, response: Response,
                   user: User = Depends(current_user), session: Session = Depends(db, scope="function"),

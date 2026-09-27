@@ -264,7 +264,7 @@ def create_thread(session: Session, user: User, workspace_id: str, title: str | 
     require_role(session, user, workspace_id, "viewer")
     get_workspace(session, workspace_id)
     thread = AskThread(id=new_id("ask"), workspace_id=workspace_id, user_id=user.id,
-                       title=(title or "").strip()[:300] or NEW_THREAD_TITLE, archived=False)
+                       title=(title or "").strip()[:300] or NEW_THREAD_TITLE, archived=False, revision=1)
     session.add(thread)
     session.flush()
     return {**row(thread), "turns": []}
@@ -295,12 +295,23 @@ def thread_detail(session: Session, user: User, thread_id: str) -> dict[str, Any
 
 @scoped_loader
 def update_thread(session: Session, user: User, thread_id: str, *, title: str | None = None,
-                  archived: bool | None = None) -> dict[str, Any]:
+                  archived: bool | None = None, expected_revision: int | None = None) -> dict[str, Any]:
+    """`expected_revision` (from an optional If-Match, P4-06) makes a stale edit 412; old clients omit it."""
+    from analystos.core.errors import PreconditionFailed
+
     thread = _thread_for(session, user, thread_id)
+    if expected_revision is not None:
+        session.refresh(thread, with_for_update=True)
+        if expected_revision != (thread.revision or 1):
+            raise PreconditionFailed(f"thread {thread.id} is at revision {thread.revision or 1}, not {expected_revision}",
+                                     details={"current_revision": thread.revision or 1})
+    changed = False
     if title is not None and title.strip():
-        thread.title = title.strip()[:300]
+        thread.title, changed = title.strip()[:300], True
     if archived is not None:
-        thread.archived = archived
+        thread.archived, changed = archived, True
+    if changed:
+        thread.revision = (thread.revision or 1) + 1
     session.flush()
     return row(thread)
 

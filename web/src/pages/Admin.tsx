@@ -8,30 +8,30 @@ import { useAction, useAsync } from "../lib/hooks";
 import { PromptsView, SettingsEditor, TokenSavingsView } from "./AdminSettings";
 import { CapabilityRegistry } from "./Registry";
 
-type Tab = "capabilities" | "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage" | "audit";
-
-/** Tabs whose endpoints are admin-only: rendered as a notice for everyone else instead of a 403. */
-const ADMIN_ONLY = new Set<Tab>(["settings", "savings", "prompts", "usage", "audit"]);
+type Tab = "capabilities" | "agents" | "tools" | "skills" | "models" | "settings" | "savings" | "prompts" | "usage";
 
 export type AdminSection = "registry" | "settings" | "usage";
 
-/** The Operate journey's platform screens: one screen per section, tabs within it. */
+/**
+ * The gear's platform screens (spec v4 §15), for platform administrators only (App.tsx renders a
+ * not-entitled state for everyone else). Model configuration has one home: Platform settings.
+ */
 const SECTIONS: Record<AdminSection, { title: string; subtitle: string; tabs: { id: Tab; label: string }[] }> = {
   registry: {
     title: "Capability registry",
-    subtitle: "Every installed capability — playbooks, agents, methods, tools, connectors, plugins and MCP tools — with certification, side effects and per-workspace enablement.",
+    subtitle: "Every installed capability (playbooks, agents, methods, tools, connectors, plugins and MCP tools) with certification, side effects and per-workspace enablement.",
     tabs: [{ id: "capabilities", label: "Capabilities" }, { id: "agents", label: "Agents" }, { id: "tools", label: "Tools" }, { id: "skills", label: "Skills" },
-      { id: "models", label: "Models" }, { id: "prompts", label: "Prompts" }],
+      { id: "prompts", label: "Prompts" }],
   },
   settings: {
     title: "Platform settings",
-    subtitle: "Versioned runtime settings: LLM mode per purpose, presets, feature flags, limits and enabled source kinds.",
-    tabs: [{ id: "settings", label: "Settings" }],
+    subtitle: "Versioned runtime settings and model configuration: when models are used, presets, feature flags, limits, enabled source kinds, routing and provider health.",
+    tabs: [{ id: "settings", label: "Settings" }, { id: "models", label: "Models & routing" }],
   },
   usage: {
     title: "Usage & cost",
-    subtitle: "Tokens avoided, model spend by purpose, query gateway activity and the platform audit log.",
-    tabs: [{ id: "savings", label: "Token savings" }, { id: "usage", label: "Usage" }, { id: "audit", label: "Audit log" }],
+    subtitle: "Model calls avoided, spend by purpose and query gateway activity. The audit log is under Members & policy.",
+    tabs: [{ id: "savings", label: "Token savings" }, { id: "usage", label: "Usage" }],
   },
 };
 
@@ -47,27 +47,25 @@ export function AdminPage({ section = "registry" }: { section?: AdminSection }) 
     return updated;
   });
   const tabbed = spec.tabs.length > 1;
+  const isAdmin = !!user?.is_admin;
   return (
     <div className="page">
       <PageHeader title={spec.title} subtitle={spec.subtitle} />
-      {!user?.is_admin && section === "registry" && (
-        <Notice tone="info">You can view the registries; changing them, platform settings, usage and the audit log need an admin account.</Notice>)}
       {tabbed && <Tabs value={tab} onChange={setTab} tabs={spec.tabs} />}
       <div className="tab-panel" role={tabbed ? "tabpanel" : undefined}>
-        {ADMIN_ONLY.has(tab) && !user?.is_admin ? (
+        {!isAdmin ? (
           <Notice tone="warning">This section is available to platform administrators only.</Notice>
         ) : (
           <>
-            {tab === "capabilities" && <CapabilityRegistry isAdmin={!!user?.is_admin} />}
-            {tab === "agents" && <Agents canEdit={!!user?.is_admin} />}
-            {tab === "tools" && <Tools canEdit={!!user?.is_admin} />}
+            {tab === "capabilities" && <CapabilityRegistry isAdmin={isAdmin} />}
+            {tab === "agents" && <Agents canEdit={isAdmin} />}
+            {tab === "tools" && <Tools canEdit={isAdmin} />}
             {tab === "skills" && <Skills />}
-            {tab === "models" && <Models isAdmin={!!user?.is_admin} />}
+            {tab === "models" && <Models isAdmin={isAdmin} />}
             {tab === "settings" && <SettingsEditor />}
             {tab === "savings" && <TokenSavingsView />}
             {tab === "prompts" && <PromptsView />}
             {tab === "usage" && <UsageView />}
-            {tab === "audit" && <Audit />}
           </>
         )}
       </div>
@@ -311,16 +309,6 @@ function UsageView() {
       </Card>
     </div>
   );
-}
-
-function Audit() {
-  const a = useAsync(() => api.audit(300), []);
-  const [q, setQ] = useState("");
-  if (a.error) return <ErrorBox error={a.error} onRetry={a.reload} />;
-  if (!a.data) return <Loading />;
-  const needle = q.toLowerCase();
-  const rows = a.data.filter((e) => !needle || `${e.actor} ${e.action} ${e.target ?? ""} ${e.decision ?? ""} ${e.workspace_id ?? ""}`.toLowerCase().includes(needle));
-  return <AuditTable rows={rows} filter={q} onFilter={setQ} />;
 }
 
 export function AuditTable({ rows, filter, onFilter }: { rows: import("../api").AuditEvent[]; filter: string; onFilter: (s: string) => void }) {

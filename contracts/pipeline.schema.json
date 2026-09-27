@@ -1,0 +1,559 @@
+{
+  "$defs": {
+    "BackfillRange": {
+      "additionalProperties": false,
+      "description": "The watermark range a backfill or replay covers; `start` alone bounds the initial load.",
+      "properties": {
+        "start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        }
+      },
+      "title": "BackfillRange",
+      "type": "object"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "Column",
+      "type": "object"
+    },
+    "Incremental": {
+      "additionalProperties": false,
+      "description": "Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a\nstaged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.\n\nA window is `[last watermark - late_window, high watermark]`, the high watermark measured once before\nreading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key\nwins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`\nremoves keys the source no longer has on a scheduled full reconcile, `soft` stamps them in\n`aos_deleted_at`, `ignore` keeps them.",
+      "properties": {
+        "watermark": {
+          "title": "Watermark",
+          "type": "string"
+        },
+        "key": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Key",
+          "type": "array"
+        },
+        "late_window": {
+          "default": 0,
+          "title": "Late Window",
+          "type": "integer"
+        },
+        "deletes": {
+          "default": "reconcile",
+          "enum": [
+            "reconcile",
+            "soft",
+            "ignore"
+          ],
+          "title": "Deletes",
+          "type": "string"
+        },
+        "reconcile_every_hours": {
+          "default": 168,
+          "maximum": 8784,
+          "minimum": 1,
+          "title": "Reconcile Every Hours",
+          "type": "integer"
+        },
+        "max_delete_pct": {
+          "default": 50.0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Delete Pct",
+          "type": "number"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "backfill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackfillRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "watermark",
+        "key"
+      ],
+      "title": "Incremental",
+      "type": "object"
+    },
+    "JoinExpectation": {
+      "additionalProperties": false,
+      "description": "What a join may do to the data: the declared cardinality (equal to the recipe's), the share of left\nrows allowed to find no match, and the row multiplication allowed (1.0 = none).",
+      "properties": {
+        "node": {
+          "title": "Node",
+          "type": "string"
+        },
+        "expected_cardinality": {
+          "enum": [
+            "one_to_one",
+            "many_to_one",
+            "one_to_many",
+            "many_to_many"
+          ],
+          "title": "Expected Cardinality",
+          "type": "string"
+        },
+        "max_unmatched_pct": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Unmatched Pct"
+        },
+        "max_row_multiplication": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Row Multiplication"
+        }
+      },
+      "required": [
+        "node",
+        "expected_cardinality"
+      ],
+      "title": "JoinExpectation",
+      "type": "object"
+    },
+    "PipelineBudgets": {
+      "additionalProperties": false,
+      "properties": {
+        "max_queries": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Queries"
+        },
+        "max_rows": {
+          "anyOf": [
+            {
+              "maximum": 5000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Rows"
+        },
+        "max_wall_seconds": {
+          "anyOf": [
+            {
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Wall Seconds"
+        }
+      },
+      "title": "PipelineBudgets",
+      "type": "object"
+    },
+    "PipelineDestination": {
+      "additionalProperties": false,
+      "description": "Where the managed writer materializes the output: an allowlisted schema.table (P6-03).",
+      "properties": {
+        "engine": {
+          "const": "postgres:analytics",
+          "default": "postgres:analytics",
+          "title": "Engine",
+          "type": "string"
+        },
+        "schema": {
+          "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+          "title": "Schema",
+          "type": "string"
+        },
+        "table": {
+          "pattern": "^[a-z_][a-z0-9_]{0,50}$",
+          "title": "Table",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "table"
+      ],
+      "title": "PipelineDestination",
+      "type": "object"
+    },
+    "PipelineFreshness": {
+      "additionalProperties": false,
+      "properties": {
+        "max_age_hours": {
+          "exclusiveMinimum": 0,
+          "maximum": 8784,
+          "title": "Max Age Hours",
+          "type": "number"
+        }
+      },
+      "required": [
+        "max_age_hours"
+      ],
+      "title": "PipelineFreshness",
+      "type": "object"
+    },
+    "PipelineInput": {
+      "additionalProperties": false,
+      "description": "An input version: the asset, optionally its pinned content fingerprint (a changed input refuses the\nrun) and how old its last staging may be.",
+      "properties": {
+        "asset": {
+          "pattern": "^[a-z_][a-z0-9_]*\\.[a-z_][a-z0-9_]*$",
+          "title": "Asset",
+          "type": "string"
+        },
+        "fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fingerprint"
+        },
+        "max_age_hours": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Age Hours"
+        }
+      },
+      "required": [
+        "asset"
+      ],
+      "title": "PipelineInput",
+      "type": "object"
+    },
+    "PipelineOutput": {
+      "additionalProperties": false,
+      "description": "The output contract: grain, keys and schema must equal the recipe output's, so a recipe change that\nalters them fails the pipeline instead of silently changing what downstream reads.",
+      "properties": {
+        "recipe": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recipe"
+        },
+        "output": {
+          "title": "Output",
+          "type": "string"
+        },
+        "grain": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Grain",
+          "type": "array"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "schema": {
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "minItems": 1,
+          "title": "Schema",
+          "type": "array"
+        }
+      },
+      "required": [
+        "output",
+        "schema"
+      ],
+      "title": "PipelineOutput",
+      "type": "object"
+    },
+    "RecipeRef": {
+      "additionalProperties": false,
+      "description": "A recipe step of a pipeline: its name, and a version to pin (None = the published version at run time).",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,55}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RecipeRef",
+      "type": "object"
+    },
+    "ReconciliationCheck": {
+      "additionalProperties": false,
+      "description": "Aggregate reconciliation: `func(input_column)` over a recipe node against `func(output_column)` over\nthe output, within `tolerance_pct` (a business measure must not multiply after a join).",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,55}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "func": {
+          "default": "sum",
+          "enum": [
+            "sum",
+            "count"
+          ],
+          "title": "Func",
+          "type": "string"
+        },
+        "input_node": {
+          "title": "Input Node",
+          "type": "string"
+        },
+        "input_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Column"
+        },
+        "output_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Column"
+        },
+        "tolerance_pct": {
+          "default": 0.0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Tolerance Pct",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "input_node"
+      ],
+      "title": "ReconciliationCheck",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The envelope around one or more published recipes (P6-01, workspace spec \u00a75): input versions, the\noutput grain, schema and keys, expected join cardinality, freshness, reconciliation checks, budgets,\nthe incremental block and an optional managed destination. Validated against the recipes it names\n(`pipelines/spec.py`); the recipe IR validator and compiler decide what runs.",
+  "properties": {
+    "type": {
+      "const": "pipeline",
+      "default": "pipeline",
+      "title": "Type",
+      "type": "string"
+    },
+    "name": {
+      "pattern": "^[a-z][a-z0-9_]{0,55}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "recipes": {
+      "items": {
+        "$ref": "#/$defs/RecipeRef"
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "title": "Recipes",
+      "type": "array"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/PipelineInput"
+      },
+      "maxItems": 50,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "output": {
+      "$ref": "#/$defs/PipelineOutput"
+    },
+    "joins": {
+      "items": {
+        "$ref": "#/$defs/JoinExpectation"
+      },
+      "maxItems": 20,
+      "title": "Joins",
+      "type": "array"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/ReconciliationCheck"
+      },
+      "maxItems": 20,
+      "title": "Checks",
+      "type": "array"
+    },
+    "freshness": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PipelineFreshness"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "budgets": {
+      "$ref": "#/$defs/PipelineBudgets"
+    },
+    "incremental": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Incremental"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "destination": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PipelineDestination"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "name",
+    "recipes",
+    "output"
+  ],
+  "title": "PipelineSpec",
+  "type": "object"
+}

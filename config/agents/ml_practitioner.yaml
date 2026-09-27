@@ -1,0 +1,32 @@
+# Agent manifest (spec v3 §3.4). Every field is enforced: see src/analystos/capabilities/agents.py.
+# P5-06 (ADR-0024): a declarative agent that only *proposes* MLSpec targets, features and estimators, through
+# the catalog-only `skill.ml_propose_spec` (which validates every proposal). It never trains, scores or
+# promotes. In `off`/`auto` mode the default action is the rule path (no model call).
+apiVersion: analystos/v1
+kind: Agent
+id: agent.ml_practitioner
+version: 1.0.0
+summary: ML Practitioner Agent (proposes MLSpecs only)
+entry: builtin:generic
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification:
+  status: tested
+  evidence: tests/unit/test_ml_propose.py
+tags: [ml]
+spec:
+  role: ML Practitioner
+  goal: Propose a governed MLSpec for the objective - which column is the target, which catalog columns are candidate
+    features available at prediction time, which allowlisted estimators to try and how to split - using catalog
+    lookups only. You propose; code validates, checks leakage and trains only a published spec.
+  capabilities: [skill.ml_propose_spec, skill.catalog_lookup]
+  tools: [metadata.read]
+  model_purpose: ml_spec_proposal
+  budget: {llm_calls: 2, usd: 0.05, queries: 0, max_steps: 2}
+  policies: {max_rows_extract: 1000, pii_access: none, approval_for_publish: true, max_iterations: 1}
+  phase: mvp
+  default_actions:
+    - capability: skill.ml_propose_spec
+      input: {assets: $scope.assets, objective: $objective}
+  output: {artifact_type: agent_output, artifact_name: ML spec proposal}

@@ -9,6 +9,7 @@ import type {
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
+import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -34,11 +35,17 @@ const SOURCE: Source = {
   execution_mode: "staged", staging_schema: "stg_sn", last_discovered_at: T, last_error: null, created_at: T,
 };
 
+/** A file source for uploads (Work → Prepare data); nothing is selected in it yet. */
+const FILE_SOURCE: Source = {
+  id: "src_files", workspace_id: WS, kind: "csv", name: "Uploaded files", config: {}, secret_ref: null, status: "registered",
+  execution_mode: "staged", staging_schema: "stg_files", last_discovered_at: T, last_error: null, created_at: T,
+};
+
 const INSIGHT_ROW: Insight = {
   id: INSIGHT, workspace_id: WS, run_id: RUN, hypothesis_id: "hyp_1", code: "F1", title: "Network group drives P1 breaches",
   finding: "Network resolves P1 incidents 2.1x slower than the median group.", confidence: 0.86, population_size: 4210,
   business_impact: {}, caveats: ["Q3 only", "Data quality: 2.1% of resolved_at values are null"], evidence: [{ type: "query", id: "qry_h1" }],
-  verified: true, status: "verified", narrative_source: "rule", created_at: T,
+  verified: true, status: "verified", narrative_source: "rule", created_at: T, verification_state: VERIFIED_STATE,
   verification: {
     verified: true,
     evaluate: [
@@ -299,14 +306,17 @@ export const BUILD_APPROVAL = "apr_build";
  * KPIs proposed or decided in the editor. `resetMockState` runs before every Playwright test (and in
  * the vitest cases that change it), so no test sees another's state.
  */
-const state = { planned: false, buildApproval: "pending", proposed: [] as SemanticMetric[], decided: {} as Record<string, string> };
+const state = { planned: false, buildApproval: "pending", proposed: [] as SemanticMetric[], decided: {} as Record<string, string>,
+  workModes: ["analysis", "engineering", "ml"] as string[] };
 
 export function resetMockState(): void {
+  state.workModes = ["analysis", "engineering", "ml"];
   state.planned = false;
   state.buildApproval = "pending";
   state.proposed = [];
   state.decided = {};
   resetKnowledgeState();
+  resetWave1();
 }
 
 const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
@@ -658,6 +668,24 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   // capability registry: list (with enablement per workspace), manifest, enable toggle, reload, run
   if (m === "GET" && p === "/capabilities") return json(capabilityList(url.searchParams.get("workspace_id")));
+  if (p === `${W}/work-modes` || p === `${W}/work-modes/preview`) {
+    const requested = requestBody ? (JSON.parse(requestBody) as { modes: string[] }).modes : state.workModes;
+    const previous = [...state.workModes];
+    if (m === "PUT" && p === `${W}/work-modes`) state.workModes = [...requested];
+    return json({ workspace_id: WS, current: m === "PUT" ? requested : previous, selected: requested,
+      capabilities: [], note: "Modes configure shortcuts and playbooks; grants remain separate." });
+  }
+  if (m === "GET" && p === `${W}/capabilities`) return json({ workspace_id: WS, digest: "d1e2f3a4b5c6d7e8",
+    job_kinds: (["explain", "compare", "forecast", "predict", "prepare", "monitor"] as const).map((key) => ({
+      key, label: { explain: "Explain", compare: "Compare", forecast: "Forecast", predict: "Predict",
+        prepare: "Prepare data", monitor: "Monitor" }[key],
+      mode: key === "prepare" ? "engineering" : key === "forecast" || key === "predict" ? "ml" : "analysis",
+      available: !["forecast", "predict", "prepare"].includes(key),
+      reasons: ["forecast", "predict", "prepare"].includes(key)
+        ? [{ code: "mock_unavailable", message: `Needs a ready ${key} executor in this workspace.`, remediation: "Enable the capability." }] : [],
+      capabilities: [],
+      entry: { type: key === "prepare" ? "recipe" : key === "monitor" ? "monitor" : "work_order" },
+    })) });
   const capId = /^\/capabilities\/([^/]+)$/.exec(p);
   if (m === "GET" && capId) {
     const man = manifestFor(decodeURIComponent(capId[1]));
@@ -692,6 +720,8 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     const all = state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED];
     return json(all.filter((a) => !status || a.status === status));
   }
+  const wave = wave1Route(m, p, WS, requestBody);
+  if (wave) return json(wave.body, wave.status);
   const asked = askRoute(m, p, requestBody);
   if (asked) return asked;
   const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows);
@@ -713,12 +743,13 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/auth/providers", { password: true, oidc: { enabled: false, name: "SSO", login_url: null } }],
     ["GET", "/workspaces", [WORKSPACE]],
     ["GET", W, WORKSPACE],
-    ["GET", `${W}/sources`, [SOURCE]],
+    ["GET", `${W}/sources`, [SOURCE, FILE_SOURCE]],
     ["GET", `${W}/analysis`, [RUN_ROW]],
     ["GET", `${W}/analysis/${RUN}`, RUN_DETAIL],
     ["GET", `${W}/analysis/${RUN}/console`, CONSOLE],
-    ["GET", `${W}/insights`, [INSIGHT_ROW, INSIGHT_DRAFT]],
+    ["GET", `${W}/insights`, [INSIGHT_ROW, INSIGHT_DRAFT, voidInsight(INSIGHT_ROW)]],
     ["GET", `/insights/${INSIGHT}`, INSIGHT_DETAIL],
+    ["GET", `/insights/${INSIGHT_VOID_ID}`, { ...INSIGHT_DETAIL, ...voidInsight(INSIGHT_ROW), queries: [], experiments: [] }],
     ["GET", `${W}/alerts`, [ALERT]],
     ["GET", `${W}/monitors`, [MONITOR]],
     ["GET", `${W}/schedules`, [SCHEDULE]],
@@ -730,6 +761,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/source-kinds", KINDS],
     ["GET", "/notifications", []],
     ["POST", `${W}/ask`, ASK],
+    ["POST", `${W}/analysis`, RUN_ROW],
     ["GET", "/agents", AGENTS],
     ["GET", "/tools", TOOLS],
     ["GET", "/skills", SKILLS],

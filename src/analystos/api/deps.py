@@ -34,7 +34,7 @@ def db() -> Iterator[Session]:
 
 
 def _authenticate(session: Session, authorization: str | None, x_correlation_id: str | None) -> User:
-    correlation_id.set(x_correlation_id or new_id("req"))
+    correlation_id.set(correlation_id.get() or x_correlation_id or new_id("req"))  # the request id when set (P4-06)
     if not authorization or not authorization.lower().startswith("bearer "):
         raise Unauthenticated("missing bearer token")
     claims = decode_token(authorization.split(" ", 1)[1])
@@ -65,7 +65,7 @@ async def streaming_auth(authorization: str | None = Header(default=None),
     The token's expiry travels with the user: the stream ends when it passes (P4-01)."""
     from analystos.events.stream import run_blocking
 
-    correlation_id.set(x_correlation_id or new_id("req"))
+    correlation_id.set(correlation_id.get() or x_correlation_id or new_id("req"))  # the request id when set (P4-06)
 
     def authenticate() -> StreamAuth:
         with session_scope() as session:

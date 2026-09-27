@@ -547,7 +547,7 @@ describe("TokenSavingsView", () => {
 describe("Admin page gating", () => {
   it("loads a linked Skills tab when a seeded skill omits tools", async () => {
     session.set("tok", ADMIN);
-    mockApi([["GET", /\/api\/skills$/, [{ id: "anova", category: "statistical", description: "One-way ANOVA",
+    mockApi([["GET", /\/api\/auth\/me$/, ADMIN], ["GET", /\/api\/skills$/, [{ id: "anova", category: "statistical", description: "One-way ANOVA",
       function: "analystos.skills.stats.one_way_anova", runtime: "in_process", deterministic: true, enabled: true }]]]);
     render(<AuthProvider><MemoryRouter initialEntries={["/operate/registry?tab=skills"]}><AdminPage section="registry" /></MemoryRouter></AuthProvider>);
     expect(screen.getByRole("tab", { name: "Skills", selected: true })).toBeTruthy();

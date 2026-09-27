@@ -27,10 +27,11 @@ def test_the_gates_file_is_versioned_and_every_ci_tier_has_a_runner():
 
 
 def test_a_version_without_a_changelog_entry_is_refused(tmp_path):
-    raw = G.GATES_FILE.read_text().replace("version: 1\n", "version: 2\n", 1)
+    current = G.load().version
+    raw = G.GATES_FILE.read_text().replace(f"version: {current}\n", f"version: {current + 1}\n", 1)
     path = tmp_path / "eval_gates.yaml"
     path.write_text(raw)
-    with pytest.raises(ValueError, match="version 2 has no changelog entry"):
+    with pytest.raises(ValueError, match=f"version {current + 1} has no changelog entry"):
         G.load(path)
 
 

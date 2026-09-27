@@ -20,7 +20,7 @@ from analystos.semantic import service as svc
 router = APIRouter(prefix="/api/workspaces/{workspace_id}/semantic", tags=["semantic"])
 
 
-class Decision(BaseModel):
+class SemanticDecision(BaseModel):
     version: int | None = None
     reason: str | None = None
 
@@ -85,28 +85,28 @@ def validate(workspace_id: str, body: MetricProposalIn, user: User = Depends(cur
 
 
 @router.post("/metrics/{name}/approve")
-def approve(workspace_id: str, name: str, body: Decision | None = None, user: User = Depends(current_user),
+def approve(workspace_id: str, name: str, body: SemanticDecision | None = None, user: User = Depends(current_user),
             session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "approver")
-    body = body or Decision()
+    body = body or SemanticDecision()
     return row(svc.decide_metric(session, workspace_id, name, session.merge(user), approve=True, version=body.version,
                                  reason=body.reason))
 
 
 @router.post("/metrics/{name}/reject")
-def reject(workspace_id: str, name: str, body: Decision | None = None, user: User = Depends(current_user),
+def reject(workspace_id: str, name: str, body: SemanticDecision | None = None, user: User = Depends(current_user),
            session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "approver")
-    body = body or Decision()
+    body = body or SemanticDecision()
     return row(svc.decide_metric(session, workspace_id, name, session.merge(user), approve=False, version=body.version,
                                  reason=body.reason))
 
 
 @router.post("/metrics/{name}/deprecate")
-def deprecate(workspace_id: str, name: str, body: Decision | None = None, user: User = Depends(current_user),
+def deprecate(workspace_id: str, name: str, body: SemanticDecision | None = None, user: User = Depends(current_user),
               session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "approver")
-    return rows(svc.deprecate_metric(session, workspace_id, name, session.merge(user), reason=(body or Decision()).reason))
+    return rows(svc.deprecate_metric(session, workspace_id, name, session.merge(user), reason=(body or SemanticDecision()).reason))
 
 
 @router.get("/conflicts")
@@ -195,6 +195,50 @@ def reject_model(workspace_id: str, body: ModelDecision, user: User = Depends(cu
     return row(review.decide_model(session, workspace_id, body.version, session.merge(user), approve=False, reason=body.reason))
 
 
+class OwnershipOfferIn(BaseModel):
+    subject: str = Field(pattern="^(metric|model)$")
+    name: str
+    to_owner: str
+    reason: str | None = None
+
+
+class OwnershipDeclineIn(BaseModel):
+    reason: str | None = None
+
+
+@router.post("/ownership", status_code=201)
+def offer_ownership(workspace_id: str, body: OwnershipOfferIn, user: User = Depends(current_user),
+                    session: Session = Depends(db, scope="function")):
+    """Offer a metric or the semantic model to a new owner (P4-05): a hash-bound record the recipient accepts."""
+    from analystos.semantic import ownership
+
+    apr = ownership.offer(session, session.merge(user), workspace_id, body.subject, body.name, to_owner=body.to_owner,
+                          reason=body.reason)
+    return row(apr)
+
+
+@router.post("/ownership/{approval_id}/accept")
+def accept_ownership(workspace_id: str, approval_id: str, user: User = Depends(current_user),
+                     session: Session = Depends(db, scope="function")):
+    """The named new owner accepts; refused (and the offer invalidated) if the definition changed since."""
+    from analystos.db.models import Approval
+    from analystos.semantic import ownership
+
+    load_in_workspace(session, Approval, approval_id, workspace_id, user=user, minimum="editor", label="ownership transfer")
+    return ownership.accept(session, session.merge(user), workspace_id, approval_id)
+
+
+@router.post("/ownership/{approval_id}/decline")
+def decline_ownership(workspace_id: str, approval_id: str, body: OwnershipDeclineIn | None = None,
+                      user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    from analystos.db.models import Approval
+    from analystos.semantic import ownership
+
+    load_in_workspace(session, Approval, approval_id, workspace_id, user=user, label="ownership transfer")
+    return row(ownership.decline(session, session.merge(user), workspace_id, approval_id,
+                                 reason=(body or OwnershipDeclineIn()).reason))
+
+
 @router.get("/reconciliation")
 def reconciliation(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Fan-out, denominator, stale-definition and unvalidated-join findings (P4-05)."""
@@ -243,23 +287,23 @@ def relationship_candidates(workspace_id: str, status: str | None = None, user: 
 
 
 @router.post("/relationships/candidates/{candidate_id}/accept")
-def accept_relationship(workspace_id: str, candidate_id: str, body: Decision | None = None, user: User = Depends(current_user),
+def accept_relationship(workspace_id: str, candidate_id: str, body: SemanticDecision | None = None, user: User = Depends(current_user),
                         session: Session = Depends(db, scope="function")):
     """Accept a measured candidate: separation of duties, hash-bound to the measurement; writes the
     relationship with its measured cardinality and validated_at/validated_by."""
     load_in_workspace(session, SemanticRelationshipCandidate, candidate_id, workspace_id, user=user, minimum="approver",
                       label="relationship candidate")
     return row(review.decide_candidate(session, workspace_id, candidate_id, session.merge(user), approve=True,
-                                       reason=(body or Decision()).reason))
+                                       reason=(body or SemanticDecision()).reason))
 
 
 @router.post("/relationships/candidates/{candidate_id}/reject")
-def reject_relationship(workspace_id: str, candidate_id: str, body: Decision | None = None, user: User = Depends(current_user),
+def reject_relationship(workspace_id: str, candidate_id: str, body: SemanticDecision | None = None, user: User = Depends(current_user),
                         session: Session = Depends(db, scope="function")):
     load_in_workspace(session, SemanticRelationshipCandidate, candidate_id, workspace_id, user=user, minimum="approver",
                       label="relationship candidate")
     return row(review.decide_candidate(session, workspace_id, candidate_id, session.merge(user), approve=False,
-                                       reason=(body or Decision()).reason))
+                                       reason=(body or SemanticDecision()).reason))
 
 
 @router.post("/relationships/candidates/{candidate_id}/measure")

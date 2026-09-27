@@ -2,6 +2,7 @@
 gates, quarantine and lineage. Every child id is bound to the path's workspace through a scoped loader."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -26,6 +27,11 @@ class RecipeRunIn(BaseModel):
     mode: Literal["preview", "materialize"] = "materialize"
     engine: Literal["auto", "sql", "duckdb"] | None = None
     limit: int = recipe_svc.PREVIEW_ROWS
+    # P6-02, incremental recipes only: auto (a watermark window; a full rebuild the first time or when a delete
+    # reconcile is due) | full | reconcile | replay / backfill of the watermark range [since, until]
+    refresh: Literal["auto", "full", "reconcile", "replay", "backfill"] = "auto"
+    since: datetime | float | None = None
+    until: datetime | float | None = None
 
 
 @router.post("/workspaces/{workspace_id}/recipes/validate")
@@ -71,8 +77,9 @@ def compiled(workspace_id: str, recipe_id: str, target: Literal["sql", "duckdb",
 def run(workspace_id: str, recipe_id: str, body: RecipeRunIn, user: User = Depends(current_user)):
     """Preview (rows and gate results, nothing written) or materialize (outputs, quarantine, lineage)."""
     engine = None if body.engine in (None, "auto") else body.engine
+    window = (body.since, body.until) if body.refresh in ("replay", "backfill") else None
     return recipe_svc.run_recipe(user, recipe_id, workspace_id, mode=body.mode, engine=engine,
-                                 limit=max(1, min(body.limit, 1000)))
+                                 limit=max(1, min(body.limit, 1000)), refresh=body.refresh, window=window)
 
 
 @router.get("/workspaces/{workspace_id}/recipe-runs")

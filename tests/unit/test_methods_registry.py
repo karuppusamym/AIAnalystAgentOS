@@ -46,7 +46,9 @@ def test_every_builtin_method_is_one_module_plus_one_manifest():
         assert m.side_effect == "read_source" and m.certification.status == "certified"
         assert (ROOT / m.certification.evidence).is_file(), m.certification.evidence
         assert "primary" in methods.get(name).purposes and methods.get(name).vocabulary
-    assert {m.id for m in cap_registry.load(packs_dir=None, entry_points=False).list("Method")} == {f"method.{n}" for n in PORTED + NEW}
+    analysis = [m for m in cap_registry.load(packs_dir=None, entry_points=False).list("Method")
+                if (m.spec or {}).get("family") != "ml"]  # the ML method pack (P5-04) is not analysis vocabulary
+    assert {m.id for m in analysis} == {f"method.{n}" for n in PORTED + NEW}
 
 
 def test_prompt_schema_validation_and_purposes_are_derived():

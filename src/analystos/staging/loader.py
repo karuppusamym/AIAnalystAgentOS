@@ -29,6 +29,11 @@ from analystos.staging.roles import ensure_workspace_role, grant_schema, reader_
 LOAD_SUFFIX = "__load"
 LOAD_MODES = ("replace", "append", "merge")
 MAX_TABLE_NAME = 63 - len(LOAD_SUFFIX)
+# Per-schema load state (P6-02): the incremental watermark of each table, written in the same transaction as
+# the rows it describes, so a crash can never leave the watermark ahead of the data. Loader-only: the
+# workspace reader role is refused SELECT on it.
+STATE_TABLE = "aos_load_state"
+StateFn = Callable[[dict[str, Any] | None], dict[str, Any] | None]
 
 _log = get_logger(__name__)
 
@@ -139,7 +144,7 @@ class StagingLoader:
 
     def load(self, source_id: str, asset: DiscoveredAsset | str, batches: Iterable[pa.RecordBatch], *,
              workspace_id: str, snapshot: Callable[[], dict[str, Any] | None] | None = None, mode: str = "replace",
-             keys: list[str] | None = None, fingerprint: str = "stream") -> dict[str, Any]:
+             keys: list[str] | None = None, fingerprint: str = "stream", state: StateFn | None = None) -> dict[str, Any]:
         """Load ``batches`` as ``src_<source_id>.<asset name>`` readable only by ``workspace_id``'s
         reader role and return ``{"row_count", "schema", "table", "columns": [{"name", "type"}]}``, plus
         ``snapshot`` and ``truncated`` when ``snapshot`` (read after the batches are exhausted) describes
@@ -150,7 +155,12 @@ class StagingLoader:
         (a retry) leaves the same table. Append and merge refuse a batch whose columns or types differ from
         the table's, a null key and a key repeated in the batch, naming the column; nothing is written then.
         ``fingerprint="table"`` (always for append/merge) hashes the resulting table in the database, so
-        the fingerprint is a function of the table's content whatever mode produced it."""
+        the fingerprint is a function of the table's content whatever mode produced it.
+
+        Writers of one table are serialized (a transaction-scoped advisory lock), so overlapping loads
+        apply one after the other. ``state`` (P6-02) receives the table's stored load state, read under that
+        lock, and returns the new one (None keeps it); it is written in the same transaction as the rows,
+        after them, so the watermark is committed only with the durable load."""
         if mode not in LOAD_MODES:
             raise InvalidInput(f"load mode must be one of {', '.join(LOAD_MODES)}")
         keys = list(keys or [])
@@ -164,6 +174,8 @@ class StagingLoader:
         for ident in (schema_name, table_name, load_name):
             if not is_safe_identifier(ident):
                 raise InvalidInput(f"Unsafe identifier {ident!r}")
+        if table_name == STATE_TABLE:
+            raise InvalidInput(f"{STATE_TABLE} is reserved for the loader's own state")
 
         schema_ident = sql.Identifier(schema_name)
         load_ident = sql.Identifier(schema_name, load_name)
@@ -202,6 +214,7 @@ class StagingLoader:
             conn = raw.driver_connection
             row_count = 0
             with conn.cursor() as cur:
+                _lock(cur, schema_name, table_name)
                 cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(schema_ident))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(load_ident))
                 cur.execute(sql.SQL("CREATE TABLE {} ({})").format(load_ident, columns_sql))
@@ -248,8 +261,11 @@ class StagingLoader:
                 if mode != "replace" or fingerprint == "table":
                     merge_info["fingerprint"], merge_info["table_rows"] = _table_fingerprint(cur, final_ident, col_names,
                                                                                              pg_types)
+                if state is not None:
+                    merge_info["state"] = _write_state(cur, schema_name, table_name, state)
                 ensure_workspace_role(cur, ws_role, self.reader_role)
                 grant_schema(cur, schema_name, ws_role, self.reader_role)
+                _hide_state(cur, schema_name, ws_role)
             conn.commit()
         except Exception:
             try:
@@ -269,11 +285,164 @@ class StagingLoader:
         if mode != "replace" or fingerprint == "table":
             info.update(mode=mode, rows_loaded=row_count, keys=keys, replaced_rows=merge_info.get("replaced_rows", 0),
                         fingerprint_basis="table")
+        if state is not None:
+            info["state"] = merge_info.get("state")
         record = snapshot() if snapshot is not None else None
         if record:
             info["snapshot"] = {**record, "rows_staged": row_count}
             info["truncated"] = bool(record.get("truncated"))
         return info
+
+    # ------------------------------------------------------------------ load state (P6-02)
+    def _names(self, source_id: str, table: str) -> tuple[str, str]:
+        schema_name = staging_schema_for(source_id)
+        table_name = sanitize_identifier(table, max_length=MAX_TABLE_NAME, fallback="t")
+        for ident in (schema_name, table_name):
+            if not is_safe_identifier(ident):
+                raise InvalidInput(f"Unsafe identifier {ident!r}")
+        return schema_name, table_name
+
+    def read_state(self, source_id: str, table: str) -> dict[str, Any] | None:
+        """The stored load state of a staged table (None when the table or its state does not exist). The
+        analytics database is the authority: a control-plane copy may lag behind a crash, this cannot."""
+        schema_name, table_name = self._names(source_id, table)
+        raw = self._engine().raw_connection()
+        try:
+            with raw.driver_connection.cursor() as cur:
+                cur.execute("SELECT to_regclass(%s), to_regclass(%s)", (f'"{schema_name}"."{STATE_TABLE}"',
+                                                                        f'"{schema_name}"."{table_name}"'))
+                state_exists, table_exists = cur.fetchone()
+                row = None
+                if state_exists is not None and table_exists is not None:
+                    cur.execute(sql.SQL("SELECT state FROM {} WHERE asset = %s").format(
+                        sql.Identifier(schema_name, STATE_TABLE)), (table_name,))
+                    row = cur.fetchone()
+            raw.driver_connection.rollback()
+        finally:
+            raw.close()
+        return dict(row[0]) if row and row[0] else None
+
+    def table_info(self, source_id: str, table: str) -> dict[str, Any]:
+        """Row count, columns and content fingerprint of a staged table as it is now."""
+        schema_name, table_name = self._names(source_id, table)
+        raw = self._engine().raw_connection()
+        try:
+            with raw.driver_connection.cursor() as cur:
+                ident = sql.Identifier(schema_name, table_name)
+                cols = _columns_of(cur, ident)
+                fp, rows = _table_fingerprint(cur, ident, [c for c, _ in cols], [t for _, t in cols])
+            raw.driver_connection.rollback()
+        finally:
+            raw.close()
+        return {"schema": schema_name, "table": table_name, "row_count": rows, "content_fingerprint": fp,
+                "columns": [{"name": n, "type": t} for n, t in cols]}
+
+    def save_state(self, source_id: str, table: str, state: StateFn) -> dict[str, Any] | None:
+        """Update only the load state (an empty window still advances its watermark), under the table lock."""
+        schema_name, table_name = self._names(source_id, table)
+        raw = self._engine().raw_connection()
+        try:
+            conn = raw.driver_connection
+            with conn.cursor() as cur:
+                _lock(cur, schema_name, table_name)
+                cur.execute("SELECT to_regclass(%s)", (f'"{schema_name}"."{table_name}"',))
+                if cur.fetchone()[0] is None:
+                    raise InvalidInput(f"{schema_name}.{table_name} is not staged; load it before saving its state")
+                out = _write_state(cur, schema_name, table_name, state)
+            conn.commit()
+        except Exception:
+            raw.driver_connection.rollback()
+            raise
+        finally:
+            raw.close()
+        return out
+
+    def reconcile(self, source_id: str, table: str, key_batches: Iterable[pa.RecordBatch], *, keys: list[str],
+                  policy: str, workspace_id: str, max_delete_pct: float = 50.0,
+                  state: StateFn | None = None) -> dict[str, Any]:
+        """Full reconcile of deletes (P6-02, ADR-0016): ``key_batches`` is every key the source holds now.
+        ``reconcile`` deletes staged rows whose key is gone, ``soft`` stamps them in ``aos_deleted_at``,
+        ``ignore`` only counts them. A reconcile that would remove more than ``max_delete_pct`` of the table
+        is refused (an empty or partial key read is an outage, not a mass delete); nothing changes then."""
+        from analystos.contracts.recipe import SOFT_DELETE_COLUMN
+
+        if policy not in ("reconcile", "soft", "ignore"):
+            raise InvalidInput("deletes must be reconcile, soft or ignore")
+        schema_name, table_name = self._names(source_id, table)
+        final_ident = sql.Identifier(schema_name, table_name)
+        keys_ident = sql.Identifier("aos_reconcile_keys")
+        raw = self._engine().raw_connection()
+        try:
+            conn = raw.driver_connection
+            with conn.cursor() as cur:
+                _lock(cur, schema_name, table_name)
+                cur.execute("SELECT to_regclass(%s)", (f'"{schema_name}"."{table_name}"',))
+                if cur.fetchone()[0] is None:
+                    raise InvalidInput(f"{schema_name}.{table_name} is not staged; nothing to reconcile")
+                cols = dict(_columns_of(cur, final_ident))
+                missing = [k for k in keys if k not in cols]
+                if missing:
+                    raise InvalidInput(f"key column {', '.join(missing)} is not a column of {table_name}")
+                if policy == "soft" and SOFT_DELETE_COLUMN not in cols:
+                    raise InvalidInput(f"{table_name} has no {SOFT_DELETE_COLUMN} column; stage it with deletes: soft")
+                cur.execute(sql.SQL("CREATE TEMP TABLE {} ({}) ON COMMIT DROP").format(keys_ident, sql.SQL(", ").join(
+                    sql.SQL("{} {}").format(sql.Identifier(k), sql.SQL(cols[k])) for k in keys)))
+                received = 0
+                with cur.copy(sql.SQL("COPY {} ({}) FROM STDIN").format(
+                        keys_ident, sql.SQL(", ").join(sql.Identifier(k) for k in keys))) as copy:
+                    for batch in key_batches:
+                        names = batch.schema.names
+                        columns = [batch.column(names.index(k)).to_pylist() for k in keys]
+                        for values in zip(*columns, strict=True):
+                            copy.write_row([None if v is None else str(v) if cols[k] == "text" else v
+                                            for k, v in zip(keys, values, strict=True)])
+                            received += 1
+                cur.execute(sql.SQL("CREATE INDEX ON {} ({})").format(keys_ident, sql.SQL(", ").join(
+                    sql.Identifier(k) for k in keys)))
+                gone = sql.SQL("NOT EXISTS (SELECT 1 FROM {} AS k WHERE {})").format(keys_ident, sql.SQL(" AND ").join(
+                    sql.SQL("k.{k} = f.{k}").format(k=sql.Identifier(k)) for k in keys))
+                live = sql.SQL(" AND f.{} IS NULL").format(sql.Identifier(SOFT_DELETE_COLUMN)) if policy == "soft" \
+                    else sql.SQL("")
+                cur.execute(sql.SQL("SELECT count(*) FROM {} AS f").format(final_ident))
+                total = int(cur.fetchone()[0])
+                cur.execute(sql.SQL("SELECT count(*) FROM {} AS f WHERE {}{}").format(final_ident, gone, live))
+                missing_rows = int(cur.fetchone()[0])
+                if total and missing_rows and policy != "ignore" and 100.0 * missing_rows / total > max_delete_pct:
+                    raise InvalidInput(f"the reconcile would remove {missing_rows} of {total} rows of {table_name} "
+                                       f"(more than {max_delete_pct:g}%); the key read looks partial, nothing was "
+                                       "changed. Check the source, or raise max_delete_pct for an intended purge.",
+                                       details={"missing_rows": missing_rows, "table_rows": total})
+                changed = 0
+                if policy == "reconcile" and missing_rows:
+                    cur.execute(sql.SQL("DELETE FROM {} AS f WHERE {}").format(final_ident, gone))
+                    changed = max(cur.rowcount or 0, 0)
+                elif policy == "soft":
+                    if missing_rows:
+                        cur.execute(sql.SQL("UPDATE {} AS f SET {} = now() WHERE {}{}").format(
+                            final_ident, sql.Identifier(SOFT_DELETE_COLUMN), gone, live))
+                        changed = max(cur.rowcount or 0, 0)
+                    # a key the source holds again is live again
+                    cur.execute(sql.SQL("UPDATE {} AS f SET {} = NULL WHERE f.{} IS NOT NULL AND NOT ({})").format(
+                        final_ident, sql.Identifier(SOFT_DELETE_COLUMN), sql.Identifier(SOFT_DELETE_COLUMN), gone))
+                fp, rows = _table_fingerprint(cur, final_ident, list(cols), list(cols.values()))
+                out: dict[str, Any] = {"policy": policy, "keys_received": received, "missing_rows": missing_rows,
+                                       "deleted_rows": changed if policy == "reconcile" else 0,
+                                       "soft_deleted_rows": changed if policy == "soft" else 0,
+                                       "row_count": rows, "content_fingerprint": fp, "schema": schema_name,
+                                       "table": table_name, "columns": [{"name": n, "type": t} for n, t in cols.items()]}
+                if state is not None:
+                    out["state"] = _write_state(cur, schema_name, table_name, state)
+                ws_role = role_for(self.settings, workspace_id)
+                ensure_workspace_role(cur, ws_role, self.reader_role)
+                grant_schema(cur, schema_name, ws_role, self.reader_role)
+                _hide_state(cur, schema_name, ws_role)
+            conn.commit()
+        except Exception:
+            raw.driver_connection.rollback()
+            raise
+        finally:
+            raw.close()
+        return out
 
     def drop_source(self, source_id: str) -> None:
         schema_name = staging_schema_for(source_id)
@@ -290,6 +459,35 @@ class StagingLoader:
             raise
         finally:
             raw.close()
+
+
+def _lock(cur: Any, schema_name: str, table_name: str) -> None:
+    """Serialize writers of one staged table for the rest of the transaction (overlapping schedules, a retry
+    racing the original): the second waits, then applies its own change to the first one's result."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"aos.load:{schema_name}.{table_name}",))
+
+
+def _write_state(cur: Any, schema_name: str, table_name: str, state: StateFn) -> dict[str, Any] | None:
+    ident = sql.Identifier(schema_name, STATE_TABLE)
+    cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (asset text PRIMARY KEY, state jsonb NOT NULL, "
+                        "updated_at timestamptz NOT NULL DEFAULT now())").format(ident))
+    cur.execute(sql.SQL("SELECT state FROM {} WHERE asset = %s FOR UPDATE").format(ident), (table_name,))
+    row = cur.fetchone()
+    old = dict(row[0]) if row and row[0] else None
+    new = state(old)
+    if new is None:
+        return old
+    cur.execute(sql.SQL("INSERT INTO {} (asset, state, updated_at) VALUES (%s, %s::jsonb, now()) ON CONFLICT (asset) "
+                        "DO UPDATE SET state = EXCLUDED.state, updated_at = now()").format(ident),
+                (table_name, json.dumps(new, default=_json_default)))
+    return new
+
+
+def _hide_state(cur: Any, schema_name: str, role: str) -> None:
+    cur.execute("SELECT to_regclass(%s)", (f'"{schema_name}"."{STATE_TABLE}"',))
+    if cur.fetchone()[0] is not None:
+        cur.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(sql.Identifier(schema_name, STATE_TABLE),
+                                                               sql.Identifier(role)))
 
 
 def _columns_of(cur: Any, ident: sql.Composable) -> list[tuple[str, str]]:

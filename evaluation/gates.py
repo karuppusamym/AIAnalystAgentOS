@@ -39,6 +39,7 @@ class Tier(BaseModel):
     runs: str
     suite: str
     metrics: dict[str, Bound]
+    blocking: bool = True  # false: a report; its failures are listed but never fail the gate result
 
 
 class Gates(BaseModel):
@@ -139,6 +140,18 @@ def ask_metrics(run: Any) -> dict[str, Any]:
             "questions": o["questions"]}
 
 
+def ml_metrics() -> dict[str, Any]:
+    from evaluation.ml import run
+
+    return run()
+
+
+def heldout_metrics() -> dict[str, Any]:
+    from evaluation.heldout.runner import gate_metrics, run
+
+    return gate_metrics(run("component"))
+
+
 def _ask(tier: str) -> Callable[[], dict[str, Any]]:
     def go() -> dict[str, Any]:
         from evaluation.ask import run
@@ -151,6 +164,8 @@ RUNNERS: dict[str, Callable[[], dict[str, Any]]] = {
     "grounding": grounding_metrics,
     "analytical_component": analytical_component_metrics,
     "cost": cost_metrics,
+    "ml": ml_metrics,
+    "heldout": heldout_metrics,
     "ask_fake": _ask("fake"),
     "ask_off": _ask("off"),
     "ask_live": _ask("live"),
@@ -161,8 +176,10 @@ LIVE_KEYS = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "AZURE_OPENAI_API_KEY")
 def run_gates(tiers: list[str], gates: Gates | None = None,
               runners: dict[str, Callable[[], dict[str, Any]]] | None = None, *, require_live: bool = False) -> dict[str, Any]:
     """Run the named tiers and gate them. Result: {config: {version, sha256}, tiers: {name: {status,
-    metrics, failures, seconds}}, skipped, passed}. A deterministic tier can never pass by being skipped;
-    a live tier with no provider key is skipped, and with `require_live` (a release) that fails too."""
+    metrics, failures, seconds, blocking}}, skipped, reports, passed}. A deterministic tier can never pass by
+    being skipped; a live tier with no provider key is skipped, and with `require_live` (a release) that fails
+    too. A non-blocking tier (`blocking: false`) is a report: it runs and lists its failures, but never
+    decides `passed`."""
     gates = gates or load()
     runners = RUNNERS if runners is None else runners
     out: dict[str, Any] = {"config": {"version": gates.version, "sha256": gates.digest, "owner": gates.owner}, "tiers": {}}
@@ -181,11 +198,12 @@ def run_gates(tiers: list[str], gates: Gates | None = None,
         except Exception as exc:  # a suite that cannot run fails its gate
             metrics, failures = {}, [f"{name}: suite failed: {type(exc).__name__}: {exc}"]
         out["tiers"][name] = {"status": "failed" if failures else "passed", "metrics": metrics, "failures": failures,
-                              "seconds": round(time.perf_counter() - started, 1)}
-    statuses = [t["status"] for t in out["tiers"].values()]
+                              "seconds": round(time.perf_counter() - started, 1), "blocking": tier.blocking}
+    failed = [n for n, t in out["tiers"].items() if t["status"] == "failed" and gates.tiers[n].blocking]
     out["skipped"] = [n for n, t in out["tiers"].items() if t["status"] == "skipped"]
-    blocking = [n for n in out["skipped"] if require_live or gates.tiers[n].kind == "deterministic"]
-    out["passed"] = "failed" not in statuses and not blocking
+    out["reports"] = [n for n in out["tiers"] if not gates.tiers[n].blocking]
+    blocking = [n for n in out["skipped"] if gates.tiers[n].blocking and (require_live or gates.tiers[n].kind == "deterministic")]
+    out["passed"] = not failed and not blocking
     return out
 
 

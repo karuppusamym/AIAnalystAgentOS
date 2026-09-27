@@ -1,6 +1,9 @@
 # ADR-0025 — Lite by default: one small install, more services only when a feature needs them
 
-**Status:** proposed (2026-09-26, spec v4 §12a; tracker P7-16..P7-18). **Amends
+**Status:** accepted (2026-09-27; proposed 2026-09-26, spec v4 §12a; tracker P7-16..P7-18). Implemented by
+P7-16/P7-17 (`compose.yaml` lite default with profiles, local-orchestrator resume in `workflows/orchestrator.py`,
+Postgres spend caps; [runbook 04](../../30-runbooks/04-lite-and-profiles.md)); the code's default profile setting
+stays `standard`. **Amends
 [ADR-0003](0003-full-stack-compose.md)**. The full stack stays the CI and production-scale profile
 but stops being the default install. Source: the owner's requirement that the application "should not
 look heavy" (UI *and* install), and the

@@ -1,6 +1,6 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { to } from "../routes";
+import { to, type DataTab } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
 import { KpiEditor } from "../components/KpiEditor";
 import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card, Tabs } from "../components/ui";
@@ -10,7 +10,7 @@ import { useAction, useAsync } from "../lib/hooks";
 // The studio's other tabs load on demand (the force-graph renderer among them), keeping the main bundle small.
 const KnowledgeDocs = lazy(() => import("../components/KnowledgeDocs").then((m) => ({ default: m.KnowledgeDocs })));
 const ReviewQueue = lazy(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
-const SemanticGraph = lazy(() => import("../components/SemanticGraph").then((m) => ({ default: m.SemanticGraph })));
+const DefinitionsPanel = lazy(() => import("../components/DefinitionsPanel").then((m) => ({ default: m.DefinitionsPanel })));
 const KnowledgeTransfer = lazy(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
 
 /** Who wrote a description: the source system, a rule, a model, or a person (a person always wins). */
@@ -29,17 +29,17 @@ export function OriginBadge({ origin }: { origin: string | null | undefined }) {
 
 const EDITOR_ROLES = new Set(["editor", "owner"]);
 
-type StudioTab = "catalog" | "documents" | "review" | "graph" | "metrics" | "transfer";
+type StudioTab = DataTab;
 const TABS: { id: StudioTab; label: string }[] = [
   { id: "catalog", label: "Catalog" }, { id: "documents", label: "Documents" }, { id: "review", label: "Review queue" },
-  { id: "graph", label: "Semantic graph" }, { id: "metrics", label: "Metrics" }, { id: "transfer", label: "Import & export" },
+  { id: "metrics", label: "Metrics" }, { id: "definitions", label: "Definitions" }, { id: "transfer", label: "Import & export" },
 ];
 
 /**
- * Knowledge → Knowledge studio (P4-U04): one screen, six tabs, inside the 20-screen budget. The
- * crawled catalog; the OKF documents of every pack the workspace sees (the workspace pack editable);
- * the review queue of AI and learning-loop drafts; the semantic graph (governed solid, inferred
- * dashed); the Ossie metrics editor (the same KPI editor as Build); and bundle import/export.
+ * Data → Catalog & definitions (spec v4 §15): one screen, six tabs. The crawled catalog; the
+ * workspace's knowledge documents; the review queue of drafted descriptions; metrics (their one
+ * home); definitions (joins to confirm, data model changes, versioned definitions and the graph);
+ * and bundle import/export.
  */
 export function CatalogPage() {
   const { wsId = "" } = useParams();
@@ -61,9 +61,9 @@ export function CatalogPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Knowledge studio"
-        subtitle={<>The catalog, the workspace&apos;s knowledge documents and their review, the semantic model and its metrics. Crawl sources on
-          the <Link to={to.sources(wsId)}>Sources</Link> page.</>} />
+      <PageHeader title="Catalog & definitions"
+        subtitle={<>What the data means: tables and columns, documents, metrics and the joins between them. Connect and crawl data
+          under <Link to={to.sources(wsId)}>Sources</Link>.</>} />
       <Tabs value={tab} onChange={switchTab} tabs={TABS} />
       <div className="tab-panel">
         <Suspense fallback={<Loading />}>
@@ -71,7 +71,7 @@ export function CatalogPage() {
           {tab === "documents" && <KnowledgeDocs wsId={wsId} params={params} set={set} />}
           {tab === "review" && <ReviewQueue wsId={wsId} canDecide={canEdit}
             onOpenDocument={(path) => setParams({ tab: "documents", path })} />}
-          {tab === "graph" && <SemanticGraph wsId={wsId} />}
+          {tab === "definitions" && <DefinitionsPanel wsId={wsId} role={ws.data?.role} />}
           {tab === "metrics" && <KpiEditor wsId={wsId} selected={params.get("kpi")} onSelect={(k) => set({ kpi: k })} />}
           {tab === "transfer" && <KnowledgeTransfer wsId={wsId} canEdit={canEdit}
             onBrowse={(packId) => setParams({ tab: "documents", pack: packId })} />}

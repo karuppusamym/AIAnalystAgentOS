@@ -1,90 +1,134 @@
 /**
- * The information architecture (spec v3 §9): six journeys, at most 20 screens.
+ * The information architecture (spec v4 §15, P7-18): five areas and an admin-only gear, at most
+ * 20 screens.
  *
  * SCREENS is the single route manifest. App.tsx renders exactly these routes, the side nav and the
- * command palette are built from it, and a test asserts the screen budget, so a new screen cannot
- * be added without being counted. LEGACY_REDIRECTS keeps every pre-increment-4 URL working.
+ * command palette are built from it, and tests assert the screen budget, that every concept has one
+ * home (`owns`), and that the gear's platform screens are hidden from analysts and viewers. A new
+ * capability arrives as a Start work job kind, an output type or a panel inside an existing screen,
+ * never as a new top-level screen (P23). LEGACY_REDIRECTS keeps every older URL working.
  */
 
-export type Journey = "home" | "ask" | "investigate" | "knowledge" | "build" | "operate" | "access";
+export type Area = "overview" | "data" | "work" | "outputs" | "operate" | "settings" | "access";
 
-export const JOURNEYS: { id: Exclude<Journey, "access">; label: string; description: string }[] = [
-  { id: "home", label: "Home", description: "What changed since you were last here" },
-  { id: "ask", label: "Ask", description: "Questions answered from governed data" },
-  { id: "investigate", label: "Investigate", description: "Objectives, hypotheses and verified findings" },
-  { id: "knowledge", label: "Knowledge", description: "Sources, the catalog, knowledge documents, review and the semantic model" },
-  { id: "build", label: "Build", description: "Datasets, metrics, dashboards and reports" },
-  { id: "operate", label: "Operate", description: "Approvals, monitors, schedules, policy, usage and platform admin" },
+export const AREAS: { id: Exclude<Area, "access">; label: string; description: string }[] = [
+  { id: "overview", label: "Overview", description: "What needs you, and the next step" },
+  { id: "data", label: "Data", description: "Sources, the catalog and definitions: metrics, relationships and their review" },
+  { id: "work", label: "Work", description: "Everything started with Start work: Ask, investigations and prepared data" },
+  { id: "outputs", label: "Outputs", description: "One list, filtered by type: findings, dashboards, reports, datasets" },
+  { id: "operate", label: "Operate", description: "The approval inbox, monitors and alerts, schedules" },
+  { id: "settings", label: "Settings", description: "Members and policy; for administrators, the registry, platform settings and usage" },
 ];
+
+/**
+ * A concept a person can edit (or, for read-only records such as audit, look up). Each has exactly
+ * one home screen: the build-right study found metrics, dashboards, model configuration, audit and
+ * autonomy each editable in two or three places.
+ */
+export const CONCEPTS = [
+  "workspace", "brief", "source", "selection", "catalog", "knowledge-document", "knowledge-review", "metric",
+  "relationship", "semantic-model", "definition", "question", "investigation", "recipe", "file-ingest", "dbt-build",
+  "finding", "dashboard", "report", "dataset", "chart", "approval", "monitor", "alert", "schedule", "policy",
+  "member", "autonomy", "audit", "capability", "platform-settings", "model-config", "usage",
+] as const;
+export type Concept = (typeof CONCEPTS)[number];
+
+/**
+ * Who sees a screen: everyone, workspace owners (and platform admins), or platform admins only.
+ * The server enforces the same authority; this only keeps the gear's screens out of sight.
+ */
+export type Audience = "everyone" | "owner" | "admin";
 
 export type ScreenId =
   | "login"
-  | "workspaces" | "workspace-home"
-  | "ask"
-  | "investigations" | "investigation" | "investigation-console" | "findings"
+  | "workspaces" | "overview"
   | "sources" | "catalog"
-  | "studio" | "reports"
-  | "approvals" | "monitoring" | "schedules" | "governance" | "registry" | "settings" | "usage";
+  | "work" | "ask" | "investigation" | "investigation-console"
+  | "outputs" | "finding"
+  | "approvals" | "monitoring" | "schedules"
+  | "policy" | "registry" | "platform" | "usage";
 
 export interface Screen {
   id: ScreenId;
-  journey: Journey;
+  area: Area;
   /** react-router pattern. */
   path: string;
   title: string;
-  /** Shown in the side nav (screens with parameters other than :wsId are reached from lists). */
+  /** Shown in the navigation (screens with parameters other than :wsId are reached from lists). */
   nav: boolean;
   /** Needs a workspace (`:wsId`) in the URL. */
   workspace: boolean;
+  audience: Audience;
+  /** The concepts whose one home is this screen. */
+  owns: Concept[];
   keywords?: string;
 }
 
 export const SCREEN_BUDGET = 20;
 
 export const SCREENS: Screen[] = [
-  { id: "login", journey: "access", path: "/login", title: "Sign in", nav: false, workspace: false },
+  { id: "login", area: "access", path: "/login", title: "Sign in", nav: false, workspace: false, audience: "everyone", owns: [] },
 
-  { id: "workspaces", journey: "home", path: "/", title: "Workspaces", nav: true, workspace: false, keywords: "home landing" },
-  { id: "workspace-home", journey: "home", path: "/w/:wsId", title: "Workspace home", nav: true, workspace: true,
-    keywords: "overview what changed start analysis" },
+  { id: "workspaces", area: "overview", path: "/", title: "Workspaces", nav: true, workspace: false, audience: "everyone",
+    owns: ["workspace"], keywords: "home landing" },
+  { id: "overview", area: "overview", path: "/w/:wsId", title: "Overview", nav: true, workspace: true, audience: "everyone",
+    owns: ["brief"], keywords: "home what needs me checklist onboarding start work objective" },
 
-  { id: "ask", journey: "ask", path: "/w/:wsId/ask", title: "Ask", nav: true, workspace: true, keywords: "question sql console explain" },
+  { id: "sources", area: "data", path: "/w/:wsId/data/sources", title: "Sources", nav: true, workspace: true, audience: "everyone",
+    owns: ["source", "selection"], keywords: "connect discover crawl drift database upload" },
+  { id: "catalog", area: "data", path: "/w/:wsId/data/catalog", title: "Catalog & definitions", nav: true, workspace: true, audience: "everyone",
+    owns: ["catalog", "knowledge-document", "knowledge-review", "metric", "relationship", "semantic-model", "definition"],
+    keywords: "tables columns glossary documents review metrics kpis relationships cardinality semantic diff definitions versions import export" },
 
-  { id: "investigations", journey: "investigate", path: "/w/:wsId/investigate", title: "Investigations", nav: true, workspace: true,
-    keywords: "analysis runs objective" },
-  { id: "findings", journey: "investigate", path: "/w/:wsId/investigate/findings/:insightId?", title: "Findings", nav: true, workspace: true,
-    keywords: "insights verified evidence" },
-  { id: "investigation", journey: "investigate", path: "/w/:wsId/investigate/:runId", title: "Investigation board", nav: false, workspace: true },
-  { id: "investigation-console", journey: "investigate", path: "/w/:wsId/investigate/:runId/console", title: "Agent console", nav: false,
-    workspace: true },
+  { id: "work", area: "work", path: "/w/:wsId/work", title: "Work", nav: true, workspace: true, audience: "everyone",
+    owns: ["investigation", "recipe", "file-ingest", "dbt-build"], keywords: "investigations prepare data recipes ingest file pipelines dbt builds" },
+  { id: "ask", area: "work", path: "/w/:wsId/work/ask", title: "Ask", nav: true, workspace: true, audience: "everyone",
+    owns: ["question"], keywords: "question sql console explain quick" },
+  { id: "investigation", area: "work", path: "/w/:wsId/work/investigations/:runId", title: "Investigation", nav: false, workspace: true,
+    audience: "everyone", owns: [] },
+  { id: "investigation-console", area: "work", path: "/w/:wsId/work/investigations/:runId/console", title: "Agent console", nav: false,
+    workspace: true, audience: "everyone", owns: [] },
 
-  { id: "catalog", journey: "knowledge", path: "/w/:wsId/knowledge/catalog", title: "Knowledge studio", nav: true, workspace: true,
-    keywords: "catalog tables columns glossary descriptions okf documents review queue suggestions semantic graph metrics import export" },
-  { id: "sources", journey: "knowledge", path: "/w/:wsId/knowledge/sources", title: "Sources & crawls", nav: true, workspace: true,
-    keywords: "connect discover crawl drift data" },
+  { id: "outputs", area: "outputs", path: "/w/:wsId/outputs", title: "Outputs", nav: true, workspace: true, audience: "everyone",
+    owns: ["dashboard", "report", "dataset", "chart"], keywords: "findings dashboards reports datasets charts publish download" },
+  { id: "finding", area: "outputs", path: "/w/:wsId/outputs/findings/:insightId?", title: "Findings", nav: false, workspace: true,
+    audience: "everyone", owns: ["finding"], keywords: "verified evidence why this number void" },
 
-  { id: "studio", journey: "build", path: "/w/:wsId/build/studio", title: "Studio", nav: true, workspace: true,
-    keywords: "datasets metrics charts dashboards artifacts dbt builds kpis semantic publish" },
-  { id: "reports", journey: "build", path: "/w/:wsId/build/reports", title: "Reports", nav: true, workspace: true },
+  { id: "approvals", area: "operate", path: "/w/:wsId/operate/approvals", title: "Approval inbox", nav: true, workspace: true,
+    audience: "everyone", owns: ["approval"], keywords: "inbox publish approve reject" },
+  { id: "monitoring", area: "operate", path: "/w/:wsId/operate/monitoring", title: "Monitors & alerts", nav: true, workspace: true,
+    audience: "everyone", owns: ["monitor", "alert"], keywords: "failures void results alerts thresholds" },
+  { id: "schedules", area: "operate", path: "/w/:wsId/operate/schedules", title: "Schedules", nav: true, workspace: true,
+    audience: "everyone", owns: ["schedule"], keywords: "recurring pins upgrade available" },
 
-  { id: "approvals", journey: "operate", path: "/w/:wsId/operate/approvals", title: "Approvals", nav: true, workspace: true,
-    keywords: "inbox publish approve reject" },
-  { id: "monitoring", journey: "operate", path: "/w/:wsId/operate/monitoring", title: "Monitors & alerts", nav: true, workspace: true },
-  { id: "schedules", journey: "operate", path: "/w/:wsId/operate/schedules", title: "Schedules", nav: true, workspace: true },
-  { id: "governance", journey: "operate", path: "/w/:wsId/operate/governance", title: "Policy & members", nav: true, workspace: true,
-    keywords: "audit roles" },
-  { id: "registry", journey: "operate", path: "/operate/registry", title: "Capability registry", nav: true, workspace: false,
-    keywords: "agents tools skills models prompts" },
-  { id: "settings", journey: "operate", path: "/operate/settings", title: "Platform settings", nav: true, workspace: false,
-    keywords: "admin llm modes presets features limits" },
-  { id: "usage", journey: "operate", path: "/operate/usage", title: "Usage & cost", nav: true, workspace: false,
-    keywords: "token savings spend audit log" },
+  { id: "policy", area: "settings", path: "/w/:wsId/settings/policy", title: "Members & policy", nav: true, workspace: true,
+    audience: "owner", owns: ["policy", "member", "autonomy", "audit"], keywords: "roles budget limits autonomy audit log" },
+  { id: "registry", area: "settings", path: "/settings/registry", title: "Capability registry", nav: true, workspace: false,
+    audience: "admin", owns: ["capability"], keywords: "agents tools skills prompts plugins" },
+  { id: "platform", area: "settings", path: "/settings/platform", title: "Platform settings", nav: true, workspace: false,
+    audience: "admin", owns: ["platform-settings", "model-config"], keywords: "admin llm modes presets models routing features limits" },
+  { id: "usage", area: "settings", path: "/settings/usage", title: "Usage & cost", nav: true, workspace: false,
+    audience: "admin", owns: ["usage"], keywords: "token savings spend" },
 ];
 
 export function screen(id: ScreenId): Screen {
   const s = SCREENS.find((x) => x.id === id);
   if (!s) throw new Error(`unknown screen ${id}`);
   return s;
+}
+
+const ROLE_RANK: Record<string, number> = { viewer: 0, approver: 1, analyst: 2, editor: 3, owner: 4 };
+
+/** The server's role order (security/auth.py ROLE_RANK). */
+export function roleAtLeast(role: string | null | undefined, minimum: keyof typeof ROLE_RANK): boolean {
+  return role != null && (ROLE_RANK[role] ?? -1) >= ROLE_RANK[minimum];
+}
+
+/** Whether a person sees a screen: platform admins see everything, workspace owners the owner screens. */
+export function canSee(s: Screen, who: { isAdmin: boolean; role?: string | null }): boolean {
+  if (s.audience === "everyone") return true;
+  if (who.isAdmin) return true;
+  return s.audience === "owner" && who.role === "owner";
 }
 
 /**
@@ -112,53 +156,117 @@ function withQuery(path: string, query: Record<string, string | undefined | null
   return parts.length ? `${path}?${parts.join("&")}` : path;
 }
 
+/** Tabs of the Data → Catalog & definitions screen. */
+export type DataTab = "catalog" | "documents" | "review" | "metrics" | "definitions" | "transfer";
+/** Tabs of the Work screen. */
+export type WorkTab = "investigations" | "prepare" | "builds" | "ml";
+/** Output types: one list, filtered (spec v4 §15). Metrics are not an output: they live in Data. */
+export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "other";
+
+const P = (id: ScreenId, params: Record<string, string | undefined> = {}) => fillPath(screen(id).path, params);
+
 /** Typed links into the IA. Every in-app link goes through here, so a route move is one edit. */
 export const to = {
   workspaces: () => "/",
-  workspace: (ws: string) => fillPath(screen("workspace-home").path, { wsId: ws }),
-  ask: (ws: string) => fillPath(screen("ask").path, { wsId: ws }),
-  investigations: (ws: string) => fillPath(screen("investigations").path, { wsId: ws }),
-  run: (ws: string, run: string) => fillPath(screen("investigation").path, { wsId: ws, runId: run }),
-  runConsole: (ws: string, run: string) => fillPath(screen("investigation-console").path, { wsId: ws, runId: run }),
-  findings: (ws: string, insight?: string) => fillPath(screen("findings").path, { wsId: ws, insightId: insight }),
-  sources: (ws: string) => fillPath(screen("sources").path, { wsId: ws }),
-  catalog: (ws: string) => fillPath(screen("catalog").path, { wsId: ws }),
-  studio: (ws: string, artifact?: string) => withQuery(fillPath(screen("studio").path, { wsId: ws }), { artifact }),
-  /** Build studio tabs (P4-U05): builds (dbt jobs), kpis (semantic layer), dashboards (preview → publish). */
-  build: (ws: string, tab: "builds" | "kpis" | "dashboards", q: { job?: string; kpi?: string; dashboard?: string } = {}) =>
-    withQuery(fillPath(screen("studio").path, { wsId: ws }), { tab, ...q }),
-  /** Knowledge studio tabs (P4-U04); `doc` is a context receipt's document id, opened in Documents. */
+  workspace: (ws: string) => P("overview", { wsId: ws }),
+  ask: (ws: string) => P("ask", { wsId: ws }),
+  work: (ws: string, tab?: WorkTab, q: Record<string, string | undefined> = {}) =>
+    withQuery(P("work", { wsId: ws }), { tab: tab === "investigations" ? undefined : tab, ...q }),
+  investigations: (ws: string) => P("work", { wsId: ws }),
+  run: (ws: string, run: string) => P("investigation", { wsId: ws, runId: run }),
+  runConsole: (ws: string, run: string) => P("investigation-console", { wsId: ws, runId: run }),
+  findings: (ws: string, insight?: string) => P("finding", { wsId: ws, insightId: insight }),
+  sources: (ws: string) => P("sources", { wsId: ws }),
+  catalog: (ws: string) => P("catalog", { wsId: ws }),
+  /** Data → Catalog & definitions; `doc` is a context receipt's document id, opened in Documents. */
+  data: (ws: string, tab?: DataTab, q: { pack?: string; path?: string; doc?: string; kpi?: string; definition?: string } = {}) =>
+    withQuery(P("catalog", { wsId: ws }), { tab: tab === "catalog" ? undefined : tab, ...q }),
+  /** Older name for `data` (Knowledge studio tabs); `graph` is now inside Definitions. */
   knowledge: (ws: string, tab?: "catalog" | "documents" | "review" | "graph" | "metrics" | "transfer",
-    q: { pack?: string; path?: string; doc?: string } = {}) =>
-    withQuery(fillPath(screen("catalog").path, { wsId: ws }), { tab: tab === "catalog" ? undefined : tab, ...q }),
-  reports: (ws: string, artifact?: string) => withQuery(fillPath(screen("reports").path, { wsId: ws }), { artifact }),
-  approvals: (ws: string) => fillPath(screen("approvals").path, { wsId: ws }),
+    q: { pack?: string; path?: string; doc?: string } = {}) => to.data(ws, tab === "graph" ? "definitions" : tab, q),
+  outputs: (ws: string, q: { type?: OutputType; artifact?: string; dashboard?: string } = {}) =>
+    withQuery(P("outputs", { wsId: ws }), q),
+  studio: (ws: string, artifact?: string) => to.outputs(ws, { artifact }),
+  /** The former Build studio tabs, each at its one home: dbt builds in Work, KPIs in Data, dashboards in Outputs. */
+  build: (ws: string, tab: "builds" | "kpis" | "dashboards", q: { job?: string; kpi?: string; dashboard?: string } = {}) =>
+    tab === "builds" ? to.work(ws, "builds", { job: q.job })
+      : tab === "kpis" ? to.data(ws, "metrics", { kpi: q.kpi })
+        : to.outputs(ws, { type: "dashboard", dashboard: q.dashboard }),
+  reports: (ws: string, artifact?: string) => to.outputs(ws, { type: "report", artifact }),
+  approvals: (ws: string) => P("approvals", { wsId: ws }),
   monitoring: (ws: string, q: { tab?: string; alert?: string } = {}) =>
-    withQuery(fillPath(screen("monitoring").path, { wsId: ws }), { tab: q.tab, alert: q.alert }),
-  schedules: (ws: string, schedule?: string) => withQuery(fillPath(screen("schedules").path, { wsId: ws }), { schedule }),
-  governance: (ws: string) => fillPath(screen("governance").path, { wsId: ws }),
+    withQuery(P("monitoring", { wsId: ws }), { tab: q.tab, alert: q.alert }),
+  schedules: (ws: string, schedule?: string) => withQuery(P("schedules", { wsId: ws }), { schedule }),
+  governance: (ws: string) => P("policy", { wsId: ws }),
   registry: () => screen("registry").path,
-  settings: () => screen("settings").path,
+  settings: () => screen("platform").path,
   usage: () => screen("usage").path,
 };
 
-/** Pre-increment-4 URLs → their new home. Query strings are carried over by the redirect. */
-export const LEGACY_REDIRECTS: { from: string; to: string }[] = [
-  { from: "/admin", to: "/operate/registry" },
-  { from: "/operate", to: "/operate/registry" },
-  { from: "/w/:wsId/sources", to: "/w/:wsId/knowledge/sources" },
-  { from: "/w/:wsId/catalog", to: "/w/:wsId/knowledge/catalog" },
-  { from: "/w/:wsId/knowledge", to: "/w/:wsId/knowledge/catalog" },
-  { from: "/w/:wsId/runs", to: "/w/:wsId/investigate" },
-  { from: "/w/:wsId/runs/:runId", to: "/w/:wsId/investigate/:runId" },
-  { from: "/w/:wsId/runs/:runId/console", to: "/w/:wsId/investigate/:runId/console" },
-  { from: "/w/:wsId/insights", to: "/w/:wsId/investigate/findings" },
-  { from: "/w/:wsId/insights/:insightId", to: "/w/:wsId/investigate/findings/:insightId" },
-  { from: "/w/:wsId/studio", to: "/w/:wsId/build/studio" },
-  { from: "/w/:wsId/build", to: "/w/:wsId/build/studio" },
-  { from: "/w/:wsId/reports", to: "/w/:wsId/build/reports" },
+export interface LegacyRedirect {
+  from: string;
+  to: string;
+  /** An old `?tab=` value whose content now lives elsewhere → that target (its own query kept, `tab` dropped). */
+  tabs?: Record<string, string>;
+}
+
+/** Older URLs → their new home. Query strings are carried over by the redirect. */
+export const LEGACY_REDIRECTS: LegacyRedirect[] = [
+  // pre-increment-4
+  { from: "/admin", to: "/settings/registry" },
+  { from: "/w/:wsId/sources", to: "/w/:wsId/data/sources" },
+  { from: "/w/:wsId/catalog", to: "/w/:wsId/data/catalog" },
+  { from: "/w/:wsId/runs", to: "/w/:wsId/work" },
+  { from: "/w/:wsId/runs/:runId", to: "/w/:wsId/work/investigations/:runId" },
+  { from: "/w/:wsId/runs/:runId/console", to: "/w/:wsId/work/investigations/:runId/console" },
+  { from: "/w/:wsId/insights", to: "/w/:wsId/outputs/findings" },
+  { from: "/w/:wsId/insights/:insightId", to: "/w/:wsId/outputs/findings/:insightId" },
+  { from: "/w/:wsId/studio", to: "/w/:wsId/outputs" },
+  { from: "/w/:wsId/reports", to: "/w/:wsId/outputs?type=report" },
   { from: "/w/:wsId/schedules", to: "/w/:wsId/operate/schedules" },
   { from: "/w/:wsId/monitoring", to: "/w/:wsId/operate/monitoring" },
-  { from: "/w/:wsId/governance", to: "/w/:wsId/operate/governance" },
+  { from: "/w/:wsId/governance", to: "/w/:wsId/settings/policy" },
   { from: "/w/:wsId/operate", to: "/w/:wsId/operate/approvals" },
+  // increment-4 six-journey IA (spec v3 §9)
+  { from: "/operate", to: "/settings/registry" },
+  { from: "/operate/registry", to: "/settings/registry" },
+  { from: "/operate/settings", to: "/settings/platform" },
+  { from: "/operate/usage", to: "/settings/usage" },
+  { from: "/w/:wsId/ask", to: "/w/:wsId/work/ask" },
+  { from: "/w/:wsId/investigate", to: "/w/:wsId/work" },
+  { from: "/w/:wsId/investigate/:runId", to: "/w/:wsId/work/investigations/:runId" },
+  { from: "/w/:wsId/investigate/:runId/console", to: "/w/:wsId/work/investigations/:runId/console" },
+  { from: "/w/:wsId/investigate/findings", to: "/w/:wsId/outputs/findings" },
+  { from: "/w/:wsId/investigate/findings/:insightId", to: "/w/:wsId/outputs/findings/:insightId" },
+  { from: "/w/:wsId/knowledge", to: "/w/:wsId/data/catalog" },
+  { from: "/w/:wsId/knowledge/sources", to: "/w/:wsId/data/sources" },
+  { from: "/w/:wsId/knowledge/catalog", to: "/w/:wsId/data/catalog", tabs: { graph: "/w/:wsId/data/catalog?tab=definitions" } },
+  { from: "/w/:wsId/build", to: "/w/:wsId/outputs" },
+  { from: "/w/:wsId/build/studio", to: "/w/:wsId/outputs", tabs: {
+    artifacts: "/w/:wsId/outputs",
+    builds: "/w/:wsId/work?tab=builds",
+    kpis: "/w/:wsId/data/catalog?tab=metrics",
+    dashboards: "/w/:wsId/outputs?type=dashboard",
+  } },
+  { from: "/w/:wsId/build/reports", to: "/w/:wsId/outputs?type=report" },
+  { from: "/w/:wsId/operate/governance", to: "/w/:wsId/settings/policy" },
 ];
+
+/**
+ * Where an old URL lands: the target pattern filled with the path parameters, the old `tab` mapped
+ * when its content moved, and the rest of the old query kept (the target's own query first).
+ */
+export function legacyTarget(r: LegacyRedirect, params: Record<string, string | undefined>, search: string): string {
+  const old = new URLSearchParams(search);
+  let target = r.to;
+  const tab = old.get("tab");
+  if (tab && r.tabs?.[tab]) {
+    target = r.tabs[tab];
+    old.delete("tab");
+  }
+  const [pattern, ownQuery = ""] = target.split("?");
+  const merged = new URLSearchParams(ownQuery);
+  old.forEach((v, k) => { if (!merged.has(k)) merged.append(k, v); });
+  const q = merged.toString();
+  return `${fillPath(pattern, params)}${q ? `?${q}` : ""}`;
+}

@@ -87,6 +87,25 @@ export interface WorkspaceDetail extends Workspace {
   members: Member[];
 }
 
+export type WorkMode = "analysis" | "engineering" | "ml";
+export interface WorkModesPlan {
+  workspace_id: string;
+  current: WorkMode[];
+  selected: WorkMode[];
+  capabilities: { capability_id: string; mode: WorkMode; enabled: boolean; available: boolean; changed: boolean }[];
+  note: string;
+}
+
+export interface JobAvailability {
+  key: "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
+  label: string;
+  mode: WorkMode;
+  available: boolean;
+  reasons: { code: string; message: string; remediation: string }[];
+  capabilities: { id: string; usable: boolean; reason?: string | null }[];
+  entry: { type: string; payload_type?: string; route?: string };
+}
+
 export interface WorkspacePolicy {
   max_rows?: number;
   query_timeout_seconds?: number;
@@ -310,6 +329,57 @@ export interface Insight {
   status: string;
   narrative_source: string;
   created_at: string;
+  /** The verification record's state (P7-01); a void one carries its cause. */
+  verification_state?: VerificationState;
+}
+
+/** `evidence/verification.py state_of`: what the UI shows about a finding's verdict. */
+export interface VerificationState {
+  state: "ACTIVE" | "PENDING" | "VOID" | "SUPERSEDED" | "LEGACY" | null | string;
+  badge: "verified" | "pending" | "void" | "superseded" | "legacy" | "failed" | "unverified" | string;
+  record_id: string | null;
+  verdict?: string | null;
+  verifier?: string | null;
+  fingerprint?: string | null;
+  dependencies?: unknown[];
+  created_at?: string | null;
+  void: { kind: string | null; reason: string | null; at: string | null; detail?: unknown } | null;
+  flags?: { by: string; reason: string; at: string }[];
+  prior_verdicts?: Dict[];
+}
+
+export type WhyLinkState = "ok" | "changed" | "void" | "failed" | "broken" | "unknown" | "not_applicable";
+
+/** One of the six links a displayed number resolves through (docs/10-architecture/03-evidence-model.md §8). */
+export interface WhyLink {
+  link: "fact" | "step" | "query_receipt" | "data_version" | "semantic_version" | "verdict" | string;
+  state: WhyLinkState | string;
+  reason?: string | null;
+  detail?: Dict;
+}
+
+export interface WhyNumber {
+  text: string;
+  value: number | null;
+  unit: string | null;
+  state: WhyLinkState | string;
+  links: WhyLink[];
+}
+
+/** GET /api/insights/{id}/why (evidence/why.py). */
+export interface WhyResponse {
+  subject: { type: string; id: string; code?: string; run_id?: string; title?: string; finding?: string; status?: string };
+  verification_state: VerificationState;
+  state: WhyLinkState | string;
+  numbers: WhyNumber[];
+}
+
+/** GET /api/workspaces/{ws}/analysis/{run}/why. */
+export interface WhyRunResponse {
+  run_id: string;
+  findings: WhyResponse[];
+  numbers: number;
+  by_state: Record<string, number>;
 }
 
 export interface QueryExecution {
@@ -1163,6 +1233,209 @@ export interface Schedule {
   last_run_at: string | null;
   created_at: string;
   recent_runs?: ScheduleRun[];
+  revision?: number;
+  pins?: Dict | null;
+}
+
+export type PinState = "current" | "upgrade_available" | "deprecated" | "blocked" | "unpinned";
+
+/** One pinned dependency of a schedule against what is current now (contracts/definition.py PinItem). */
+export interface PinItem {
+  type: "definition" | "capability" | "method" | "metric" | "semantic_model" | string;
+  id: string;
+  pinned: string | null;
+  current: string | null;
+  state: "current" | "newer" | "deprecated" | "retired" | "rejected" | string;
+  reason: string | null;
+  diff: { path: string; from: unknown; to: unknown }[];
+}
+
+export interface PinStatus {
+  state: PinState | string;
+  revision: number;
+  items: PinItem[];
+  warnings: string[];
+  blocking: string[];
+  upgrade_hash: string | null;
+  checked_at: string | null;
+}
+
+/** GET /api/workspaces/{ws}/schedules/{id}: the schedule with its pin status computed now. */
+export interface ScheduleDetail extends Schedule {
+  revision: number;
+  pin_status: PinStatus;
+}
+
+export interface ScheduleUpgradeResult {
+  schedule_id: string;
+  revision: number;
+  pin_revision: number;
+  status: PinStatus;
+  added: string[];
+  removed: string[];
+}
+
+// ----------------------------------------------------------------------------------- definitions (P7-03)
+export type DefinitionStatus = "draft" | "published" | "deprecated" | "retired";
+
+/** services/definitions.py `out`: one version of an executable definition. */
+export interface DefinitionVersion {
+  id: string;
+  workspace_id: string;
+  kind: string;
+  key: string;
+  version: number;
+  status: DefinitionStatus | string;
+  title: string | null;
+  content_hash: string;
+  revision: number;
+  created_by: string;
+  published_by: string | null;
+  retired_by: string | null;
+  reason: string | null;
+  published_at: string | null;
+  retired_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  spec?: Dict;
+}
+
+export interface DefinitionRef {
+  kind: string;
+  key: string;
+  version: number | string | null;
+  content_hash: string | null;
+  source: "workspace" | "builtin";
+  status: string | null;
+  id: string | null;
+}
+
+export interface DefinitionPage {
+  items: DefinitionVersion[];
+  next_cursor: string | null;
+  builtin?: DefinitionRef[];
+}
+
+/** Governed training result; a refusal remains visible in Work with its reason. */
+export interface MlExperiment {
+  id: string;
+  workspace_id: string;
+  definition_id: string;
+  definition_key: string;
+  definition_version: number;
+  task: string;
+  status: string;
+  verdict: string | null;
+  dataset_asset: string;
+  summary: Dict;
+  readiness: Dict;
+  artifacts: Dict;
+  error: string | null;
+  created_at: string | null;
+  finished_at: string | null;
+  verification?: Dict | null;
+}
+
+export interface DefinitionDiff {
+  from: DefinitionVersion;
+  to: DefinitionVersion | null;
+  changes: { path: string; from: unknown; to: unknown }[];
+}
+
+// ----------------------------------------------------------------------------------- recipes and file ingest (P6-04..07)
+export interface Recipe {
+  id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  status: "draft" | "published" | string;
+  spec: Dict;
+  spec_hash: string;
+  created_by: string;
+  created_at: string;
+  published_at: string | null;
+}
+
+/** services/recipes.py `run_view`. */
+export interface RecipeRun {
+  id: string;
+  workspace_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  recipe_version: number;
+  spec_hash: string;
+  mode: "preview" | "materialize" | string;
+  engine: string | null;
+  status: "running" | "succeeded" | "blocked" | "refused" | "failed" | string;
+  plan?: Dict | null;
+  preflight?: Dict[] | null;
+  snapshots?: Dict | null;
+  /** Per output: its gate outcome (recipes/gates.py `GateOutcome.summary`). */
+  gates?: Record<string, RecipeGateOutcome> | null;
+  schema_changes?: unknown;
+  outputs?: Dict | null;
+  lineage?: unknown;
+  query_ids?: string[];
+  error: string | null;
+  created_by: string;
+  created_at: string;
+  finished_at: string | null;
+  /** Preview mode only: the rows each output would have; nothing was written. */
+  preview?: Record<string, { columns: string[]; rows: unknown[][]; row_count: number; truncated: boolean; dropped_rows: number; would_block: boolean }>;
+}
+
+export interface RecipeGateOutcome {
+  blocked: boolean;
+  kept_rows: number;
+  dropped_rows: number;
+  gates: { gate: string; type: string; severity: string; columns: string[]; checked_rows: number; failed_rows: number; status: string; note?: string }[];
+  warnings: string[];
+}
+
+/** POST …/sources/{id}/ingest (services/file_ingest.py). */
+export interface IngestResult {
+  asset: string;
+  asset_id: string;
+  mode: string;
+  format: string;
+  [k: string]: unknown;
+}
+
+// ----------------------------------------------------------------------------------- relationship review (P7-09)
+export interface RelationshipCandidate {
+  id: string;
+  workspace_id: string;
+  source_id: string | null;
+  from_asset: string;
+  from_columns: string[];
+  to_asset: string;
+  to_columns: string[];
+  /** Measured, never guessed: one_to_one | many_to_one | one_to_many | many_to_many. */
+  cardinality: string;
+  containment: number;
+  confidence: number;
+  evidence: Dict;
+  assessment: Dict;
+  origin: string;
+  status: "pending" | "accepted" | "rejected" | "superseded" | string;
+  proposed_by: string;
+  approval_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  relationship_name: string | null;
+  measured_at: string;
+  content_hash: string;
+  created_at: string;
+}
+
+/** GET …/semantic/model/diff: a structure version against the approved one. */
+export interface SemanticModelDiff {
+  version: number;
+  status: string;
+  base_version: number | null;
+  has_changes: boolean;
+  entries: { field: string; change: "added" | "removed" | "changed"; before: unknown; after: unknown }[];
 }
 
 /** Request body of POST …/schedules: the generated ScheduleIn with the typed kind-specific config. */
@@ -1621,6 +1894,9 @@ export interface CapabilitySummary {
   tags: string[];
   /** Enablement in the requested workspace; null without `workspace_id`. */
   enabled: boolean | null;
+  /** False when an optional extra is missing (ADR-0025): shown with the reason, never as a broken button. */
+  available?: boolean;
+  unavailable_reason?: string | null;
   bindings?: {
     capabilities: { id: string; kind: string; enabled: boolean | null; determinism: string; certification: string }[];
     tools: string[];
@@ -1985,7 +2261,7 @@ export async function request<T>(method: string, path: string, body?: unknown, i
   }
   let resp: Response;
   try {
-    resp = await fetch(`${API_BASE}${path}`, { method, headers, body: payload, ...init });
+    resp = await fetch(`${API_BASE}${path}`, { ...init, method, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) }, body: payload });
   } catch (err) {
     throw new ApiError(0, "network_error", `API unreachable: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -2129,6 +2405,14 @@ export const api = {
   createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
   getWorkspace: (ws: string) =>
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  getWorkModes: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/work-modes", { path: W(ws) }) as Promise<WorkModesPlan>,
+  previewWorkModes: (ws: string, modes: WorkMode[]) =>
+    post("/api/workspaces/{workspace_id}/work-modes/preview", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
+  setWorkModes: (ws: string, modes: WorkMode[]) =>
+    put("/api/workspaces/{workspace_id}/work-modes", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
+  jobAvailability: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/capabilities", { path: W(ws) }) as Promise<{ workspace_id: string; digest: string; job_kinds: JobAvailability[] }>,
   workspaceInventory: (ws: string) =>
     get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
@@ -2284,6 +2568,70 @@ export const api = {
     post("/api/admin/settings/rollback", { body: { version } }) as Promise<SettingsUpdateResult>,
   prompts: () => get("/api/admin/prompts", {}) as Promise<PromptTemplate[]>,
   tokenSavings: (days = 30) => get("/api/admin/token-savings", { query: { days } }) as Promise<TokenSavings>,
+
+  // "Why this number?" (P7-08)
+  whyInsight: (id: string, q: { number?: string; fact_id?: string } = {}) =>
+    get("/api/insights/{insight_id}/why", { path: { insight_id: id }, query: q }) as Promise<WhyResponse>,
+  whyRun: (ws: string, run: string) =>
+    get("/api/workspaces/{workspace_id}/analysis/{run_id}/why", { path: { workspace_id: ws, run_id: run } }) as Promise<WhyRunResponse>,
+
+  // schedule pins (P7-03)
+  getSchedule: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/schedules/{schedule_id}", { path: { workspace_id: ws, schedule_id: id } }) as Promise<ScheduleDetail>,
+  /** Accept the upgrade the owner reviewed: bound to its revision (If-Match) and `upgrade_hash`. */
+  upgradeSchedule: (ws: string, id: string, revision: number, upgradeHash: string | null) =>
+    request<ScheduleUpgradeResult>("POST", apiPath("post", "/api/workspaces/{workspace_id}/schedules/{schedule_id}/upgrade",
+      { path: { workspace_id: ws, schedule_id: id } }), { upgrade_hash: upgradeHash } satisfies Schemas["UpgradeIn"],
+    { headers: { "If-Match": `"${revision}"` } }),
+
+  // definitions: drafts, publish, deprecate, retire, diff (P7-03)
+  listDefinitions: (ws: string, q: { kind?: string; status?: string; include_builtin?: boolean; cursor?: string } = {}) =>
+    get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
+  getDefinition: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
+  startMlExperiment: (ws: string, definitionId: string) =>
+    post("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), body: { definition: definitionId } }) as Promise<MlExperiment>,
+  listMlExperiments: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws) }) as Promise<MlExperiment[]>,
+  getMlExperiment: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}", { path: { workspace_id: ws, experiment_id: id } }) as Promise<MlExperiment>,
+  publishDefinition: (ws: string, id: string, revision: number) =>
+    request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish",
+      { path: { workspace_id: ws, definition_id: id } }), {}, { headers: { "If-Match": `"${revision}"` } }),
+  changeDefinitionStatus: (ws: string, id: string, action: "deprecate" | "retire", revision: number, reason?: string) =>
+    request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/{action}",
+      { path: { workspace_id: ws, definition_id: id, action } }), { reason: reason ?? null } satisfies Schemas["ReasonIn"],
+    { headers: { "If-Match": `"${revision}"` } }),
+  definitionDiff: (ws: string, id: string, against?: string) =>
+    get("/api/workspaces/{workspace_id}/definitions/{definition_id}/diff",
+      { path: { workspace_id: ws, definition_id: id }, query: { against } }) as Promise<DefinitionDiff>,
+
+  // recipes and file ingestion: Work → Prepare data (P6-04..07)
+  listRecipes: (ws: string) => get("/api/workspaces/{workspace_id}/recipes", { path: W(ws) }) as Promise<Recipe[]>,
+  saveRecipe: (ws: string, spec: Dict) =>
+    post("/api/workspaces/{workspace_id}/recipes", { path: W(ws), body: { spec } }) as Promise<Recipe>,
+  publishRecipe: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/recipes/{recipe_id}/publish", { path: { workspace_id: ws, recipe_id: id } }) as Promise<Recipe>,
+  runRecipe: (ws: string, id: string, body: Schemas["RecipeRunIn"]) =>
+    post("/api/workspaces/{workspace_id}/recipes/{recipe_id}/runs", { path: { workspace_id: ws, recipe_id: id }, body }) as Promise<RecipeRun>,
+  listRecipeRuns: (ws: string, recipe?: string) =>
+    get("/api/workspaces/{workspace_id}/recipe-runs", { path: W(ws), query: { recipe } }) as Promise<RecipeRun[]>,
+  ingestFile: (ws: string, sourceId: string, body: Schemas["IngestSpec"]) =>
+    post("/api/workspaces/{workspace_id}/sources/{source_id}/ingest", { path: { workspace_id: ws, source_id: sourceId }, body }) as Promise<IngestResult>,
+
+  // relationship review queue and semantic diff (P7-09, P4-05)
+  relationshipCandidates: (ws: string, status?: string) =>
+    get("/api/workspaces/{workspace_id}/semantic/relationships/candidates", { path: W(ws), query: { status } }) as Promise<RelationshipCandidate[]>,
+  decideRelationship: (ws: string, id: string, decision: "accept" | "reject", reason?: string) =>
+    post(`/api/workspaces/{workspace_id}/semantic/relationships/candidates/{candidate_id}/${decision}`,
+      { path: { workspace_id: ws, candidate_id: id }, body: { reason: reason ?? null } }) as Promise<RelationshipCandidate>,
+  measureRelationship: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/relationships/candidates/{candidate_id}/measure",
+      { path: { workspace_id: ws, candidate_id: id } }) as Promise<RelationshipCandidate>,
+  semanticModelDiff: (ws: string, version?: number) =>
+    get("/api/workspaces/{workspace_id}/semantic/model/diff", { path: W(ws), query: { version } }) as Promise<SemanticModelDiff>,
+  decideSemanticModel: (ws: string, version: number, decision: "approve" | "reject", reason?: string) =>
+    post(`/api/workspaces/{workspace_id}/semantic/model/${decision}`, { path: W(ws), body: { version, reason: reason ?? null } }) as Promise<Dict>,
 
   // capability registry (P4-X01)
   listCapabilities: (filter: { kind?: string; workspace_id?: string } = {}) =>
