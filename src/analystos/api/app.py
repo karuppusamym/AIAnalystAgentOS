@@ -21,6 +21,7 @@ from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import ml as ml_router
 from analystos.api.routers import pilot as pilot_router
 from analystos.api.routers import pipelines as pipelines_router
+from analystos.api.routers import process as process_router
 from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
@@ -95,6 +96,7 @@ app.include_router(pipelines_router.router)
 app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
 app.include_router(ml_router.router)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
+app.include_router(process_router.router)  # process and task mining over event logs
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
