@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from analystos.agents.common import compile_for, llm_json, model_gate
+from analystos.agents.common import defer_compile, llm_json, model_gate
 from analystos.agents.sql_agent import dataset_def
 from analystos.artifacts.registry import link, save_artifact
 from analystos.contracts.bi import MetricDef
@@ -159,7 +159,7 @@ def define_metrics(ctx: RunContext) -> dict:
     approved = approved_workspace_metrics(ctx, columns, dialect)
     candidates = approved + previous_metrics(ctx) + default_metrics(ds)
     origin = ["approved"] * len(approved) + ["carried"] * (len(candidates) - len(approved))
-    payload = compile_for(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
+    payload = defer_compile(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
                                                      "existing": [m.name for m in candidates]})
     data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2", payload, validate=valid_metric_definitions) \
         if model_gate(ctx, "semantic_modeling", payload, deterministic_ok=len(candidates) >= 4) else (None, "deterministic")

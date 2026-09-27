@@ -189,11 +189,17 @@ def test_llm_json_sends_compiled_context_in_cache_stable_order_with_receipts(mon
     turns = normalize_messages(transport.chat_calls[0]["messages"])
     system, user = turns[0]["content"], turns[1]["content"]
     assert "closed analysis vocabulary" in system  # static text + method vocabulary first
-    header, _, variable = user.partition("\n\n")
-    head = json.loads(header)["workspace_context"]
-    assert head["workspace"] == "ITSM" and head["dialects"] == ["postgres"] and "objective" not in head
-    body = json.loads(variable)
-    assert body["glossary"][0]["id"] == "ctx_sla" and body["metrics"] == NO_MATCH
+    preamble, _, variable = user.rpartition("\n\n")
+    # the run-stable preamble: header, objective, catalog and knowledge as sorted text lines
+    assert preamble.startswith("Workspace: ITSM · ") and "SQL dialect: postgres\n" in preamble
+    assert "OBJECTIVE: What drives SLA breaches by priority?" in preamble
+    assert "TABLE sn.incident [rows≈5,000] — Incidents" in preamble and "  made_sla (boolean)" in preamble
+    assert "- SLA breach — An incident breaches" in preamble and f"METRICS: {NO_MATCH}" in preamble
+    assert preamble.index("<untrusted_context>") < preamble.index("CATALOG")
+    body = json.loads(variable)  # the volatile part: only what is not stable for the run
+    assert "objective" not in body and "catalog" not in body and "glossary" not in body
+    logical = sink.records[-1]["request"]["messages"]
+    assert [m.get("cache", False) for m in logical] == [True, True, False]
     assert sink.records[-1]["status"] == "ok"
     assert {r["id"] for r in sink.records[-1]["ctx"].context_receipts} >= {"ctx_sla", "asset:sn.incident"}
 

@@ -37,10 +37,11 @@ def ctx_for(**policy):
 
 
 # --------------------------------------------------------------------- send_data_samples_to_models
-def _catalog_ctx(monkeypatch, *, samples: bool):
+def _catalog_ctx(monkeypatch, *, samples: bool, profile: dict | None = None, tags: list | None = None):
     column = SimpleNamespace(name="priority", data_type="text", semantic_type="categorical", business_name=None, description=None,
-                             tags=[], profile={"distinct": 4, "null_rate": 0.0,
-                                               "top_values": [{"value": "1 - Critical", "count": 9}, {"value": "2 - High", "count": 5}]})
+                             tags=tags or [], profile=profile or {
+                                 "distinct": 2, "null_rate": 0.0,
+                                 "top_values": [{"value": "1 - Critical", "count": 9}, {"value": "2 - High", "count": 5}]})
     asset = SimpleNamespace(schema_name="sn", name="incident", business_name="Incidents", row_count=100)
     monkeypatch.setattr(common, "asset_rows", lambda ctx: [(asset, [column])])
     monkeypatch.setattr("analystos.services.platform_settings.get", lambda: PlatformSettings())
@@ -58,6 +59,18 @@ def test_send_data_samples_false_keeps_top_values_out_of_prompts(monkeypatch):
 def test_send_data_samples_true_allows_low_cardinality_vocabulary(monkeypatch):
     catalog = common.catalog_for_prompt(_catalog_ctx(monkeypatch, samples=True))
     assert catalog[0]["columns"][0]["values"] == ["1 - Critical", "2 - High"]
+
+
+def test_only_complete_value_sets_reach_a_prompt(monkeypatch):
+    """Stream B: a partial top-N list would let a model believe the unseen values do not exist."""
+    partial = {"distinct": 4, "top_values": [{"value": "1 - Critical", "count": 9}, {"value": "2 - High", "count": 5}]}
+    assert "values" not in common.catalog_for_prompt(_catalog_ctx(monkeypatch, samples=True, profile=partial))[0]["columns"][0]
+    marked = {"distinct": 3, "values": ["a", "b", "c"], "values_complete": True}  # the profiler says it is the full set
+    assert common.catalog_for_prompt(_catalog_ctx(monkeypatch, samples=True, profile=marked))[0]["columns"][0]["values"] ==         ["a", "b", "c"]
+    many = {"distinct": 13, "values": [str(i) for i in range(13)], "values_complete": True}
+    assert "values" not in common.catalog_for_prompt(_catalog_ctx(monkeypatch, samples=True, profile=many))[0]["columns"][0]
+    sensitive = common.catalog_for_prompt(_catalog_ctx(monkeypatch, samples=True, profile=marked, tags=["sensitive"]))
+    assert "values" not in sensitive[0]["columns"][0]
 
 
 # --------------------------------------------------------------------- allowed_providers

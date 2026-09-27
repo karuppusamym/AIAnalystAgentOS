@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from analystos import methods
-from analystos.agents.common import asset_rows, catalog_for_prompt, compile_for, llm_json, model_gate, task_output
+from analystos.agents.common import asset_rows, catalog_for_prompt, defer_compile, llm_json, model_gate, task_output
 from analystos.artifacts.registry import link
 from analystos.capabilities import packs as pack_registry
 from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
@@ -352,7 +352,7 @@ def generate_hypotheses(ctx: RunContext) -> dict:
     # "resolved" means the evidence changed — not that a different question was asked this time.
     carried, rejected = _accept(ctx, carried_forward(ctx), types, origin="carried", seen=seen)
     required["already_testing"] = [c["statement"] for c in carried]
-    payload = compile_for(ctx, "hypothesis_generation", required)
+    payload = defer_compile(ctx, "hypothesis_generation", required)  # compiled only if the model is asked
     # Deterministic-first (admin: llm.purpose_modes.hypothesis_generation): the profile-driven playbook
     # runs first; in `auto` mode the model is only asked when the playbook is not enough.
     rules, rej_rules = _accept(ctx, [{**p, "origin": "heuristic"} for p in heuristic_proposals(ctx, types, packs)], types,
@@ -498,6 +498,41 @@ def _results_summary(run_id: str) -> list[dict]:
         return out
 
 
+_PROMPT_STATS = ("test", "n", "p_value", "effect_size", "effect_label")
+_PROMPT_HIGHLIGHTS = ("top_segment", "top_rate", "baseline_segment", "baseline_rate", "rate_ratio", "top_mean",
+                      "baseline_mean", "top_median", "baseline_median", "top_share", "top_driver", "slope", "change_point")
+
+
+def _spec_for_prompt(spec: dict[str, Any]) -> dict[str, Any]:
+    """A spec without its defaults and empty fields: the model needs what was tested, not the schema."""
+    def clean(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()
+                    if v not in (None, [], {}) and k not in ("start_hour", "end_hour", "top_k", "min_group_size", "origin")}
+        return value
+    return clean(spec)
+
+
+def results_for_prompt(results: list[dict]) -> list[Any]:
+    """Follow-up prompt input (Stream B): supported and inconclusive tests — the ones a follow-up can
+    drill into or re-examine — with a compact spec and the few statistics that say what was found; every
+    other test as one line. Repeats of a tested spec are removed in code (`identity_keys`), so the
+    model needs to know what was asked, not the full spec of every rejected test."""
+    out: list[Any] = []
+    for r in results:
+        if r.get("status") in ("supported", "inconclusive"):
+            res = r.get("result") or {}
+            hl = res.get("highlights") or {}
+            stats = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in res.items() if k in _PROMPT_STATS and v is not None}
+            stats.update({k: (round(v, 4) if isinstance(v, float) else v) for k, v in hl.items()
+                          if k in _PROMPT_HIGHLIGHTS and v is not None})
+            out.append({"code": r["code"], "status": r["status"], "statement": r["statement"],
+                        "spec": _spec_for_prompt(r.get("spec") or {}), "stats": stats})
+        else:
+            out.append(f"{r['code']} {r.get('status')}: {r.get('statement')}")
+    return out
+
+
 def _new_supported(run_id: str, round_no: int) -> int:
     """Supported hypotheses first tested in round `round_no` (AUT-005: stop when a round adds none)."""
     with session_scope() as s:
@@ -534,8 +569,8 @@ def follow_ups(ctx: RunContext) -> dict:
     roles = {f"{a.schema_name}.{a.name}.{c.name}": (c.semantics or {}).get("semantic_role") for a, cols in asset_rows(ctx) for c in cols}
     display = [p.templates["display_name"] for p in pack_registry.for_scope(ctx.scope, ctx.policy) if p.templates.get("display_name")]
     drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
-    payload = compile_for(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results,
-                                                        "constraints": ctx.run.constraints})
+    payload = defer_compile(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results_for_prompt(results),
+                                                          "constraints": ctx.run.constraints})
     data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload,
                             validate=usable_hypotheses(ctx, types))
                    if model_gate(ctx, "follow_up_generation", payload, deterministic_ok=bool(drill)) else (None, "deterministic"))

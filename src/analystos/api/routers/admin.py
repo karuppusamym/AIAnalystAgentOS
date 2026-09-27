@@ -333,6 +333,7 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
         add(by_model.setdefault(model or "unknown", bucket()), status, n, used, saved, cost)
     denom = totals["tokens_used"] + totals["tokens_saved"]
     totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
+    _provider_cache(session, since, totals, by_purpose, by_model)
     # A model with no price and no provider-reported cost: its spend is unknown, not $0.
     unpriced = session.execute(select(ModelCall.model, ModelCall.purpose, ModelCall.answered_by, func.count(), func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0))
                                .where(ModelCall.created_at >= since, ModelCall.cost_source == "missing_price")
@@ -352,7 +353,45 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
     totals["escalation_cost_usd"] = round(sum(e["cost_usd"] for e in escalations.values()), 6)
     return {"days": days, "totals": totals, "by_purpose": by_purpose, "by_rung": by_rung, "by_model": by_model,
             "escalations": escalations, "missing_price": missing, "prices_version": load_models_config().prices_version,
-            "cost_complete": not missing}
+            "cost_complete": not missing, "context_cache": _context_cache_view()}
+
+
+def _provider_cache(session: Session, since: object, totals: dict, by_purpose: dict, by_model: dict) -> None:
+    """Provider prompt caching (P4-T04): prompt tokens the provider served from its cache, their share
+    of all prompt tokens sent, and the estimated USD they saved (input price × the provider's cache-read
+    discount, `llm.config.cached_discount`). Unpriced models count tokens but add no USD estimate."""
+    config = load_models_config()
+    totals.update({"input_tokens": 0, "cached_input_tokens": 0, "cached_input_share": 0.0, "cached_input_saved_usd": 0.0})
+    for group in (by_purpose, by_model):
+        for row in group.values():
+            row.update({"cached_input_tokens": 0, "cached_input_saved_usd": 0.0})
+    for purpose, model, sent, cached in session.execute(
+            select(ModelCall.purpose, ModelCall.model, func.coalesce(func.sum(ModelCall.input_tokens), 0),
+                   func.coalesce(func.sum(ModelCall.cached_input_tokens), 0))
+            .where(ModelCall.created_at >= since, ModelCall.status.in_(("ok", "error")))
+            .group_by(ModelCall.purpose, ModelCall.model)).all():
+        saved = config.cached_saving(model or "", int(cached)) if cached else 0.0
+        totals["input_tokens"] += int(sent)
+        totals["cached_input_tokens"] += int(cached)
+        totals["cached_input_saved_usd"] += saved or 0.0
+        for group, key in ((by_purpose, purpose), (by_model, model or "unknown")):
+            if key in group:
+                group[key]["cached_input_tokens"] += int(cached)
+                group[key]["cached_input_saved_usd"] = round(group[key]["cached_input_saved_usd"] + (saved or 0.0), 6)
+    totals["cached_input_saved_usd"] = round(totals["cached_input_saved_usd"], 6)
+    if totals["input_tokens"]:
+        totals["cached_input_share"] = round(totals["cached_input_tokens"] / totals["input_tokens"], 4)
+
+
+def _context_cache_view() -> dict:
+    """Context reuse (Stream B): compiled contexts and knowledge retrievals served from the shared
+    context cache. Work avoided, not provider tokens: never counted in tokens_saved."""
+    from analystos.context import cache as context_cache
+
+    try:
+        return {"shared": context_cache.store().shared, "by_kind": context_cache.stats()}
+    except Exception:  # visibility only
+        return {"shared": False, "by_kind": {}}
 
 
 @router.get("/admin/usage")

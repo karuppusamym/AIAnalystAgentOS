@@ -66,7 +66,11 @@ def budget_counters(monkeypatch):
 def compiled_contexts():
     """Compiled-context reuse (CTX-005) is process-wide: every unit test starts with an empty cache."""
     from analystos.agents import common
+    from analystos.context import cache as context_cache
+    from analystos.llm.cache import ResponseCache
 
+    context_cache.use(ResponseCache(None))  # never a real Redis from a unit test
     common._COMPILED.clear()
     yield common._COMPILED
     common._COMPILED.clear()
+    context_cache.use(None)

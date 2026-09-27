@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 
 from analystos import methods
-from analystos.agents.common import llm_json, model_gate
+from analystos.agents.common import ModelOutcome, llm_json, llm_json_batch, model_gate
 from analystos.artifacts.registry import link
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
@@ -130,6 +130,41 @@ def benjamini_hochberg(pvals: list[float]) -> list[float]:
     return list(bh(pvals))
 
 
+def draft_narratives(ctx: RunContext, prepared: list[tuple]) -> dict[str, tuple[Any, Any]]:
+    """Model narratives for every finding of the run in ONE call (`insight_narrative_batch.v1`, Stream B)
+    instead of one call each, so the static instructions are sent once. Each item is still bound to its
+    own typed facts by the caller (P4-03); an item the batch skipped keeps its template text. A malformed
+    batch answer falls back to one call per finding (with its own escalation check)."""
+    if not prepared:
+        return {}
+    items = [{"id": code, "hypothesis": statement, "method": spec.get("method"), "facts": facts}
+             for _, code, statement, spec, _, _, _, _, _, facts in prepared]
+    if not model_gate(ctx, "insight_narrative", {"findings": items}, deterministic_ok=True):
+        return {}
+    checks = {code: binding_check(spec, stat, typed, facts) for _, code, _, spec, stat, _, _, _, typed, facts in prepared}
+
+    def single(p: tuple) -> tuple[Any, Any]:
+        _, code, statement, spec, stat, _, _, _, typed, facts = p
+        return llm_json(ctx, "insight_narrative", "insight_narrative.v1",
+                        {"hypothesis": statement, "method": spec.get("method"), "facts": facts}, validate=checks[code])
+
+    if len(prepared) == 1:
+        return {prepared[0][1]: single(prepared[0])}
+
+    def usable(data: dict) -> str | None:  # escalate only when no narrative of the batch binds to its facts
+        ok = any(isinstance(a, dict) and a.get("id") in checks and checks[a["id"]](a) is None for a in data["findings"])
+        return None if ok else "no narrative in the batch binds to its computed facts"
+
+    answers, model = llm_json_batch(ctx, "insight_narrative", "insight_narrative_batch.v1", items, list_key="findings",
+                                    max_tokens=min(8000, 300 + 300 * len(items)), validate=usable)
+    if answers is None and isinstance(model, ModelOutcome):
+        return {}
+    if answers is None:
+        ctx.say("Batched narratives were malformed; writing each finding's narrative on its own.", kind="decision")
+        return {p[1]: single(p) for p in prepared}
+    return {code: (answer, model) for code, answer in answers.items()}
+
+
 def build_insights(ctx: RunContext) -> dict:
     with session_scope() as s:
         rows = []
@@ -178,6 +213,7 @@ def build_insights(ctx: RunContext) -> dict:
 
     manifest = ensure_run_manifest(ctx.run.id, ctx.scope.asset_sources, {c[3].get("asset") for c in candidates if c[3].get("asset")}) \
         if candidates else None
+    prepared = []
     for hid, code, statement, spec, stat, eid, qids, _ in candidates:
         hl = stat.get("highlights") or {}
         impact = {k: hl[k] for k in ("affected_records", "excess_events", "top_segment_n", "top_n") if k in hl}
@@ -193,12 +229,12 @@ def build_insights(ctx: RunContext) -> dict:
             spec, stat, extra={k: impact[k] for k in ("affected_records", "excess_events") if k in impact},
             query_ids=tuple(qids), result_hashes=tuple(h for h in receipts.values() if h))
         facts = {**facts_for(stat, spec), **{k: impact[k] for k in ("affected_records", "excess_events") if k in impact}}
+        prepared.append((hid, code, statement, spec, stat, eid, qids, impact, typed, facts))
+    narratives = draft_narratives(ctx, prepared)
+    for hid, code, _statement, spec, stat, eid, qids, impact, typed, facts in prepared:
         title, finding = template_text(stat, spec)
         source, action = "template", None
-        payload = {"hypothesis": statement, "method": spec.get("method"), "facts": facts}
-        data, model = llm_json(ctx, "insight_narrative", "insight_narrative.v1", payload,
-                               validate=binding_check(spec, stat, typed, facts)) \
-            if model_gate(ctx, "insight_narrative", payload, deterministic_ok=True) else (None, "deterministic")
+        data, model = narratives.get(code, (None, "deterministic"))
         if isinstance(data, dict) and isinstance(data.get("finding"), str):
             texts = (str(data.get("title") or ""), str(data["finding"]), str(data.get("recommended_action") or ""))
             bound = bind_finding(spec, stat, typed, *texts)

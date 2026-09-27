@@ -10,11 +10,12 @@ lower the review score or add caveats, but cannot make a finding true; the score
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from sqlalchemy import select
 
 from analystos import methods
-from analystos.agents.common import compact_json, llm_json, task_output
+from analystos.agents.common import ModelOutcome, compact_json, llm_json, llm_json_batch, task_output
 from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link
@@ -68,6 +69,62 @@ def representative_population(ctx: RunContext, asset: str) -> dict:
     return population_for(asset, ctx.scope.asset_sources.get(asset)).check()
 
 
+def review_statistics(stat_d: dict) -> dict:
+    """The statistics a reviewer reads: test, n, p (raw and adjusted), effect and the highlights, floats to
+    4 significant digits and each value once (highlights repeat n and p)."""
+    def short(v: Any) -> Any:
+        return float(f"{v:.4g}") if isinstance(v, float) else v
+
+    out = {k: short(stat_d.get(k)) for k in ("test", "n", "p_value", "p_adjusted", "effect_size", "effect_label")
+           if stat_d.get(k) is not None}
+    out.update({k: short(v) for k, v in (stat_d.get("highlights") or {}).items() if k not in out and v is not None})
+    if stat_d.get("warnings"):
+        out["warnings"] = stat_d["warnings"]
+    return out
+
+
+def _review_ok(review: Any) -> bool:
+    return isinstance(review, dict) and isinstance(review.get("supports"), bool)
+
+
+def independent_reviews(ctx: RunContext, states: list[dict]) -> dict[str, tuple[Any, str]]:
+    """The opt-in independent-model review (P4-T02) of every finding of the run in one call
+    (`verification_batch.v1`), from a family that wrote none of them. A malformed batch answer falls
+    back to one call per finding; a finding the batch skipped gets no review (its deterministic checks
+    decide, as when the model is unavailable)."""
+    if not states:
+        return {}
+    if not ctx.policy.independent_model_verification:
+        for st in states:
+            ctx.router.record_skip("verification", ctx.call_ctx(),
+                                   estimated_tokens=estimate_tokens(compact_json(st["review_payload"])) + 500,
+                                   reason="workspace policy: independent-model verification is opt-in; deterministic REV checks decide")
+        return {st["code"]: (None, "policy_off") for st in states}
+    families = sorted({st["primary_family"] for st in states if st["primary_family"]})
+
+    def single(st: dict) -> tuple[Any, str]:
+        return llm_json(ctx, "verification", "verification.v1", st["review_payload"],
+                        exclude_families=[st["primary_family"]] if st["primary_family"] else [])
+
+    if len(states) == 1:
+        return {states[0]["code"]: single(states[0])}
+    items = [{"id": st["code"], **st["review_payload"]} for st in states]
+    answers, model = llm_json_batch(ctx, "verification", "verification_batch.v1", items, list_key="reviews",
+                                    exclude_families=families, max_tokens=min(8000, 300 + 250 * len(items)),
+                                    validate=lambda d: None if any(_review_ok(r) for r in d["reviews"]) else "no usable review")
+    if answers is None and isinstance(model, ModelOutcome):
+        return {st["code"]: (None, model) for st in states}
+    if answers is None:
+        ctx.say("REV: the batched independent review was malformed; reviewing each finding on its own.", kind="decision")
+        return {st["code"]: single(st) for st in states}
+    out = {}
+    for st in states:
+        review = answers.get(st["code"])
+        out[st["code"]] = ({k: v for k, v in review.items() if k != "id"}, model) if _review_ok(review) \
+            else (None, f"not reviewed in the batch answer of {model}")
+    return out
+
+
 def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
@@ -77,6 +134,9 @@ def verify_insights(ctx: RunContext) -> dict:
     quality = task_output(ctx.run.id, "quality").get("issues") or []
     verified_codes, failed_codes = [], []
     directions: dict[tuple, list] = {}
+    # Two passes (Stream B): every finding's deterministic checks first, then ONE independent-model review
+    # call for all of them (not one per finding), then each verdict. The review only adjusts confidence.
+    states: list[dict] = []
     for insight_id, code in insights:
         ctx.check_control()
         with session_scope() as s:
@@ -163,16 +223,27 @@ def verify_insights(ctx: RunContext) -> dict:
             checks.append({"check": "second_method", "passed": False, "detail": f"failed: {exc.code}"})
         # ---- Verify: independent model family (policy opt-in, P4-T02) + JEV (recorded, not decisive)
         review_payload = {"claim": finding, "hypothesis": statement, "method": spec.method,
-                          "statistics": {k: stat_d.get(k) for k in ("test", "n", "p_value", "p_adjusted", "effect_size",
-                                                                    "effect_label", "highlights", "warnings")},
-                          "checks": checks}
-        if ctx.policy.independent_model_verification:
-            review, review_model = llm_json(ctx, "verification", "verification.v1", review_payload,
-                                            exclude_families=[primary_family] if primary_family else [])
-        else:
-            review, review_model = None, "policy_off"
-            ctx.router.record_skip("verification", ctx.call_ctx(), estimated_tokens=estimate_tokens(compact_json(review_payload)) + 500,
-                                   reason="workspace policy: independent-model verification is opt-in; deterministic REV checks decide")
+                          "statistics": review_statistics(stat_d),
+                          # one line per check: the verdict and its evidence, without repeating keys per check
+                          "checks": [f"{c['check']} {'ok' if c['passed'] else 'FAILED'}: {c.get('detail') or ''}".rstrip(": ")
+                                     for c in checks]}
+        states.append({"insight_id": insight_id, "code": code, "spec": spec, "spec_d": spec_d, "stat_d": stat_d,
+                       "finding": finding, "title": title, "narrative_source": narrative_source, "checks": checks,
+                       "second": second, "p_adj": p_adj, "reproducible": reproducible, "dq": dq, "reason": reason,
+                       "recorded_manifest": recorded_manifest, "recorded": recorded, "entry": entry, "prior": prior,
+                       "origin": origin, "iteration": iteration, "parent": parent, "prior_caveats": prior_caveats,
+                       "population": population, "facts": facts, "binding": binding, "receipts": receipts, "alpha": alpha,
+                       "primary_family": primary_family, "review_payload": review_payload})
+    reviews = independent_reviews(ctx, states)
+    for st in states:
+        (insight_id, code, spec, spec_d, stat_d, finding, title, narrative_source, checks, second, p_adj, reproducible, dq,
+         reason, recorded_manifest, recorded, entry, prior, origin, iteration, parent, prior_caveats, population, facts,
+         binding, receipts, alpha) = (st[k] for k in (
+            "insight_id", "code", "spec", "spec_d", "stat_d", "finding", "title", "narrative_source", "checks", "second",
+            "p_adj", "reproducible", "dq", "reason", "recorded_manifest", "recorded", "entry", "prior", "origin", "iteration",
+            "parent", "prior_caveats", "population", "facts", "binding", "receipts", "alpha"))
+        review, review_model = reviews.get(code, (None, "unavailable"))
+        ctx.check_control()
         # ADR-0015 escalate_only: the second opinion can add doubt (lower confidence), never add credit.
         second_opinion = ctx.decisions.decide(
             "rev_second_opinion", {"claim": finding, "evidence": str({k: stat_d.get(k) for k in (

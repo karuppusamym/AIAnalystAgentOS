@@ -58,7 +58,13 @@ class LLMSettings(BaseModel):
     cacheable_purposes: list[str] = Field(default_factory=lambda: [
         "planning", "hypothesis_generation", "semantic_modeling", "sql_generation", "feedback_interpretation",
         "metadata_enrichment", "insight_narrative", "summarization", "hypothesis_priority", "chart_selection",
-        "rev_second_opinion", "risk_check", "feedback_classification", "alert_triage"])
+        "rev_second_opinion", "risk_check", "feedback_classification", "alert_triage",
+        # Deterministic-input purposes (Stream B): the request text holds everything the answer depends on.
+        "sql_repair",  # the failing SQL + the gateway's error + the catalog; the fix is a function of them
+        "semantic_query",  # question + the approved metric catalog (names only); the compiler validates the choice
+        "verification",  # the claim, its statistics and the deterministic checks; the reviewer only judges them
+        "follow_up_generation",  # objective + tested results + catalog; the same round asks the same question
+    ])
     max_prompt_tokens: int = Field(16000, ge=500, le=400_000)  # estimated input tokens per call; larger prompts are refused (deterministic fallback)
     downgrade_below_budget_fraction: float = Field(0.25, ge=0.0, le=1.0)  # when a run has less budget left, chat purposes use the low_cost profile
     compact_prompts: bool = True
@@ -102,8 +108,9 @@ def _default_profiles() -> dict[str, PurposeProfile]:
                                                           "negative_knowledge", "episodes"],
                                                 catalog_detail="stats", drop_semantic_types=["id"],
                                                 max_columns_per_table=30, max_chars=48_000),
+        # Same catalog rendering as hypothesis_generation (stats, 30 columns), so the run's catalog text repeats.
         "follow_up_generation": PurposeProfile(sections=["catalog", "negative_knowledge"], catalog_detail="stats",
-                                               drop_semantic_types=["id"], max_columns_per_table=24,
+                                               drop_semantic_types=["id"], max_columns_per_table=30,
                                                max_items_per_section=6, max_chars=40_000),
         "sql_generation": PurposeProfile(sections=["catalog", "glossary", "metrics"], catalog_detail="profile",
                                          referenced_only=True, max_columns_per_table=40, max_items_per_section=6,
@@ -124,6 +131,10 @@ class ContextSettings(BaseModel):
 
     compiler_enabled: bool = True
     min_relevance: float = Field(0.15, ge=0.0, le=1.0)
+    # Shared context cache (Stream B): compiled contexts, knowledge retrieval and the rendered catalog,
+    # reused across steps and workers for this long (Redis when configured, else in-process).
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = Field(900, ge=0, le=86_400)
     profiles: dict[str, PurposeProfile] = Field(default_factory=_default_profiles)
 
 

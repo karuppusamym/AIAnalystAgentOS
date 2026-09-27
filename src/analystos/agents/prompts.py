@@ -36,7 +36,17 @@ as associations (not causal claims). """ + UNTRUSTED_NOTE,
     "follow_up_generation.v1": """You are the Investigation Agent reviewing test results. Propose up to 3 FOLLOW-UP hypotheses
 that drill deeper into SUPPORTED findings (e.g. restrict with a filter to the top segment and segment by another
 dimension, or test an interaction), or that test an alternative explanation (confounder) for a supported finding.
-Use the same closed spec vocabulary as before and only catalog columns. Do not repeat tested specs.
+Use this closed spec vocabulary and only catalog columns:
+
+{method_vocabulary}
+derivation = {"type": column|duration_hours|after_hours|bucket|equals|is_true|date_trunc|hour_of_day|day_of_week,
+  "column": str, "end_column": str|null (duration_hours), "value": any (equals), "edges": [numbers] (bucket),
+  "grain": day|week|month|quarter (date_trunc), "label": short business label}
+filter = {"column": str, "op": "=|!=|>|>=|<|<=|in|not in|is null|is not null", "value": any}
+spec = {"method", "asset": "schema.table", "outcome", "segment", "drivers": [], "time", "filters": []}
+
+`results` gives the SUPPORTED and INCONCLUSIVE tests with their specs and key statistics, and every other
+test as "code status: statement". Do not repeat a tested question (repeats are dropped).
 Return JSON: {"hypotheses": [{"question","statement","rationale","priority","spec":{...}, "parent": "H-n"}], "done": bool}.
 """ + UNTRUSTED_NOTE,
 
@@ -44,6 +54,20 @@ Return JSON: {"hypotheses": [{"question","statement","rationale","priority","spe
 for a statistically supported result. You may ONLY use numbers that appear in the provided `facts` (you may round
 percentages to whole numbers or one decimal). Describe an association, never causation. No speculation.
 Return JSON: {"title": str (<= 12 words), "finding": str, "recommended_action": str}.""",
+
+    # One call per run instead of one per finding (Stream B); each item is still validated on its own.
+    "insight_narrative_batch.v1": """You are the Insight Analyst. For EACH item in `findings` (a statistically supported result),
+write a concise business finding (1-2 sentences) and a short title. For an item you may ONLY use numbers that appear
+in that item's own `facts` (you may round percentages to whole numbers or one decimal). Describe an association,
+never causation. No speculation. Return JSON: {"findings": [{"id": the item's id, "title": str (<= 12 words),
+"finding": str, "recommended_action": str}]} with one entry per item.""",
+
+    "verification_batch.v1": """You are an independent reviewer (REV critic) from a different model family than the analyst.
+For EACH item in `claims`, judge whether its statistical evidence supports the claim as worded.
+Check: method fit, sample size, significance after multiple-testing adjustment, effect size, overreach
+(causal wording, generalisation beyond the population), and missing caveats. Judge each item on its own evidence.
+Return JSON: {"reviews": [{"id": the item's id, "supports": bool, "confidence": 0..1, "concerns": [short strings],
+"suggested_caveat": str|null}]} with one entry per item.""",
 
     "verification.v1": """You are an independent reviewer (REV critic) from a different model family than the analyst.
 Given a claim and its statistical evidence, judge whether the evidence supports the claim as worded.
