@@ -243,7 +243,9 @@ def _decide(s, run: AnalysisRun, *, locked: bool, workspace_disabled: bool = Fal
             ready.append(key)
     failed_required = [k for k, t in tasks.items() if t.status == "FAILED" and not t.input.get("optional")]
     if failed_required:
-        return {"fail": f"required task(s) failed: {', '.join(failed_required)}"}
+        # the task's own error carries the cause and remedy (e.g. a policy refusal); the run shows it
+        causes = "; ".join(f"{k}: {tasks[k].error}" for k in failed_required if tasks[k].error)
+        return {"fail": f"required task(s) failed: {', '.join(failed_required)}" + (f" — {causes}" if causes else "")}
     done = all(t.status in ("COMPLETED", "SKIPPED", "FAILED", "CANCELLED", "INVALIDATED") for t in tasks.values())
     if done:
         return {"done": True}

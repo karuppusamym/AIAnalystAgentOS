@@ -84,6 +84,15 @@ def test_get_state_required_failure_fails_the_run(sqlite_db):
     assert engine.get_state("run_1") == {"fail": "required task(s) failed: req"}
 
 
+def test_a_failed_run_carries_the_task_cause_and_remedy(sqlite_db):
+    _run(("publish_request", "FAILED", []))
+    with session_scope() as s:
+        s.get(RunTask, "tsk_0").error = "PolicyDenied: publication refused: 1 KPI(s) are not approved. Remedy: an approver approves it"
+    fail = engine.get_state("run_1")["fail"]
+    assert fail.startswith("required task(s) failed: publish_request — publish_request: PolicyDenied")
+    assert "Remedy: an approver approves it" in fail
+
+
 def test_get_state_done_and_running(sqlite_db):
     _run(("a", "COMPLETED", []), ("b", "RUNNING", []))
     assert engine.get_state("run_1") == {"running": ["b"]}
