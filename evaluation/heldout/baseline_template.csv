@@ -1,0 +1,2 @@
+task_id,arm,participant,blinded_code,started_at,finished_at,active_minutes,review_minutes,correction_minutes,interventions,tools,output_ref,scorer,verdict,scorer_notes,model_usd,infrastructure_usd
+# one row per task and arm; arm = analystos | practitioner; verdict = a runner status (accepted, correct_abstention, confident_wrong, incomplete, unnecessary_abstention, wrong_abstention, error); times ISO 8601 UTC; minutes as decimals

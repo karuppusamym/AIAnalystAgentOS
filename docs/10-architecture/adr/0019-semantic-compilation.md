@@ -1,6 +1,8 @@
 # ADR-0019 — Semantic compilation: questions about governed metrics compile, they are not prompted
 
-**Status:** proposed (2026-09-26, spec v4 §5; tracker P7-02). Builds on ADR-0013 (Ossie as the
+**Status:** accepted (2026-09-27; proposed 2026-09-26, spec v4 §5; tracker P7-02). Implemented by P7-02 in
+`semantic/compiler.py`, `governance/row_filters.py` and `semantic/diff.py`; multi-fact plans and relative
+windows are follow-ups. Builds on ADR-0013 (Ossie as the
 metric format) and the P4-K03 semantic service. Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §10.
 
