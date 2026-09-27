@@ -2,7 +2,8 @@
 
 Only scikit-learn (and statsmodels for forecasts) estimators named in `contracts.work.ESTIMATORS` can be
 built; every size parameter is clamped by `HARD_LIMITS`, and every estimator runs single-threaded with
-the spec's seed. The search order interleaves estimator families (round robin over their grids) so a
+the spec's seed. Gradient boosting is the classic (not the histogram, OpenMP) implementation: on a shared
+worker an OpenMP pool can stall a small fit for minutes. The search order interleaves estimator families (round robin over their grids) so a
 small trial budget still tries each family; the order is fixed, so a re-run tries the same trials.
 """
 from __future__ import annotations
@@ -17,8 +18,8 @@ HARD_LIMITS = {"n_estimators": 300, "max_depth": 12, "max_iter": 300, "n_cluster
 GRIDS: dict[str, list[dict[str, Any]]] = {
     "logistic": [{"C": c} for c in (0.1, 1.0, 10.0, 0.01)],
     "linear": [{"alpha": a} for a in (1.0, 10.0, 0.1, 100.0)],
-    "gradient_boosting": [{"learning_rate": lr, "max_depth": d, "max_iter": it}
-                          for lr, d, it in product((0.1, 0.05), (3, 6), (100, 200))],
+    "gradient_boosting": [{"learning_rate": lr, "max_depth": d, "n_estimators": n}
+                          for lr, d, n in product((0.1, 0.05), (3, 5), (100, 200))],
     "random_forest": [{"n_estimators": n, "max_depth": d, "min_samples_leaf": leaf}
                       for n, d, leaf in product((100, 200), (8, 12), (1, 5))],
     "ets": [{"trend": None, "damped": False}, {"trend": "add", "damped": True}, {"trend": "add", "damped": False}],
@@ -90,8 +91,8 @@ def estimator(task: str, name: str, params: dict[str, Any], seed: int) -> Any:
         if name == "logistic":
             return linear_model.LogisticRegression(C=p.get("C", 1.0), max_iter=1000)
         if name == "gradient_boosting":
-            return ensemble.HistGradientBoostingClassifier(learning_rate=p["learning_rate"], max_depth=p["max_depth"],
-                                                           max_iter=p["max_iter"], early_stopping=False, random_state=seed)
+            return ensemble.GradientBoostingClassifier(learning_rate=p["learning_rate"], max_depth=p["max_depth"],
+                                                       n_estimators=p["n_estimators"], random_state=seed)
         if name == "random_forest":
             return ensemble.RandomForestClassifier(n_estimators=p["n_estimators"], max_depth=p["max_depth"],
                                                    min_samples_leaf=p["min_samples_leaf"], n_jobs=1, random_state=seed)
@@ -101,8 +102,8 @@ def estimator(task: str, name: str, params: dict[str, Any], seed: int) -> Any:
         if name == "linear":
             return linear_model.Ridge(alpha=p.get("alpha", 1.0))
         if name == "gradient_boosting":
-            return ensemble.HistGradientBoostingRegressor(learning_rate=p["learning_rate"], max_depth=p["max_depth"],
-                                                          max_iter=p["max_iter"], early_stopping=False, random_state=seed)
+            return ensemble.GradientBoostingRegressor(learning_rate=p["learning_rate"], max_depth=p["max_depth"],
+                                                      n_estimators=p["n_estimators"], random_state=seed)
         if name == "random_forest":
             return ensemble.RandomForestRegressor(n_estimators=p["n_estimators"], max_depth=p["max_depth"],
                                                   min_samples_leaf=p["min_samples_leaf"], n_jobs=1, random_state=seed)

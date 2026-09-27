@@ -326,7 +326,7 @@ def test_train_and_score_playbooks_and_the_mlflow_export(world):
     ws, owner = world["ws"], world["owner"]
     spec = _publish(world, "ml_spec", "churn_pb", _spec(world, seed=31))
     run = create_run(owner, ws, objective="Train the published churn model and evaluate it on a holdout",
-                     playbook="playbook.train", origin={"type": "user", "publish": "skip",
+                     playbook="playbook.train", source_ids=[world["src"]], origin={"type": "user", "publish": "skip",
                                                          "ml_definition": {"key": "churn_pb", "version": spec["version"]}})
     assert _wait(run.id, {"COMPLETED", "FAILED"}) == "COMPLETED"
     with session_scope() as s:
@@ -339,7 +339,7 @@ def test_train_and_score_playbooks_and_the_mlflow_export(world):
     champion = ml.promote(owner, version_id, ws, approval_id=req["approval_id"])["model_version"]
     scoring = _scoring(world, "pb_scoring", champion, "customers_next", "pb_scores")
     run = create_run(owner, ws, objective="Score next month's customers with the approved churn model",
-                     playbook="playbook.score", origin={"type": "user", "publish": "skip",
+                     playbook="playbook.score", source_ids=[world["src"]], origin={"type": "user", "publish": "skip",
                                                          "scoring_definition": {"key": "pb_scoring", "version": 1}})
     assert _wait(run.id, {"WAITING_USER", "FAILED", "COMPLETED"}) == "WAITING_USER"
     with session_scope() as s:

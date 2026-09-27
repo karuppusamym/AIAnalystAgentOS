@@ -31,6 +31,17 @@ DEFAULT_CAPS = {"max_trials": 12, "max_seconds": 300, "max_rows": 100_000, "max_
 
 
 def run_ml_job(job: dict[str, Any]) -> dict[str, Any]:
+    """One job, single-threaded: native BLAS/OpenMP pools are capped at one thread (a resource cap, and on a
+    shared worker oversubscribed thread pools are what make fits slow and timings irreproducible)."""
+    try:
+        from threadpoolctl import threadpool_limits
+    except ImportError:  # pragma: no cover - ships with scikit-learn
+        return _run(job)
+    with threadpool_limits(limits=1):
+        return _run(job)
+
+
+def _run(job: dict[str, Any]) -> dict[str, Any]:
     kind = job.get("kind", "train")
     if kind == "prepare":
         return {k: v for k, v in _prepare(job).items() if not k.startswith("_")}
