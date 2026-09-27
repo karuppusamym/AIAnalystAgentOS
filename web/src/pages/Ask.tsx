@@ -16,6 +16,7 @@ import {
 import { guessChart } from "../lib/charts";
 import { fmtDate, fmtMs, fmtNumber, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
+import { exampleSql, starterQuestions } from "../lib/starters";
 import { to } from "../routes";
 
 /** Reorder a result so the hinted x / y columns come first (chart builders read columns 0 and 1). */
@@ -454,7 +455,7 @@ function Inspector({ turn }: { turn: AskTurn }) {
 // ------------------------------------------------------------------------------------ page
 export function AskPage() {
   const { wsId = "" } = useParams();
-  const assets = useAsync(() => api.listAssets(wsId), [wsId]);
+  const assets = useAsync(() => api.catalog(wsId), [wsId]);
   const [params, setParams] = useSearchParams();
   const threadId = params.get("thread");
   const [search, setSearch] = useState("");
@@ -476,15 +477,8 @@ export function AskPage() {
   const [running, setRunning] = useState(false);
   const [explain, setExplain] = useState<SqlExplanation | null>(null);
   const [explaining, setExplaining] = useState(false);
-  const incident = assets.data?.find((a) => a.selected && a.name.toLowerCase() === "incident");
-  const incidentColumns = new Set(incident?.columns.map((c) => c.name) ?? []);
-  const sqlExamples = incident ? [
-    { label: "Count incidents", sql: `SELECT COUNT(*) AS incident_count FROM ${incident.fq}` },
-    ...(incidentColumns.has("priority") ? [{ label: "Incidents by priority", sql: `SELECT priority, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY priority ORDER BY incident_count DESC` }] : []),
-    ...(incidentColumns.has("made_sla") ? [{ label: "SLA outcome", sql: `SELECT made_sla, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY made_sla ORDER BY incident_count DESC` }] : []),
-    ...(incidentColumns.has("assignment_group_name") ? [{ label: "Top assignment groups", sql: `SELECT assignment_group_name, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY assignment_group_name ORDER BY incident_count DESC LIMIT 10` }] : []),
-    ...(incidentColumns.has("reopen_count") ? [{ label: "Reopened incidents", sql: `SELECT COUNT(*) AS reopened_incidents FROM ${incident.fq} WHERE reopen_count > 0` }] : []),
-  ] : [];
+  const sqlExamples = exampleSql(assets.data ?? []);
+  const starters = starterQuestions(assets.data ?? []);
 
   useEffect(() => {
     let stale = false;
@@ -631,6 +625,16 @@ export function AskPage() {
                   <p><strong>{pending}</strong></p>
                   {live.length ? <Stages stages={live} live /> : <Loading label="Starting…" />}
                 </article>
+              )}
+              {!thread?.turns.length && !pending && starters.length > 0 && (
+                <div className="starter-questions">
+                  <p className="small muted">Try asking — built from your tables, no model involved:</p>
+                  <div className="chip-row" aria-label="Suggested questions">
+                    {starters.map((q) => (
+                      <button key={q} type="button" className="btn btn-sm" disabled={asking} onClick={() => void ask(q)}>{q}</button>
+                    ))}
+                  </div>
+                </div>
               )}
               <form className="form" data-tour="ask-box" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
                 <Field label="Question" htmlFor="ask-q">

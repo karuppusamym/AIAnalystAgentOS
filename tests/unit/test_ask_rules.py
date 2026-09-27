@@ -233,3 +233,25 @@ def test_a_catalog_that_cannot_be_read_means_no_rule_answer(monkeypatch):
     monkeypatch.setattr(ar, "load_tables", boom)
     ctx, _ = _ask_ctx()
     assert ar.plan_for(ctx, "distribution of tickets") is None
+
+
+@pytest.mark.parametrize("q", ["Which assignment group has the most tickets?", "what category had the highest number of tickets",
+                               "Which contact type received the most tickets?"])
+def test_which_has_the_most_is_a_top_ten_ranked_count(q):
+    p = plan(q)
+    assert p is not None and p.status == "answer" and p.limit == ar.WHICH_TOP_N and p.order == "measure_desc"
+    assert p.measure[1] == "count" and len(p.dims) == 1
+    assert ar.sql_for(p).endswith(f"LIMIT {ar.WHICH_TOP_N}")
+
+
+def test_which_has_the_most_of_an_unknown_grouping_falls_through():
+    assert plan("which planet has the most tickets") is None
+
+
+def test_a_foreign_key_groups_by_its_readable_label():
+    table = tickets()
+    table.columns.append(col("assignment_group", "text", "foreign_key", "id", 9))
+    p = plan("Which assignment group has the most tickets?", [table])
+    assert p.dims[0][0] == "assignment_group_name"
+    p = plan("tickets by assignment group", [table])
+    assert p.dims[0][0] == "assignment_group_name"

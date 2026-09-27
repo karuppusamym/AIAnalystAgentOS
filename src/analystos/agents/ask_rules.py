@@ -67,6 +67,9 @@ _COUNT_NOUNS = frozenset({"count", "number", "volume", "record", "row", "entry",
 
 _SHAPES: list[tuple[str, re.Pattern[str]]] = [
     ("top", re.compile(r"^(?P<dir>top|bottom) (?P<n>\d{1,3}) (?P<y>.+?)(?: by (?P<x>.+))?$")),
+    # "which assignment group has the most incidents": a ranked count, the top 10 (articles are already dropped)
+    ("top", re.compile(r"^(?:which|what) (?P<y>.+?) (?:has|have|had|gets|got|sees|saw|receives|received|handles|handled) "
+                       r"(?:most|highest number of|largest number of|greatest number of) (?P<x>.+)$")),
     ("distribution", re.compile(r"^(?:distribution|breakdown|split|mix) of (?P<x>.+?)(?: " + _CUE + r" (?P<y>.+))?$")),
     ("distribution", re.compile(r"^(?P<x>.+?) (?:distribution|breakdown)(?: " + _CUE + r" (?P<y>.+))?$")),
     ("distribution", re.compile(r"^(?P<x>.+?) (?:broken down|split|grouped|segmented|distributed) by (?P<y>.+)$")),
@@ -75,6 +78,9 @@ _SHAPES: list[tuple[str, re.Pattern[str]]] = [
     ("count", re.compile(r"^(?P<x>.+?) (?:count|counts|volume) (?:" + _CUE + r") (?P<y>.+)$")),
     ("count", re.compile(r"^(?P<x>[a-z0-9 ]+?) (?:by|per) (?P<y>.+)$")),
 ]
+
+
+WHICH_TOP_N = 10  # "which X has the most Y" answers with the top ten, so ties and the runners-up are visible
 
 
 @dataclass
@@ -125,7 +131,7 @@ def parse(question: str) -> Intent | None:
         g = m.groupdict()
         intent = Intent(shape=shape, dims=_split_dims(g.get("y")), grain=grain)
         if shape == "top":
-            intent.top, intent.descending = int(g["n"]), g["dir"] == "top"
+            intent.top, intent.descending = int(g.get("n") or WHICH_TOP_N), (g.get("dir") or "top") == "top"
             intent.dims = _split_dims(g["y"])
             x = (g.get("x") or "").strip()
             am = re.match(r"^" + _AGG + r" (?:of )?(?P<m>.+)$", x)
@@ -331,6 +337,14 @@ class _Ambiguous(Exception):
         self.phrase, self.candidates = phrase, candidates
 
 
+def _readable(column: Column, columns: list[Column]) -> Column:
+    """A foreign key's denormalised label (`region` → `region_name`) when the table
+    has one: a grouping by opaque key values answers the question but nobody can read it."""
+    if column.role != "foreign_key":
+        return column
+    return next((c for c in columns if c.name == f"{column.name}_name"), column)
+
+
 def _match(phrase: str, columns: list[Column], table: Table, lex: Any) -> Column | None:
     """The one column a phrase names: every word of the phrase explained by the column's words
     (the table's own entity words may be dropped: "order region" on orders); an exact name wins.
@@ -343,8 +357,14 @@ def _match(phrase: str, columns: list[Column], table: Table, lex: Any) -> Column
             continue
         exact = [c for c in columns if w == c.name_words]
         if len(exact) == 1:
-            return exact[0]
+            return _readable(exact[0], columns)
         found = exact or [c for c in columns if w <= c.words]
+        readable: list[Column] = []
+        for c in found:
+            r = _readable(c, columns)
+            if not any(r is x for x in readable):
+                readable.append(r)
+        found = readable
         if len(found) == 1:
             return found[0]
         if len(found) > 1:
