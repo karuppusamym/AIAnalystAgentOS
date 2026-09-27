@@ -22,14 +22,19 @@ def test_heldout_platform_tier(control_db):
     for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "AZURE_OPENAI_API_KEY"):
         os.environ.pop(key, None)  # the rule path; a live run is scripts/benchmark_heldout.py --models live
     full = bool(os.environ.get("ANALYSTOS_HELDOUT_FULL"))
+    picked = {t.strip() for t in os.environ.get("ANALYSTOS_HELDOUT_ONLY", "").split(",") if t.strip()}
     corpus = R.load_corpus()
-    platform = R.run("platform", only=None if full else SMOKE, corpus=corpus)
+    if picked:  # a measurement of the named tasks only (debugging a family); asserts harness health like FULL
+        full, subset = True, picked
+    else:
+        subset = None if full else SMOKE
+    platform = R.run("platform", only=subset, corpus=corpus)
     o = platform.summary["overall"]
     out = os.environ.get("ANALYSTOS_HELDOUT_REPORT")
     if out:
         from evaluation.heldout.report import render
 
-        runs = {"component": R.run("component", only=None if full else SMOKE, corpus=corpus), "platform": platform}
+        runs = {"component": R.run("component", only=subset, corpus=corpus), "platform": platform}
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render(runs, corpus))
