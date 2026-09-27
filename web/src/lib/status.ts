@@ -26,6 +26,22 @@ const TONES: Record<string, Tone> = {
   not_applicable: "neutral", merged: "info", staged: "running",
 };
 
+/** Server enums whose plain reading is not just the lower-cased word. */
+const STATUS_WORDS: Record<string, string> = {
+  waiting_user: "waiting for you", failed_verification: "not verified", approval_required: "needs approval",
+  awaiting_approval: "awaiting approval", approved_plan: "plan approved", needs_input: "needs input",
+};
+
+/**
+ * The words a status badge shows: one vocabulary in one case everywhere, so "COMPLETED" from the
+ * run API and "verified" from a finding read the same way ("completed", "verified").
+ */
+export function statusLabel(status: string | null | undefined): string {
+  if (!status) return "unknown";
+  const s = status.toLowerCase();
+  return STATUS_WORDS[s] ?? s.replace(/_/g, " ");
+}
+
 export function toneFor(status: string | null | undefined): Tone {
   if (!status) return "neutral";
   return TONES[status.toLowerCase()] ?? "neutral";

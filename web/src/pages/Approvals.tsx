@@ -40,12 +40,15 @@ export function ApprovalsPage() {
       <Tabs value={filter} onChange={setFilter} tabs={[{ id: "pending", label: "Pending" }, { id: "all", label: "All" }]} />
       <ErrorBox error={list.error} onRetry={list.reload} />
       {list.loading && !list.data && <Loading />}
-      {list.data && rows.length === 0 && (
-        <EmptyState title={filter === "pending" ? "Nothing waiting for approval" : "No approvals yet"}>
-          Approvals are requested by investigations; see <Link to={to.investigations(wsId)}>Investigations</Link>.
+      {list.data && rows.length === 0 && !search && (
+        <EmptyState title={filter === "pending" ? "Nothing waiting for approval" : "No approvals yet"}
+          action={filter === "pending" && all.length > 0
+            ? <button type="button" className="btn btn-sm" onClick={() => setFilter("all")}>Show decided approvals</button> : undefined}>
+          Publishing, pinning and other changes outside the platform ask for an approval here; see <Link to={to.investigations(wsId)}>Investigations</Link>.
         </EmptyState>
       )}
-      <div className="review-layout">
+      {/* With nothing to review and no search to clear, the queue and detail panes would only repeat the empty state. */}
+      {(rows.length > 0 || !!search) && <div className="review-layout">
         <aside className="review-queue" aria-label="Approval proposals">
           <label className="field"><span>Find a proposal</span><input type="search" placeholder="Metric, action or destination…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
           <p className="muted small">{rows.length} proposal{rows.length === 1 ? "" : "s"}</p>
@@ -63,7 +66,7 @@ export function ApprovalsPage() {
             {(open.run_id || typeof open.evidence?.run_id === "string") && <Link className="small" to={to.run(wsId, open.run_id ?? String(open.evidence.run_id))}>Open the investigation</Link>}
           </div> : <EmptyState title="No proposal selected">Select a proposal from the queue. Try a broader search if nothing matches.</EmptyState>}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

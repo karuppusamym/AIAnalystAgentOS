@@ -73,7 +73,7 @@ export function WorkspaceHomePage() {
           <AtAGlance ws={w} runs={runs.data} />
         </>
       )}
-      {w.role === "owner" && !!runs.data?.length && <WorkModesSettings wsId={wsId} />}
+      {w.role === "owner" && !!runs.data?.length && <WorkModesSettings wsId={wsId} collapsed />}
     </div>
   );
 }

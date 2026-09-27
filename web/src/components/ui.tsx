@@ -1,13 +1,13 @@
 import { useId, useState, type ReactNode } from "react";
 import { fmtValue, formatKnown, type ValueFormat } from "../lib/format";
-import { toneFor } from "../lib/status";
+import { statusLabel, toneFor } from "../lib/status";
 
 export function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
   const tone = toneFor(status);
   return (
-    <span className={`badge badge-${tone}`} data-tone={tone}>
+    <span className={`badge badge-${tone}`} data-tone={tone} data-status={status ?? undefined}>
       <span className="badge-dot" aria-hidden="true" />
-      {label ?? status ?? "unknown"}
+      {label ?? statusLabel(status)}
     </span>
   );
 }
@@ -38,11 +38,13 @@ export function Notice({ children, tone = "info" }: { children: ReactNode; tone?
   );
 }
 
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+/** An empty list: what is missing, why, and (with `action`) the one next step. */
+export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="empty">
       <p className="empty-title">{title}</p>
       {children && <div className="empty-body">{children}</div>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }

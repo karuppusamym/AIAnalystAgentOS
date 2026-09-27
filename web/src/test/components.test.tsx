@@ -19,10 +19,15 @@ afterEach(() => {
 });
 
 describe("StatusBadge", () => {
-  it("renders the status with its tone", () => {
+  it("renders the status in plain words with its tone", () => {
     render(<StatusBadge status="WAITING_USER" />);
-    const el = screen.getByText("WAITING_USER");
+    const el = screen.getByText("waiting for you");
     expect(el.getAttribute("data-tone")).toBe("warning");
+    expect(el.getAttribute("data-status")).toBe("WAITING_USER");
+  });
+  it("shows every status in one case, without underscores", () => {
+    render(<><StatusBadge status="COMPLETED" /><StatusBadge status="in_progress" /><StatusBadge status="verified" /></>);
+    for (const t of ["completed", "in progress", "verified"]) expect(screen.getByText(t)).toBeTruthy();
   });
 });
 
