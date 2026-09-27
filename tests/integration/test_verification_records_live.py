@@ -81,6 +81,26 @@ def _records(run_id: str) -> dict[str, dict]:
                 for i, h in rows}
 
 
+def _claim_record(run_id: str, insight_id: str, timeout: float = 120) -> str:
+    """The id of the verification record of the claim step that records a finding. The run is recorded as
+    Data Thread steps right after it completes (engine -> steps.record_quietly), so wait for it."""
+    from analystos.db.base import session_scope
+    from analystos.db.models import AnalysisStep
+    from analystos.evidence.verification import latest
+
+    started = time.time()
+    while time.time() - started < timeout:
+        with session_scope() as s:
+            claims = s.scalars(select(AnalysisStep).where(AnalysisStep.container_type == "run",
+                                                          AnalysisStep.container_id == run_id, AnalysisStep.kind == "claim"))
+            step = next((c for c in claims if (c.origin or {}).get("id") == insight_id), None)
+            rec = latest(s, "step", [step.id]).get(step.id) if step is not None else None
+            if rec is not None:
+                return rec.id
+        time.sleep(0.5)
+    raise AssertionError(f"finding {insight_id} of run {run_id} was not recorded as a claim step")
+
+
 def _active(run_id: str) -> dict[str, dict]:
     return {c: r for c, r in _records(run_id).items() if r["status"] == "verified" and r["state"] == "ACTIVE"}
 
@@ -153,8 +173,10 @@ def test_verdicts_void_when_a_dependency_changes(control_db, pg_orders, monkeypa
         why = explain_run(s, run.id)
     assert why["numbers"] > 0 and why["by_state"] == {"ok": why["numbers"]}, why["by_state"]
 
-    # ---- editing a step's SQL/spec voids that verdict only (P7-04 will call the same public hook)
+    # ---- editing a step's SQL/spec voids that verdict only, and the claim step that carries it (P7-04 calls
+    # the same public hook)
     edited = sorted(set(verified) - on_returns - cites_term)[0]
+    claim_record = _claim_record(run.id, verified[edited]["insight_id"])
     from analystos.db.models import Hypothesis
 
     with session_scope() as s:
@@ -162,7 +184,7 @@ def test_verdicts_void_when_a_dependency_changes(control_db, pg_orders, monkeypa
         h.spec = {**h.spec, "min_group_size": h.spec.get("min_group_size", 30), "filters": [
             {"column": "channel", "op": "!=", "value": "__none__"}]}
         voided = V.dependency_changed(s, "query", h.id, f"step {h.code} edited", event="step.edited")
-    assert voided == [verified[edited]["record_id"]]
+    assert sorted(voided) == sorted([verified[edited]["record_id"], claim_record])
     assert _records(run.id)[edited]["void_kind"] == "query"
 
     # ---- an edit to the cited glossary section (knowledge studio -> revision -> index) voids its citers
