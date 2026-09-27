@@ -99,7 +99,10 @@ test.describe("light IA (spec v4 §15)", () => {
 
 /** Top-level nav entries: job kinds and panels must never add one. */
 async function navEntries(page: Page): Promise<number> {
-  return page.getByRole("navigation", { name: "Main" }).getByRole("link").count();
+  const links = page.getByRole("navigation", { name: "Main" }).getByRole("link");
+  // Count only once the nav has rendered; an early count of 0 made the comparison meaningless.
+  await expect(links.first()).toBeVisible();
+  return links.count();
 }
 
 test.describe("job-kind journeys without new top-level screens", () => {
