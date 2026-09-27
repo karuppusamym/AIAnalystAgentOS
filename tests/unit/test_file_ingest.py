@@ -100,3 +100,24 @@ def test_the_ingest_spec_is_a_closed_contract():
     assert spec.mode == "merge" and spec.mapping is None
     with pytest.raises(ValueError):
         IngestSpec(path="orders.csv", table="orders", mode="upsert")
+
+
+def test_append_accepts_a_lossless_widening_and_refuses_a_narrowing(monkeypatch):
+    """Live journey 2026-09-27: appending a file whose amounts were whole numbers (inferred bigint) to a staged
+    double precision column was refused. INSERT ... SELECT converts a widening losslessly; a narrowing or a
+    change of kind is still refused with the column named."""
+    from analystos.staging import loader
+
+    staged = [("order_id", "bigint"), ("amount", "double precision"), ("region", "text")]
+    monkeypatch.setattr(loader, "_columns_of", lambda cur, ident: staged if ident == "final" else incoming)
+    incoming = [("order_id", "integer"), ("amount", "bigint"), ("region", "text")]
+    loader._check_same_columns(None, "final", "load", "more.csv")
+    for bad in ([("order_id", "bigint"), ("amount", "text"), ("region", "text")],
+                [("order_id", "bigint"), ("amount", "double precision"), ("region", "bigint")]):
+        incoming = bad
+        with pytest.raises(InvalidInput, match="in the staged table but"):
+            loader._check_same_columns(None, "final", "load", "more.csv")
+    staged = [("order_id", "integer")]
+    incoming = [("order_id", "bigint")]  # bigint into integer narrows
+    with pytest.raises(InvalidInput, match="order_id is integer in the staged table but bigint"):
+        loader._check_same_columns(None, "final", "load", "more.csv")

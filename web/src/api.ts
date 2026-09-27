@@ -2223,7 +2223,7 @@ export type BriefPatchBody = Schemas["BriefPatch"];
 export type JobKindKey = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
 
 export interface JobKindReason {
-  code: "no_executor" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
+  code: "no_executor" | "no_ml_spec" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
   message: string;
   remediation: string;
 }
@@ -2422,7 +2422,8 @@ export interface BranchCompare {
 export interface MergeResult {
   report: { id: string; version: number; name: string; content: { kind: "data_thread"; title: string; sections: Dict[]; branches: Dict[] } };
   branch: Branch;
-  included: string[];
+  /** services/branches.py `merge`: how many sections the report took from the branch (a count, not ids). */
+  included: number;
   excluded: Dict[];
 }
 
@@ -3449,6 +3450,8 @@ export const api = {
       { path: { workspace_id: ws, materialization_id: id } }) as Promise<Materialization>,
   writerDestinations: (ws: string) =>
     get("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws) }) as Promise<WriterDestination[]>,
+  designateDestination: (ws: string, body: Schemas["DestinationIn"]) =>
+    post("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws), body }) as Promise<WriterDestination>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)

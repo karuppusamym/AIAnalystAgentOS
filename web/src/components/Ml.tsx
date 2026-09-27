@@ -586,7 +586,10 @@ export function ExperimentsPanel({ wsId, role, selected, newKind, onSelect, onNe
 // ------------------------------------------------------------------------------------ Outputs: models and scoring
 function ScoreForm({ wsId, champion, onScored }: { wsId: string; champion: ModelVersion; onScored: (r: ScoringRun | null, note: string) => void }) {
   const id = useId();
-  const [asset, setAsset] = useState("stg_sn.incident");
+  // Default to the table the champion was trained on (same columns, in scope); never a fixed demo name.
+  const trained = useAsync(() => api.experiment(wsId, champion.experiment_id), [wsId, champion.experiment_id]);
+  const [typed, setAsset] = useState<string | null>(null);
+  const asset = typed ?? trained.data?.dataset_asset ?? "";
   const [output, setOutput] = useState(`${champion.name}_scores`.slice(0, 40));
   const [defId, setDefId] = useState<string | null>(null);
   const prep = useAction();
@@ -610,7 +613,7 @@ function ScoreForm({ wsId, champion, onScored }: { wsId: string; champion: Model
           </div>
           <p className="small muted">Pinned to v{champion.version} (package <code>{shortHash(champion.package_hash, 10)}</code>); a new version needs a new scoring definition.</p>
           <ErrorBox error={prep.error} />
-          <button type="submit" className="btn btn-sm" disabled={prep.busy}>Prepare the scoring definition</button>
+          <button type="submit" className="btn btn-sm" disabled={prep.busy || !asset.trim()}>Prepare the scoring definition</button>
         </form>
       )}
       {defId && (

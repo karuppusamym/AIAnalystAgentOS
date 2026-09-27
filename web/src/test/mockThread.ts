@@ -213,10 +213,11 @@ function merge(branch: string, body: { title?: string | null }) {
   s.branches[branch] = { ...b, status: "merged", merged_into: ["art_thread_report"] };
   const flagged = steps.filter((x) => x.status === "flagged");
   return ok({
-    report: { id: "art_thread_report", version: 1, name: body.title || `Data Thread: ${b.name}`, content: { kind: "data_thread", title: body.title || b.name,
+    // as services/branches.py: the artifact's name is generated, the title lives in its content, `included` is a count
+    report: { id: "art_thread_report", version: 1, name: "thread-report-r_1", content: { kind: "data_thread", title: body.title || `Report from ${b.name}`,
       sections: steps.filter((x) => x.status !== "flagged").map((x) => ({ step_id: x.id, version: x.version, title: x.title })),
       branches: [{ id: b.id, name: b.name, parent: b.parent_branch_id }] } },
-    branch: s.branches[branch], included: steps.filter((x) => x.status !== "flagged").map((x) => x.id),
+    branch: s.branches[branch], included: steps.filter((x) => x.status !== "flagged").length,
     excluded: flagged.map((x) => ({ step_id: x.id, reason: "flagged: failed verification" })),
   });
 }

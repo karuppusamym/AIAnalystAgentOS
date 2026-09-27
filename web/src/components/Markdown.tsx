@@ -7,7 +7,8 @@ import type { ReactNode } from "react";
  */
 export function renderInline(text: string, keyBase = "i"): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
+  // Underscores inside a word never emphasise (CommonMark): `incident_made_sla`, `learning_rate` stay intact.
+  const re = /(\*\*[^*]+\*\*|(?<!\w)__[^_]+__(?!\w)|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|\*[^*\s][^*]*\*|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;

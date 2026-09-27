@@ -264,7 +264,9 @@ function StepCard({ wsId, step, role, highlight, onRevised, onFork, forking }: {
   const act = useAction();
   const canRun = roleAtLeast(role, "analyst") && !step.inherited;
   const canPin = roleAtLeast(role, "editor");
-  const pinnable = step.status === "ok" && step.verification_record?.state === "ACTIVE" && step.verification_record.badge === "verified";
+  // services/steps.py pin(): only a query or an AnalysisSpec method step has a frozen query to replay
+  const pinKind = step.kind === "query" || (step.kind === "method" && !!step.spec.analysis_spec);
+  const pinnable = pinKind && step.status === "ok" && step.verification_record?.state === "ACTIVE" && step.verification_record.badge === "verified";
   const vr = step.verification_record;
   const failed = step.checks.filter((c) => !c.passed);
   const rerun = async () => {
@@ -320,7 +322,8 @@ function StepCard({ wsId, step, role, highlight, onRevised, onFork, forking }: {
             Fork from here<span className="sr-only"> ({step.title})</span></button>
         )}
       </div>
-      {canPin && !pinnable && <p className="small muted">Pinning needs an ok version with an active verified verdict.</p>}
+      {canPin && !pinnable && <p className="small muted">{pinKind ? "Pinning needs an ok version with an active verified verdict."
+        : "Only a query or method step can be pinned; pin the step this one reads."}</p>}
       <ErrorBox error={act.error} />
       {panel === "edit" && <EditStepForm wsId={wsId} step={detail.data ?? step} onCancel={() => setPanel(null)}
         onDone={(r) => { setPanel(null); onRevised(r); }} />}
@@ -550,8 +553,8 @@ export function DataThread({ wsId, type, id, branch, role, onBranch }: {
         <section className="card" aria-label="Merge into a report">
           <div className="card-body stack">
             {merged ? (
-              <Notice tone="success">Merged into the report "{merged.report.name}" (version {merged.report.version}) with {merged.included.length} step
-                {merged.included.length === 1 ? "" : "s"}{merged.excluded.length ? `; ${merged.excluded.length} left out (${merged.excluded.map((x) => String(x.reason)).join("; ")})` : ""}.
+              <Notice tone="success">Merged into the report "{merged.report.content?.title || merged.report.name}" (version {merged.report.version}) with {merged.included} step
+                {merged.included === 1 ? "" : "s"}{merged.excluded.length ? `; ${merged.excluded.length} left out (${merged.excluded.map((x) => String(x.reason)).join("; ")})` : ""}.
                 {" "}<Link to={to.reports(wsId, merged.report.id)}>Open it in Outputs</Link>. It keeps this branch&apos;s lineage.</Notice>
             ) : (
               <form className="form-inline" onSubmit={merge} aria-label="Merge into a report">

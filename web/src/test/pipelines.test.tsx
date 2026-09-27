@@ -29,6 +29,36 @@ async function openPipeline(version = 2) {
   return screen.findByRole("region", { name: `Pipeline p1_clean v${version}` });
 }
 
+describe("creating a pipeline in the UI (live regression)", () => {
+  // live 2026-09-27: the panel said "the engineer agent proposes one" but offered no way to save a
+  // PipelineSpec, publish a draft ("Publish the pipeline first") or allow a writer destination.
+  it("an owner allows a destination, saves a pipeline spec as a draft, publishes it, and can then dry-run it", async () => {
+    const f = mockFetch();
+    renderAt(`/w/${WS}/work?tab=prepare`);
+    const card = await screen.findByRole("region", { name: "Pipelines" });
+    fireEvent.click(within(card).getByText(/^Destinations the writer may use/));
+    const allow = within(card).getByRole("form", { name: "Allow a destination" });
+    fireEvent.change(within(allow).getByLabelText("Schema"), { target: { value: "aos_mart" } });
+    fireEvent.change(within(allow).getByLabelText(/^Tables/), { target: { value: "orders_mart" } });
+    fireEvent.click(within(allow).getByRole("button", { name: "Allow destination" }));
+    expect(await within(card).findByText("aos_mart")).toBeTruthy();
+    expect(bodyOf(calls(f, "POST", /\/writer-destinations$/)[0][1])).toEqual({ schema: "aos_mart", tables: ["orders_mart"] });
+
+    const spec = { type: "pipeline", name: "orders_mart", recipes: [{ name: "orders_clean" }],
+      output: { output: "clean", keys: ["order_id"] }, destination: { schema: "aos_mart", table: "orders_mart" } };
+    fireEvent.click(within(card).getByText("Advanced: new pipeline from a specification"));
+    const form = within(card).getByRole("form", { name: "New pipeline" });
+    fireEvent.change(within(form).getByLabelText(/^Pipeline specification/), { target: { value: JSON.stringify(spec) } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save draft" }));
+    const detail = await screen.findByRole("region", { name: "Pipeline orders_mart v1" });
+    expect(bodyOf(calls(f, "POST", /\/pipelines$/)[0][1])).toEqual({ spec });
+    expect((within(detail).getByRole("button", { name: "Dry run" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(detail).getByRole("button", { name: "Publish" }));
+    await vi.waitFor(() => expect((within(detail).getByRole("button", { name: "Dry run" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(calls(f, "POST", /\/pipelines\/pip_orders_mart_1\/publish$/)).toHaveLength(1);
+  });
+});
+
 describe("pipelines in Work → Prepare data (P6-03)", () => {
   it("shows the source-to-output DAG and the transformation diff against the previous version", async () => {
     mockFetch();
