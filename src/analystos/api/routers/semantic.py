@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows
-from analystos.contracts.semantic import MetricProposalIn
+from analystos.contracts.semantic import MetricProposalIn, SemanticDataset
 from analystos.core.errors import InvalidInput
 from analystos.db.models import SemanticRelationshipCandidate, User
 from analystos.governance.policy import load_in_workspace, require_role
@@ -178,6 +178,22 @@ def model_diff(workspace_id: str, version: int | None = None, user: User = Depen
                session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return review.model_diff(session, workspace_id, version)
+
+
+class ModelProposalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    datasets: list[SemanticDataset] = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/model/proposals", status_code=201)
+def propose_model(workspace_id: str, body: ModelProposalIn, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function")):
+    """Propose entities and grain (datasets and their primary keys) as a `proposed` structure version (P4-05):
+    another person approves it through `/model/approve`; joins go through the relationship queue."""
+    require_role(session, user, workspace_id, "editor")
+    return row(review.propose_structure(session, workspace_id, session.merge(user), body.datasets,
+                                        description=body.description))
 
 
 @router.post("/model/approve")
