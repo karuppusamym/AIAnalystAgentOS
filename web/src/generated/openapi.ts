@@ -2688,6 +2688,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/knowledge/glossary/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan Glossary
+         * @description Scan the catalog and recent unanswered Ask questions for glossary terms and missing descriptions; queue
+         *     them for review. Rules first; nothing is written to the glossary or the catalog until a person approves.
+         */
+        post: operations["scan_glossary_api_workspaces__workspace_id__knowledge_glossary_scan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/knowledge/graph": {
         parameters: {
             query?: never;
@@ -2926,6 +2947,26 @@ export interface paths {
          * @description Approve, edit-then-approve or reject drafts in one batch: one workspace-pack revision.
          */
         post: operations["review_suggestions_api_workspaces__workspace_id__knowledge_suggestions_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/knowledge/suggestions/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggestion Summary
+         * @description Pending drafts per kind, and `questions`: glossary terms and descriptions a person should answer.
+         */
+        get: operations["suggestion_summary_api_workspaces__workspace_id__knowledge_suggestions_summary_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6001,6 +6042,27 @@ export interface components {
             spec?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** GlossaryScanIn */
+        GlossaryScanIn: {
+            /**
+             * Include Ask
+             * @description also suggest terms from recent unanswered Ask questions
+             * @default true
+             */
+            include_ask?: boolean;
+            /**
+             * Include Descriptions
+             * @description also ask about undescribed tables, views and columns
+             * @default true
+             */
+            include_descriptions?: boolean;
+            /**
+             * Use Model
+             * @description let the glossary_suggestion model draft definitions the rules could not (its mode, availability and the workspace policy still decide)
+             * @default true
+             */
+            use_model?: boolean;
         };
         /** GrantIn */
         GrantIn: {
@@ -13135,6 +13197,44 @@ export interface operations {
             };
         };
     };
+    scan_glossary_api_workspaces__workspace_id__knowledge_glossary_scan_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GlossaryScanIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     semantic_graph_api_workspaces__workspace_id__knowledge_graph_get: {
         parameters: {
             query?: never;
@@ -13635,6 +13735,40 @@ export interface operations {
                 "application/json": components["schemas"]["ReviewIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggestion_summary_api_workspaces__workspace_id__knowledge_suggestions_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

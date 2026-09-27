@@ -106,12 +106,49 @@ function initialSuggestions(): KnowledgeSuggestion[] {
   ];
 }
 
+/** What `POST …/knowledge/glossary/scan` queues in the mock: a code-set skeleton, a defined abbreviation, a question. */
+export const SCAN_TERM = "ksug_gl_priority";
+export const SCAN_ABBR = "ksug_gl_cmdb";
+export const SCAN_QUESTION = "ksug_desc_flag";
+
+function scanSuggestions(): KnowledgeSuggestion[] {
+  const base = { batch: "gscan_1", status: "pending" as const, decided_by: null, decided_at: null, reason: null, revision: null, created_at: T,
+    proposed_by: `user:${ME}` };
+  const rule = { source: "rule", rule: "code_set", scan: "gscan_1" };
+  return [
+    { ...base, id: SCAN_TERM, kind: "glossary_term", subject: "glossary:priority", title: "Priority", path: "glossary/priority.md",
+      confidence: 0.2, origin: "glossary.scan",
+      fields: { name: field("Priority", 0.6, rule), body: field("Priority codes: 1 = ?; 2 = ?; 3 = ?; 4 = ?; 5 = ?.", 0.2, rule),
+        synonyms: field([], 0.5, rule), mapped_columns: field(["servicenow.incident.priority"], 0.9, rule),
+        evidence: field([{ kind: "code_set", where: "incident.priority", values: ["1", "2", "3", "4", "5"], detail: "5 values: 1–5" },
+          { kind: "ask", question: "how many P1 incidents breached", turn_id: "askt_1", detail: "asked in Ask" }], 1, rule),
+        question: field("What do the Priority codes 1–5 mean?", 1, rule), placeholder: field(true, 1, rule) } },
+    { ...base, id: SCAN_ABBR, kind: "glossary_term", subject: "glossary:cmdb", title: "CMDB", path: "glossary/cmdb.md", confidence: 0.5,
+      origin: "glossary.scan",
+      fields: { name: field("CMDB", 0.6, rule), body: field("CMDB: Configuration Management Database.", 0.5, { ...rule, rule: "abbreviation" }),
+        synonyms: field(["Configuration Management Database"], 0.5, rule), mapped_columns: field([], 0.5, rule),
+        evidence: field([{ kind: "abbreviation", where: "cmdb_ci", detail: "“cmdb” in the name cmdb_ci" }], 1, rule),
+        question: field("What does CMDB mean in your business?", 1, rule), placeholder: field(false, 1, rule) } },
+    { ...base, id: SCAN_QUESTION, kind: "description_question", subject: "describe:column:ast_inc:u_flag2", title: "Describe incident.u_flag2",
+      path: "notes/describe-incident-u-flag2.md", confidence: 0.2, origin: "glossary.describe",
+      fields: { question: field("What does “u_flag2” in Incident mean?", 1, rule),
+        description: field("U flag2.", 0.2, { source: "rule", rule: "catalog" }),
+        evidence: field([{ kind: "description", where: "incident.u_flag2", detail: "the name rules did not understand this column" }], 1, rule),
+        target: field({ kind: "column", asset_id: "ast_inc", column: "u_flag2" }, 1, rule) } },
+  ];
+}
+
 const k = { packs: initialPacks(), suggestions: initialSuggestions(), question: "" };
 
 export function resetKnowledgeState(): void {
   k.packs = initialPacks();
   k.suggestions = initialSuggestions();
   k.question = "";
+}
+
+/** Queue what a glossary scan would (tests of the Overview count). */
+export function seedScan(): void {
+  k.suggestions.push(...scanSuggestions());
 }
 
 /** The mock's stand-in for the context compiler: remember what was asked last. */
@@ -196,11 +233,29 @@ function review(decisions: { id: string; action: string; fields?: Dict; reason?:
   const files: Record<string, MockDoc> = {};
   const out: ReviewResult = { revision: null, approved: [], rejected: [], errors: [] };
   const decided: [KnowledgeSuggestion, "approved" | "rejected", string | null][] = [];
+  const notes: Record<string, string> = {};
   for (const d of decisions) {
     const s = k.suggestions.find((x) => x.id === d.id);
     if (!s) { out.errors.push({ id: d.id, error: "not_found" }); continue; }
     if (s.status !== "pending") { out.errors.push({ id: d.id, error: "not_pending", status: s.status }); continue; }
     const origin = `review:${s.origin}`;
+    if (s.kind === "glossary_term" || s.kind === "description_question") {
+      // applied outside the pack: a glossary entry or catalog text (no document, no revision)
+      if (d.action === "reject") {
+        s.reason = d.reason ?? null;
+        decided.push([s, "rejected", null]);
+        continue;
+      }
+      const edited = d.action === "edit" ? (d.fields ?? {}) : {};
+      const glossary = s.kind === "glossary_term";
+      const missing = glossary ? s.fields.placeholder?.value === true && !("body" in edited)
+        : !("description" in edited) && s.fields.description?.provenance?.source !== "model";
+      if (missing) { out.errors.push({ id: d.id, error: glossary ? "definition_required" : "answer_required" }); continue; }
+      for (const [name, value] of Object.entries(edited)) s.fields[name] = { value, confidence: 1, provenance: { source: "human", by: `user:${ME}` } };
+      notes[s.id] = glossary ? "glossary term ctx_new created" : "catalog updated";
+      decided.push([s, "approved", null]);
+      continue;
+    }
     if (d.action === "reject") {
       const path = `negative/${s.kind}-${s.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
       files[path] = { frontmatter: { type: "Negative Knowledge", title: `Rejected: ${s.title}`, status: "stable", verified: [{ by: `human:${ME}`, at: T }],
@@ -229,7 +284,7 @@ function review(decisions: { id: string; action: string; fields?: Dict; reason?:
   }
   for (const [s, st, path] of decided) {
     Object.assign(s, { status: st, decided_by: ME, decided_at: T, revision: out.revision });
-    out[st].push({ id: s.id, path });
+    out[st].push({ id: s.id, path, ...(notes[s.id] ? { catalog: notes[s.id] } : {}) });
   }
   return out;
 }
@@ -340,6 +395,20 @@ export function knowledgeRoute(m: string, p: string, url: URL, requestBody: stri
     return { status: 200, body: k.suggestions.filter((s) => s.status === status) };
   }
   if (m === "POST" && rest === "/suggestions/review") return { status: 200, body: review((body.decisions ?? []) as never[]) };
+  if (m === "GET" && rest === "/suggestions/summary") {
+    const pending: Record<string, number> = {};
+    for (const s of k.suggestions.filter((x) => x.status === "pending")) pending[s.kind] = (pending[s.kind] ?? 0) + 1;
+    const questions = (pending.glossary_term ?? 0) + (pending.description_question ?? 0);
+    return { status: 200, body: { pending, questions, total: Object.values(pending).reduce((a, b) => a + b, 0) } };
+  }
+  if (m === "POST" && rest === "/glossary/scan") {
+    const fresh = scanSuggestions().filter((s) => !k.suggestions.some((x) => x.subject === s.subject));
+    k.suggestions.push(...fresh);
+    const terms = fresh.filter((s) => s.kind === "glossary_term").length;
+    return { status: 200, body: { glossary_terms: terms, description_questions: fresh.length - terms, candidates: fresh.length,
+      by_rule: { code_set: 1, abbreviation: 1 }, skipped_known: 3, skipped_decided: 0, assets: 2,
+      model: { called: false, filled: 0, skipped: "no model available" } } };
+  }
   if (m === "GET" && rest === "/graph") return { status: 200, body: graph(metrics()) };
   if (m === "GET" && rest === "/locate") {
     const want = url.searchParams.get("document_id");
