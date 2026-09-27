@@ -136,11 +136,15 @@ def _analysis_context(session: Session, workspace_id: str, key: str, spec: dict[
 
     from analystos.contracts.analysis_context import AnalysisContextSpec
     from analystos.db.models import SemanticMetric, Source
+    from analystos.security.injection import is_injection
 
     try:
         data = AnalysisContextSpec.model_validate(spec)
     except ValidationError as exc:
         raise InvalidInput("; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:5])) from None
+    for field in ("purpose", "business_description", "question_template"):
+        if is_injection(getattr(data, field)):
+            raise InvalidInput(f"analysis context {field} contains instructions unrelated to the business context")
     if len(set(data.source_ids)) != len(data.source_ids):
         raise InvalidInput("an analysis context cannot list a source more than once")
     found = set(session.scalars(select(Source.id).where(Source.workspace_id == workspace_id,

@@ -14,7 +14,8 @@ specification to the run. The pinned business context enters model prompts and t
 it never widens source scope. Outputs groups findings and artifacts by run question, with a
 three-panel desktop layout and responsive two/one-panel fallbacks. Data provides a two-panel
 context editor, while its definitions panel explains semantic-model validation. Run bindings and
-metric approval now read approved semantic structure, not the newest proposal.
+metric approval now read approved semantic structure, not the newest proposal. Context text is
+screened for prompt injection before save or publication.
 
 Evidence: `tests/unit/test_analysis_context.py`, `tests/unit/test_definitions_pins.py`,
 the context compiler and semantic compiler suites (48 focused Python tests),
