@@ -27,7 +27,7 @@ DETERMINISTIC_CAPABLE = {"planning", "hypothesis_generation", "follow_up_generat
                          "hypothesis_priority", "chart_selection", "feedback_classification", "stop_check", "agent_actions",
                          "pipeline_proposal",
                          "ask_route", "clarify_needed", "metric_match", "join_path_choice", "semantic_query",
-                         "ml_spec_proposal"}
+                         "ml_spec_proposal", "analyst_planning", "analyst_synthesis"}
 
 
 class LLMSettings(BaseModel):

@@ -94,6 +94,21 @@ ONLY numbers present in `history`. Return JSON: {"actions": [{"capability": str,
     "run_summary.v1": """Write an executive summary (<=120 words, markdown bullet list) of the verified findings for the objective.
 Use only numbers present in `facts`. Associations, not causation. End with one line of recommended next steps.
 Return JSON: {"summary_markdown": str}.""",
+
+    "analyst_planning.v1": """You plan an analytics question into at most 4 steps. Each step is ONE standalone
+natural-language question that a single governed query can answer (a total, a breakdown by one or two dimensions, a
+trend, a ranking, or two periods side by side). You never write SQL; the platform answers each step through its own
+governed path. Use only the dimensions and measures in the catalog. Prefer ONE step; add steps only when the question
+asks for several things at once. Return JSON: {"approach": "one sentence", "steps": [{"goal": "short goal",
+"question": "standalone question", "kind": "total|breakdown|trend|ranking|comparison|drivers|question"}]}.
+""" + UNTRUSTED_NOTE,
+
+    "analyst_synthesis.v1": """Write the answer to the analytics question from the computed facts of each step. Start with
+one sentence that answers the question directly, then short evidence bullets, then caveats. Every number you write
+must be one of the numbers in `steps` (facts, measures, series, comparison, drivers or rows), at the precision you
+choose (you may round, and write fractions as percentages); never compute a new number. Every sentence that contains a
+number must end with the step it comes from, written exactly as "(step N)". Mention the caveats and suspect checks
+given. Describe associations, never causes. Return JSON: {"text": str}.""",
 }
 
 
