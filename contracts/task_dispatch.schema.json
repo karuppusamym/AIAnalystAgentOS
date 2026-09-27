@@ -172,6 +172,54 @@
       "title": "ProbeSpec",
       "type": "object"
     },
+    "PythonCellSpec": {
+      "additionalProperties": false,
+      "description": "A notebook/step Python cell (P7-12) for `compute-py`: restricted code over the JSON input artifact named\n`inputs_artifact`, under the sandbox's static and runtime policy inside the credential-free worker.",
+      "properties": {
+        "kind": {
+          "const": "python.cell",
+          "default": "python.cell",
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 100000,
+          "title": "Code",
+          "type": "string"
+        },
+        "inputs_artifact": {
+          "title": "Inputs Artifact",
+          "type": "string"
+        },
+        "allowed_imports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Imports",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "memory_mb": {
+          "default": 1024,
+          "maximum": 65536,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "inputs_artifact"
+      ],
+      "title": "PythonCellSpec",
+      "type": "object"
+    },
     "RecipeSnapshotSpec": {
       "additionalProperties": false,
       "description": "A recipe's DuckDB statement over immutable input snapshots (ADR-0023, P6-04).",
@@ -275,6 +323,7 @@
             "mapping": {
               "conformance.probe": "#/$defs/ProbeSpec",
               "ml.job": "#/$defs/MLJobSpec",
+              "python.cell": "#/$defs/PythonCellSpec",
               "recipe.snapshot": "#/$defs/RecipeSnapshotSpec"
             },
             "propertyName": "kind"
@@ -285,6 +334,9 @@
             },
             {
               "$ref": "#/$defs/MLJobSpec"
+            },
+            {
+              "$ref": "#/$defs/PythonCellSpec"
             },
             {
               "$ref": "#/$defs/ProbeSpec"

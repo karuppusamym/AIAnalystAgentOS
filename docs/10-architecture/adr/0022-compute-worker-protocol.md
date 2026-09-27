@@ -80,6 +80,10 @@ deployment to operate; `inline` remains the default so small skills pay nothing.
   plane's router with the workspace policy. A job child has no network, so only the supervisor can call it
   today; exposing it to a job goes through the supervisor.
 * First consumer: recipe snapshot jobs (`workers/recipe.py`) when `compute-py` is configured.
+* Step and notebook Python cells (`workers/python.py`, `PythonCellSpec`, 2026-09-27) when `compute-py` is
+  configured: `services/steps.execute_python` sends the cell with its inputs as one JSON artifact; the worker
+  applies the sandbox's static policy and runs the sandbox harness under the job's limits; the result keeps
+  the sandbox's shape with `isolation: compute-py`. Without the pool the sandbox runs it as before.
 * ML jobs (`workers/ml.py`, 2026-09-27) when `compute-ml` is configured: the dataset snapshot (and, for scoring,
   the package) go out as input artifacts; the job's dict (`result`, wall-clock timings returned inline) and a
   tar of the files it wrote (`files`) come back, and each file is re-verified against its content address

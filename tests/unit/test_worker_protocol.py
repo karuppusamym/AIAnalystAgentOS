@@ -222,7 +222,7 @@ def test_the_cli_starts_an_isolated_worker_without_settings(monkeypatch):
 def test_handlers_are_bound_to_pools_and_hashed_by_source():
     from analystos.workers import handlers
 
-    assert handlers.served_by("compute-py") == ["recipe.snapshot"]
+    assert handlers.served_by("compute-py") == ["python.cell", "recipe.snapshot"]
     assert handlers.served_by("compute-ml") == ["ml.job"]
     assert "conformance.probe" in handlers.served_by("compute-ml", conformance=True)
     with pytest.raises(errors.UnsupportedCapability):
@@ -310,6 +310,23 @@ def test_ml_compute_goes_to_compute_ml_only_when_the_pool_is_configured(monkeypa
     assert orchestrator.run_ml_compute({"x": 1}) == {"inline": True} and not calls
     monkeypatch.setattr(get_settings(), "isolated_pools", "compute-ml")
     assert orchestrator.run_ml_compute({"x": 1}) == {"iso": 1} and calls == [{"x": 1}]
+
+
+def test_step_python_goes_to_compute_py_only_when_the_pool_is_configured(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.services import steps
+
+    calls = []
+    monkeypatch.setattr("analystos.workers.python.run_python_isolated",
+                        lambda code, inputs, **kw: calls.append((code, kw["workspace_id"])) or {"ok": True, "iso": 1})
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-py")
+    assert steps.execute_python("result = 1", {}, workspace_id="ws1") == {"ok": True, "iso": 1}
+    assert calls == [("result = 1", "ws1")]
+    monkeypatch.setattr(get_settings(), "isolated_pools", "")
+    monkeypatch.setattr("analystos.sandbox.runner.run_python", lambda code, **kw: pytest.fail("ran") if calls[1:] else
+                        type("R", (), {"ok": True, "result": 1, "error": None, "stdout": "", "duration_ms": 1,
+                                       "timed_out": False, "isolation": "process", "network_isolated": True})())
+    assert steps.execute_python("result = 1", {})["isolation"] == "process" and len(calls) == 1
 
 
 def test_the_ml_capability_hash_covers_the_ml_package():

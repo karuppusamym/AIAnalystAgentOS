@@ -93,6 +93,18 @@ class MLJobSpec(_Strict):
     job: dict[str, Any] = Field(default_factory=dict)
 
 
+class PythonCellSpec(_Strict):
+    """A notebook/step Python cell (P7-12) for `compute-py`: restricted code over the JSON input artifact named
+    `inputs_artifact`, under the sandbox's static and runtime policy inside the credential-free worker."""
+
+    kind: Literal["python.cell"] = "python.cell"
+    code: str = Field(max_length=100_000)
+    inputs_artifact: str
+    allowed_imports: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=30, gt=0, le=3600)
+    memory_mb: int = Field(default=1024, ge=64, le=65_536)
+
+
 class ProbeSpec(_Strict):
     """Conformance probe (tests/conformance/worker): served only by a worker started with --conformance."""
 
@@ -102,7 +114,7 @@ class ProbeSpec(_Strict):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
-TaskSpec = Annotated[RecipeSnapshotSpec | MLJobSpec | ProbeSpec, Field(discriminator="kind")]
+TaskSpec = Annotated[RecipeSnapshotSpec | MLJobSpec | PythonCellSpec | ProbeSpec, Field(discriminator="kind")]
 
 
 class TaskEnvelope(_Strict):

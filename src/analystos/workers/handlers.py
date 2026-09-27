@@ -60,6 +60,8 @@ def register_handler(kind: str, target: str, *, pools: tuple[str, ...], adapter:
 
 
 register_handler("recipe.snapshot", "analystos.workers.handlers:recipe_snapshot", pools=("compute-py",))
+register_handler("python.cell", "analystos.workers.python:python_cell", pools=("compute-py",),
+                 covers=("analystos.sandbox.runner", "analystos.sandbox._harness"))
 register_handler("ml.job", ML_JOB_TARGET, pools=("compute-ml",), covers=("analystos.ml",))
 register_handler("conformance.probe", "analystos.workers.conformance:probe", pools=("compute-py", "compute-ml"),
                  conformance_only=True)
