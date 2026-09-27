@@ -72,12 +72,18 @@ describe("notebooks (P7-12)", () => {
     expect(await within(cell).findByRole("listitem", { name: "Version 2" })).toBeTruthy();
   });
 
-  it("restricted Python refuses a disallowed import, and Run all runs every cell in order", async () => {
+  it("restricted Python: a disallowed import is refused before any cell exists; a runtime error is a failed version", async () => {
     mockFetch();
     renderAt(`/w/${WS}/work?tab=notebooks&notebook=nb_1`);
     await addCell("python", "import os\nresult = os.listdir('/')");
+    const form = screen.getByRole("form", { name: "Add a cell" });
+    expect(await within(form).findByText(/refused by the sandbox policy: line 1: import of 'os' is not allowed/)).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Cells" })).toBeNull();
+    // the source stays in the form to fix
+    expect((within(form).getByLabelText("Source") as HTMLTextAreaElement).value).toMatch(/import os/);
+    await addCell("python", "result = 1/0");
     const py = await screen.findByRole("listitem", { name: "Cell 1 (Python)" });
-    expect(within(py).getByText(/import of 'os' is not allowed/)).toBeTruthy();
+    expect(within(py).getByText(/Version 1 failed:/).closest("[role=alert]")!.textContent).toMatch(/ZeroDivisionError/);
     fireEvent.click(screen.getByRole("button", { name: "Run all cells" }));
     expect(await screen.findByText(/Ran 1 cell in order on today's data\./)).toBeTruthy();
   });

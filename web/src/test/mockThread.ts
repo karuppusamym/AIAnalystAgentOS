@@ -243,9 +243,10 @@ function runCell(id: string, cell: string, source: string, version: number): { s
     return { step: { ...base, spec: { sql: source, cell: "sql" }, receipts: [{ kind: "query", query_id: `qry_${id}_${version}`, sql: source, result_hash: `rh_${id}` }] },
       result: { columns: ["assignment_group", "incidents"], rows: [["Network", 182], ["Desktop", 140]], row_count: 2, truncated: false } };
   }
-  if (/import\s+os|open\(|__import__/.test(source)) {
-    return { step: { ...base, status: "failed", error: "ImportError: import of 'os' is not allowed (allowed: math, statistics, json, numpy, pandas)",
-      verification_record: null, checks: [], result_snapshot: null }, result: {} };
+  if (/1\s*\/\s*0/.test(source)) {
+    // a runtime error in allowed code runs and fails: the version is recorded as failed (policy refusals are 422s, see threadRoute)
+    return { step: { ...base, status: "failed", error: "ZeroDivisionError: division by zero (line 1)", verification_record: null, checks: [],
+      result_snapshot: null }, result: {} };
   }
   return { step: { ...base, spec: { cell: "python", code: source } }, result: { columns: ["value"], rows: [[322]], row_count: 1, truncated: false } };
 }
@@ -347,6 +348,12 @@ export function threadRoute(m: string, p: string, url: URL, W: string, body: Rec
     if (!book) return err(404, "not_found", "notebook not found");
     if (!action && m === "GET") return ok(nbView(id));
     if (action === "/cells" && m === "POST") {
+      // as the server: the sandbox policy refuses a disallowed import before any cell is created
+      const bad = /^\s*(?:import|from)\s+(os|sys|subprocess|socket)\b/m.exec(String(body.source));
+      if (body.cell === "python" && bad) {
+        return err(422, "invalid_input", `the Python is refused by the sandbox policy: line 1: import of '${bad[1]}' is not allowed`,
+          { problems: [`line 1: import of '${bad[1]}' is not allowed`] });
+      }
       const cid = `cell_${book.cells.length + 1}`;
       const { step, result } = runCell(cid, String(body.cell), String(body.source), 1);
       const st = { ...step, title: String(body.title ?? `Cell ${book.cells.length + 1}`), seq: book.cells.length + 1 };
