@@ -5,7 +5,7 @@ import { fmtDate, fmtPct, shortHash } from "../lib/format";
 import { useAction } from "../lib/hooks";
 import { EmptyState, ErrorBox, KeyValue, StatusBadge, Tag, TechnicalDetails } from "./ui";
 
-const ACTION_LABEL: Record<string, string> = {
+export const ACTION_LABEL: Record<string, string> = {
   publish_dashboard: "Publish dashboards",
   execute_plan: "Run an investigation plan",
   mcp_tool_call: "Call an external MCP tool",
@@ -25,6 +25,11 @@ function GovernanceReview({ evidence }: { evidence: Record<string, unknown> }) {
   const jev = evidence.jev_consequential as number | null | undefined;
   return (
     <div className="evidence">
+      <h3>Automated review</h3>
+      {!review && !policy && !Object.hasOwn(evidence, "problem") && <p className="muted small">No automated review result was attached to this proposal. Approval still runs the server validation checks.</p>}
+      {Object.hasOwn(evidence, "problem") && <p className="small">Proposal checks: <StatusBadge status={evidence.problem ? "failed" : "ok"} label={evidence.problem ? "needs attention" : "no problem recorded"} />{evidence.problem ? ` ${String(evidence.problem)}` : ""}</p>}
+      {Array.isArray(evidence.conflicts) && evidence.conflicts.length > 0 && <p className="warn-text small">{evidence.conflicts.length} conflicting definition(s). Review them in Data → Metrics before approving.</p>}
+      {typeof evidence.proposed_via === "string" && <p className="small muted">Proposed by {evidence.proposed_via.replace("agent:", "the ").replace(/_/g, " ")}{evidence.proposed_via.startsWith("agent:") ? " agent" : ""}.</p>}
       {review && (
         <p className="small">
           Governance review: <StatusBadge status={review.ok ? "ok" : "failed"} label={review.ok ? "passed" : "failed"} />
@@ -105,7 +110,7 @@ export function ApprovalCard({ approval, onDecided, previous, currentPolicyVersi
   return (
     <article className={`approval ${pending ? "approval-pending" : ""}`}>
       <header className="approval-head">
-        <strong>{ACTION_LABEL[approval.action] ?? approval.action}</strong>
+        <h2 className="card-title">{ACTION_LABEL[approval.action] ?? approval.action}</h2>
         <StatusBadge status={approval.status} />
         <Tag tone={approval.risk_tier === "high" ? "danger" : approval.risk_tier === "medium" ? "warning" : "neutral"}>risk: {approval.risk_tier}</Tag>
       </header>
@@ -119,13 +124,19 @@ export function ApprovalCard({ approval, onDecided, previous, currentPolicyVersi
       {policyMoved && (
         <p className="small warn-text" role="status">The workspace policy changed since this was requested; execution re-verifies against the current policy and will refuse a mismatch.</p>
       )}
-      <PayloadDiff approval={approval} previous={previous} />
+      {approval.action === "semantic_metric.approve" && !!approval.payload?.definition && <div className="review-proposal">
+        <h3>Metric definition</h3>
+        <p><strong>{String(approval.payload.metric ?? "Metric").replace(/_/g, " ")}</strong></p>
+        <TechnicalDetails value={approval.payload.definition} label="Expression, dataset and dimensions" />
+        {typeof approval.evidence?.expression === "string" && <pre className="json">{approval.evidence.expression}</pre>}
+      </div>}
+      <details className="proposal-diff"><summary>Proposed content and changes</summary><PayloadDiff approval={approval} previous={previous} /></details>
       <GovernanceReview evidence={approval.evidence ?? {}} />
       {pending && (
         <div className="approval-actions">
           <label className="sr-only" htmlFor={`reason-${approval.id}`}>Reason</label>
           <input id={`reason-${approval.id}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <button type="button" className="btn btn-success btn-sm" disabled={act.busy} onClick={() => decide(true)}>Approve</button>
+          <button type="button" className="btn btn-success btn-sm" disabled={act.busy || expired || policyMoved} onClick={() => decide(true)}>Approve</button>
           <button type="button" className="btn btn-danger btn-sm" disabled={act.busy} onClick={() => decide(false)}>Reject</button>
         </div>
       )}

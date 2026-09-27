@@ -65,6 +65,7 @@ describe("stale edits on versioned definitions", () => {
     mockFetch((method, path) => (method === "POST" && /\/definitions\/[^/]+\/publish$/.test(path)
       ? { status: 412, body: { error: { code: "precondition_failed", message: "revision 1 is not current (2)", details: {} } } } : null));
     renderAt(`/w/${WS}/data/catalog?tab=definitions`);
+    fireEvent.click(await screen.findByRole("button", { name: /Saved definitions/ }));
     const draft = (await screen.findAllByRole("button", { name: "Publish" }))[0];
     fireEvent.click(draft);
     expect(await screen.findByText(/Someone changed this\./)).toBeTruthy();

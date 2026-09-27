@@ -601,6 +601,7 @@ export interface ConsoleCost {
 
 /** Spend on one rung of the deterministic-first ladder (spec v3 §4.1): L0 cache … L5 strong model. */
 export interface RungSpend {
+  cost_complete?: boolean;
   calls?: number;
   tokens_used?: number;
   tokens_saved?: number;
@@ -1098,6 +1099,8 @@ export interface EffectiveRoute {
   models: string[];
   mode: LLMMode;
   available: boolean;
+  unavailable_reason?: string | null;
+  unavailable_code?: string | null;
   /** A rule-based path exists: "off"/"auto" still produce a result without a model. */
   deterministic_path: boolean;
   decision_model: boolean;
@@ -1142,7 +1145,7 @@ export interface ModelsView {
 }
 
 export interface Usage {
-  models: { purpose: string; model: string; provider: string; calls: number; cost_usd: number; avg_latency_ms: number; failed: number }[];
+  models: { purpose: string; model: string; provider: string; calls: number; cost_usd: number; avg_latency_ms: number; failed: number; cost_complete?: boolean; missing_price_calls?: number }[];
   queries: { status: string; count: number; avg_ms: number }[];
 }
 
@@ -1812,6 +1815,7 @@ export interface PromptTemplate {
 }
 
 export interface TokenSavingsRow {
+  cost_complete?: boolean;
   calls: number;
   tokens_used: number;
   tokens_saved: number;

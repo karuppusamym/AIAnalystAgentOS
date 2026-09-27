@@ -433,7 +433,9 @@ def _check_definition(session: Session, row: SemanticMetric) -> None:
     columns (and a cross-dataset dimension needs a validated, fan-out-safe join)."""
     from analystos.semantic.review import approved_model, definition_problems
 
-    model = approved_model(session, row.workspace_id)
+    # A first run can propose its dataset before a structure version has been approved.
+    # Keep that onboarding path, while an existing approved structure remains authoritative.
+    model = approved_model(session, row.workspace_id) or current_model(session, row.workspace_id)
     problems = definition_problems(definition(row), model.datasets if model else [], model.relationships if model else [])
     if problems:
         raise InvalidInput(f"metric {row.name} v{row.version} cannot be approved: {'; '.join(problems)}",
@@ -448,7 +450,7 @@ def _link_metric(session: Session, row: SemanticMetric) -> None:
     from analystos.artifacts.registry import link
     from analystos.semantic.review import approved_model
 
-    model = approved_model(session, row.workspace_id)
+    model = approved_model(session, row.workspace_id) or current_model(session, row.workspace_id)
     defn = definition(row)
     dataset = next((d for d in (model.datasets if model else []) if d["name"] == defn.dataset), None)
     if dataset is None:

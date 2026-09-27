@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun, type Run } from "../api";
 import { useAuth } from "../auth";
@@ -56,6 +56,7 @@ export function OutputsPage() {
   const type: OutputType | "" = insightId ? "finding" : OUTPUT_FILTERS.some((f) => f.id === requested) ? requested! : "";
   const selected = insightId ?? params.get("artifact") ?? params.get("dashboard") ?? params.get("run");
   const analysis = params.get("analysis");
+  const [search, setSearch] = useState("");
   const artifacts = useAsync(() => api.listArtifacts(wsId), [wsId]);
   const findings = useAsync(() => api.listInsights(wsId), [wsId]);
   const prepared = useAsync(() => api.listRecipeRuns(wsId), [wsId]);
@@ -101,7 +102,8 @@ export function OutputsPage() {
     const tableNames = new Set((Array.isArray(tables.data) ? tables.data : []).map((m) => `${m.schema_name}.${m.table_name}`)).size;
     if (tableNames) counts.set("table", tableNames);
   }
-  const shown = scopedItems.filter((i) => !type || typeOf(i) === type);
+  const shown = scopedItems.filter((i) => (!type || typeOf(i) === type) &&
+    `${i.kind === "finding" ? i.finding.title : i.kind === "artifact" ? i.artifact.name : i.run.recipe_name} ${runById.get(analysisOf(i) ?? "")?.objective ?? ""}`.toLowerCase().includes(search.toLowerCase()));
   const analysisRuns = (runs.data ?? []).filter((r) => items.some((i) => analysisOf(i) === r.id));
   const unknownRuns = [...new Set(items.map(analysisOf).filter((id): id is string => !!id && !runById.has(id)))];
   const workspaceCount = items.filter((i) => !analysisOf(i)).length;
@@ -111,7 +113,7 @@ export function OutputsPage() {
   const filters = OUTPUT_FILTERS.filter((f) => counts.has(f.id) || f.id === type || f.id === "report" || f.id === "dashboard");
 
   return (
-    <div className="page">
+    <div className="page outputs-page">
       <PageHeader title="Outputs" subtitle="Findings and stories belong to the investigation question that produced them. Choose an investigation to review its outputs." />
       <nav className="chip-row type-filter" aria-label="Filter outputs by type">
         <Link className={`chip ${type ? "" : "active"}`} aria-current={type ? undefined : "page"} to={to.outputs(wsId, { analysis: activeAnalysis ?? undefined })}>All ({scopedItems.length})</Link>
@@ -151,6 +153,8 @@ export function OutputsPage() {
           </aside>
           <div className="split-list">
             <h2>{activeAnalysis ? runById.get(activeAnalysis)?.objective ?? "Investigation outputs" : "Recent outputs"}</h2>
+            <label className="field output-search"><span className="sr-only">Search outputs</span><input type="search" placeholder="Find an output…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+            <span className="small muted">{shown.length} outputs · newest first</span>
             {shown.length === 0 && <EmptyState title="No outputs for this selection">Choose another investigation or output type.</EmptyState>}
             <ul className="list selectable" aria-label="Outputs">
               {shown.map((i) => {
@@ -168,7 +172,7 @@ export function OutputsPage() {
               })}
             </ul>
           </div>
-          <div className="split-detail">
+          <div className="split-detail output-detail">
             {open && analysisOf(open) && <div className="output-context">
               <span className="small muted">Investigation question</span>
               <strong>{runById.get(analysisOf(open) ?? "")?.objective ?? "Earlier investigation"}</strong>

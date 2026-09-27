@@ -186,8 +186,11 @@ def models(_: User = Depends(current_user)):
     effective = {}
     for purpose in cfg.routing:
         profile, profile_cfg, models = router_.candidates(purpose, CallContext())
+        unavailable = router_.unavailable(purpose)
         effective[purpose] = {"profile": profile, "models": models, "mode": router_.mode(purpose), "ladder": router_.ladder(purpose),
                               "available": router_.available(purpose), "deterministic_path": purpose in DETERMINISTIC_CAPABLE,
+                              "unavailable_reason": unavailable.message if unavailable else None,
+                              "unavailable_code": unavailable.code if unavailable else None,
                               "decision_model": cfg.profiles[cfg.routing[purpose]].provider == "typesafe",
                               "escalation": router_.escalation_policy(purpose),
                               "escalation_models": router_.escalation_tier(purpose, CallContext(), profile, profile_cfg, models)}
@@ -331,10 +334,19 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
     denom = totals["tokens_used"] + totals["tokens_saved"]
     totals["saved_share"] = round(totals["tokens_saved"] / denom, 4) if denom else 0.0
     # A model with no price and no provider-reported cost: its spend is unknown, not $0.
-    unpriced = session.execute(select(ModelCall.model, func.count(), func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0))
+    unpriced = session.execute(select(ModelCall.model, ModelCall.purpose, ModelCall.answered_by, func.count(), func.coalesce(func.sum(ModelCall.input_tokens + ModelCall.output_tokens), 0))
                                .where(ModelCall.created_at >= since, ModelCall.cost_source == "missing_price")
-                               .group_by(ModelCall.model)).all()
-    missing = [{"model": m, "calls": n, "tokens": int(t)} for m, n, t in unpriced]
+                               .group_by(ModelCall.model, ModelCall.purpose, ModelCall.answered_by)).all()
+    missing_models: dict[str, dict] = {}
+    for model, purpose, rung, n, tokens in unpriced:
+        entry = missing_models.setdefault(model, {"model": model, "calls": 0, "tokens": 0})
+        entry["calls"] += n
+        entry["tokens"] += int(tokens)
+        # Mark every breakdown that includes unknown spend, so a row cannot imply a known $0.
+        for group, key in ((by_model, model or "unknown"), (by_purpose, purpose), (by_rung, rung or "llm_large")):
+            if key in group:
+                group[key]["cost_complete"] = False
+    missing = list(missing_models.values())
     totals["missing_price_calls"] = sum(m["calls"] for m in missing)
     totals["escalations"] = sum(e["calls"] for e in escalations.values())
     totals["escalation_cost_usd"] = round(sum(e["cost_usd"] for e in escalations.values()), 6)
@@ -346,12 +358,13 @@ def token_savings(days: int = 30, _: User = Depends(admin_user), session: Sessio
 @router.get("/admin/usage")
 def usage(_: User = Depends(admin_user), session: Session = Depends(db, scope="function")):
     by_model = session.execute(select(ModelCall.purpose, ModelCall.model, ModelCall.provider, func.count(), func.sum(ModelCall.cost_usd),
-                                      func.avg(ModelCall.latency_ms), func.count().filter(ModelCall.status == "error"))
+                                      func.avg(ModelCall.latency_ms), func.count().filter(ModelCall.status == "error"),
+                                      func.count().filter(ModelCall.cost_source == "missing_price"))
                                .where(ModelCall.status.in_(("ok", "error")))  # skips/cache hits/refusals: see /admin/token-savings
                                .group_by(ModelCall.purpose, ModelCall.model, ModelCall.provider)).all()
     q = session.execute(select(QueryExecution.status, func.count(), func.avg(QueryExecution.duration_ms)).group_by(QueryExecution.status)).all()
     return {"models": [{"purpose": p, "model": m, "provider": pr, "calls": c, "cost_usd": float(cost or 0), "avg_latency_ms": float(lat or 0),
-                        "failed": int(f or 0)} for p, m, pr, c, cost, lat, f in by_model],
+                        "failed": int(f or 0), "cost_complete": not missing, "missing_price_calls": int(missing)} for p, m, pr, c, cost, lat, f, missing in by_model],
             "queries": [{"status": s, "count": c, "avg_ms": float(a or 0)} for s, c, a in q]}
 
 
