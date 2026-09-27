@@ -1,4 +1,5 @@
-"""A ServiceNow Table API look-alike over the synthetic ITSM data.
+"""A ServiceNow Table API look-alike over the synthetic ITSM data (incident, change_request,
+sys_user_group, cmdb_ci, and for process mining sc_task and the u_task_activity log).
 
 Implements the subset the connector uses, with the real API's wire conventions:
   GET /api/now/table/{table}
@@ -32,6 +33,7 @@ from analystos.connectors.synthetic_servicenow import (
     CHOICE_LABELS,
     DICTIONARY,
     TABLE_LABELS,
+    generate_activity_data,
     generate_servicenow_data,
     user_display_name,
 )
@@ -70,7 +72,7 @@ def _fmt(value: Any) -> str:
 
 @lru_cache(maxsize=1)
 def _records() -> dict[str, list[dict[str, str]]]:
-    data = generate_servicenow_data()
+    data = {**generate_servicenow_data(), **generate_activity_data()}
     out: dict[str, list[dict[str, str]]] = {}
     for name, table in data.items():
         cols = table.column_names
@@ -105,7 +107,8 @@ def _records() -> dict[str, list[dict[str, str]]]:
 
 
 # Field used as the display value of a record in each referenced table.
-_DISPLAY_FIELD = {"sys_user_group": "name", "cmdb_ci": "name", "change_request": "number", "incident": "number"}
+_DISPLAY_FIELD = {"sys_user_group": "name", "cmdb_ci": "name", "change_request": "number", "incident": "number",
+                  "sc_task": "number"}
 
 
 @lru_cache(maxsize=1)
