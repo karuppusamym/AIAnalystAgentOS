@@ -79,6 +79,8 @@ Timings are from the live evidence run on a loaded machine: an investigation rea
 * **Say:** "A workspace is one business problem: its data, its brief, its people and its policy. The home page
   shows what needs me — here, KPI definitions waiting for an approver."
 * **If slow:** the banner (§2) tells you which service is missing; carry on talking while it recovers.
+* **Optional (first-time audience):** **Guide** (top bar) → **Tours** → *The two-minute tour*. It points at the
+  real screens in order; **What you can do** lists every capability by role with **Open** / **Show me**.
 
 ### Step 2 — Governed data (1.5 min)
 
@@ -90,6 +92,23 @@ Timings are from the live evidence run on a loaded machine: an investigation rea
   audits it. Restricted and PII columns are refused even through `SELECT *`. The brief records what the business
   told us — the question, the audience, what counts as out of scope — as reviewed facts the planner uses."
 * **If slow:** skip to step 3; the brief is optional colour.
+
+### Step 2b — What the data means, measured (2 min)
+
+* **Click:** **Data → Catalog & definitions → Catalog** → **Columns** on *Incident*. Each column shows what was
+  measured: how complete it is, distinct values, range or the full list of codes; **Profile** opens the
+  distribution, top values, rows per month and value formats. Point at `number` ("nearly unique: 15 values repeat")
+  and `opened_at` ("some rows are dated after today"): the crawler found the data-quality defects on its own.
+* **Click:** **Definitions** (opens on **Suggested model**): facts and dimensions, each table's key and how it is
+  known, the time column, how the tables join, the gaps to settle and candidate metrics — built by rules, no model.
+  **Measure keys and joins** runs the checks through the gateway; **Propose for approval** sends it to an approver.
+* **Click:** **Review queue** → the glossary questions ("What do the Priority codes 1–5 mean?", "What does SLA
+  mean?") → **Edit & accept** one with a definition.
+* **Say:** "Everything an agent reads about this data is measured or confirmed by a person. The platform asks
+  what it cannot know — what a code means — instead of guessing, and a rejected suggestion never comes back."
+* **Optional:** **Import & export** → **Download context** (OKF, JSON or Markdown; never secrets or rows) and
+  **What the agents see** → *Writing SQL for Ask* → **Preview**: the exact prompt context, its token count and
+  how much of it is cached between calls.
 
 ### Step 3 — Start a live investigation (3 min)
 
@@ -161,10 +180,13 @@ Timings are from the live evidence run on a loaded machine: an investigation rea
 ### Step 9 — Prepare data and ask (1.5 min)
 
 * **Click:** **Work → Prepare data** → recipe **team_capacity** → preview (filter, aggregate, quality gates).
-* **Click:** **Work → Ask** → type "How many incidents are there by priority?" in **Question** → **Ask**. Show the
-  labels (*Ad hoc analysis*, *Built from the catalog · no model*, *Validated by the query gateway*), the table and
-  **Why these numbers?**. (The chips under **SQL console**, such as *Incidents by priority*, fill in read-only SQL
-  for **Explain** / **Run** instead.)
+* **Click:** **Work → Ask** → a **Try asking** chip (built from the tables, answered by rules, no model), e.g.
+  *Which assignment group has the most incidents?*. Show the labels (*Ad hoc analysis*, *Built from the catalog ·
+  no model*, *Validated by the query gateway*), the table and **Why these numbers?**. (The chips under **SQL
+  console** fill in read-only SQL for **Explain** / **Run** instead.)
+* **Click:** switch to **Step by step** → ask "incidents by priority and category" → the answer cites its steps
+  (click *step 2*); each step shows its SQL, the facts computed in code and its checks. **Open as a Data Thread**:
+  every step is already recorded there, with versions, re-run and fork.
 * **Say:** "The same governance covers data preparation and quick questions: recipes compile to SQL with
   quality gates and lineage; Ask answers through the same gateway."
 
