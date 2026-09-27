@@ -12,7 +12,7 @@ import { roleAtLeast } from "../routes";
 export type JobKindId = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
 
 /** What starting the kind does: an investigation, the Prepare data panel, or a new monitor. */
-export type JobAction = "investigate" | "prepare" | "monitor";
+export type JobAction = "investigate" | "prepare" | "monitor" | "ml";
 
 export interface JobKind {
   id: JobKindId;
@@ -116,11 +116,6 @@ export function jobKindsFromServer(rows: JobAvailability[], modes: WorkMode[]): 
     let reason = !modes.includes(mode) ? `Enable ${mode === "ml" ? "ML" : mode} in Workspace work modes first.`
       : !row.available ? row.reasons.map((r) => r.message).join(" ") || "This work is not ready here."
         : null;
-    // The current investigation form accepts analysis objectives only. ML needs a published spec and
-    // a typed work order; sending it to the investigation endpoint would run the wrong job.
-    if (!reason && (id === "forecast" || id === "predict")) {
-      reason = "Set up a published ML definition and typed work order first; the guided ML start form is not available yet.";
-    }
     return { id, label: row.label, description: {
       explain: "Investigate a question and keep verified findings.",
       compare: "Compare groups or periods with tested findings.",
@@ -128,7 +123,7 @@ export function jobKindsFromServer(rows: JobAvailability[], modes: WorkMode[]): 
       predict: "Train and evaluate a model from a published ML definition.",
       prepare: "Load data or build a checked recipe.",
       monitor: "Watch a metric and raise an alert.",
-    }[id], action: id === "prepare" ? "prepare" : id === "monitor" ? "monitor" : "investigate",
+    }[id], action: id === "prepare" ? "prepare" : id === "monitor" ? "monitor" : id === "forecast" || id === "predict" ? "ml" : "investigate",
     enabled: reason === null, reason, uses: row.capabilities.filter((c) => c.usable).map((c) => c.id) };
   });
 }

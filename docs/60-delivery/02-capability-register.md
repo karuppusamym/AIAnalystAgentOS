@@ -5,6 +5,19 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-26 — P7-19 guided ML start, second slice
+
+Start work routes Forecast and Predict to a published `ml_spec` selection with the plan's task,
+dataset, target, budget and exact version visible before training. The request calls the governed
+experiment API with the selected definition id. Work has an ML experiments tab with status,
+evaluation, readiness, verification and refusal reasons. Server availability requires a published
+definition matching the chosen job, alongside existing role, source, capability and mode checks.
+
+Evidence: focused `test_ml_work_orders.py` and `test_workspace_modes.py` pass; web suite
+242 passed / 1 skipped, including an API journey asserting the selected id is sent to
+`/ml/experiments` and the result opens in Work. TypeScript, production build and Ruff pass. Remaining: agent editor,
+workflow authoring, real API browser journeys and live category validation.
+
 ## 2026-09-26 — P7-19 configurable work modes, first slice
 
 `services/workspace_modes.py` validates a nonempty combination of Analysis, Engineering and ML,

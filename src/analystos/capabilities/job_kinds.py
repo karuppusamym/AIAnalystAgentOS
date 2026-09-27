@@ -77,16 +77,17 @@ def _reason(code: str, message: str, remediation: str) -> dict[str, str]:
     return {"code": code, "message": message, "remediation": remediation}
 
 
-def published_ml_specs(session: Session, workspace_id: str) -> int:
-    """How many published (or deprecated, still runnable) ml_spec definitions the workspace has."""
-    from sqlalchemy import func, select
+def published_ml_specs(session: Session, workspace_id: str, job_key: str | None = None) -> int:
+    """Count runnable ML plans that match the job the user is about to start."""
+    from sqlalchemy import select
 
-    from analystos.contracts.definition import RUNNABLE_STATUSES
     from analystos.db.models import Definition
 
-    return session.scalar(select(func.count(Definition.id)).where(Definition.workspace_id == workspace_id,
-                                                                  Definition.kind == "ml_spec",
-                                                                  Definition.status.in_(RUNNABLE_STATUSES))) or 0
+    specs = session.scalars(select(Definition.spec).where(Definition.workspace_id == workspace_id,
+                                                         Definition.kind == "ml_spec",
+                                                         Definition.status == "published"))
+    tasks = {"forecast": {"forecast"}, "predict": {"classify", "regress"}}.get(job_key)
+    return sum(1 for spec in specs if tasks is None or (spec or {}).get("task") in tasks)
 
 
 def executor_reason(job: JobKind, session: Session | None = None, workspace_id: str | None = None) -> dict[str, str] | None:
@@ -95,9 +96,9 @@ def executor_reason(job: JobKind, session: Session | None = None, workspace_id: 
     from analystos.contracts.work import EXECUTABLE_TYPES
 
     if job.entry["type"] == "work_order" and job.entry["payload_type"] == "ml" and session is not None and workspace_id:
-        if published_ml_specs(session, workspace_id):
+        if published_ml_specs(session, workspace_id, job.key):
             return None
-        return _reason("no_executor", f"{job.label} trains a published ml_spec definition, and this workspace has none yet",
+        return _reason("no_executor", f"{job.label} needs a published ml_spec definition for this task, and this workspace has none yet",
                        "Publish an ml_spec definition (a reviewed MLSpec) and start the work order with that exact spec; "
                        "or choose Explain or Compare explicitly. Nothing is started in its place.")
     if job.entry["type"] == "work_order" and job.entry["payload_type"] not in EXECUTABLE_TYPES:

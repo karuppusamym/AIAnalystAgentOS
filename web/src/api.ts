@@ -1316,6 +1316,26 @@ export interface DefinitionPage {
   builtin?: DefinitionRef[];
 }
 
+/** Governed training result; a refusal remains visible in Work with its reason. */
+export interface MlExperiment {
+  id: string;
+  workspace_id: string;
+  definition_id: string;
+  definition_key: string;
+  definition_version: number;
+  task: string;
+  status: string;
+  verdict: string | null;
+  dataset_asset: string;
+  summary: Dict;
+  readiness: Dict;
+  artifacts: Dict;
+  error: string | null;
+  created_at: string | null;
+  finished_at: string | null;
+  verification?: Dict | null;
+}
+
 export interface DefinitionDiff {
   from: DefinitionVersion;
   to: DefinitionVersion | null;
@@ -2565,8 +2585,16 @@ export const api = {
     { headers: { "If-Match": `"${revision}"` } }),
 
   // definitions: drafts, publish, deprecate, retire, diff (P7-03)
-  listDefinitions: (ws: string, q: { kind?: string; status?: string; include_builtin?: boolean } = {}) =>
+  listDefinitions: (ws: string, q: { kind?: string; status?: string; include_builtin?: boolean; cursor?: string } = {}) =>
     get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
+  getDefinition: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
+  startMlExperiment: (ws: string, definitionId: string) =>
+    post("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), body: { definition: definitionId } }) as Promise<MlExperiment>,
+  listMlExperiments: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws) }) as Promise<MlExperiment[]>,
+  getMlExperiment: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}", { path: { workspace_id: ws, experiment_id: id } }) as Promise<MlExperiment>,
   publishDefinition: (ws: string, id: string, revision: number) =>
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish",
       { path: { workspace_id: ws, definition_id: id } }), {}, { headers: { "If-Match": `"${revision}"` } }),

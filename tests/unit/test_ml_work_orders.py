@@ -98,3 +98,4 @@ def test_start_work_offers_ml_once_an_ml_spec_is_published(world):  # noqa: F811
     assert "no_executor" in reasons("predict")
     _definition(world["owner"], "published")
     assert "no_executor" not in reasons("predict")
+    assert "no_executor" in reasons("forecast")
