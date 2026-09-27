@@ -197,6 +197,7 @@ def test_notebook_cells_run_through_the_gateway_and_an_edit_voids_dependents(api
     assert sql.status_code == 201, sql.text
     sql = sql.json()
     assert sql["status"] in ("ok", "flagged") and sql["verification_record"]["state"] == "ACTIVE"
+    assert (sql["cell"], sql["version"]) == ("sql", 1) and sql["source"].startswith("SELECT priority")  # as the GET shows it
     with session_scope() as s:
         q = s.get(QueryExecution, sql["receipts"][-1]["query_id"])
         assert q is not None and q.task_id == sql["id"] and q.status == "ok"  # audited by the gateway, bound to the step
@@ -220,6 +221,14 @@ def test_notebook_cells_run_through_the_gateway_and_an_edit_voids_dependents(api
     assert v1["version"] == 1 and "WHERE" not in v1["spec"]["sql"] and v1["verification_record"]["state"] == "VOID"
     versions = api.get(f"/api/workspaces/{ws}/steps/{sql['id']}/versions", headers=analyst).json()["versions"]
     assert [v["version"] for v in versions] == [2, 1]
+    why = api.get(f"/api/workspaces/{ws}/steps/{sql['id']}/why", headers=analyst, params={"version": 1})
+    assert why.status_code == 200, why.text
+    why = why.json()
+    assert why["verification_state"]["state"] == "VOID" and why["numbers"]
+    links = {lk["link"]: lk for lk in why["numbers"][0]["links"]}
+    assert list(links) == ["fact", "step", "query_receipt", "data_version", "semantic_version", "verdict"]
+    assert links["verdict"]["state"] == "void" and links["query_receipt"]["state"] == "ok"  # the gateway's own receipt
+    assert api.get(f"/api/workspaces/{world['other']}/steps/{sql['id']}/why", headers=analyst).status_code == 404
     assert api.get(f"/api/workspaces/{world['other']}/steps/{sql['id']}", headers=analyst).status_code == 404
 
 
