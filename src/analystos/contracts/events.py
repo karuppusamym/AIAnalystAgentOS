@@ -48,6 +48,8 @@ EVENT_TYPES = {
     "pipeline.dry_run.failed", "pipeline.run.completed", "pipeline.run.blocked", "pipeline.run.failed",
     "writer_destination.provisioned", "pipeline.materialized", "pipeline.materialization.failed",
     "pipeline.rolled_back", "pipeline.freshness.breached",
+    # Isolated compute pools (P7-06, ADR-0022): a task dispatched to compute-py / compute-ml, as its worker reports it
+    "task.started", "task.progress", "task.completed", "task.failed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

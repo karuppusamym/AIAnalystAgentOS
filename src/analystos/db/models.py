@@ -1766,3 +1766,45 @@ class Materialization(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkerTask(Base):
+    """One task dispatched to an isolated compute pool (ADR-0022, P7-06): the envelope's identity and hash,
+    where it ran, its status and its result (output artifact refs, a small result, a structured error,
+    resource usage). Provenance: run -> dispatched -> worker_task; input artifact -> input_to -> worker_task
+    -> produced -> output artifact."""
+
+    __tablename__ = "worker_task"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    work_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pool: Mapped[str] = mapped_column(String(40))
+    capability_id: Mapped[str] = mapped_column(String(120))
+    capability_version: Mapped[str] = mapped_column(String(40))
+    capability_hash: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(60))
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    envelope_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued|running|completed|failed
+    inputs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    outputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkerTaskEvent(Base):
+    """task.started | task.progress | task.completed | task.failed as the worker reported them (Temporal
+    signals or the local pool's event lines), persisted by the control plane. Retries append, never rewrite."""
+
+    __tablename__ = "worker_task_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("worker_task.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(40))
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    worker_at: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = _ts()

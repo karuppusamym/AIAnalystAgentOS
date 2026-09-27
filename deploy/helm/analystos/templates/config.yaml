@@ -16,6 +16,9 @@ data:
   ANALYSTOS_GRAPH_ENABLED: {{ .Values.config.graphEnabled | quote }}
   ANALYSTOS_SANDBOX_ISOLATION: {{ .Values.config.sandboxIsolation | quote }}
   ANALYSTOS_AIR_GAPPED: {{ .Values.airGapped.enabled | quote }}
+  # Isolated compute pools (ADR-0022, P7-06): the API dispatches to those this release deploys.
+  ANALYSTOS_ISOLATED_POOLS: {{ include "analystos.isolatedPools" . | quote }}
+  ANALYSTOS_WORKER_ARTIFACT_URL: {{ include "analystos.artifactUrl" . | quote }}
   {{- with .Values.database.pools }}
   ANALYSTOS_DB_POOL_MODE: {{ .mode | quote }}
   ANALYSTOS_DB_POOL_RECYCLE: {{ .recycleSeconds | quote }}

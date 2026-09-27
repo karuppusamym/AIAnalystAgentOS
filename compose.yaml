@@ -11,6 +11,7 @@
 #   demo      the ServiceNow mock source (its own small image)
 #   sandbox   the container sandbox image (build only)
 #   pooled    PgBouncer (+ ANALYSTOS_PG_POOLER=pgbouncer:5432 ANALYSTOS_DB_TRANSACTION_POOLER=true)
+#   isolated  the credential-free compute-py / compute-ml pools on an internal network (deploy/compose/isolated.env)
 #
 # Profiles combine; a `--profile` on the command line replaces COMPOSE_PROFILES from the env files, so name
 # them all, e.g. the full stack: docker compose --env-file .env --env-file deploy/compose/standard.env
@@ -51,6 +52,17 @@ x-app-env: &app-env
   # seccomp profile, cannot create namespaces: the sandbox is refused here (fail closed; /api/health
   # checks.sandbox). Run the worker on the host for `process`/`container` isolation, or set `off` (dev only).
   ANALYSTOS_SANDBOX_ISOLATION: ${ANALYSTOS_SANDBOX_ISOLATION:-auto}
+  # Isolated compute pools (ADR-0022, P7-06), opt-in: profile `isolated` (deploy/compose/isolated.env).
+  ANALYSTOS_ISOLATED_POOLS: ${ANALYSTOS_ISOLATED_POOLS:-}
+  ANALYSTOS_ISOLATED_TRANSPORT: ${ANALYSTOS_ISOLATED_TRANSPORT:-auto}
+  ANALYSTOS_WORKER_ARTIFACT_URL: ${ANALYSTOS_WORKER_ARTIFACT_URL:-http://localhost:8000}
+
+# Isolated pools get this environment and nothing else: no database, Redis, Superset or provider credential
+# (a worker given one refuses to start). They reach the API (artifact store) and Temporal over `isolated` only.
+x-isolated-env: &isolated-env
+  ANALYSTOS_ENV: ${ANALYSTOS_ENV:-dev}
+  ANALYSTOS_WORKER_ARTIFACT_URL: http://api:8000
+  ANALYSTOS_TEMPORAL_ADDRESS: temporal:7233
 
 # The worker/scheduler image carries every extra (ml, reports, temporal, graph).
 x-worker-build: &worker-build
@@ -88,6 +100,7 @@ services:
       redis: {condition: service_healthy, required: false}
     command: ["sh", "-c", "analystos migrate && analystos seed && uvicorn analystos.api.app:app --host 0.0.0.0 --port 8000"]
     ports: ["8000:8000"]
+    networks: [default, isolated]  # isolated pools reach the artifact store here
     healthcheck:
       test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://localhost:8000/api/health', timeout=3))['ok']"]
       interval: 5s
@@ -122,6 +135,7 @@ services:
       POSTGRES_PWD: analystos
       POSTGRES_SEEDS: postgres
     ports: ["7233:7233"]
+    networks: [default, isolated]
 
   # standard: one worker serving every task queue (config/task_queues.yaml).
   worker:
@@ -172,6 +186,36 @@ services:
     # elt runs playbook.elt_build (P4-E04): dbt parse/build via ANALYSTOS_DBT_EXECUTABLE (a dbt Core venv or image
     # with the `dbt` extra); it rides on the crawl pool until builds need their own.
     environment: {<<: *app-env, ANALYSTOS_WORKER_QUEUES: "crawl,elt"}
+    depends_on: [api, temporal]
+    restart: unless-stopped
+    command: ["analystos", "worker"]
+
+  # isolated (ADR-0022, P7-06): credential-free compute pools. Only the `isolated` network (internal: no route to
+  # Postgres, Redis, Superset or the internet); `analystos worker --queues compute-py` checks and scrubs its own
+  # environment, allows sockets to the artifact store and Temporal only, and runs each task in a child under
+  # the task's budget. compute-ml is the only image with the ML stack.
+  worker-compute-py:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, args: {EXTRAS: temporal}}
+    profiles: ["isolated"]
+    environment: {<<: *isolated-env, ANALYSTOS_WORKER_QUEUES: compute-py}
+    networks: [isolated]
+    read_only: true
+    tmpfs: ["/tmp:size=2g"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [api, temporal]
+    restart: unless-stopped
+    command: ["analystos", "worker"]
+
+  worker-compute-ml:
+    build: {context: ., dockerfile: deploy/docker/Dockerfile, args: {EXTRAS: "temporal,ml"}}
+    profiles: ["isolated"]
+    environment: {<<: *isolated-env, ANALYSTOS_WORKER_QUEUES: compute-ml}
+    networks: [isolated]
+    read_only: true
+    tmpfs: ["/tmp:size=4g"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     depends_on: [api, temporal]
     restart: unless-stopped
     command: ["analystos", "worker"]
@@ -257,6 +301,13 @@ services:
     profiles: ["sandbox"]
     network_mode: none
     entrypoint: ["python3", "-c", "pass"]
+
+networks:
+  default: {}
+  # Isolated compute pools (profile `isolated`): internal, so its members have no route outside it; only the API
+  # and Temporal join it besides the pools.
+  isolated:
+    internal: true
 
 volumes:
   pgdata:

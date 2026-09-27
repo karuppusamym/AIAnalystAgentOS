@@ -23,6 +23,7 @@ from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
 from analystos.api.routers import steps as steps_router
 from analystos.api.routers import work_orders as work_orders_router
+from analystos.api.routers import worker as worker_router
 from analystos.api.routers import workspace_brief as brief_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
@@ -57,6 +58,9 @@ async def lifespan(_: FastAPI):
     finally:
         if scheduler_stop is not None:
             scheduler_stop.set()
+        from analystos.workers.dispatch import reset_default_transport
+
+        reset_default_transport()  # local isolated worker processes (P7-06), if any were started
         if runtime is not None:
             runtime.shutdown()
             from analystos.workflows.orchestrator import reset_local_runtime
@@ -84,6 +88,7 @@ app.include_router(recipes_router.router)
 app.include_router(brief_router.router)
 app.include_router(steps_router.router)
 app.include_router(pipelines_router.router)
+app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
@@ -175,6 +180,13 @@ def health():
                              "detail": st.detail}
     except Exception as exc:  # noqa: BLE001 - health never raises
         checks["sandbox"] = {"ok": False, "available": False, "error": str(exc)[:200]}
+    # P7-06: isolated compute pools this installation dispatches to (opt-in) and how it reaches them.
+    pools = sorted(settings.isolated_pool_set)
+    transport = settings.isolated_transport
+    if transport == "auto":
+        transport = "temporal" if settings.orchestrator == "temporal" else "subprocess"
+    checks["isolated_pools"] = {"ok": True, "enabled": bool(pools), "pools": pools,
+                                "transport": transport if pools else None}
     from analystos.core.profiles import summary
 
     return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "installation": summary(settings),

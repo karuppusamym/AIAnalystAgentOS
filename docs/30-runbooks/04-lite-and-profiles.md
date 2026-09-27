@@ -21,6 +21,7 @@ replaces `COMPOSE_PROFILES` from the env files):
 | `demo` | the ServiceNow mock source, in its own small image | `--env-file deploy/compose/demo.env --profile demo` |
 | `sandbox` | the container sandbox image (build only) | `docker compose --profile sandbox build sandbox` |
 | `pooled` | PgBouncer | runbook 02 "Connection pooling" |
+| `isolated` | the credential-free `compute-py` / `compute-ml` worker pools on an internal network (§5) | `--env-file deploy/compose/standard.env --env-file deploy/compose/isolated.env` (standard + isolated) |
 
 The CI stack (everything): `docker compose --env-file .env --env-file deploy/compose/standard.env
 --env-file deploy/compose/bi.env --env-file deploy/compose/demo.env --profile standard --profile bi --profile demo up -d`.
@@ -52,7 +53,8 @@ it assumes **one API process** drives local runs (resume releases the claims it 
 
 ### Unavailable, with the reason
 
-A capability manifest may require an installation feature: `requires: [profile:bi]` or `requires: [extra:ml]`.
+A capability manifest may require an installation feature: `requires: [profile:bi]`, `requires: [extra:ml]`
+or an isolated compute pool, `requires: [pool:compute-ml]` (§5).
 
 * `GET /api/capabilities` returns `available` and `unavailable_reason` for each capability.
 * Binding and invocation refuse an unavailable capability, with the reason (`capabilities/enablement.usable`).
@@ -140,6 +142,7 @@ Compose sets its own database URL. On a laptop, development defaults stand in fo
 | SSO | `ANALYSTOS_OIDC_ISSUER`, `ANALYSTOS_OIDC_CLIENT_ID`, `ANALYSTOS_OIDC_CLIENT_SECRET`, `ANALYSTOS_OIDC_REDIRECT_URI`, `ANALYSTOS_OIDC_SCOPES`, `ANALYSTOS_OIDC_GROUPS_CLAIM`, `ANALYSTOS_OIDC_MAPPING_FILE`, `ANALYSTOS_OIDC_JWKS_FILE`, `ANALYSTOS_OIDC_DISCOVERY_URL`, `ANALYSTOS_OIDC_PROVIDER_NAME`, `ANALYSTOS_PASSWORD_LOGIN` |
 | Web | `ANALYSTOS_WEB_URL`, `ANALYSTOS_CORS_ORIGINS` |
 | Outbound HTTP and MCP | `ANALYSTOS_HTTP_TOOL_ALLOWLIST`, `ANALYSTOS_OUTBOUND_PRIVATE_HOSTS`, `ANALYSTOS_MCP_PRIVATE_HOSTS` (default: loopback and RFC 1918 allowed for MCP servers only), `ANALYSTOS_HTTP_TOOL_TIMEOUT_SECONDS`, `ANALYSTOS_HTTP_TOOL_MAX_BYTES` |
+| Isolated compute pools (§5) | `ANALYSTOS_ISOLATED_POOLS`, `ANALYSTOS_ISOLATED_TRANSPORT`, `ANALYSTOS_WORKER_ARTIFACT_URL`, `ANALYSTOS_WORKER_TOKEN_SECRET` (API only; never give it to a worker) |
 | Knowledge embeddings | `ANALYSTOS_KNOWLEDGE_EMBEDDING_PROVIDER`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_MODEL`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_DIM`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_ALLOW_DOWNLOAD` |
 
 **Tier 3, advanced.** Defaults are right for almost every install.
@@ -157,3 +160,73 @@ Compose sets its own database URL. On a laptop, development defaults stand in fo
 | Catalogs | `ANALYSTOS_AGENTS_DIR` |
 
 `tests/unit/test_lite_profile.py` checks that every setting in `core/config.py` is listed here.
+
+## 5. Isolated compute pools (P7-06, ADR-0022)
+
+Heavy jobs (recipe snapshot statements today; classical ML in P5-04; notebook Python cells in P7-12) can
+run in the credential-free pools `compute-py` and `compute-ml`. They are **opt-in**: with
+`ANALYSTOS_ISOLATED_POOLS` empty, recipe snapshot jobs run as before (the `compute` queue or in-process),
+and a capability that declares `requires: [pool:compute-ml]` is listed as unavailable with the remedy.
+
+| What | Where |
+|---|---|
+| Contracts | `contracts/worker.py`: `TaskEnvelope`, `ArtifactRef`, `TaskDispatch`, `TaskResult` (`contracts/task_*.schema.json`) |
+| Control plane | `workers/dispatch.py` `dispatch_isolated(pool, envelope)`; tasks and events in `worker_task` / `worker_task_event` (migration 0038) |
+| Worker | `analystos worker --queues compute-py` (`workers/main.py`, `runtime.py`, `child.py`) |
+| Artifact store | `GET /api/worker/artifacts/{id}`, `PUT /api/worker/tasks/{task}/outputs/{name}`, `POST /api/worker/model`, token-authenticated (`api/routers/worker.py`) |
+| Conformance | `tests/conformance/worker/` (any implementation: `ANALYSTOS_CONFORMANCE_IMPL`) |
+
+**Turning them on.**
+
+* *Lite (subprocess transport).* `ANALYSTOS_ISOLATED_POOLS=compute-py` (and/or `compute-ml`). The API starts
+  one local worker process per pool with an environment built from scratch (no credentials), which reaches the
+  store at `ANALYSTOS_WORKER_ARTIFACT_URL` (default `http://localhost:8000`). Isolation is in-process only
+  (the controls below): the worker shares the API container's network. Use it for a laptop or a pilot.
+* *Standard / scale (Temporal transport).* Also run the pool as its own deployment: compose
+  `--env-file deploy/compose/standard.env --env-file deploy/compose/isolated.env` (standard + isolated) (services `worker-compute-py`,
+  `worker-compute-ml` on the internal `isolated` network), or Helm `workers.compute-py.replicas: 1`.
+  `ANALYSTOS_ISOLATED_TRANSPORT=auto` picks Temporal when the orchestrator is Temporal.
+
+**What the worker enforces in its own process** (`workers/isolation.py`):
+
+* it refuses to start (exit 78, variable *names* reported) when given `ANALYSTOS_DATABASE_URL`, any analytics,
+  Redis, Neo4j or Superset setting, the JWT or token secret, `OPENROUTER_API_KEY`, `PG*`, cloud keys, or any
+  `*_PASSWORD`, `*_SECRET`, `*_API_KEY`; then it drops every variable not on a short allowlist;
+* it never builds the platform `Settings` (which would read `.env`);
+* Python sockets reach only the artifact store (and the Temporal frontend); other connects, datagrams, Unix
+  sockets and name lookups are refused;
+* each task runs in a child process with rlimits from the envelope budget (CPU, address space, file size,
+  open files, no core), a wall-clock kill of its process group, an empty environment and, where the kernel
+  allows it, an empty network namespace (`usage.network = namespace`), else the socket guard (`guard`);
+* inputs are downloaded and outputs uploaded by the supervisor with the task token; every input is checked
+  against its SHA-256; outputs are bound per (workspace, idempotency key, output name), so a retry that
+  finishes twice writes one artifact, and a retry with different content is refused.
+
+**Scoped task tokens** (`workers/tokens.py`): HMAC-SHA256 with `ANALYSTOS_WORKER_TOKEN_SECRET` (else a key
+derived from the JWT secret), bound to the task, its workspace, the input artifact ids it may read, the output
+names it may write, its verbs (`read`, `write`, `model`) and model purposes, expiring after the task's
+attempts (wall budget x 3 + 2 min, at most 6 h). A session JWT is not accepted, nor a token of another task.
+
+**Network policy (the outer layer; not verifiable in the test environment, which has no Docker):**
+
+* *compose:* the `isolated` network is `internal: true`; only `api` and `temporal` join it besides the pool
+  services, so a pool container has no route to Postgres, Redis, Superset or the internet. The pool services get
+  only `ANALYSTOS_WORKER_QUEUES`, `ANALYSTOS_WORKER_ARTIFACT_URL` and the Temporal address, never the
+  `x-app-env` block.
+* *Kubernetes:* pools with `isolated: true` get no ConfigMap or Secret (`envFrom`), the label
+  `analystos.io/isolated: "true"`, and their own NetworkPolicy (`templates/networkpolicy-isolated.yaml`,
+  always rendered when such a pool exists): no ingress; egress to cluster DNS, the API pods on port 8000 and
+  `isolatedPools.temporalEgress` only. The release-wide egress policy excludes isolated pods so the two
+  policies do not add up.
+* The shared `artifact_dir` assumption of recipe snapshots still holds for the API and the analysis worker (the
+  control plane writes inputs to `<artifact_dir>/worker_artifacts`, which the API serves); isolated pools never
+  mount it.
+
+**Plugging a new job in (e.g. P5-04 ML).** Register the handler
+(`workers/handlers.py`: `register_handler("ml.job", "analystos.ml.jobs:run_ml_job", pools=("compute-ml",),
+adapter="pure")`; `ML_JOB_TARGET` is that default), build a `TaskEnvelope` with `spec=MLJobSpec(job=...)`,
+`capability=capability_ref("ml.job")`, `budget=default_budget("compute-ml")`, `required_outputs=["result"]`
+and a deterministic `idempotency_key`, then `raise_for_result(dispatch_isolated("compute-ml", envelope))`. A pure
+job gets `{**job, "inputs": {artifact_id: path}}` and its returned dict becomes the JSON output `result`;
+`ctx.trial()` (context handlers) enforces `max_trials`. When the pool is not configured, `require_pool`
+raises `FeatureUnavailable` with the remedy; the manifest should declare `requires: [pool:compute-ml]`.

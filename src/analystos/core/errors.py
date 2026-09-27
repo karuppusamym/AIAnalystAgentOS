@@ -209,3 +209,37 @@ class FeatureUnavailable(AnalystOSError):
     the UI shows it as unavailable with that reason, never as a broken button."""
 
     code, http_status = "feature_unavailable", 501
+
+
+class WorkerUnavailable(UpstreamUnavailable):
+    """An isolated compute worker was lost mid-task or could not be reached (P7-06). Retried under the
+    task's idempotency key; outputs are content-addressed, so a retry that also finishes writes nothing new."""
+
+    code = "worker_unavailable"
+
+
+class WorkerTaskFailed(AnalystOSError):
+    """An isolated job ended without a structured result (killed by a signal, a crash in native code)."""
+
+    code = "worker_task_failed"
+
+
+def _codes(cls: type[AnalystOSError]) -> dict[str, type[AnalystOSError]]:
+    out = {cls.code: cls}
+    for sub in cls.__subclasses__():
+        for code, found in _codes(sub).items():
+            out.setdefault(code, found)
+    return out
+
+
+def error_from_dict(data: dict) -> AnalystOSError:
+    """The inverse of `AnalystOSError.to_dict` (worker results, P7-06): the class registered for `code`,
+    or a plain AnalystOSError carrying the unknown code. Retryability stays a property of the class, except
+    for an unknown code, which keeps what the worker said."""
+    code = str(data.get("code") or "internal_error")
+    cls = _codes(AnalystOSError).get(code)
+    err = (cls or AnalystOSError)(str(data.get("message") or code), details=dict(data.get("details") or {}))
+    if cls is None:
+        err.code = code
+        err.retryable = bool(data.get("retryable"))
+    return err

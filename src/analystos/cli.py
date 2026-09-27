@@ -125,6 +125,7 @@ def export_contracts() -> None:
         semantic,
         step,
         work,
+        worker,
     )
 
     out = REPO_ROOT / "contracts"
@@ -141,7 +142,8 @@ def export_contracts() -> None:
               "recipe": recipe.Recipe, "workspace_brief": brief.WorkspaceBriefDoc,
               "readiness_assessment": brief.ReadinessAssessmentDoc, "job_kind": brief.JobKindAvailability,
               "step": step.Step, "branch": step.Branch,
-              "pipeline": work.PipelineSpec}
+              "pipeline": work.PipelineSpec, "task_envelope": worker.TaskEnvelope,
+              "task_dispatch": worker.TaskDispatch, "task_result": worker.TaskResult, "artifact_ref": worker.ArtifactRef}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
@@ -242,7 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
     parser.add_argument("--out", help="replay-run: write the JSON report to this file")
     parser.add_argument("--queues", help="worker: comma-separated workloads to serve (analysis, compute, publish, crawl, elt; "
-                                         "default ANALYSTOS_WORKER_QUEUES or all)")
+                                         "default ANALYSTOS_WORKER_QUEUES or all). The isolated pools compute-py and "
+                                         "compute-ml (ADR-0022) are named alone and run without credentials")
+    parser.add_argument("--conformance", action="store_true",
+                        help="worker, isolated pools only: also serve the conformance probe (tests/conformance/worker)")
     parser.add_argument("--dry-run", action="store_true", help="calibrate: report without downgrading or restoring")
     parser.add_argument("--workspace", action="append", help="bi-sync: only members of this workspace (repeatable)")
     args = parser.parse_args(argv)
@@ -261,7 +266,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "worker":
         from analystos.workflows.worker import run_worker
 
-        run_worker(args.queues)
+        code = run_worker(args.queues, conformance=True) if args.conformance else run_worker(args.queues)
+        if isinstance(code, int) and code:
+            return code
     elif args.command == "scheduler":
         from analystos.services.schedules import run_scheduler
 

@@ -5,8 +5,9 @@ source's dialect has a recipe compiler, the recipe compiles to that dialect and 
 `QueryGateway.execute` (one gateway, CLAUDE.md rule 4). Otherwise it falls back to a snapshot:
 each input is read through the gateway with its own source's scope, stored as an immutable,
 content-addressed snapshot, and the DuckDB form of the recipe runs over those snapshots only, in the
-sandboxed in-memory DuckDB engine on the `compute` workload queue (isolated pools are P7-06). The
-plan records why it fell back.
+sandboxed in-memory DuckDB engine: on the isolated `compute-py` pool when this installation runs it
+(P7-06, `workers/recipe.py`), else on the `compute` workload queue or in-process. The plan records why
+it fell back.
 
 A snapshot is `{columns, rows}` with the rows sorted, named by the SHA-256 of that content: the same
 data is the same snapshot, and a file whose content no longer matches its name is refused.
@@ -222,7 +223,8 @@ class RecipeExecutor:
             return Result(res.columns, res.rows, res.truncated, "sql", [res.query_id])
         snaps = self.take_snapshots()
         job = {"sql": self.compiler.sql(tree), "tables": {a: s["snapshot"] for a, s in snaps.items()}, "max_rows": cap,
-               "timeout_seconds": self.timeout, "artifact_dir": str(self.store.root.parent)}
+               "timeout_seconds": self.timeout, "artifact_dir": str(self.store.root.parent),
+               "workspace_id": self.scope.workspace_id, "run_id": self.run_id}  # who it is for, on an isolated pool
         out = self.compute(job)
         columns, rows = self.store.get(out["result"])
         return Result(columns, rows, bool(out["truncated"]), "duckdb", [], snapshot=out["result"])

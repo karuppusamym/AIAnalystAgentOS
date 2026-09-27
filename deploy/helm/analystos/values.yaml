@@ -190,6 +190,36 @@ workers:
     autoscaling: {enabled: false}
     pdb: {enabled: false}
 
+  # Isolated compute pools (ADR-0022, P7-06): opt-in, deployed only with replicas > 0. No ConfigMap or Secret
+  # (a worker given a credential refuses to start), their own NetworkPolicy (DNS, the API, Temporal only;
+  # isolatedPools.temporalEgress is then required), and the API's ANALYSTOS_ISOLATED_POOLS follows them.
+  # Build compute-ml from an image with the `ml` extra (image override per pool is not modelled yet: the
+  # default image is EXTRAS=standard, which has it).
+  compute-py:          # recipe snapshot jobs (P6-04); later notebook Python cells (P7-12)
+    queues: compute-py
+    isolated: true
+    replicas: 0
+    resources:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {cpu: "2", memory: 4Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+  compute-ml:          # classical ML with bounded search (P5-04, ADR-0024)
+    queues: compute-ml
+    isolated: true
+    replicas: 0
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+    autoscaling: {enabled: false}
+    pdb: {enabled: false}
+
+isolatedPools:
+  # NetworkPolicy `to` peers of the Temporal frontend, e.g.
+  #   [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: temporal}}}] or [{ipBlock: {cidr: 10.0.4.0/24}}]
+  temporalEgress: []
+  temporalPort: 7233
+
 scheduler:
   # Claim-then-execute: several replicas never fire a schedule twice, so 2 is safe for HA.
   replicas: 1

@@ -118,10 +118,19 @@ def queue_ping() -> str:
     return activity.info().task_queue
 
 
+@activity.defn(name="record_task_events")
+def record_task_events(task_id: str, events: list[dict]) -> int:
+    """Persist the events an isolated worker signalled to IsolatedTaskWorkflow (P7-06). Control plane only:
+    isolated workers never register this activity and hold no database credential."""
+    from analystos.services.worker_tasks import record_events
+
+    return record_events(task_id, events)
+
+
 ENGINE_ACTIVITIES = [plan_run, get_state, execute_task, finish_run]
 # Activities served by each workload's worker. The analysis worker also hosts AnalysisWorkflow.
 BY_WORKLOAD: dict[str, list] = {
-    "analysis": [*ENGINE_ACTIVITIES, queue_ping],
+    "analysis": [*ENGINE_ACTIVITIES, record_task_events, queue_ping],
     "compute": [execute_task, run_recipe_snapshot, queue_ping],
     "publish": [execute_task, queue_ping],
     "crawl": [run_crawl, queue_ping],

@@ -58,6 +58,22 @@ securityContext:
   {{- toYaml .Values.containerSecurityContext | nindent 2 }}
 {{- end -}}
 
+{{/* The artifact store as isolated workers reach it: the API Service (ADR-0022, P7-06). */}}
+{{- define "analystos.artifactUrl" -}}
+{{- printf "http://%s-api:%v" (include "analystos.fullname" .) .Values.api.service.port -}}
+{{- end -}}
+
+{{/* Comma-separated isolated pools this release deploys (replicas > 0): ANALYSTOS_ISOLATED_POOLS for the API. */}}
+{{- define "analystos.isolatedPools" -}}
+{{- $out := list -}}
+{{- range $name, $pool := .Values.workers -}}
+{{- if and $pool $pool.isolated (gt (int $pool.replicas) 0) -}}
+{{- $out = append $out $pool.queues -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $out -}}
+{{- end -}}
+
 {{- define "analystos.appVolumes" -}}
 - {name: tmp, emptyDir: {}}
 - {name: var, emptyDir: {}}

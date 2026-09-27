@@ -56,7 +56,8 @@ class CapabilityManifest(BaseModel):
     side_effect: SideEffect = "write_external"
     cost_class: CostClass = "free"
     permissions: list[str] = Field(default_factory=list)
-    requires: list[str] = Field(default_factory=list)  # capability ids (or "engine:<feature>") it needs
+    # capability ids it needs, or "engine:<feature>", "profile:<p>", "extra:<e>", "pool:<isolated pool>" (ADR-0022)
+    requires: list[str] = Field(default_factory=list)
     certification: Certification = Field(default_factory=Certification)
     ui: UiHints = Field(default_factory=UiHints)
     tags: list[str] = Field(default_factory=list)

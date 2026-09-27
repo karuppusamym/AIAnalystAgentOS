@@ -114,10 +114,16 @@ def start_crawl_job(crawl_id: str, user_id: str) -> str | None:
 def run_recipe_compute(job: dict) -> dict:
     """A recipe's snapshot statement on the Temporal `compute` pool (ADR-0023); in-process when the
     orchestrator is local or Temporal cannot take it (the job only reads snapshot files, so both paths
-    give the same result)."""
+    give the same result). When the installation runs the isolated `compute-py` pool (P7-06), the job
+    runs there instead, without credentials; a failure there is the job's answer, never a silent fallback."""
     from analystos.recipes.execute import run_snapshot_job
+    from analystos.workers.dispatch import pool_configured
 
     settings = get_settings()
+    if pool_configured("compute-py", settings):
+        from analystos.workers.recipe import run_recipe_isolated
+
+        return run_recipe_isolated(job, settings=settings)
     if settings.orchestrator != "temporal":
         return run_snapshot_job(job)
 
