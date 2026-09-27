@@ -506,19 +506,21 @@ describe("wave-1 features as panels in the new areas", () => {
   it("Data → Definitions: joins to confirm (measured), the model diff and draft → publish", async () => {
     const f = mockFetch();
     const { container } = renderAt(`/w/${WS}/data/catalog?tab=definitions`);
+    expect(await screen.findByRole("table", { name: "Data model changes" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Joins to confirm/ }));
     const join = await screen.findByRole("article", { name: "Join stg_sn.incident to stg_sn.sys_user_group" });
     expect(within(join).getByText("many to one")).toBeTruthy();
     expect(within(join).getByText(/98% of values match/)).toBeTruthy();
-    expect(await screen.findByRole("table", { name: "Data model changes" })).toBeTruthy();
+    fireEvent.change(within(join).getByPlaceholderText("Reason (optional)"), { target: { value: "matches the CMDB" } });
+    fireEvent.click(within(join).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(calls(f, "POST", /\/candidates\/rlc_1\/accept$/)).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: /Saved definitions/ }));
     const draft = await screen.findByRole("article", { name: "Definition P1 weekly review version 2" });
     fireEvent.click(within(draft).getByRole("button", { name: "Changes" }));
     expect(await within(draft).findByText("window_days")).toBeTruthy();
     fireEvent.click(within(draft).getByRole("button", { name: "Publish" }));
     await waitFor(() => expect(calls(f, "POST", /\/definitions\/def_2\/publish$/)).toHaveLength(1));
     expect((calls(f, "POST", /\/publish$/)[0][1]!.headers as Record<string, string>)["If-Match"]).toBe('"1"');
-    fireEvent.change(within(join).getByPlaceholderText("Reason (optional)"), { target: { value: "matches the CMDB" } });
-    fireEvent.click(within(join).getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(calls(f, "POST", /\/candidates\/rlc_1\/accept$/)).toHaveLength(1));
     const result = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
   }, 15000);

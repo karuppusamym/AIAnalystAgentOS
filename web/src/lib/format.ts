@@ -38,6 +38,7 @@ function knownNumber(v: unknown): number | null {
 export function fmtUsd(v: unknown): string {
   const n = knownNumber(v);
   if (n === null) return UNKNOWN;
+  if (n > 0 && n < 0.0001) return "<$0.0001";
   return `$${n < 1 ? n.toFixed(4) : n.toFixed(2)}`;
 }
 
