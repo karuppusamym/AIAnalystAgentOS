@@ -3139,6 +3139,9 @@ export const api = {
     get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
   getDefinition: (ws: string, id: string) =>
     get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
+  updateDefinition: (ws: string, id: string, revision: number, body: { title: string; spec: Dict }) =>
+    request<DefinitionVersion>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/definitions/{definition_id}",
+      { path: { workspace_id: ws, definition_id: id } }), body, { headers: { "If-Match": `"${revision}"` } }),
   publishDefinition: (ws: string, id: string, revision: number) =>
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish",
       { path: { workspace_id: ws, definition_id: id } }), {}, { headers: { "If-Match": `"${revision}"` } }),

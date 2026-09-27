@@ -8,6 +8,7 @@ import { ExperimentsPanel } from "../components/Ml";
 import { NotebooksPanel } from "../components/Notebooks";
 import { PreparePanel } from "../components/PreparePanel";
 import { StartWorkButton } from "../components/StartWork";
+import { WorkflowPanel } from "../components/WorkflowPanel";
 import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
 import { durationBetween, fmtDate } from "../lib/format";
 import { useAsync } from "../lib/hooks";
@@ -16,7 +17,7 @@ import { to, type WorkTab } from "../routes";
 const TABS: { id: WorkTab; label: string }[] = [
   { id: "investigations", label: "Investigations" }, { id: "thread", label: "Data Thread" }, { id: "notebooks", label: "Notebooks" },
   { id: "experiments", label: "Experiments" },
-  { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
+  { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" }, { id: "workflows", label: "Workflows" },
 ];
 
 /**
@@ -61,6 +62,7 @@ export function WorkPage() {
           onSelectRecipe={(id) => set({ recipe: id })} pipeline={params.get("pipeline")} onSelectPipeline={(id) => set({ pipeline: id })} />}
         {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
           canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
+        {tab === "workflows" && <WorkflowPanel wsId={wsId} role={role} />}
       </div>
     </div>
   );
