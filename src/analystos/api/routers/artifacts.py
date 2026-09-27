@@ -98,7 +98,12 @@ def list_approvals(workspace_id: str, status: str | None = None, user: User = De
 
 @scoped_loader
 def _decide(approval_id: str, user: User, session: Session, approve: bool, reason: str | None):
-    load_in_workspace(session, Approval, approval_id, user=user, label="approval")
+    pending = load_in_workspace(session, Approval, approval_id, user=user, label="approval")
+    from analystos.semantic import ownership
+
+    if pending.action == ownership.ACTION:  # P4-05: the named new owner accepts; an approver is not the recipient
+        raise InvalidInput("an ownership transfer is accepted or declined by its recipient "
+                           "(POST /api/workspaces/{workspace_id}/semantic/ownership/{approval_id}/accept)")
     approval = approval_svc.decide(session, approval_id, session.merge(user), approve=approve, reason=reason)
     if approval.action == semantic_svc.APPROVAL_ACTION:  # a KPI decided from the approvals inbox takes effect now
         semantic_svc.apply_decision(session, approval)

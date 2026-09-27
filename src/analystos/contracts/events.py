@@ -19,6 +19,7 @@ EVENT_TYPES = {
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
     # Semantic compilation and review (P7-02, P7-09, P4-05)
     "semantic.metric.stale", "semantic.model.approved", "semantic.relationship.candidate", "semantic.relationship.validated",
+    "semantic.ownership_offered", "semantic.ownership_transferred", "semantic.ownership_declined",  # P4-05
     "ask.answered", "ask.promoted", "capability.invoked",
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
     # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches
