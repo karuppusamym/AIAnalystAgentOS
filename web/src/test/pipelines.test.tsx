@@ -5,8 +5,10 @@
  * and freshness in Operate.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { session } from "../api";
+import { DryRunResult } from "../components/Pipelines";
+import { dryRun } from "./mockPipelines";
 import { calls, bodyOf, mockFetch, renderAt } from "./harness";
 import { decide } from "./mockApprovals";
 import { resetMockState, USER, WS } from "./mockBackend";
@@ -105,5 +107,22 @@ describe("Operate → Models & pipelines: failures and freshness", () => {
     const stale = await screen.findByRole("list", { name: "Stale destinations" });
     expect(stale.textContent).toMatch(/aos_out\.p1_clean/);
     expect(stale.textContent).toMatch(/the pipeline promises 24 hours/);
+  });
+});
+
+describe("late rows in the dry-run ledger", () => {
+  const lateStat = () => within(screen.getByRole("group", { name: "Rows" })).getByText("Late rows").closest(".stat") as HTMLElement;
+
+  it("shows a measured count, and an unmeasured one as not measured with the server's reason", () => {
+    const base = dryRun();
+    const { unmount } = render(<DryRunResult run={{ ...base, reconciliation: { ...base.reconciliation!, late_rows: 3, late_rows_reason: null } }} />);
+    expect(lateStat().textContent).toMatch(/^Late rows3/);
+    expect(lateStat().getAttribute("data-attention")).toBe("true");
+    unmount();
+    render(<DryRunResult run={{ ...base, reconciliation: { ...base.reconciliation!, late_rows: null,
+      late_rows_reason: "the pipeline declares no incremental watermark" } }} />);
+    expect(lateStat().textContent).toMatch(/not measured/);
+    expect(lateStat().textContent).toMatch(/declares no incremental watermark/);
+    expect(lateStat().textContent).not.toMatch(/\b0\b/);
   });
 });

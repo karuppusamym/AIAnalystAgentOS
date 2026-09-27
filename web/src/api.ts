@@ -2626,8 +2626,10 @@ export interface PipelineReconciliation {
   rejected_rows: number;
   dropped_rows: number;
   blocked: boolean;
-  /** Rows that arrived after the watermark's late window: not reported by the API yet (unknown, never 0). */
+  /** Rows that arrived behind the watermark's late window: a count only when measured (the dry run of an
+   * incremental pipeline); null with `late_rows_reason` otherwise; absent from older servers. Never a silent 0. */
   late_rows?: number | null;
+  late_rows_reason?: string | null;
   unmatched: Record<string, { unmatched_left_rows: number; unmatched_left_pct: number; unmatched_left_keys: number; unmatched_right_keys: number;
     row_multiplication: number | null }>;
   aggregates: { name: string; func: string; input: { node: string; column: string | null; value: number }; output: { column: string | null; value: number };

@@ -43,7 +43,7 @@ const mat = (id: string, version: number, status: string, promotedHoursAgo: numb
   created_at: HOURS_AGO(promotedHoursAgo), promoted_at: status === "failed" ? null : HOURS_AGO(promotedHoursAgo),
 });
 
-function dryRun(): PipelineRun {
+export function dryRun(): PipelineRun {
   return {
     id: DRY_RUN, workspace_id: "ws_demo", pipeline_id: PIPELINE, pipeline_name: "p1_clean", pipeline_version: 2, spec_hash: "ps_pip_2", mode: "dry_run",
     status: "awaiting_approval", recipes: { p1_incidents_clean: 2 }, plan: { engine: "duckdb" },
