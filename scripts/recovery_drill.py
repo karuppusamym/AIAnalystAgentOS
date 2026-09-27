@@ -174,18 +174,43 @@ def resolve(url: str) -> dict[str, Any]:
                 try:
                     dep_versions[key] = current_version(s, d["kind"], d["ref"])
                 except Exception as exc:  # noqa: BLE001 - an unresolvable dependency is a finding of the drill
-                    dep_versions[key] = f"error:{type(exc).__name__}"
+                    s.rollback()  # the failed statement aborted the transaction; the next lookup starts clean
+                    dep_versions[key] = f"error:{type(exc).__name__}: {str(exc).splitlines()[0][:160]}"
         res["verification"] = {"records": len(records), "states": dict(sorted(_count(r.state for r in records).items())),
                                "fingerprint_ok": sum(fingerprint(r.dependencies or []) == r.fingerprint for r in records),
                                "live": len(live), "live_dependencies": len(dep_versions),
                                "live_dependencies_current": sum(
                                    v == d["version_hash"] for r in live for d in r.dependencies or []
-                                   for v in [dep_versions.get(f"{r.id}|{d['kind']}|{d['ref']}")])}
+                                   for v in [dep_versions.get(f"{r.id}|{d['kind']}|{d['ref']}")]),
+                               "live_dependency_errors": sum(str(v).startswith("error:") for v in dep_versions.values()),
+                               "first_error": next((v for v in dep_versions.values() if str(v).startswith("error:")), None)}
         res["_dependency_versions"] = dep_versions
     finally:
         s.close()
         engine.dispose()
     return res
+
+
+def schema_gaps(url: str) -> list[str]:
+    """Tables and columns the ORM maps that the database lacks (the code is ahead of the schema)."""
+    from sqlalchemy import create_engine, inspect
+
+    from analystos.db import models
+
+    engine = create_engine(url)
+    try:
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+        out = []
+        for name, table in sorted(models.Base.metadata.tables.items()):
+            if name not in tables:
+                out.append(name)
+                continue
+            have = {c["name"] for c in insp.get_columns(name)}
+            out += [f"{name}.{c.name}" for c in table.columns if c.name not in have]
+        return out
+    finally:
+        engine.dispose()
 
 
 def _count(values) -> dict[str, int]:
@@ -278,10 +303,15 @@ def drill(source_url: str, scratch: str, *, files: Path | None, keep: bool, work
           f"(source: {resolved_source['evidence']['bundles_hash_ok']}/{resolved_source['evidence']['bundles_bound']})")
     same_versions = resolved["_dependency_versions"] == resolved_source["_dependency_versions"]
     check("verification records resolve", v["fingerprint_ok"] == v["records"] == resolved_source["verification"]["records"]
-          and same_versions,
+          and same_versions and not v["live_dependency_errors"],
           f"{v['fingerprint_ok']}/{v['records']} fingerprints recompute; {v['live_dependencies']} dependencies of "
           f"{v['live']} live records resolve to the same current version as on the source"
-          f" ({v['live_dependencies_current']} still equal the recorded version)")
+          f" ({v['live_dependencies_current']} still equal the recorded version)"
+          + (f"; {v['live_dependency_errors']} could not be resolved: {v['first_error']}" if v["live_dependency_errors"] else ""))
+    missing = schema_gaps(scratch_url)
+    check("schema matches this code", not missing, "every table and column the code maps exists" if not missing else
+          f"the database lacks {', '.join(missing[:8])}: migrate the restored copy (`analystos migrate`) before starting "
+          "the platform, or drill with the code that wrote it")
     if file_manifest is not None:
         check("files restore byte-for-byte", restored_files == file_manifest, f"{len(file_manifest)} files")
     if not keep:
