@@ -9,6 +9,7 @@ import type {
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
+import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -34,11 +35,17 @@ const SOURCE: Source = {
   execution_mode: "staged", staging_schema: "stg_sn", last_discovered_at: T, last_error: null, created_at: T,
 };
 
+/** A file source for uploads (Work → Prepare data); nothing is selected in it yet. */
+const FILE_SOURCE: Source = {
+  id: "src_files", workspace_id: WS, kind: "csv", name: "Uploaded files", config: {}, secret_ref: null, status: "registered",
+  execution_mode: "staged", staging_schema: "stg_files", last_discovered_at: T, last_error: null, created_at: T,
+};
+
 const INSIGHT_ROW: Insight = {
   id: INSIGHT, workspace_id: WS, run_id: RUN, hypothesis_id: "hyp_1", code: "F1", title: "Network group drives P1 breaches",
   finding: "Network resolves P1 incidents 2.1x slower than the median group.", confidence: 0.86, population_size: 4210,
   business_impact: {}, caveats: ["Q3 only", "Data quality: 2.1% of resolved_at values are null"], evidence: [{ type: "query", id: "qry_h1" }],
-  verified: true, status: "verified", narrative_source: "rule", created_at: T,
+  verified: true, status: "verified", narrative_source: "rule", created_at: T, verification_state: VERIFIED_STATE,
   verification: {
     verified: true,
     evaluate: [
@@ -307,6 +314,7 @@ export function resetMockState(): void {
   state.proposed = [];
   state.decided = {};
   resetKnowledgeState();
+  resetWave1();
 }
 
 const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
@@ -692,6 +700,8 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     const all = state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED];
     return json(all.filter((a) => !status || a.status === status));
   }
+  const wave = wave1Route(m, p, WS, requestBody);
+  if (wave) return json(wave.body, wave.status);
   const asked = askRoute(m, p, requestBody);
   if (asked) return asked;
   const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows);
@@ -713,12 +723,13 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/auth/providers", { password: true, oidc: { enabled: false, name: "SSO", login_url: null } }],
     ["GET", "/workspaces", [WORKSPACE]],
     ["GET", W, WORKSPACE],
-    ["GET", `${W}/sources`, [SOURCE]],
+    ["GET", `${W}/sources`, [SOURCE, FILE_SOURCE]],
     ["GET", `${W}/analysis`, [RUN_ROW]],
     ["GET", `${W}/analysis/${RUN}`, RUN_DETAIL],
     ["GET", `${W}/analysis/${RUN}/console`, CONSOLE],
-    ["GET", `${W}/insights`, [INSIGHT_ROW, INSIGHT_DRAFT]],
+    ["GET", `${W}/insights`, [INSIGHT_ROW, INSIGHT_DRAFT, voidInsight(INSIGHT_ROW)]],
     ["GET", `/insights/${INSIGHT}`, INSIGHT_DETAIL],
+    ["GET", `/insights/${INSIGHT_VOID_ID}`, { ...INSIGHT_DETAIL, ...voidInsight(INSIGHT_ROW), queries: [], experiments: [] }],
     ["GET", `${W}/alerts`, [ALERT]],
     ["GET", `${W}/monitors`, [MONITOR]],
     ["GET", `${W}/schedules`, [SCHEDULE]],
@@ -730,6 +741,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/source-kinds", KINDS],
     ["GET", "/notifications", []],
     ["POST", `${W}/ask`, ASK],
+    ["POST", `${W}/analysis`, RUN_ROW],
     ["GET", "/agents", AGENTS],
     ["GET", "/tools", TOOLS],
     ["GET", "/skills", SKILLS],

@@ -587,7 +587,7 @@ export function AskPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Ask" subtitle="Questions answered from governed data: verified answers first, generated SQL only through the same gateway as every run." />
+      <PageHeader title="Ask" subtitle="Questions answered from governed data: verified answers first, generated SQL only through the same gateway as every investigation." />
       <div className="ask-layout">
         <nav className="card ask-threads" aria-label="Threads">
           <div className="card-body stack">

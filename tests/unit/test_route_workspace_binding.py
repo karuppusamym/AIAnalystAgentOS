@@ -28,9 +28,14 @@ NOT_A_CHILD_ID = {
     "capability_id": "a platform-wide registry entry, not a workspace child; enablement is per workspace",
     "user_id": "a platform user; membership changes are owner-only in the path's workspace",
 }
-# Routes whose child id is never read (a fixed answer for any id).
+# Routes whose child id is never read (a fixed answer for any id), or that no user session can reach.
+WORKER_TOKEN = ("isolated-worker route (P7-06): authenticated only by a scoped task token bound to its workspace, "
+                "task, artifact ids / output names and verbs; the store also checks the artifact's own workspace "
+                "(test_worker_routes_accept_only_task_tokens)")
 EXEMPT_ROUTES = {
     ("POST", "/api/dashboards/{artifact_id}/schedule"): "always answers with where to create a schedule; reads nothing",
+    ("GET", "/api/worker/artifacts/{artifact_id}"): WORKER_TOKEN,
+    ("PUT", "/api/worker/tasks/{task_id}/outputs/{name}"): WORKER_TOKEN,
 }
 
 
@@ -143,3 +148,23 @@ def test_every_child_id_route_binds_the_child_to_its_workspace():
 def test_exemptions_still_name_real_routes():
     paths = {(sorted(r.methods)[0], path) for path, r in _api_routes()}
     assert set(EXEMPT_ROUTES) <= paths
+
+
+def test_worker_routes_accept_only_task_tokens():
+    """Every /api/worker route depends on the task-token check and on no user-session dependency, and each
+    calls the claim check for what it touches (read, write or model purpose)."""
+    from analystos.api.deps import current_user
+    from analystos.api.routers import worker as worker_routes
+
+    def calls(dependant):
+        for dep in dependant.dependencies:
+            yield dep.call
+            yield from calls(dep)
+
+    routes = [(path, r) for path, r in _api_routes() if path.startswith("/api/worker/")]
+    assert len(routes) == 3
+    for path, route in routes:
+        deps = set(calls(route.dependant))
+        assert worker_routes.worker_claims in deps and current_user not in deps, path
+        source = inspect.getsource(route.endpoint)
+        assert any(check in source for check in ("require_read(", "require_write(", "require_purpose(")), path

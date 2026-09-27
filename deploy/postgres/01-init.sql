@@ -11,9 +11,13 @@
 -- Clusters initialised before this: `analystos migrate` grants CREATEROLE and backfills the roles.
 -- The builder is the BuildGateway's write identity (P4-E06): no privilege of its own; it SETs a
 -- per-workspace build role (analystos_b_<workspace>) that may CREATE only in designated target schemas.
+-- The writer is the managed output writer's identity (P6-03): no privilege of its own; it SETs a
+-- per-workspace writer role (analystos_w_<workspace>) that may CREATE only in allowlisted destination
+-- schemas and reads no source. Clusters initialised before it: `analystos migrate` creates the login.
 CREATE ROLE analystos_loader LOGIN CREATEROLE PASSWORD 'loader';
 CREATE ROLE analystos_reader LOGIN NOINHERIT PASSWORD 'reader';
 CREATE ROLE analystos_builder LOGIN NOINHERIT PASSWORD 'builder';
+CREATE ROLE analystos_writer LOGIN NOINHERIT PASSWORD 'writer';
 CREATE ROLE superset LOGIN PASSWORD 'superset';
 
 CREATE DATABASE analytics OWNER analystos_loader;
@@ -23,7 +27,7 @@ REVOKE CONNECT ON DATABASE analystos FROM PUBLIC;
 REVOKE CONNECT ON DATABASE superset FROM PUBLIC;
 GRANT CONNECT ON DATABASE analystos TO analystos;
 REVOKE CONNECT ON DATABASE analytics FROM PUBLIC;
-GRANT CONNECT ON DATABASE analytics TO analystos_loader, analystos_reader, analystos_builder;
+GRANT CONNECT ON DATABASE analytics TO analystos_loader, analystos_reader, analystos_builder, analystos_writer;
 
 ALTER ROLE analystos_reader SET default_transaction_read_only = on;
 ALTER ROLE analystos_reader SET statement_timeout = '60s';

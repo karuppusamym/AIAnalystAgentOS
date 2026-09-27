@@ -43,6 +43,19 @@ def why_number(insight_id: str, number: str | None = None, fact_id: str | None =
     return explain_insight(session, ins, number=number, fact_id=fact_id)
 
 
+@router.post("/verification/{record_id}/reverify")
+def reverify_record(record_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Re-verify a verdict (P7-01, ADR-0020 decision 5): a new record by the subject's own deterministic path
+    (a step re-run, a replay run of a finding's frozen spec, or a new experiment of the same ML spec version).
+    The old record is never edited: a VOID verdict stays VOID and readable. 409 when it is not the subject's
+    latest record or is already current."""
+    from analystos.db.models import VerificationRecord
+    from analystos.evidence.reverify import reverify
+
+    load_in_workspace(session, VerificationRecord, record_id, user=user, minimum="analyst", label="verification record")
+    return reverify(user, record_id)
+
+
 @router.get("/workspaces/{workspace_id}/analysis/{run_id}/why")
 def why_run(workspace_id: str, run_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Every number of the run's reported findings resolved as in `/insights/{id}/why`, with counts by state."""

@@ -13,6 +13,8 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:  # isolated compute pools have their own, narrower policy (networkpolicy-isolated.yaml)
+      - {key: analystos.io/isolated, operator: NotIn, values: ["true"]}
   policyTypes: [Egress, Ingress]
   ingress:
     - {}                      # ingress stays open to the namespace's ingress controller / services

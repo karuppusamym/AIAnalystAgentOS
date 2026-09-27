@@ -25,7 +25,7 @@ export function ConsolePage() {
 
   return (
     <div className="page">
-      <PageHeader title="Agent console" subtitle={<>Run <Link to={to.run(wsId, runId)}><code>{runId}</code></Link> — what each agent thought, called and queried.</>}
+      <PageHeader title="Agent console" subtitle={<>Investigation <Link to={to.run(wsId, runId)}><code>{runId}</code></Link>: what each agent thought, called and queried.</>}
         actions={<button type="button" className="btn btn-sm" onClick={data.reload} disabled={data.loading}>{data.loading ? "Refreshing…" : "Refresh"}</button>} />
       <div className="stats-row card card-body">
         <Stat label="Cost" value={<Value value={d.cost?.usd} format="usd" />} />

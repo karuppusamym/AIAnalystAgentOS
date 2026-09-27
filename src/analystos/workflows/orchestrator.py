@@ -114,10 +114,16 @@ def start_crawl_job(crawl_id: str, user_id: str) -> str | None:
 def run_recipe_compute(job: dict) -> dict:
     """A recipe's snapshot statement on the Temporal `compute` pool (ADR-0023); in-process when the
     orchestrator is local or Temporal cannot take it (the job only reads snapshot files, so both paths
-    give the same result)."""
+    give the same result). When the installation runs the isolated `compute-py` pool (P7-06), the job
+    runs there instead, without credentials; a failure there is the job's answer, never a silent fallback."""
     from analystos.recipes.execute import run_snapshot_job
+    from analystos.workers.dispatch import pool_configured
 
     settings = get_settings()
+    if pool_configured("compute-py", settings):
+        from analystos.workers.recipe import run_recipe_isolated
+
+        return run_recipe_isolated(job, settings=settings)
     if settings.orchestrator != "temporal":
         return run_snapshot_job(job)
 
@@ -135,6 +141,38 @@ def run_recipe_compute(job: dict) -> dict:
     except Exception as exc:
         log.warning("recipe compute not handed to Temporal (%s); running it in-process", exc)
         return run_snapshot_job(job)
+
+
+def run_ml_compute(job: dict) -> dict:
+    """An ML job (`analystos.ml.jobs.run_ml_job`, ADR-0024). When the installation runs the isolated `compute-ml`
+    pool (P7-06) the job runs there, without credentials, and packages are unpickled only there; a failure there
+    is the job's answer, never a silent fallback. Otherwise on the Temporal `compute` pool, or in-process when
+    the orchestrator is local or Temporal cannot take it. The job reads and writes only content-addressed
+    files, so every path gives the same result."""
+    from analystos.ml.jobs import run_ml_job
+    from analystos.workers.dispatch import pool_configured
+
+    settings = get_settings()
+    if pool_configured("compute-ml", settings):
+        from analystos.workers.ml import run_ml_isolated
+
+        return run_ml_isolated(job, settings=settings)
+    if settings.orchestrator != "temporal":
+        return run_ml_job(job)
+
+    async def go():
+        from analystos.core.ids import new_id
+        from analystos.workflows.queues import queue_name, workflow_options
+
+        client = await _temporal_client()
+        return await client.execute_workflow("MLComputeWorkflow", args=[job, workflow_options()], id=new_id("ml-compute"),
+                                             task_queue=queue_name(settings.temporal_queue_prefix, "analysis"))
+    try:
+        fut: Future = asyncio.run_coroutine_threadsafe(go(), _event_loop())
+        return fut.result(timeout=max(900, int(settings.ml_max_seconds) + 300))
+    except Exception as exc:
+        log.warning("ML compute not handed to Temporal (%s); running it in-process", exc)
+        return run_ml_job(job)
 
 
 # ------------------------------------------------------------------------------ local orchestrator

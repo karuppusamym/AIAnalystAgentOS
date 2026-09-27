@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -100,8 +101,11 @@ def discover_source(user: User, source_id: str, workspace_id: str | None = None)
 
 
 @scoped_loader
-def select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None = None) -> dict:
-    """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load)."""
+def select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None = None, *,
+                  refresh: str = "auto") -> dict:
+    """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load, or a
+    watermark window for a table the source config declares `incremental`; `refresh` = auto | full |
+    reconcile)."""
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
     from analystos.evidence.manifest import mark_stale
@@ -122,7 +126,8 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
         selected = [(a.id, a.source_name, a.name, a.schema_name,
                      [DiscoveredColumn(name=c.name, data_type=c.data_type, nullable=c.nullable, is_key=c.is_key,
                                        references=(c.profile or {}).get("references"))
-                      for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))])
+                      for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))
+                      if c.name != "aos_deleted_at"])
                     for a in assets if a.selected]
         s.expunge(src)
     loaded = []
@@ -133,14 +138,24 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
         settings = get_settings()
         connector = build_connector(src, settings)
         loader = StagingLoader(settings)
+        from analystos.connectors import sampling
+        from analystos.staging.incremental import incremental_for, stage_incremental, supports
+
         for asset_id, source_name, name, schema, cols in selected:
             d = DiscoveredAsset(source_name=source_name, name=name, columns=cols, kind="api_table")
-            info = stage_asset(loader, connector, source_id, d, config=src.config, platform_max=platform_max,
-                               workspace_id=src.workspace_id)
+            inc = incremental_for(src.config, source_name, name) if supports(connector) else None
+            if inc is not None:  # P6-02: windows by watermark, merged on the key, deletes reconciled when due
+                cap = sampling.row_cap(src.config, platform_max, sampling.sampling_for(src.config, source_name, name))
+                info = stage_incremental(loader, connector, source_id, d, inc, workspace_id=src.workspace_id,
+                                         cap=cap, mode=refresh)
+            else:
+                info = stage_asset(loader, connector, source_id, d, config=src.config, platform_max=platform_max,
+                                   workspace_id=src.workspace_id)
             loaded.append({"asset": f"{schema}.{name}", **info})
             with session_scope() as s:
                 a = s.get(SourceAsset, asset_id)
                 a.row_count, a.freshness_at, a.snapshot = info.get("row_count"), utcnow(), info["snapshot"]
+                _register_soft_delete_column(s, a, info)
                 s.flush()
                 # P4-03: findings bound to an older version of this snapshot now need re-verification
                 mark_stale(s, a.workspace_id, source_id, f"{schema}.{name}")
@@ -153,6 +168,75 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
         emit(row.workspace_id, "metadata.collected", {"source_id": source_id, "selected": asset_names, "loaded": loaded},
              actor=f"user:{user.id}", session=s)
     return {"selected": asset_names, "loaded": loaded}
+
+
+def _register_soft_delete_column(session: Session, asset: SourceAsset, info: dict) -> None:
+    """A `deletes: soft` table carries `aos_deleted_at`; the catalog lists it so queries can filter on it."""
+    from analystos.contracts.recipe import SOFT_DELETE_COLUMN
+
+    staged = {c["name"]: c["type"] for c in info.get("columns") or []}
+    if SOFT_DELETE_COLUMN not in staged:
+        return
+    known = {c.name for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))}
+    if SOFT_DELETE_COLUMN not in known:
+        session.add(SourceColumn(asset_id=asset.id, name=SOFT_DELETE_COLUMN, ordinal=len(known),
+                                 data_type=staged[SOFT_DELETE_COLUMN], tags=[], profile={}, semantics={},
+                                 description="Set when the source no longer holds this key (soft delete)"))
+
+
+@scoped_loader
+def refresh_asset(user: User, source_id: str, asset_name: str, workspace_id: str | None = None, *, mode: str,
+                  since: Any = None, until: Any = None) -> dict:
+    """Re-stage one selected table of an incremental source (P6-02): `full` (swap), `reconcile` (a window plus
+    the full reconcile of deletes), `replay` / `backfill` (merge the watermark range [since, until] without
+    moving the watermark). Only an editor of the source's workspace; recipe outputs are not re-staged."""
+    from analystos.connectors import sampling
+    from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
+    from analystos.connectors.registry import build_connector
+    from analystos.evidence.manifest import mark_stale
+    from analystos.services.platform_settings import get as platform
+    from analystos.staging.incremental import MODES, incremental_for, stage_incremental, supports
+    from analystos.staging.loader import StagingLoader
+
+    if mode not in MODES or mode == "auto":
+        raise InvalidInput(f"mode must be one of {', '.join(m for m in MODES if m != 'auto')}")
+    with session_scope() as s:
+        src = _source(s, user, source_id, workspace_id=workspace_id)
+        if src.kind == "recipe" or src.execution_mode != "staged":
+            raise InvalidInput("only staged sources are refreshed by watermark")
+        a = s.scalar(select(SourceAsset).where(SourceAsset.source_id == source_id, SourceAsset.selected.is_(True),
+                                               (SourceAsset.name == asset_name) | (SourceAsset.source_name == asset_name)))
+        if a is None:
+            raise NotFound(f"{asset_name} is not a selected table of this source")
+        cols = [DiscoveredColumn(name=c.name, data_type=c.data_type, nullable=c.nullable, is_key=c.is_key)
+                for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal))
+                if c.name != "aos_deleted_at"]
+        d = DiscoveredAsset(source_name=a.source_name, name=a.name, columns=cols, kind="api_table")
+        asset_id, fq = a.id, f"{a.schema_name}.{a.name}"
+        s.expunge(src)
+    settings = get_settings()
+    connector = build_connector(src, settings)
+    inc = incremental_for(src.config, d.source_name, d.name)
+    if inc is None or not supports(connector):
+        raise InvalidInput(f"{asset_name} declares no incremental block (config.incremental) or its source cannot "
+                           "read by watermark")
+    cap = sampling.row_cap(src.config, platform().sources.staged_max_rows,
+                           sampling.sampling_for(src.config, d.source_name, d.name))
+    info = stage_incremental(StagingLoader(settings), connector, source_id, d, inc, workspace_id=src.workspace_id, cap=cap,
+                             mode=mode, window=(since, until) if mode in ("replay", "backfill") else None)
+    with session_scope() as s:
+        a = s.get(SourceAsset, asset_id)
+        a.row_count, a.freshness_at, a.snapshot = info.get("row_count"), utcnow(), info["snapshot"]
+        _register_soft_delete_column(s, a, info)
+        mark_stale(s, a.workspace_id, source_id, fq)
+        row = s.get(Source, source_id)
+        row.last_discovered_at = utcnow()
+        audit(f"user:{user.id}", "source.asset_refreshed", workspace_id=row.workspace_id, target=source_id,
+              details={"asset": fq, "mode": mode, "incremental": info["incremental"]}, session=s)
+        emit(row.workspace_id, "metadata.collected", {"source_id": source_id, "refreshed": fq, "mode": mode,
+                                                      "incremental": info["incremental"]}, actor=f"user:{user.id}", session=s)
+    return {"asset": fq, "row_count": info.get("row_count"), "content_fingerprint": info.get("content_fingerprint"),
+            "incremental": info["incremental"]}
 
 
 @scoped_loader

@@ -1,0 +1,464 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same\nartifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this\ntype). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step\nsnapshots stored or read as `{\"kind\": \"artifact\", \"id\": ...}` keep their shape.",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "media_type": {
+          "default": "application/octet-stream",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "kind",
+        "content_hash"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "description": "Enforced by the pool, not trusted to the job: CPU and memory by rlimits, wall clock by a kill,\noutput bytes by the store and the file-size limit, trials by the job context.",
+      "properties": {
+        "cpu_seconds": {
+          "default": 300,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Cpu Seconds",
+          "type": "integer"
+        },
+        "memory_mb": {
+          "default": 2048,
+          "maximum": 262144,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "wall_seconds": {
+          "default": 600,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Wall Seconds",
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 268435456,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "max_trials": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Trials"
+        }
+      },
+      "title": "Budget",
+      "type": "object"
+    },
+    "CapabilityRef": {
+      "additionalProperties": false,
+      "description": "The capability and the exact code the worker must run: a worker whose handler hashes differently refuses.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content_hash"
+      ],
+      "title": "CapabilityRef",
+      "type": "object"
+    },
+    "MLJobSpec": {
+      "additionalProperties": false,
+      "description": "A classical-ML job (ADR-0024, P5-04) for `compute-ml`. `job` is the pure job's input; inputs it\nreads are named by artifact id in `input_artifacts`. P5-04 narrows `job` to its MLSpec.",
+      "properties": {
+        "kind": {
+          "const": "ml.job",
+          "default": "ml.job",
+          "title": "Kind",
+          "type": "string"
+        },
+        "job": {
+          "additionalProperties": true,
+          "title": "Job",
+          "type": "object"
+        }
+      },
+      "title": "MLJobSpec",
+      "type": "object"
+    },
+    "ProbeSpec": {
+      "additionalProperties": false,
+      "description": "Conformance probe (tests/conformance/worker): served only by a worker started with --conformance.",
+      "properties": {
+        "kind": {
+          "const": "conformance.probe",
+          "default": "conformance.probe",
+          "title": "Kind",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "echo",
+            "read",
+            "write",
+            "egress",
+            "cpu",
+            "memory",
+            "sleep",
+            "big_output",
+            "raise",
+            "trials",
+            "environment"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "ProbeSpec",
+      "type": "object"
+    },
+    "PythonCellSpec": {
+      "additionalProperties": false,
+      "description": "A notebook/step Python cell (P7-12) for `compute-py`: restricted code over the JSON input artifact named\n`inputs_artifact`, under the sandbox's static and runtime policy inside the credential-free worker.",
+      "properties": {
+        "kind": {
+          "const": "python.cell",
+          "default": "python.cell",
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 100000,
+          "title": "Code",
+          "type": "string"
+        },
+        "inputs_artifact": {
+          "title": "Inputs Artifact",
+          "type": "string"
+        },
+        "allowed_imports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Imports",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "memory_mb": {
+          "default": 1024,
+          "maximum": 65536,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "inputs_artifact"
+      ],
+      "title": "PythonCellSpec",
+      "type": "object"
+    },
+    "RecipeSnapshotSpec": {
+      "additionalProperties": false,
+      "description": "A recipe's DuckDB statement over immutable input snapshots (ADR-0023, P6-04).",
+      "properties": {
+        "kind": {
+          "const": "recipe.snapshot",
+          "default": "recipe.snapshot",
+          "title": "Kind",
+          "type": "string"
+        },
+        "sql": {
+          "title": "Sql",
+          "type": "string"
+        },
+        "tables": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SnapshotInput"
+          },
+          "title": "Tables",
+          "type": "object"
+        },
+        "max_rows": {
+          "minimum": 1,
+          "title": "Max Rows",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sql",
+        "tables",
+        "max_rows",
+        "timeout_seconds"
+      ],
+      "title": "RecipeSnapshotSpec",
+      "type": "object"
+    },
+    "SnapshotInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "snapshot": {
+          "title": "Snapshot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "snapshot"
+      ],
+      "title": "SnapshotInput",
+      "type": "object"
+    },
+    "TaskEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "workspace_id": {
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "work_order_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Work Order Id"
+        },
+        "capability": {
+          "$ref": "#/$defs/CapabilityRef"
+        },
+        "spec": {
+          "discriminator": {
+            "mapping": {
+              "conformance.probe": "#/$defs/ProbeSpec",
+              "ml.job": "#/$defs/MLJobSpec",
+              "python.cell": "#/$defs/PythonCellSpec",
+              "recipe.snapshot": "#/$defs/RecipeSnapshotSpec"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RecipeSnapshotSpec"
+            },
+            {
+              "$ref": "#/$defs/MLJobSpec"
+            },
+            {
+              "$ref": "#/$defs/PythonCellSpec"
+            },
+            {
+              "$ref": "#/$defs/ProbeSpec"
+            }
+          ],
+          "title": "Spec"
+        },
+        "input_artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Input Artifacts",
+          "type": "array"
+        },
+        "context_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Ref"
+        },
+        "policy_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Ref"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "required_outputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Outputs",
+          "type": "array"
+        },
+        "trace_parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Parent"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deadline"
+        },
+        "idempotency_key": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Idempotency Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "workspace_id",
+        "capability",
+        "spec",
+        "idempotency_key"
+      ],
+      "title": "TaskEnvelope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What a pool receives: the envelope, its pool and the scoped artifact token. The token is the only\ncredential a worker ever holds; the artifact store URL comes from the worker's own configuration.",
+  "properties": {
+    "pool": {
+      "enum": [
+        "compute-py",
+        "compute-ml"
+      ],
+      "title": "Pool",
+      "type": "string"
+    },
+    "envelope": {
+      "$ref": "#/$defs/TaskEnvelope"
+    },
+    "token": {
+      "title": "Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pool",
+    "envelope",
+    "token"
+  ],
+  "title": "TaskDispatch",
+  "type": "object"
+}

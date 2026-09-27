@@ -1,0 +1,21 @@
+# Governed ML training (P5-06, ADR-0024): the ml_practitioner proposes an MLSpec (catalog only, validated);
+# the ml_engineer trains the run's published ml_spec (origin.ml_definition) - readiness and leakage checks,
+# split manifest, baseline + bounded search, one holdout read, sealed evaluation, model card, verification
+# record. Without a published spec the best proposal is saved as a draft for a person to publish. Training
+# registers a candidate or challenger; promotion is a separate hash-bound approval, never part of a run.
+# Disabled per workspace until an owner enables it; `tested`, so never autonomous or on a schedule.
+apiVersion: analystos/v1
+kind: Playbook
+id: playbook.train
+version: 1.0.0
+summary: Propose an MLSpec, then train and evaluate a published ml_spec (baseline, bounded search, untouched holdout)
+determinism: seeded
+side_effect: write_internal
+cost_class: compute
+certification: {status: tested, evidence: tests/integration/test_ml_governed.py}
+tags: [ml, training]
+spec:
+  framing: false
+  steps:
+    - {key: ml_propose, use: agent.ml_practitioner, title: "Propose target, features and estimators from the catalog", optional: true}
+    - {key: ml_train, use: agent.ml_engineer, title: Train and evaluate the published MLSpec, after: [ml_propose]}

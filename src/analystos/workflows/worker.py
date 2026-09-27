@@ -15,7 +15,7 @@ from typing import Any
 
 from analystos.core.config import get_settings
 from analystos.core.logging import configure_logging, get_logger
-from analystos.workflows.queues import QueueSpec, load_config, parse_workloads, queue_name
+from analystos.workflows.queues import ISOLATED_POOLS, QueueSpec, load_config, parse_workloads, queue_name
 
 log = get_logger(__name__)
 
@@ -27,11 +27,18 @@ def build_workers(client: Any, workloads: list[str], *, prefix: str, stack: cont
     from temporalio.worker import SharedStateManager, Worker
 
     from analystos.workflows.activities import BY_WORKLOAD
-    from analystos.workflows.analysis_workflow import AnalysisWorkflow, CrawlWorkflow, RecipeComputeWorkflow
+    from analystos.workflows.analysis_workflow import (
+        AnalysisWorkflow,
+        CrawlWorkflow,
+        IsolatedTaskWorkflow,
+        MLComputeWorkflow,
+        RecipeComputeWorkflow,
+    )
 
     specs = specs or load_config()[0]
     activities = activities or BY_WORKLOAD
-    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow], "crawl": [CrawlWorkflow]}
+    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow, IsolatedTaskWorkflow, MLComputeWorkflow],
+                              "crawl": [CrawlWorkflow]}
     workers = []
     for workload in workloads:
         spec = specs[workload]
@@ -64,9 +71,24 @@ async def _main(workloads: list[str]) -> None:
         await asyncio.gather(*(w.run() for w in workers))
 
 
-def run_worker(queues: str | None = None) -> None:
+def run_worker(queues: str | None = None, *, conformance: bool = False) -> int:
+    """`analystos worker`. Isolated pools (compute-py, compute-ml; ADR-0022) start a credential-free worker
+    that never builds Settings, so the queue list is read from the argument or the environment first."""
+    import os
+    import sys
+
     from analystos.core.profiles import require_extra
 
+    value = queues if queues is not None else (os.environ.get("ANALYSTOS_WORKER_QUEUES") or None)
+    workloads = parse_workloads(value if value is not None else get_settings().worker_queues)
+    if set(workloads) & set(ISOLATED_POOLS):
+        from analystos.workers.main import run_isolated
+
+        return run_isolated(tuple(workloads), conformance=conformance)
+    if conformance:
+        sys.stderr.write("--conformance applies to isolated pools only\n")
+        return 2
     configure_logging()
     require_extra("temporal", "`analystos worker` (the standard profile)")
-    asyncio.run(_main(parse_workloads(queues if queues is not None else get_settings().worker_queues)))
+    asyncio.run(_main(workloads))
+    return 0

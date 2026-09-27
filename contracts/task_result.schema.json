@@ -1,0 +1,213 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same\nartifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this\ntype). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step\nsnapshots stored or read as `{\"kind\": \"artifact\", \"id\": ...}` keep their shape.",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "media_type": {
+          "default": "application/octet-stream",
+          "title": "Media Type",
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "kind",
+        "content_hash"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "TaskEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "task.started",
+            "task.progress",
+            "task.completed",
+            "task.failed"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "seq": {
+          "default": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "at": {
+          "default": 0.0,
+          "title": "At",
+          "type": "number"
+        },
+        "data": {
+          "additionalProperties": true,
+          "title": "Data",
+          "type": "object"
+        }
+      },
+      "required": [
+        "task_id",
+        "type"
+      ],
+      "title": "TaskEvent",
+      "type": "object"
+    },
+    "TaskUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_seconds": {
+          "default": 0.0,
+          "title": "Cpu Seconds",
+          "type": "number"
+        },
+        "wall_seconds": {
+          "default": 0.0,
+          "title": "Wall Seconds",
+          "type": "number"
+        },
+        "max_rss_mb": {
+          "default": 0.0,
+          "title": "Max Rss Mb",
+          "type": "number"
+        },
+        "output_bytes": {
+          "default": 0,
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "network": {
+          "default": "none",
+          "title": "Network",
+          "type": "string"
+        }
+      },
+      "title": "TaskUsage",
+      "type": "object"
+    },
+    "WorkerError": {
+      "additionalProperties": false,
+      "description": "A `core/errors.py` error as data; `analystos.workers.dispatch.raise_for_result` raises the class back.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "WorkerError",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "title": "Outputs",
+      "type": "object"
+    },
+    "result": {
+      "additionalProperties": true,
+      "title": "Result",
+      "type": "object"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkerError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "usage": {
+      "$ref": "#/$defs/TaskUsage"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/TaskEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    }
+  },
+  "required": [
+    "task_id",
+    "idempotency_key",
+    "status"
+  ],
+  "title": "TaskResult",
+  "type": "object"
+}

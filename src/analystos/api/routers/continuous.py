@@ -193,12 +193,27 @@ def list_monitors(workspace_id: str, user: User = Depends(current_user), session
 
 
 @router.patch("/monitors/{monitor_id}")
-def patch_monitor(monitor_id: str, body: MonitorPatch, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    m = load_in_workspace(session, Monitor, monitor_id, user=user, minimum="editor", label="monitor")
-    for k, v in body.model_dump().items():
-        if v is not None:
-            setattr(m, k, v)
+def patch_monitor(monitor_id: str, body: MonitorPatch, response: Response, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function"), if_match: str | None = Header(default=None)):
+    """Edit a monitor. `If-Match` (its ETag) makes a stale edit 412; clients that predate revisions may omit it (P4-06)."""
+    from analystos.api.http import expected_revision, set_etag
+    from analystos.core.errors import PreconditionFailed
+
+    expected = expected_revision(if_match, required=False)
+    m = load_in_workspace(session, Monitor, monitor_id, user=user, minimum="editor", label="monitor",
+                          for_update=expected is not None)
+    if expected is not None and expected != (m.revision or 1):
+        raise PreconditionFailed(f"monitor {m.id} is at revision {m.revision or 1}, not {expected}",
+                                 details={"current_revision": m.revision or 1})
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "config" in changes:
+        mon_svc.validate_baseline(session, m.workspace_id, changes["config"])
+    for k, v in changes.items():
+        setattr(m, k, v)
+    if changes:
+        m.revision = (m.revision or 1) + 1
     audit(f"user:{user.id}", "monitor.updated", workspace_id=m.workspace_id, target=m.id, details=body.model_dump(), session=session)
+    set_etag(response, m.revision or 1)
     return row(m)
 
 

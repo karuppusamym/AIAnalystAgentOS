@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from analystos.api.request_id import RequestIdMiddleware, current, envelope
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
 from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
@@ -17,10 +18,15 @@ from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
 from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
+from analystos.api.routers import ml as ml_router
+from analystos.api.routers import pipelines as pipelines_router
 from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
+from analystos.api.routers import steps as steps_router
 from analystos.api.routers import work_orders as work_orders_router
+from analystos.api.routers import worker as worker_router
+from analystos.api.routers import workspace_brief as brief_router
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError
 from analystos.core.logging import configure_logging, get_logger
@@ -54,6 +60,9 @@ async def lifespan(_: FastAPI):
     finally:
         if scheduler_stop is not None:
             scheduler_stop.set()
+        from analystos.workers.dispatch import reset_default_transport
+
+        reset_default_transport()  # local isolated worker processes (P7-06), if any were started
         if runtime is not None:
             runtime.shutdown()
             from analystos.workflows.orchestrator import reset_local_runtime
@@ -65,7 +74,8 @@ app = FastAPI(title="Context2AI AnalystOS", version="0.1.0", lifespan=lifespan,
               description="Autonomous, governed data & analytics agent operating system (Phase 1 MVP).")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-                   expose_headers=["ETag", "Idempotent-Replayed", "Location"])  # P4-06: revisions and replays
+                   expose_headers=["ETag", "Idempotent-Replayed", "Location", "X-Request-ID"])  # P4-06
+app.add_middleware(RequestIdMiddleware)  # outermost: every response, errors included, names its request
 for r in (auth.router, workspaces.router, analysis.router, artifacts.router, admin.router, continuous.router, catalog.router,
           capabilities.router, registries_router.router, semantic_router.router):
     app.include_router(r)
@@ -78,21 +88,34 @@ app.include_router(evidence_router.router)
 app.include_router(definitions_router.router)
 app.include_router(work_orders_router.router)
 app.include_router(recipes_router.router)
+app.include_router(brief_router.router)
+app.include_router(steps_router.router)
+app.include_router(pipelines_router.router)
+app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
+app.include_router(ml_router.router)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
 @app.exception_handler(AnalystOSError)
-async def domain_error(_: Request, exc: AnalystOSError):
-    return JSONResponse(status_code=exc.http_status, content={"error": exc.to_dict()})
+async def domain_error(request: Request, exc: AnalystOSError):
+    return JSONResponse(status_code=exc.http_status, content=envelope(exc.to_dict(), request))
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error(_: Request, exc: RequestValidationError):
+async def validation_error(request: Request, exc: RequestValidationError):
     import json
 
     errors = json.loads(json.dumps(exc.errors(), default=str))  # a validator's ValueError in `ctx` is not JSON
-    return JSONResponse(status_code=422, content={"error": {"code": "invalid_input", "message": "request validation failed",
-                                                            "details": {"errors": errors}, "retryable": False}})
+    return JSONResponse(status_code=422, content=envelope({"code": "invalid_input", "message": "request validation failed",
+                                                           "details": {"errors": errors}, "retryable": False}, request))
+
+
+@app.exception_handler(Exception)
+async def internal_error(request: Request, exc: Exception):
+    """An unexpected failure is still the one envelope, with the request id to find it in the logs."""
+    return JSONResponse(status_code=500, content=envelope({"code": "internal_error", "message": "internal error",
+                                                           "details": {}, "retryable": False}, request),
+                        headers={"X-Request-ID": current(request) or ""})
 
 
 @app.get("/api/health")
@@ -169,6 +192,13 @@ def health():
                              "detail": st.detail}
     except Exception as exc:  # noqa: BLE001 - health never raises
         checks["sandbox"] = {"ok": False, "available": False, "error": str(exc)[:200]}
+    # P7-06: isolated compute pools this installation dispatches to (opt-in) and how it reaches them.
+    pools = sorted(settings.isolated_pool_set)
+    transport = settings.isolated_transport
+    if transport == "auto":
+        transport = "temporal" if settings.orchestrator == "temporal" else "subprocess"
+    checks["isolated_pools"] = {"ok": True, "enabled": bool(pools), "pools": pools,
+                                "transport": transport if pools else None}
     from analystos.core.profiles import summary
 
     return {"ok": checks["postgres"]["ok"], "orchestrator": settings.orchestrator, "installation": summary(settings),

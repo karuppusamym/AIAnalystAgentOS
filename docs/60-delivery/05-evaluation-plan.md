@@ -4,6 +4,13 @@ Proposed gates, 2026-09-25; no measurements in this document are claimed results
 owns implementation status (P4-08, P5-02 and P6-02). Evidence is appended to the capability
 register with commit, environment, fixture/snapshot versions, seeds, policy and cost settings.
 
+Implementation (2026-09-27, P4-08): the held-out corpus v1 (`evaluation/heldout/corpus.yaml`, 34
+tasks, frozen by `corpus.lock.json`), its runner (`scripts/benchmark_heldout.py`; the non-blocking
+`heldout` tier of `config/eval_gates.yaml`), the first dated result
+([`evidence/2026-09-27-heldout-component-platform-off.md`](evidence/2026-09-27-heldout-component-platform-off.md))
+and the paired practitioner-baseline protocol ([`06-practitioner-baseline-protocol.md`](06-practitioner-baseline-protocol.md),
+not yet run).
+
 ## 1. Unit of evaluation
 
 Evaluate a complete business task: input data + brief + allowed actions → accepted output or

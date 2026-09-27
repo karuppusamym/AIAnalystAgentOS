@@ -206,9 +206,11 @@ def propose_metric(session: Session, workspace_id: str, defn: SemanticMetricDef,
     if ws is None:
         raise NotFound(f"workspace {workspace_id} not found")
     version = (history[-1].version if history else 0) + 1
+    # P4-05: the metric keeps its owner across versions (ownership moves only by an accepted transfer)
+    owner = next((r.owner_id for r in reversed(history) if r.status == "approved" and r.owner_id), None) or proposed_by
     row = SemanticMetric(id=new_id("smet"), workspace_id=workspace_id, name=defn.name, version=version, status="proposed",
                          definition=defn.model_dump(mode="json"), expression=defn.expression, normalized_expression=norm,
-                         display_name=defn.display_name, owner_id=proposed_by, proposed_by=proposed_by, proposed_via=via,
+                         display_name=defn.display_name, owner_id=owner, proposed_by=proposed_by, proposed_via=via,
                          run_id=run_id, content_hash=stable_hash(defn.model_dump(mode="json")),
                          reason=f"import issue: {problem}" if problem else None)
     session.add(row)

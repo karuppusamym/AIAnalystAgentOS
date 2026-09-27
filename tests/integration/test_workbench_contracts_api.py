@@ -277,12 +277,24 @@ def test_work_orders_are_typed_revisioned_and_placeholders_do_not_start(api, wor
     refused = api.post(f"/api/workspaces/{ws}/work-orders/{wo}/runs", headers={**analyst, "If-Match": '"2"'})
     assert refused.status_code == 422 and refused.json()["error"]["code"] == "unsupported_capability"
 
-    analysis = {"kind": "diagnose", "objective": "Does priority drive SLA breaches on incidents?",
+    from analystos.db.base import session_scope
+    from analystos.db.models import SourceAsset
+
+    with session_scope() as s:  # the staged table as the gateway sees it (P4-04 readiness checks the inputs)
+        a = s.scalar(select(SourceAsset).where(SourceAsset.workspace_id == ws, SourceAsset.name == "incident"))
+        table = f"{a.schema_name}.{a.name}"
+
+    def analysis_on(asset: str) -> dict:
+        return {"kind": "diagnose", "objective": "Does priority drive SLA breaches on incidents?",
                 "spec": {"type": "analysis", "statements": ["Priority drives SLA breaches"],
-                         "analyses": [{"method": "rate_by_segment", "asset": "sn.incident",
+                         "analyses": [{"method": "rate_by_segment", "asset": asset,
                                        "outcome": {"type": "is_true", "column": "made_sla"},
                                        "segment": {"type": "column", "column": "priority"}}]}}
-    wo2 = api.post(f"/api/workspaces/{ws}/work-orders", headers=analyst, json=analysis).json()["id"]
+
+    outside = api.post(f"/api/workspaces/{ws}/work-orders", headers=analyst, json=analysis_on("sn.nowhere")).json()["id"]
+    blocked = api.post(f"/api/workspaces/{ws}/work-orders/{outside}/runs", headers={**analyst, "If-Match": '"1"'})
+    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "readiness_blocked"
+    wo2 = api.post(f"/api/workspaces/{ws}/work-orders", headers=analyst, json=analysis_on(table)).json()["id"]
     assert api.post(f"/api/workspaces/{ws}/work-orders/{wo2}/runs", headers=analyst).status_code == 428
     start = {**analyst, "If-Match": '"1"', "Idempotency-Key": "wo2-start"}
     run = api.post(f"/api/workspaces/{ws}/work-orders/{wo2}/runs", headers=start)

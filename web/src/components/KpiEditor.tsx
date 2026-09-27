@@ -6,7 +6,7 @@ import { EMPTY_KPI, kpiBody, localKpiProblems, problemsByField, type KpiDraft } 
 import { fmtDate, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { to } from "../routes";
-import { Card, CodeBlock, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag } from "./ui";
+import { Card, CodeBlock, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag, TechnicalDetails } from "./ui";
 
 const VALIDATE_DEBOUNCE_MS = 350;
 const FORMATS = ["", "number", "percent", "hours", "currency"];
@@ -55,7 +55,8 @@ export function KpiEditor({ wsId, selected, onSelect }: { wsId: string; selected
           </div>
         </div>
       )}
-      <p className="muted small">Ossie {model.data?.ossie_version ?? "—"}. Approved KPIs are what builds materialize and what publication requires.</p>
+      <p className="muted small">Approved KPIs are what builds materialize and what publication requires.</p>
+      <TechnicalDetails><p className="small">Semantic model format: Ossie {model.data?.ossie_version ?? "—"}</p></TechnicalDetails>
     </div>
   );
 }

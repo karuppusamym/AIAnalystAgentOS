@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import * as echarts from "echarts/core";
 import { GraphChart } from "echarts/charts";
+import { LabelLayout } from "echarts/features";
 import { api, type KnowledgeGraph } from "../api";
 import { DARK, LIGHT } from "../lib/charts";
 import { filterGraph, graphOption, NODE_KINDS, NODE_LABELS } from "../lib/knowledge";
@@ -8,7 +9,7 @@ import { useAsync, usePrefersDark } from "../lib/hooks";
 import { canvasSupported, EChart } from "./Chart";
 import { Card, EmptyState, ErrorBox, Loading, Tag } from "./ui";
 
-echarts.use([GraphChart]);
+echarts.use([GraphChart, LabelLayout]);
 
 function LineSample({ dashed }: { dashed: boolean }) {
   return (
@@ -63,7 +64,10 @@ export function SemanticGraph({ wsId }: { wsId: string }) {
         {graph.data.truncated && <p className="small muted">The graph is truncated to its first 400 nodes.</p>}
       </Card>
       {shown.nodes.length === 0 ? <EmptyState title="Nothing to draw">Crawl sources, approve KPIs or write knowledge documents.</EmptyState> : (
-        canvasSupported() && <EChart option={option} height={460} label={`Semantic graph: ${shown.nodes.length} nodes, ${shown.governed} governed and ${shown.inferred} inferred edges`} />
+        canvasSupported() && (
+          <EChart option={option} height={Math.min(760, Math.max(460, 60 + shown.nodes.length * 9))}
+            label={`Semantic graph: ${shown.nodes.length} nodes, ${shown.governed} governed and ${shown.inferred} inferred edges`} />
+        )
       )}
       <EdgeTable graph={shown} open={!canvasSupported()} />
     </div>

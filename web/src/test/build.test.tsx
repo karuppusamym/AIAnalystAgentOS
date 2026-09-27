@@ -84,10 +84,12 @@ describe("build helpers", () => {
     });
   });
 
-  it("stays inside the screen budget: Build tabs are not new screens", () => {
+  it("stays inside the screen budget: the former Build tabs are panels at each concept's one home", () => {
     expect(SCREENS.length).toBeLessThanOrEqual(SCREEN_BUDGET);
-    expect(SCREENS.filter((s) => s.journey === "build").map((s) => s.id)).toEqual(["studio", "reports"]);
-    expect(to.build(WS, "builds", { job: BUILD_NEW })).toBe(`/w/${WS}/build/studio?tab=builds&job=${BUILD_NEW}`);
+    expect(SCREENS.filter((s) => s.area === "outputs").map((s) => s.id)).toEqual(["outputs", "finding"]);
+    expect(to.build(WS, "builds", { job: BUILD_NEW })).toBe(`/w/${WS}/work?tab=builds&job=${BUILD_NEW}`);
+    expect(to.build(WS, "kpis", { kpi: "mttr_hours" })).toBe(`/w/${WS}/data/catalog?tab=metrics&kpi=mttr_hours`);
+    expect(to.build(WS, "dashboards", { dashboard: "art_dash" })).toBe(`/w/${WS}/outputs?type=dashboard&dashboard=art_dash`);
   });
 });
 
@@ -110,7 +112,7 @@ describe("Build studio: dbt builds", () => {
     const f = mockFetch();
     renderAt(to.build(WS, "builds"));
     const form = await screen.findByRole("form", { name: "Plan a build" });
-    await waitFor(() => expect(within(form).getByLabelText("From run").querySelectorAll("option").length).toBe(1));
+    await waitFor(() => expect(within(form).getByLabelText("From investigation").querySelectorAll("option").length).toBe(1));
     fireEvent.click(within(form).getByRole("button", { name: "Plan build" }));
     await screen.findByText(/Compared with job/);
     const [, init] = calls(f, "POST", /\/builds$/)[0];

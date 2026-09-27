@@ -112,17 +112,35 @@ def run_recipe_snapshot(job: dict) -> dict:
     return heartbeating(run_snapshot_job, job)
 
 
+@activity.defn(name="run_ml_job")
+def run_ml_job(job: dict) -> dict:
+    """An ML job (ADR-0024): readiness, split, bounded search, holdout evaluation or scoring over immutable
+    snapshots, on the compute pool until the isolated compute-ml pool exists (P7-06)."""
+    from analystos.ml.jobs import run_ml_job as job_fn
+
+    return heartbeating(job_fn, job)
+
+
 @activity.defn(name="queue_ping")
 def queue_ping() -> str:
     """Liveness probe answered by every pool (the only activity of the placeholder `elt` pool)."""
     return activity.info().task_queue
 
 
+@activity.defn(name="record_task_events")
+def record_task_events(task_id: str, events: list[dict]) -> int:
+    """Persist the events an isolated worker signalled to IsolatedTaskWorkflow (P7-06). Control plane only:
+    isolated workers never register this activity and hold no database credential."""
+    from analystos.services.worker_tasks import record_events
+
+    return record_events(task_id, events)
+
+
 ENGINE_ACTIVITIES = [plan_run, get_state, execute_task, finish_run]
 # Activities served by each workload's worker. The analysis worker also hosts AnalysisWorkflow.
 BY_WORKLOAD: dict[str, list] = {
-    "analysis": [*ENGINE_ACTIVITIES, queue_ping],
-    "compute": [execute_task, run_recipe_snapshot, queue_ping],
+    "analysis": [*ENGINE_ACTIVITIES, record_task_events, queue_ping],
+    "compute": [execute_task, run_recipe_snapshot, run_ml_job, queue_ping],
     "publish": [execute_task, queue_ping],
     "crawl": [run_crawl, queue_ping],
     "elt": [queue_ping],

@@ -1,10 +1,11 @@
 """Typed work orders (workspace spec §3, P4-06): persist, edit under revision checks, start.
 
-A work order is the envelope (`contracts.work.WorkOrderSpec`) around one typed payload. Only
-`AnalysisWork` is executable today: starting it creates a run that replays exactly its AnalysisSpecs
-(the frozen-set path pinned schedules use, ADR-0021), with no model call and no re-planning. The
-placeholders (`PipelineSpec`, `MLSpec`, `ExperimentSpec`) validate and persist; starting one is
-refused with `unsupported_capability` until P5/P6 give them executors.
+A work order is the envelope (`contracts.work.WorkOrderSpec`) around one typed payload. `AnalysisWork`
+starts a run that replays exactly its AnalysisSpecs (the frozen-set path pinned schedules use, ADR-0021),
+with no model call and no re-planning. A complete `MLSpec` starts a `playbook.train` run of the published
+`ml_spec` definition whose content hash equals the spec's; an unpublished (or draft) spec is refused. The
+other placeholders (`PipelineSpec`, `ExperimentSpec`) validate and persist; starting one is refused with
+`unsupported_capability`.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from analystos.contracts.work import WorkOrderSpec
-from analystos.core.errors import PreconditionFailed, UnsupportedCapability
+from analystos.core.errors import PreconditionFailed, ReadinessBlocked, UnsupportedCapability
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, User, WorkOrder
@@ -72,6 +73,7 @@ def update(session: Session, user: User, wo: WorkOrder, spec: WorkOrderSpec, exp
 def start(user: User, workspace_id: str, work_order_id: str, *, expected_revision: int | None,
           idempotency: Any = None) -> tuple[AnalysisRun, bool]:
     from analystos.registries.hypotheses import spec_hash as analysis_hash
+    from analystos.services.readiness import assess_work_order
     from analystos.services.runs import start_run_request
 
     with session_scope() as s:
@@ -79,10 +81,28 @@ def start(user: User, workspace_id: str, work_order_id: str, *, expected_revisio
         _check(wo, expected_revision)
         spec = WorkOrderSpec.model_validate(wo.spec)
         revision = wo.revision
+        # P4-04: the job's required readiness checks decide before anything starts. An unsupported job
+        # (no executor, e.g. a prediction) or a blocked one (e.g. no label) never becomes another job.
+        assessment = assess_work_order(s, s.merge(user), wo)
+    failing = [c for c in assessment["checks"] if c["required"] and c["status"] in ("unsupported", "fail")]
+    if assessment["status"] == "unsupported":
+        raise UnsupportedCapability("this job kind cannot run here: " + "; ".join(c["reason"] for c in failing),
+                                    details={"type": spec.spec.type, "assessment_id": assessment["id"],
+                                             "readiness": assessment["status"], "checks": failing,
+                                             "alternatives": assessment["alternatives"]})
+    if assessment["status"] == "blocked":
+        raise ReadinessBlocked("readiness blocked: " + "; ".join(f"{c['check']}: {c['reason']}" for c in failing),
+                               details={"assessment_id": assessment["id"], "checks": failing,
+                                        "alternatives": assessment["alternatives"]})
     if not spec.executable:
-        raise UnsupportedCapability(f"a {spec.spec.type} work order is a typed contract without an executor yet "
-                                    "(P5 ML / P6 pipelines); it was saved but cannot start",
-                                    details={"type": spec.spec.type})
+        problems = spec.spec.executable_problems() if spec.spec.type == "ml" else []
+        raise UnsupportedCapability(f"a {spec.spec.type} work order is a typed contract without a work-order executor "
+                                    "(ML trains a published ml_spec definition: POST .../ml/experiments or "
+                                    "playbook.train; pipelines: P6); it was saved but cannot start"
+                                    + (": the MLSpec is incomplete (" + "; ".join(problems) + ")" if problems else ""),
+                                    details={"type": spec.spec.type, "problems": problems})
+    if spec.spec.type == "ml":
+        return _start_training(user, workspace_id, work_order_id, spec, revision, idempotency)
     statements = list(getattr(spec.spec, "statements", []) or [])
     analyses = []
     for i, a in enumerate(spec.spec.analyses):
@@ -93,9 +113,59 @@ def start(user: User, workspace_id: str, work_order_id: str, *, expected_revisio
         user, workspace_id, objective=spec.objective, source_ids=spec.source_ids,
         origin={"type": "work_order", "work_order_id": work_order_id, "revision": revision, "publish": "skip"},
         pins={"analyses": analyses}, idempotency=idempotency)
+    _record_start(work_order_id, run, replayed)
+    return run, replayed
+
+
+def _record_start(work_order_id: str, run: AnalysisRun, replayed: bool) -> None:
     if not replayed:
         with session_scope() as s:
             wo = s.get(WorkOrder, work_order_id, with_for_update=True)
             wo.run_ids = [*(wo.run_ids or []), run.id]
             wo.status = "started"
+
+
+def published_ml_definition(session: Any, workspace_id: str, ml: Any) -> Any:
+    """The published ml_spec definition whose content is exactly this MLSpec (by content hash), or a refusal: a
+    work order never trains a draft, and never trains content nobody published."""
+    from sqlalchemy import select
+
+    from analystos.contracts.definition import RUNNABLE_STATUSES
+    from analystos.core.errors import PolicyDenied
+    from analystos.db.models import Definition
+    from analystos.services.definitions import content_hash, ref_of
+
+    digest = content_hash("ml_spec", ml.model_dump(mode="json"))
+    rows = list(session.scalars(select(Definition).where(Definition.workspace_id == workspace_id, Definition.kind == "ml_spec",
+                                                         Definition.content_hash == digest)
+                                .order_by(Definition.version.desc())))
+    runnable = [r for r in rows if r.status in RUNNABLE_STATUSES]
+    if runnable:
+        return ref_of(runnable[0])
+    if rows:
+        r = rows[0]
+        raise PolicyDenied(f"this MLSpec is ml_spec {r.key} v{r.version}, which is {r.status}: a work order trains a "
+                           "published version only (publish it, then start again)",
+                           details={"definition": ref_of(r).model_dump(), "content_hash": digest})
+    raise PolicyDenied("this MLSpec is not a published ml_spec definition in this workspace: save it as an ml_spec "
+                       "definition, have it reviewed and published, then start the work order",
+                       details={"content_hash": digest})
+
+
+def _start_training(user: User, workspace_id: str, work_order_id: str, spec: WorkOrderSpec, revision: int,
+                    idempotency: Any) -> tuple[AnalysisRun, bool]:
+    """P5-01: a complete MLSpec trains as its published ml_spec definition in a `playbook.train` run (the same path as
+    any training run: readiness, leakage checks, split manifest, bounded search, one holdout read, verification)."""
+    from analystos.services.runs import start_run_request
+
+    with session_scope() as s:
+        ref = published_ml_definition(s, workspace_id, spec.spec)
+    dataset = spec.spec.dataset
+    source_ids = spec.source_ids or ([dataset.source_id] if dataset is not None and dataset.source_id else None)
+    run, replayed = start_run_request(
+        user, workspace_id, objective=spec.objective, source_ids=source_ids, playbook="playbook.train",
+        origin={"type": "work_order", "work_order_id": work_order_id, "revision": revision, "publish": "skip",
+                "ml_definition": {"id": ref.id, "key": ref.key, "version": ref.version}},
+        idempotency=idempotency)
+    _record_start(work_order_id, run, replayed)
     return run, replayed

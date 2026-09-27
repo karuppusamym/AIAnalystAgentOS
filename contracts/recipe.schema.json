@@ -55,6 +55,40 @@
       "title": "AggregateNode",
       "type": "object"
     },
+    "BackfillRange": {
+      "additionalProperties": false,
+      "description": "The watermark range a backfill or replay covers; `start` alone bounds the initial load.",
+      "properties": {
+        "start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        }
+      },
+      "title": "BackfillRange",
+      "type": "object"
+    },
     "CastNode": {
       "additionalProperties": false,
       "properties": {
@@ -407,6 +441,82 @@
         "type"
       ],
       "title": "Gate",
+      "type": "object"
+    },
+    "Incremental": {
+      "additionalProperties": false,
+      "description": "Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a\nstaged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.\n\nA window is `[last watermark - late_window, high watermark]`, the high watermark measured once before\nreading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key\nwins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`\nremoves keys the source no longer has on a scheduled full reconcile, `soft` stamps them in\n`aos_deleted_at`, `ignore` keeps them.",
+      "properties": {
+        "watermark": {
+          "title": "Watermark",
+          "type": "string"
+        },
+        "key": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Key",
+          "type": "array"
+        },
+        "late_window": {
+          "default": 0,
+          "title": "Late Window",
+          "type": "integer"
+        },
+        "deletes": {
+          "default": "reconcile",
+          "enum": [
+            "reconcile",
+            "soft",
+            "ignore"
+          ],
+          "title": "Deletes",
+          "type": "string"
+        },
+        "reconcile_every_hours": {
+          "default": 168,
+          "maximum": 8784,
+          "minimum": 1,
+          "title": "Reconcile Every Hours",
+          "type": "integer"
+        },
+        "max_delete_pct": {
+          "default": 50.0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Delete Pct",
+          "type": "number"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "backfill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackfillRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "watermark",
+        "key"
+      ],
+      "title": "Incremental",
       "type": "object"
     },
     "JoinKey": {
@@ -1031,6 +1141,17 @@
       "minItems": 2,
       "title": "Nodes",
       "type": "array"
+    },
+    "incremental": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Incremental"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

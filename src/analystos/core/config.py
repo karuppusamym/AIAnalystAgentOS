@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # workspace reader role. Never used for queries; the query identities never write.
     analytics_builder_url: str = "postgresql+psycopg://analystos_builder:builder@localhost:5432/analytics"
     analytics_build_role_prefix: str = "analystos_b_"
+    # Managed output writer (P6-03, ADR-0011): a fourth analytics identity used only to materialize approved
+    # pipeline outputs. It reaches per-workspace NOLOGIN writer roles (<prefix><workspace id>) by SET ROLE;
+    # each holds CREATE on that workspace's allowlisted destination schemas and reads no source.
+    analytics_writer_url: str = "postgresql+psycopg://analystos_writer:writer@localhost:5432/analytics"
+    analytics_writer_role_prefix: str = "analystos_w_"
+    writer_keep_versions: int = Field(default=3, ge=2, le=50)  # version tables kept per destination (rollback depth)
     # The customer's dbt runner (P4-E04): a dbt Core executable run as a separate process (its own
     # venv or container image), never imported in-process. Projects and job logs live under build_dir.
     dbt_executable: str = "dbt"
@@ -84,6 +90,18 @@ class Settings(BaseSettings):
     # config/task_queues.yaml. `analystos worker` serves `worker_queues` unless --queues is given.
     temporal_queue_prefix: str = "analystos"
     worker_queues: str = "all"
+    # Isolated compute pools (ADR-0022, P7-06), opt-in: comma-separated pools this installation runs
+    # (compute-py, compute-ml). Empty = none: recipe snapshot jobs run on the compute queue / in-process as
+    # before, and capabilities that require a pool (`requires: [pool:compute-ml]`) are unavailable with the reason.
+    isolated_pools: str = ""
+    # How the control plane reaches them: temporal (the `<prefix>-<pool>` queues) | subprocess (local worker
+    # processes started by the API, lite) | auto = temporal when the orchestrator is temporal, else subprocess.
+    isolated_transport: Literal["auto", "temporal", "subprocess"] = "auto"
+    # HMAC key of scoped worker task tokens; None = derived from jwt_secret (domain-separated). Only the
+    # control plane and the artifact store (the API) hold it; never give it to a worker.
+    worker_token_secret: str | None = None
+    # The artifact store as isolated workers reach it (the API's base URL on their network).
+    worker_artifact_url: str = "http://localhost:8000"
     # temporal | local. local runs the same engine in-process (lite profile, tests, laptops); lite's default.
     orchestrator: str = "temporal"
     # Local orchestrator (ADR-0025): None = the profile default (lite: 4, otherwise tasks run inline in
@@ -153,6 +171,12 @@ class Settings(BaseSettings):
     query_max_rows: int = 50_000
     query_cache_ttl_seconds: int = 3600
 
+    # Governed ML (P5-01, ADR-0024): hard ceilings every MLSpec search budget is clamped to.
+    ml_max_trials: int = Field(default=50, ge=1, le=1000)
+    ml_max_seconds: int = Field(default=900, ge=1)
+    ml_max_rows: int = Field(default=200_000, ge=100)
+    ml_max_features: int = Field(default=200, ge=1)
+
     sandbox_timeout_seconds: int = 60
     sandbox_memory_mb: int = 1024
     # Isolation of sandbox children (P4-02, sandbox/isolation.py): container = docker run per execution
@@ -215,6 +239,10 @@ class Settings(BaseSettings):
     @property
     def run_inprocess_scheduler(self) -> bool:
         return self.inprocess_scheduler if self.inprocess_scheduler is not None else self.profile == "lite"
+
+    @property
+    def isolated_pool_set(self) -> set[str]:
+        return {p.strip() for p in self.isolated_pools.split(",") if p.strip()}
 
     @property
     def spend_store(self) -> str:

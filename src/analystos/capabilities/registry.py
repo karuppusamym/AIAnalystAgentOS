@@ -33,6 +33,7 @@ import yaml
 from pydantic import ValidationError
 
 from analystos.contracts.capability import CapabilityManifest
+from analystos.contracts.worker import ISOLATED_POOLS
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import stable_hash
 from analystos.core.profiles import EXTRAS, FEATURES, requirement_reason
@@ -46,7 +47,7 @@ ENTRY_POINT_GROUP = "analystos.capabilities"
 
 # What the bridged tools and skills need from the installation (ADR-0025). Without it they are listed as
 # unavailable with the reason and refused when invoked; manifests declare the same in `requires`.
-INSTALL_PREFIXES = ("profile:", "extra:")
+INSTALL_PREFIXES = ("profile:", "extra:", "pool:")
 INSTALL_REQUIRES: dict[str, list[str]] = {
     "tool.superset_publish": ["profile:bi"],
     "skill.logistic_regression": ["extra:ml"],
@@ -226,9 +227,10 @@ def load(*, builtin_dir: Path | None = BUILTIN_DIR, packs_dir: Path | None | str
                 continue  # engine features are checked when an engine is bound (wave 4)
             if req.startswith(INSTALL_PREFIXES):
                 kind, name = req.split(":", 1)
-                if name not in (FEATURES if kind == "profile" else EXTRAS):
+                known = {"profile": FEATURES, "extra": EXTRAS, "pool": ISOLATED_POOLS}[kind]
+                if name not in known:
                     problems.append(f"{m.source}: {m.id} requires unknown {req} (profiles: {', '.join(FEATURES)}; "
-                                    f"extras: {', '.join(EXTRAS)})")
+                                    f"extras: {', '.join(EXTRAS)}; pools: {', '.join(ISOLATED_POOLS)})")
                 continue
             if not any(fnmatch.fnmatchcase(i, req) for i in manifests):
                 problems.append(f"{m.source}: {m.id} requires unknown capability {req}")

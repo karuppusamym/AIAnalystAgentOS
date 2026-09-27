@@ -56,6 +56,16 @@ Replanning already supersedes a run's hypotheses and insights and invalidates it
    * **A reason is required:** marking a finding *wrong* needs one, which is stored with the record
      and feeds negative knowledge.
 
+**Follow-ups implemented (2026-09-27).** Monitors that compare with a verified baseline
+(`config.baseline = {subject_type, subject_id}`, and the champion's experiment for `ml_drift` /
+`ml_performance`) read its state on every evaluation (`services/monitors.baseline_state`): a VOID baseline
+is refused by default (`state: baseline_void`, no query, no alert, the last reading kept) or, with
+`config.on_void_baseline: relabel`, evaluated with every reading labelled. Re-verification is
+`POST /api/verification/{record_id}/reverify` (`evidence/reverify.py`): a step re-runs, a finding replays
+its frozen `AnalysisSpec` in a new run (origin `reverify`), an ML experiment trains the same published
+spec version again; only the subject's latest, non-current record qualifies, and the old record is never
+edited (event `verification.reverify_requested`).
+
 **Consequences.** "Change the SQL or the metric and watch the badge go away" becomes a test,
 not a promise. More verdicts will void than users expect (a glossary edit voids findings that cited
 it); the UI groups voids by cause and offers one-click re-verification. Pushdown sources with no

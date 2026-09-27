@@ -25,7 +25,8 @@ def test_repo_config_loads_and_keeps_engine_tasks_within_the_claim_ttl():
     from analystos.runtime.engine import CLAIM_TTL_SECONDS
 
     specs, max_activities = queues.load_config()
-    assert set(specs) == set(queues.WORKLOADS)
+    assert set(specs) == set(queues.WORKLOADS) | set(queues.ISOLATED_POOLS)
+    assert {n for n, s in specs.items() if s.isolated} == set(queues.ISOLATED_POOLS)
     assert specs["compute"].executor == "process"
     assert max_activities > 0
     for workload in ("analysis", "compute", "publish"):  # execute_task runs here; a retry must be able to retake the claim

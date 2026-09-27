@@ -1,0 +1,260 @@
+{
+  "$defs": {
+    "Assertion": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "group": {
+          "enum": [
+            "decision",
+            "domain",
+            "data_semantics",
+            "time_measures",
+            "ml_objective",
+            "constraints",
+            "knowledge"
+          ],
+          "title": "Group",
+          "type": "string"
+        },
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "origin": {
+          "enum": [
+            "source",
+            "rule",
+            "model",
+            "user"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "review_state": {
+          "default": "suggested",
+          "enum": [
+            "suggested",
+            "reviewed",
+            "validated",
+            "rejected"
+          ],
+          "title": "Review State",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "updated_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updated By"
+        },
+        "updated_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updated At"
+        }
+      },
+      "required": [
+        "key",
+        "group",
+        "field",
+        "value",
+        "origin"
+      ],
+      "title": "Assertion",
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "What an assertion rests on: an asset, a column profile, a relationship, a context entry, a check.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "asset",
+            "column",
+            "profile",
+            "relationship",
+            "context",
+            "metric",
+            "query",
+            "check",
+            "user_note"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    }
+  },
+  "description": "One version of a workspace's brief (the API and contract view).",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "workspace_id": {
+      "title": "Workspace Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "content_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Hash"
+    },
+    "created_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created By"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "assertions": {
+      "items": {
+        "$ref": "#/$defs/Assertion"
+      },
+      "title": "Assertions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "workspace_id",
+    "version"
+  ],
+  "title": "WorkspaceBriefDoc",
+  "type": "object"
+}

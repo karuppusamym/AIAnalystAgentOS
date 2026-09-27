@@ -2,11 +2,12 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, type Approval, type Hypothesis, type Insight } from "../api";
 import { buildBoard, caveatsOf, modelOpinions, relevantApprovals, trustFacts, type TrustState } from "../lib/board";
-import { fmtNumber, fmtP, shortHash } from "../lib/format";
+import { fmtNumber, fmtP } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { toneFor } from "../lib/status";
 import { to } from "../routes";
 import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
+import { VerificationBadge, voidCause, WhyNumberButton } from "./WhyNumber";
 
 /**
  * The live hypothesis board (P4-U03, spec v3 §9 Investigate): one column per status, each
@@ -149,13 +150,16 @@ function FindingCard({ insight: i, wsId, runId, readOnly, onChanged, onTrust }: 
         <Link to={to.findings(wsId, i.id)}><strong>{i.code}</strong> {i.title}</Link>
       </div>
       <div className="chip-row small">
-        <StatusBadge status={i.status} label={i.verified ? "verified" : i.status.replace(/_/g, " ")} />
+        {i.verification_state?.badge === "void" ? <VerificationBadge state={i.verification_state} showCause={false} />
+          : <StatusBadge status={i.status} label={i.verified ? "verified" : i.status.replace(/_/g, " ")} />}
         <span className="muted">n</span> <Value value={i.population_size || null} format="int" />
       </div>
+      {voidCause(i.verification_state) && <p className="small void-cause">Why void: {voidCause(i.verification_state)}</p>}
       <p className="small">{i.finding}</p>
       <ConfidenceBar value={i.confidence} />
       <div className="finding-actions">
         <button type="button" className="btn btn-xs" onClick={(e) => onTrust(i.id, e.currentTarget)}>Why trust this</button>
+        <WhyNumberButton insightId={i.id} />
         {!readOnly && !rejected && signal?.kind !== "accepted" && (
           <button type="button" className="btn btn-xs btn-success" disabled={act.busy} onClick={() => void accept()}>Accept</button>
         )}
@@ -256,20 +260,21 @@ function TrustDrawer({ insight: i, hypothesis, approvals, wsId, onClose }: {
           {detail.error && <p className="muted small">Query evidence unavailable: {detail.error}</p>}
           <h3>Caveats</h3>
           {caveats.length ? <ul className="small">{caveats.map((c) => <li key={c}>{c}</li>)}</ul> : <p className="muted small">No data-quality or population caveats recorded.</p>}
-          <h3>Model opinions <span className="muted small">(adjust confidence only)</span></h3>
-          {opinions.length ? (
-            <ul className="small">{opinions.map((o) => <li key={o.label}><span className="tag tag-jev">{o.label}</span> {o.value}</li>)}</ul>
-          ) : <p className="muted small">None recorded.</p>}
-          <h3>Approvals on this run</h3>
+          <h3>Approvals on this investigation</h3>
           {gates.length ? (
             <ul className="small">
               {gates.map((a) => (
-                <li key={a.id}><StatusBadge status={a.status} /> {a.action.replace(/_/g, " ")} · payload <code title={a.payload_hash}>{shortHash(a.payload_hash, 12)}</code> · policy v{a.policy_version}</li>
+                <li key={a.id}><StatusBadge status={a.status} /> {a.action.replace(/_/g, " ")} · policy version {a.policy_version}</li>
               ))}
             </ul>
-          ) : <p className="muted small">Nothing from this run needed an approval.</p>}
+          ) : <p className="muted small">Nothing from this investigation needed an approval.</p>}
           <p className="small"><Link to={to.findings(wsId, i.id)}>Open the full evidence (queries, lineage)</Link></p>
-          <TechnicalDetails value={{ verification: i.verification, evidence: i.evidence }} />
+          <TechnicalDetails value={{ verification: i.verification, evidence: i.evidence, approvals: gates.map((a) => ({ id: a.id, payload_hash: a.payload_hash })) }}>
+            <h3 className="small">Model opinions <span className="muted">(adjust confidence only)</span></h3>
+            {opinions.length ? (
+              <ul className="small">{opinions.map((o) => <li key={o.label}><span className="tag tag-jev">{o.label}</span> {o.value}</li>)}</ul>
+            ) : <p className="muted small">None recorded.</p>}
+          </TechnicalDetails>
         </div>
       </div>
     </div>

@@ -49,13 +49,13 @@ function MetricRow({ m }: { m: MetricDelta }) {
   );
 }
 
-/** "What changed since the previous run" for recurring analyses (run.summary.changes). */
+/** "What changed since the previous investigation" for recurring analyses (run.summary.changes). */
 export function ChangesPanel({ changes, wsId, reportArtifactId }: { changes: RunChanges; wsId: string; reportArtifactId?: string | null }) {
   const metrics = changes.metrics ?? [];
   return (
-    <Card title="What changed since the previous run"
+    <Card title="What changed since the previous investigation"
       actions={<>
-        {changes.previous_run_id && <Link className="btn btn-xs btn-ghost" to={to.run(wsId, changes.previous_run_id)}>Previous run</Link>}
+        {changes.previous_run_id && <Link className="btn btn-xs btn-ghost" to={to.run(wsId, changes.previous_run_id)}>Previous investigation</Link>}
         {reportArtifactId && <Link className="btn btn-xs" to={to.reports(wsId, reportArtifactId)}>Generated report</Link>}
       </>}>
       <div className="chip-row changes-counts" aria-label="Finding changes">

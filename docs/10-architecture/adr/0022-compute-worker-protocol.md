@@ -1,6 +1,6 @@
 # ADR-0022 — One compute-worker protocol for heavy data-science, ML and transformation work
 
-**Status:** proposed (2026-09-26, spec v4 §4; tracker P7-06). Implements the "compute worker"
+**Status:** accepted, implemented by P7-06 (2026-09-26; proposed the same day, spec v4 §4). Implements the "compute worker"
 boundary of [ADR-0011 (workspace)](0011-workspace-workflows-and-evidence.md) and the container
 sandbox of P4-02. Source: the
 [2026-09-26 comparison review](../../70-reviews/2026-09-26-agent-os-comparison-review.md) §9.
@@ -53,3 +53,43 @@ scale independently (Kubernetes HPA on queue depth). The protocol is the seam a 
 implementation (including a future out-of-repo specialist) would plug into, without making it an
 orchestrator. Cost: artifact round-trips for inputs (a snapshot export per task) and a second
 deployment to operate; `inline` remains the default so small skills pay nothing.
+
+**Implementation (P7-06, 2026-09-26).** Where each decision lives, and what differs from the text above:
+
+* Contracts: `contracts/worker.py` (`TaskEnvelope`, `ArtifactRef`, `TaskDispatch`, `TaskResult`, typed specs
+  `RecipeSnapshotSpec | MLJobSpec | ProbeSpec`), exported to `contracts/task_*.schema.json` and `artifact_ref`.
+  `capability.content_hash` is the SHA-256 of the handler module's source: a worker running other code refuses.
+* Pools: `compute-py`, `compute-ml` in `config/task_queues.yaml` (`isolated: true`, default budgets), never part
+  of `--queues all`; opt-in per installation with `ANALYSTOS_ISOLATED_POOLS`. A manifest declares the need as
+  `requires: [pool:compute-ml]` (reported unavailable with the remedy); `workers/dispatch.require_pool` refuses
+  a direct call the same way. The manifest `worker: <pool>` execution class is not modelled separately: the
+  pool follows from the spec kind (`workers/handlers.py`).
+* Tokens: `workers/tokens.py` (HMAC-SHA256, domain-separated from session JWTs; task, workspace, idempotency
+  key, readable artifact ids, writable output names, verbs `read|write|model`, purposes, output-byte cap).
+* Artifact store: `workers/store.py` (content-addressed blobs; outputs bound per workspace + idempotency key +
+  name: identical rewrite = same artifact, different content = conflict), served by the token-only routes in
+  `api/routers/worker.py`. It holds worker artifacts only; registry artifacts are not exposed to workers.
+* Worker: `analystos worker --queues compute-py` -> `workers/main.py` (environment refusal and scrub, egress
+  guard, then a transport), `workers/runtime.py` (supervisor: hash check, verified downloads, job child with
+  rlimits and an empty network namespace where available, uploads), `workers/child.py` (structured errors).
+* Transports: Temporal (`IsolatedTaskWorkflow` on the analysis queue; `run_isolated_task` on `<prefix>-<pool>`;
+  events as signals, persisted by `record_task_events`) and a local subprocess pool for the lite profile.
+  Decision 5's `step.completed` and `artifact.created` event types are folded into `task.progress` and
+  `task.completed` (which lists the output artifact ids).
+* Model callback (decision 4): `POST /api/worker/model`, the token's purposes and call cap, the control
+  plane's router with the workspace policy. A job child has no network, so only the supervisor can call it
+  today; exposing it to a job goes through the supervisor.
+* First consumer: recipe snapshot jobs (`workers/recipe.py`) when `compute-py` is configured.
+* Step and notebook Python cells (`workers/python.py`, `PythonCellSpec`, 2026-09-27) when `compute-py` is
+  configured: `services/steps.execute_python` sends the cell with its inputs as one JSON artifact; the worker
+  applies the sandbox's static policy and runs the sandbox harness under the job's limits; the result keeps
+  the sandbox's shape with `isolation: compute-py`. Without the pool the sandbox runs it as before.
+* ML jobs (`workers/ml.py`, 2026-09-27) when `compute-ml` is configured: the dataset snapshot (and, for scoring,
+  the package) go out as input artifacts; the job's dict (`result`, wall-clock timings returned inline) and a
+  tar of the files it wrote (`files`) come back, and each file is re-verified against its content address
+  before it enters `<artifact_dir>`. The `ml.job` capability hash covers the whole `analystos.ml` package.
+  With the pool configured the control plane never unpickles a package (`services/ml.load_package` refuses;
+  the MLflow export then carries the platform package without the separate sklearn flavor).
+* Conformance: `tests/conformance/worker/` (any implementation via `ANALYSTOS_CONFORMANCE_IMPL`); green for
+  both pools on the local subprocess transport and on Temporal (dev server). Not verified here: the compose
+  `isolated` network and the Helm NetworkPolicy under a real CNI (no Docker or cluster in the test environment).

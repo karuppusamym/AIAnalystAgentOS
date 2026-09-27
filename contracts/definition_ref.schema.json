@@ -53,6 +53,7 @@
         {
           "enum": [
             "draft",
+            "tested",
             "published",
             "deprecated",
             "retired"

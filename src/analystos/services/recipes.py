@@ -22,7 +22,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.connectors.naming import sanitize_identifier, staging_schema_for
-from analystos.contracts.recipe import Column, RecipeInvalid, canonical_type, same_type, validate_recipe
+from analystos.contracts.recipe import (
+    SOFT_DELETE_COLUMN,
+    Column,
+    RecipeInvalid,
+    canonical_type,
+    incremental_source,
+    same_type,
+    validate_recipe,
+)
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError, Conflict, InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
@@ -37,6 +45,7 @@ QUARANTINE_SUFFIX = "_quarantine"
 RUN_COLUMN, REASON_COLUMN = "aos_run_id", "aos_reason"
 PREVIEW_ROWS = 50
 PROPAGATED_TAGS = {"pii", "restricted", "sensitive"}
+INCREMENTAL_REFRESH = ("auto", "full", "reconcile", "replay", "backfill")
 
 
 # ------------------------------------------------------------------------------------ versions
@@ -273,9 +282,15 @@ def _finish(run_id: str, status: str, **fields: Any) -> dict[str, Any]:
 
 @scoped_loader
 def run_recipe(user: User, recipe_id: str, workspace_id: str | None = None, *, mode: str = "materialize",
-               engine: str | None = None, limit: int = PREVIEW_ROWS) -> dict[str, Any]:
+               engine: str | None = None, limit: int = PREVIEW_ROWS, refresh: str = "auto",
+               window: tuple[Any, Any] | None = None, incremental: Any = None,
+               minimum_role: str | None = None) -> dict[str, Any]:
     """Run a recipe version. `preview` returns rows and gate results and writes nothing; `materialize`
-    writes each output (or keeps the last good one and quarantines the candidate)."""
+    writes each output (or keeps the last good one and quarantines the candidate).
+
+    An incremental recipe (its own `incremental` block, or `incremental` given by a PipelineSpec, P6-02)
+    materializes by watermark window: `refresh` = `auto` (a window, a full rebuild the first time and
+    when a delete reconcile is due), `full`, `reconcile`, or `replay`/`backfill` of the range `window`."""
     from analystos.artifacts.registry import link
     from analystos.recipes.execute import RecipeExecutor, default_store, plan_execution
     from analystos.runtime.context import default_gateway
@@ -283,10 +298,18 @@ def run_recipe(user: User, recipe_id: str, workspace_id: str | None = None, *, m
 
     if mode not in ("preview", "materialize"):
         raise InvalidInput("mode must be preview or materialize")
+    if refresh not in INCREMENTAL_REFRESH:
+        raise InvalidInput(f"refresh must be one of {', '.join(INCREMENTAL_REFRESH)}")
     settings = get_settings()
     with session_scope() as s:
-        row = get_recipe(s, user, recipe_id, workspace_id, minimum="editor" if mode == "materialize" else "analyst")
+        row = get_recipe(s, user, recipe_id, workspace_id,
+                         minimum=minimum_role or ("editor" if mode == "materialize" else "analyst"))
         ws, name, version, spec = row.workspace_id, row.name, row.version, dict(row.spec)
+        if incremental is not None:
+            given = incremental.model_dump(mode="json", exclude_none=True)
+            if spec.get("incremental") not in (None, given):
+                raise InvalidInput("the pipeline's incremental block differs from the recipe's; they must be the same")
+            spec["incremental"] = given
         validated = validate_recipe(spec)
         scope = resolve_scope(s, user, ws, minimum_role="analyst")
         upstream = _upstream_drift(s, ws, validated)
@@ -314,9 +337,14 @@ def run_recipe(user: User, recipe_id: str, workspace_id: str | None = None, *, m
         plan = plan_execution(validated, scope, prefer=engine)
         executor = RecipeExecutor(default_gateway(), scope, validated, plan, actor=f"user:{user.id}",
                                   store=default_store(settings), compute=run_recipe_compute)
+        inc_plan = None
+        if mode == "materialize" and validated.recipe.incremental is not None:
+            inc_plan = _incremental_plan(ws, name, validated, executor, previous_outputs, refresh=refresh, window=window)
         with session_scope() as s:
             r = s.get(RecipeRun, run_id)
             r.plan, r.engine = plan.to_dict(), plan.engine
+            if inc_plan is not None:
+                r.plan = {**r.plan, "incremental": inc_plan["record"]}
         needed = {nid for o in validated.outputs() for nid in validated.ancestors(o.id)}
         preflight = [executor.preflight(n.id) for n in validated.recipe.nodes if n.op == "join" and n.id in needed]
         violated = [p for p in preflight if not p["ok"]]
@@ -329,7 +357,8 @@ def run_recipe(user: User, recipe_id: str, workspace_id: str | None = None, *, m
                     snapshots=executor.snapshots)
             raise InvalidInput(message, details={"recipe_run_id": run_id, "preflight": violated})
         result = _run_outputs(user, run_id, ws, name, version, validated, executor, plan, mode=mode, limit=limit,
-                              upstream=upstream, previous_outputs=previous_outputs, started=started, preflight=preflight)
+                              upstream=upstream, previous_outputs=previous_outputs, started=started, preflight=preflight,
+                              inc_plan=inc_plan)
         return result
     except RecipeInvalid:
         raise
@@ -343,7 +372,8 @@ def run_recipe(user: User, recipe_id: str, workspace_id: str | None = None, *, m
 
 def _run_outputs(user: User, run_id: str, ws: str, name: str, version: int, validated: Any, executor: Any, plan: Any, *,
                  mode: str, limit: int, upstream: list[dict[str, Any]], previous_outputs: dict[str, Any],
-                 preflight: list[dict[str, Any]], started: datetime) -> dict[str, Any]:
+                 preflight: list[dict[str, Any]], started: datetime,
+                 inc_plan: dict[str, Any] | None = None) -> dict[str, Any]:
     from analystos.evidence.lineage.sql import redact_literals
     from analystos.recipes.gates import evaluate, row_gates, schema_policy
     from analystos.recipes.lineage import column_lineage, openlineage_events
@@ -367,8 +397,12 @@ def _run_outputs(user: User, run_id: str, ws: str, name: str, version: int, vali
             if mode == "materialize":
                 raise InvalidInput(message)
         prev = previous_outputs.get(out.name) or {}
-        outcome = evaluate(out, res.columns, res.rows, previous_rows=prev.get("row_count"))
-        policy = schema_policy(out.schema_policy, out.output_schema or [], prev.get("columns"), upstream)
+        # an increment is a window of the output, not the output: row_count_delta judges full builds only
+        increment = inc_plan is not None and inc_plan["load_mode"] == "merge"
+        outcome = evaluate(out, res.columns, res.rows, previous_rows=None if increment else prev.get("row_count"))
+        previous_columns = [c for c in prev.get("columns") or [] if c.get("name") != SOFT_DELETE_COLUMN] \
+            if prev.get("columns") is not None else None
+        policy = schema_policy(out.schema_policy, out.output_schema or [], previous_columns, upstream)
         blocked = outcome.blocked or policy["action"] == "block"
         blocked_any = blocked_any or blocked
         gates_out[out.name] = outcome.summary()
@@ -380,7 +414,7 @@ def _run_outputs(user: User, run_id: str, ws: str, name: str, version: int, vali
             continue
         outputs[out.name] = _materialize(user, run_id, ws, name, out, outcome, blocked, previous=prev,
                                          lineage=next(entry for entry in lineage if entry["output"] == out.name),
-                                         loader=StagingLoader(get_settings()), max_table=MAX_TABLE_NAME)
+                                         loader=StagingLoader(get_settings()), max_table=MAX_TABLE_NAME, inc_plan=inc_plan)
     status = "blocked" if blocked_any and mode == "materialize" else "succeeded"
     sources = dict(plan.sources)
     targets = {n: {"namespace": f"analystos://source/{o['source_id']}", "name": o.get("table") or n,
@@ -398,8 +432,10 @@ def _run_outputs(user: User, run_id: str, ws: str, name: str, version: int, vali
 
 
 def _materialize(user: User, run_id: str, ws: str, recipe: str, out: Any, outcome: Any, blocked: bool, *,
-                 previous: dict[str, Any], lineage: dict[str, Any], loader: Any, max_table: int) -> dict[str, Any]:
-    """Write one output through the loader, or keep the last good output and quarantine the candidate."""
+                 previous: dict[str, Any], lineage: dict[str, Any], loader: Any, max_table: int,
+                 inc_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Write one output through the loader, or keep the last good output and quarantine the candidate.
+    An incremental output merges the window on its key and commits the watermark with it (P6-02)."""
     from analystos.artifacts.registry import link
 
     declared = list(out.output_schema or [])
@@ -426,7 +462,11 @@ def _materialize(user: User, run_id: str, ws: str, recipe: str, out: Any, outcom
         result.update(table=previous.get("table"), kept_previous=bool(previous.get("table")),
                       row_count=previous.get("row_count"), content_fingerprint=previous.get("content_fingerprint"))
     else:
-        info = loader.load(source_id, table, _batches(declared, outcome.kept), workspace_id=ws, fingerprint="table")
+        if inc_plan is None:
+            info = loader.load(source_id, table, _batches(declared, outcome.kept), workspace_id=ws, fingerprint="table")
+        else:
+            info = _load_incremental(loader, source_id, table, ws, declared, outcome.kept, inc_plan)
+            result["incremental"] = info.get("incremental")
         result.update(table=f"{info['schema']}.{info['table']}", row_count=info["row_count"],
                       content_fingerprint=info["content_fingerprint"], kept_previous=False)
         with session_scope() as s:
@@ -500,3 +540,114 @@ def recipe_runs(session: Session, user: User, workspace_id: str, recipe_name: st
     if recipe_name:
         stmt = stmt.where(RecipeRun.recipe_name == recipe_name)
     return list(session.scalars(stmt.order_by(RecipeRun.created_at.desc()).limit(200)))
+
+
+# ------------------------------------------------------------------------------------ incremental (P6-02)
+def output_table(recipe: str, output: str) -> str:
+    from analystos.staging.loader import MAX_TABLE_NAME
+
+    return sanitize_identifier(f"{recipe}_{output}", max_length=MAX_TABLE_NAME - len(QUARANTINE_SUFFIX), fallback="output")
+
+
+def _incremental_plan(ws: str, recipe: str, validated: Any, executor: Any, previous_outputs: dict[str, Any], *,
+                      refresh: str, window: tuple[Any, Any] | None) -> dict[str, Any]:
+    """Decide the window of an incremental run and install it on the executor's compiler. The high watermark
+    is measured once, through the governed read, before the window is computed (the fixed cursor); the
+    stored watermark is read from the analytics database, where it was committed with the rows."""
+    from sqlglot import exp
+
+    from analystos.recipes.compiler import Compiler, SourceWindow, col, cte_name
+    from analystos.staging.incremental import as_text, reconcile_due, shift, to_watermark
+    from analystos.staging.loader import StagingLoader
+
+    inc = validated.recipe.incremental
+    out = validated.outputs()[0]
+    src = incremental_source(validated.recipe, validated.schemas)
+    wm_type = validated.columns(src)[inc.watermark]
+    table = output_table(recipe, out.name)
+    with session_scope() as s:
+        source_id = ensure_output_source(s, ws).id
+    loader = StagingLoader(get_settings())
+    prev = previous_outputs.get(out.name) or {}
+    state = loader.read_state(source_id, table) if prev.get("table") else None
+    tree = exp.select(exp.alias_(exp.Max(this=col(inc.watermark)), "high_watermark")).from_(
+        exp.Table(this=exp.to_identifier(cte_name(src), quoted=True)))
+    tree = executor.compiler._with([src], tree)
+    res = executor.query(tree, purpose="recipe.watermark", max_rows=1)
+    high = to_watermark(res.rows[0][0]) if res.rows and res.rows[0] else None
+    stored = to_watermark((state or {}).get("watermark"))
+    now = utcnow()
+    soft = inc.deletes == "soft"
+    if refresh in ("replay", "backfill"):
+        if not window or window[0] is None or window[1] is None:
+            raise InvalidInput(f"{refresh} needs a watermark range [start, end]")
+        if stored is None:
+            raise InvalidInput(f"the output of {recipe} has no incremental state yet; run it once before a {refresh}")
+        since, until, load_mode, advance, full = to_watermark(window[0]), to_watermark(window[1]), "merge", False, False
+    elif stored is None or refresh == "full" or (inc.deletes == "reconcile" and (
+            refresh == "reconcile" or (refresh == "auto" and reconcile_due(state, inc, now)))):
+        since = to_watermark(inc.backfill.start) if inc.backfill and inc.backfill.start else None
+        until, load_mode, advance, full = high, "replace", True, True
+    elif refresh == "reconcile" or (refresh == "auto" and reconcile_due(state, inc, now)):
+        # soft / ignore: recompute everything, merge it, and stamp (soft) the keys that are gone
+        since, until, load_mode, advance, full = None, high, "merge", True, True
+    else:
+        since, until, load_mode, advance, full = shift(stored, inc.late_window), high, "merge", True, False
+    until = until if until is not None else stored
+    windows = {src: SourceWindow(inc.watermark, wm_type, as_text(since), as_text(until), keep_nulls=full)}
+    executor.compiler = Compiler(validated, executor.plan.dialect, windows=windows)
+    record = {"refresh": refresh, "source_node": src, "watermark_column": inc.watermark, "key": list(inc.key),
+              "late_window_seconds": inc.late_window, "deletes": inc.deletes, "load_mode": load_mode, "full": full,
+              "since": as_text(since), "until": as_text(until), "high_watermark": as_text(high),
+              "stored_watermark": as_text(stored)}
+
+    def next_state(old: dict[str, Any] | None) -> dict[str, Any]:
+        from analystos.staging.incremental import later
+
+        new = dict(old or {})
+        if advance:
+            new["watermark"] = as_text(until) if load_mode == "replace" else as_text(later(new.get("watermark"), until))
+        new.update(watermark_column=inc.watermark, key=list(inc.key), deletes=inc.deletes, last_window=record,
+                   updated_at=now.isoformat())
+        if full:
+            new["last_full_at"] = now.isoformat()
+            new["last_reconciled_at"] = now.isoformat()
+        return new
+
+    return {"record": record, "load_mode": load_mode, "keys": list(inc.key), "state": next_state, "soft": soft,
+            "reconcile_soft": full and soft and load_mode == "merge", "max_delete_pct": inc.max_delete_pct}
+
+
+def _with_soft(batches: list[pa.RecordBatch]) -> list[pa.RecordBatch]:
+    out = []
+    for b in batches:
+        arrays = [*b.columns, pa.array([None] * b.num_rows, type=pa.timestamp("us", tz="UTC"))]
+        out.append(pa.RecordBatch.from_arrays(arrays, names=[*b.schema.names, SOFT_DELETE_COLUMN]))
+    return out
+
+
+def _load_incremental(loader: Any, source_id: str, table: str, ws: str, declared: list[Column], rows: list[list[Any]],
+                      inc_plan: dict[str, Any]) -> dict[str, Any]:
+    batches = _batches(declared, rows)
+    if inc_plan["soft"]:
+        batches = _with_soft(batches)
+    record = dict(inc_plan["record"], rows_in_window=len(rows))
+    if rows or inc_plan["load_mode"] == "replace":
+        if not rows:  # an empty full rebuild: an empty table of the declared shape
+            batches = [b.slice(0, 0) for b in batches] or batches
+        info = loader.load(source_id, table, batches, workspace_id=ws, mode=inc_plan["load_mode"],
+                           keys=inc_plan["keys"] if inc_plan["load_mode"] == "merge" else None, fingerprint="table",
+                           state=inc_plan["state"])
+    else:
+        loader.save_state(source_id, table, inc_plan["state"])
+        info = loader.table_info(source_id, table)
+    if inc_plan["reconcile_soft"]:
+        keys = inc_plan["keys"]
+        key_batches = [pa.RecordBatch.from_arrays([b.column(b.schema.names.index(k)) for k in keys], names=keys)
+                       for b in batches]
+        rec = loader.reconcile(source_id, table, key_batches, keys=keys, policy="soft", workspace_id=ws,
+                               max_delete_pct=inc_plan["max_delete_pct"])
+        record["reconcile"] = {k: rec[k] for k in ("policy", "missing_rows", "soft_deleted_rows")}
+        info.update({k: rec[k] for k in ("row_count", "content_fingerprint", "columns")})
+    info["incremental"] = record
+    return info

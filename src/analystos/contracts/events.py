@@ -19,6 +19,7 @@ EVENT_TYPES = {
     "semantic.metric.deprecated", "semantic.conflict.detected", "semantic.imported",
     # Semantic compilation and review (P7-02, P7-09, P4-05)
     "semantic.metric.stale", "semantic.model.approved", "semantic.relationship.candidate", "semantic.relationship.validated",
+    "semantic.ownership_offered", "semantic.ownership_transferred", "semantic.ownership_declined",  # P4-05
     "ask.answered", "ask.promoted", "capability.invoked",
     "knowledge.revision_committed", "knowledge.imported", "knowledge.pushed",
     # Review queue (P4-K07/K08): drafts proposed by a model or the learning loop, decided in batches
@@ -30,14 +31,32 @@ EVENT_TYPES = {
     # Verification records (P7-01, ADR-0020): a verdict bound to its dependency fingerprint; voided when a
     # dependency changes (with its cause), swept nightly; a finding flagged wrong carries its reason
     "verification.recorded", "verification.voided", "verification.sweep_completed", "insight.flagged_wrong",
+    "verification.reverify_requested",
     # Definition lifecycle and pinned schedules (P7-03, ADR-0021)
     "definition.draft_saved", "definition.published", "definition.deprecated", "definition.retired",
+    "definition.tested", "definition.promoted",
     "schedule.upgrade_available", "schedule.upgraded", "schedule.pin_warning", "schedule.blocked", "narrative.stale",
     # Typed work orders and the dispatch outbox (P4-06)
     "work_order.created", "work_order.updated", "run.dispatched", "run.dispatch_failed",
     # Transformation recipes (P6-04..07) and file ingestion (P6-06)
     "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
     "recipe.run.refused", "recipe.run.failed", "file.ingested",
+    # Workspace brief and readiness (P4-04)
+    "brief.updated", "readiness.assessed",
+    # Steps, branches and notebooks: the Data Thread (P7-04, P7-05, P7-12)
+    "step.created", "step.edited", "step.executed", "step.flagged", "step.pinned", "step.pin_refreshed",
+    "branch.forked", "branch.merged", "notebook.created", "notebook.updated",
+    # Pipelines, incremental runs and the managed writer (P6-01..P6-03): operational alerts included
+    "pipeline.saved", "pipeline.published", "pipeline.dry_run.completed", "pipeline.dry_run.blocked",
+    "pipeline.dry_run.failed", "pipeline.run.completed", "pipeline.run.blocked", "pipeline.run.failed",
+    "writer_destination.provisioned", "pipeline.materialized", "pipeline.materialization.failed",
+    "pipeline.rolled_back", "pipeline.freshness.breached",
+    # Isolated compute pools (P7-06, ADR-0022): a task dispatched to compute-py / compute-ml, as its worker reports it
+    "task.started", "task.progress", "task.completed", "task.failed",
+    # Governed classical ML (P5-01..P5-06, ADR-0024): experiments, the model registry, approved batch scoring
+    "ml.experiment.started", "ml.experiment.completed", "ml.experiment.refused", "ml.experiment.failed",
+    "ml.model.registered", "ml.model.promoted", "ml.model.rolled_back", "ml.scoring.planned", "ml.scoring.completed",
+    "ml.scoring.refused", "ml.scoring.duplicate",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

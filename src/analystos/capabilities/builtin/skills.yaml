@@ -57,3 +57,27 @@
   certification: {status: certified, evidence: tests/unit/test_generic_agent.py}
   tags: [catalog]
   spec: {call: context, tool: sql.execute}
+- apiVersion: analystos/v1
+  kind: Skill
+  id: skill.pipeline_propose
+  version: 1.0.0
+  summary: Propose a transformation recipe and PipelineSpec for in-scope tables (rules from the catalog, or a proposed
+    recipe/pipeline object), validated by the recipe IR validator, the scope check and the PipelineSpec check; never
+    saves, compiles or runs anything
+  entry: python:analystos.skills.pipeline_propose:pipeline_propose
+  determinism: deterministic
+  side_effect: none
+  cost_class: free
+  input_schema:
+    type: object
+    additionalProperties: false
+    properties:
+      assets: {type: array, items: {type: string}, minItems: 1, maxItems: 10}
+      recipe: {type: object}
+      pipeline: {type: object}
+    anyOf:
+      - required: [assets]
+      - required: [recipe]
+  certification: {status: certified, evidence: tests/unit/test_engineer_agent.py}
+  tags: [transformation, pipelines]
+  spec: {call: context, tool: metadata.read}

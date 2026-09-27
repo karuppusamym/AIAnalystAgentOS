@@ -32,6 +32,8 @@ from analystos.services.notifications import notify
 log = get_logger(__name__)
 KINDS = {"reanalysis": "analyst", "dataset_refresh": "editor", "report": "analyst", "monitor": "analyst", "crawl": "editor"}
 KINDS["saved_analysis"] = "editor"
+KINDS["step"] = "editor"  # a pinned step's frozen query (P7-04, services/step_pins.py)
+KINDS["pipeline"] = "editor"  # P6-02: a published pipeline's incremental run, or a dry run proposing a materialization
 MIN_INTERVAL_SECONDS = 15 * 60
 
 
@@ -58,6 +60,13 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
         raise InvalidInput("config.report must be an object like {kind, formats}")
     if config.get("publish", "skip") not in ("skip", "propose"):
         raise InvalidInput("config.publish must be skip or propose (publication always needs an approval)")
+    if kind == "pipeline":
+        if not isinstance(config.get("pipeline"), str) or not config["pipeline"]:
+            raise InvalidInput("config.pipeline must name a published pipeline")
+        if config.get("action", "run") not in ("run", "dry_run"):
+            raise InvalidInput("config.action must be run or dry_run (a destination is only written after an approval)")
+        if config.get("mode", "auto") not in ("auto", "full", "reconcile"):
+            raise InvalidInput("config.mode must be auto, full or reconcile")
     if kind == "reanalysis":
         from analystos.registries.replay import validate_schedule_config
 
@@ -100,6 +109,10 @@ def create_schedule(session: Session, user: User, workspace_id: str, *, name: st
         from analystos.services.saved_analysis import verify
 
         verify(session, user, workspace_id, name, cron, timezone, config)
+    if kind == "step":
+        from analystos.services.step_pins import verify_schedule
+
+        verify_schedule(session, user, workspace_id, name, cron, timezone, config)
     sch = Schedule(id=new_id("sch"), workspace_id=workspace_id, name=name, kind=kind, cron=cron, timezone=timezone, config=config,
                    owner_id=user.id, enabled=True, next_run_at=next_fire(cron, timezone), revision=1, pins={}, pin_status={})
     session.add(sch)
@@ -132,6 +145,10 @@ def update_schedule(session: Session, user: User, schedule_id: str, patch: dict,
         from analystos.services.saved_analysis import verify
 
         verify(session, session.get(User, sch.owner_id), sch.workspace_id, sch.name, sch.cron, sch.timezone, sch.config)
+    if sch.kind == "step" and (patch.get("enabled") is not False or set(patch) != {"enabled"}):
+        from analystos.services.step_pins import verify_schedule
+
+        verify_schedule(session, session.get(User, sch.owner_id), sch.workspace_id, sch.name, sch.cron, sch.timezone, sch.config)
     sch.next_run_at = next_fire(sch.cron, sch.timezone) if sch.enabled else None
     sch.revision = (sch.revision or 1) + 1
     audit(f"user:{user.id}", "schedule.updated", workspace_id=sch.workspace_id, target=sch.id, details=patch, session=session)
@@ -224,9 +241,11 @@ def execute(srun_id: str) -> None:
         return
     try:
         from analystos.services.saved_analysis import execute as saved_analysis
+        from analystos.services.step_pins import execute_schedule as step_pin
 
         result = {"dataset_refresh": _refresh, "reanalysis": _reanalysis, "report": _report, "monitor": _monitors,
-                  "crawl": _crawl, "saved_analysis": saved_analysis}[kind](
+                  "crawl": _crawl, "saved_analysis": saved_analysis, "step": step_pin,
+                  "pipeline": _pipeline}[kind](
             owner, workspace_id, schedule_id, srun_id, config)
     except AnalystOSError as exc:
         _finish(srun_id, "failed", error=f"{exc.code}: {exc.message}")
@@ -260,6 +279,28 @@ def _refresh(owner: User, workspace_id: str, schedule_id: str, srun_id: str, con
         if assets:
             loaded[source_id] = select_assets(owner, source_id, assets)["loaded"]
     return {"refreshed": loaded}
+
+
+def _pipeline(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
+    """The published version of a pipeline (by name): `action: run` (default) runs it into the managed output,
+    incremental by watermark when declared, so an overlapping or retried firing merges the same keys again
+    instead of double counting; `action: dry_run` dry-runs it and, with a destination, requests the approval
+    a materialization needs (a schedule never writes a destination by itself)."""
+    from analystos.db.models import Pipeline
+    from analystos.services import pipelines
+
+    name = config.get("pipeline")
+    with session_scope() as s:
+        row = s.scalar(select(Pipeline).where(Pipeline.workspace_id == workspace_id, Pipeline.name == name,
+                                              Pipeline.status == "published").order_by(Pipeline.version.desc()).limit(1))
+        if row is None:
+            raise NotFound(f"no published pipeline named {name!r}")
+        pipeline_id = row.id
+    if config.get("action", "run") == "dry_run":
+        out = pipelines.dry_run(owner, pipeline_id, workspace_id)
+    else:
+        out = pipelines.run_pipeline(owner, pipeline_id, workspace_id, mode=config.get("mode", "auto"))
+    return {"pipeline_run": out["id"], "status": out["status"], "approval_id": out.get("approval_id")}
 
 
 def _crawl(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
@@ -469,6 +510,12 @@ def housekeeping() -> dict[str, Any]:
             out["idempotency_purged"] = idempotency.purge_expired(s)
     except Exception:
         log.exception("scheduler housekeeping failed")
+    try:  # P6-03 operational alert: a destination whose good version is older than its pipeline's freshness
+        from analystos.services.pipelines import check_freshness
+
+        out["freshness_alerts"] = len(check_freshness())
+    except Exception:
+        log.exception("pipeline freshness check failed")
     return out
 
 

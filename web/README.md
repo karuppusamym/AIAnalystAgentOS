@@ -38,24 +38,34 @@ because the routers declare no `response_model`, so each endpoint names a hand-m
 response shape (the "Response shapes" section of `api.ts`). CI fails when either generated file is
 stale.
 
-## Information architecture (spec v3 §9)
+## Information architecture (spec v4 §15)
 
 `src/routes.ts` is the route manifest: `App.tsx`, the side nav and the Ctrl/Cmd-K palette are built
-from it, and `ia.test.tsx` asserts at most 20 screens (19 today).
+from it. Each screen declares its area, its audience (everyone, workspace owners, platform admins) and
+the concepts whose one home it is (`owns`). Tests assert at most 20 screens (18 today), that every
+concept has exactly one home and its editor renders only there (`lightIa.test.tsx`), and that analysts
+and viewers see no admin screen.
 
-| Journey | Screens |
+| Area | Screens |
 |---|---|
-| Home | Workspaces `/`, What changed `/w/:ws` |
-| Ask | Ask `/w/:ws/ask` |
-| Investigate | Investigations `/w/:ws/investigate`, board `/w/:ws/investigate/:run`, agent console `…/:run/console`, findings `/w/:ws/investigate/findings/:id?` |
-| Knowledge | Catalog `/w/:ws/knowledge/catalog`, Sources & crawls `/w/:ws/knowledge/sources` |
-| Build | Studio `/w/:ws/build/studio`, Reports `/w/:ws/build/reports` |
-| Operate | Approvals, Monitors & alerts, Schedules, Policy & members (`/w/:ws/operate/*`); Capability registry `/operate/registry`, Platform settings `/operate/settings`, Usage & cost `/operate/usage` |
+| Overview | Workspaces `/`, Overview `/w/:ws` (first run: a checklist from real state; after it: what needs you + Start work) |
+| Data | Sources `/w/:ws/data/sources`; Catalog & definitions `/w/:ws/data/catalog?tab=catalog\|documents\|review\|metrics\|definitions\|transfer` |
+| Work | Work `/w/:ws/work?tab=investigations\|prepare\|builds`, Ask `/w/:ws/work/ask`, investigation `/w/:ws/work/investigations/:run`, agent console `…/:run/console` |
+| Outputs | Outputs `/w/:ws/outputs?type=finding\|dashboard\|report\|dataset\|chart\|prepared\|other`, finding `/w/:ws/outputs/findings/:id?` |
+| Operate | Approval inbox, Monitors & alerts, Schedules (`/w/:ws/operate/*`) |
+| ⚙ Settings | Members & policy `/w/:ws/settings/policy` (owners); Capability registry `/settings/registry`, Platform settings `/settings/platform`, Usage & cost `/settings/usage` (platform admins) |
 | (access) | Sign in `/login` |
 
-Old URLs (`/admin`, `/w/:ws/runs/…`, `/insights/…`, `/sources`, `/catalog`, `/studio`, `/reports`,
-`/schedules`, `/monitoring`, `/governance`) redirect to their new screen with the query string kept
-(`LEGACY_REDIRECTS`). Links are built with `to.*` from `routes.ts`, never by hand.
+**Start work** (Overview, Work) lists Explain, Compare, Forecast, Predict, Prepare data and Monitor.
+Their availability is derived from `GET /api/capabilities?workspace_id=` in one function
+(`lib/jobKinds.ts`) until the job-kind endpoint (P4-04) exists; a disabled kind shows its reason and
+has no start button. Hashes, JEV, rungs, REV, OKF and Ossie appear only under *Technical details*.
+
+Old URLs (`/admin`, `/operate/*`, `/w/:ws/runs/…`, `/insights/…`, `/investigate/…`, `/knowledge/…`,
+`/build/…`, `/ask`, `/sources`, `/catalog`, `/studio`, `/reports`, `/schedules`, `/monitoring`,
+`/governance`) redirect to their new home with the query string kept; an old `?tab=` whose content
+moved (Build's builds/KPIs/dashboards, Knowledge's graph) lands on the new tab (`LEGACY_REDIRECTS`).
+Links are built with `to.*` from `routes.ts`, never by hand.
 
 Design system: tokens on `:root` (light) with dark tokens under `prefers-color-scheme` unless the user
 pinned light, and under `[data-theme=dark]`; the top-bar toggle cycles system → light → dark and is
@@ -85,22 +95,22 @@ bodies for uploads. `compose.yaml` publishes the app on port 5173 (`web` service
 |---|---|---|
 | Login | `/login` | `POST /api/auth/login`, `GET /api/auth/me` (validates a stored token) |
 | Workspaces | `/` | `GET/POST /api/workspaces` (name, description, objective, autonomy 0–4 with explanations) |
-| Workspace home ("What changed") | `/w/:ws` | `GET /api/workspaces/{id}` (counts, role, policy, members), `…/sources`, `…/analysis`, `…/insights`, `…/artifacts`; **Start analysis** → `POST …/analysis {objective, source_ids?, autonomy_level?}` |
-| Sources & crawls (Knowledge) | `/w/:ws/knowledge/sources` | `GET /api/source-kinds` (Add-source form generated per kind: grouped by category, required/optional fields, `secret_ref` only, driver/install hint, pushdown vs staged, admin-disabled kinds greyed out), `POST …/sources` (file kinds may upload via `POST …/uploads` then `config.path`), `POST …/sources/{id}/discover`, `PUT …/sources/{id}/selection`, `GET …/assets`, `PUT /api/assets/{asset}/columns/{col}/tags`, `GET …/relationships`; per source **Crawl** `POST …/sources/{id}/crawl {mode, include, exclude, profile?, enrich?}`, history `GET …/crawls?source_id=`, running crawls polled every 2 s via `GET /api/crawls/{id}`; detail shows schema drift (new / changed with added, removed, retyped columns / missing / deprecated / rename candidates) and the stage log |
-| Catalog (Knowledge) | `/w/:ws/knowledge/catalog` | `GET …/catalog?q=&domain=&role=&include_deprecated=` (role, domain, grain, confidence, description with origin badge source/rule/model/user, reviewed, lifecycle; expandable columns with role, unit, tags + `tags_origin`, PII category, glossary term), `PATCH /api/assets/{id}/metadata` (editors/owners: business name, description, reviewed) |
-| Investigations | `/w/:ws/investigate` | `GET …/analysis` |
-| Investigation board | `/w/:ws/investigate/:run` | `GET …/analysis/{run}` (incl. `origin` badge: scheduled / alert investigation, and a **What changed since the previous run** panel from `summary.changes` with KPI deltas and a link to `summary.report_artifact_id`); live **SSE** `GET …/analysis/{run}/events` (fetch + ReadableStream with a bearer header; reconnects with `?after_id=`); `POST …/analysis/{run}/pause|resume|cancel`; `POST …/feedback`; `POST /api/approvals/{id}/approve|reject`; `GET /api/agent-runs/{task}` (task details); `POST /api/publications/{id}/rollback` |
-| Agent console | `/w/:ws/investigate/:run/console` | `GET …/analysis/{run}/console` (messages, tool calls, model calls with **JEV decision** highlight for `provider == "typesafe"`, queries, cost) |
-| Findings | `/w/:ws/investigate/findings/:id?` | `GET …/insights`, `GET /api/insights/{id}` (REV record, queries with SQL + result preview, experiments, lineage) |
-| Studio (Build) | `/w/:ws/build/studio?artifact=` | `GET …/artifacts`, `GET /api/artifacts/{id}` (versions + lineage); dashboard preview uses `GET …/artifacts?type=chart&run_id=` for chart previews |
-| Schedules (Operate) | `/w/:ws/operate/schedules?schedule=` | `GET/POST …/schedules` (list includes `recent_runs`), `PATCH/DELETE /api/schedules/{id}` (edit, enable toggle, delete), `POST /api/schedules/{id}/run` (run now). Form: kind-specific config (reanalysis / dataset_refresh / report / monitor / crawl: sources, mode, include/exclude), cron presets (weekly Mon 07:00, daily 06:00, monthly 1st 07:00) plus raw cron, IANA time zone; next run shown in the schedule's zone and local time; server validation errors (e.g. < 15 min interval) shown verbatim |
+| Overview | `/w/:ws` | `GET /api/workspaces/{id}`, `…/sources`, `…/analysis`, `…/catalog` (first-run checklist), `…/approvals?status=pending`, `…/alerts?status=open`, `…/insights` (void findings), `…/semantic/relationships/candidates?status=pending`; **Start work** → `GET /api/capabilities?workspace_id=`, `POST …/analysis {objective, source_ids?}` |
+| Sources (Data) | `/w/:ws/data/sources` | `GET /api/source-kinds` (Add-source form generated per kind: grouped by category, required/optional fields, `secret_ref` only, driver/install hint, pushdown vs staged, admin-disabled kinds greyed out), `POST …/sources` (file kinds may upload via `POST …/uploads` then `config.path`), `POST …/sources/{id}/discover`, `PUT …/sources/{id}/selection`, `GET …/assets`, `PUT /api/assets/{asset}/columns/{col}/tags`, `GET …/relationships`; per source **Crawl** `POST …/sources/{id}/crawl {mode, include, exclude, profile?, enrich?}`, history `GET …/crawls?source_id=`, running crawls polled every 2 s via `GET /api/crawls/{id}`; detail shows schema drift (new / changed with added, removed, retyped columns / missing / deprecated / rename candidates) and the stage log |
+| Catalog & definitions (Data) | `/w/:ws/data/catalog` | `GET …/catalog?q=&domain=&role=&include_deprecated=` (role, domain, grain, confidence, description with origin badge source/rule/model/user, reviewed, lifecycle; expandable columns with role, unit, tags + `tags_origin`, PII category, glossary term), `PATCH /api/assets/{id}/metadata` (editors/owners: business name, description, reviewed) |
+| Work | `/w/:ws/work?tab=` | `GET …/analysis`; Prepare data: `POST …/uploads` → `POST …/sources/{id}/ingest`, `GET …/recipes`, `POST …/recipes/{id}/runs {mode: preview\|materialize}`, `POST …/recipes/{id}/publish`, `GET …/recipe-runs`; dbt builds as before |
+| Investigation | `/w/:ws/work/investigations/:run` | `GET …/analysis/{run}/why` (numbers panel); `GET …/analysis/{run}` (incl. `origin` badge: scheduled / alert investigation, and a **What changed since the previous run** panel from `summary.changes` with KPI deltas and a link to `summary.report_artifact_id`); live **SSE** `GET …/analysis/{run}/events` (fetch + ReadableStream with a bearer header; reconnects with `?after_id=`); `POST …/analysis/{run}/pause|resume|cancel`; `POST …/feedback`; `POST /api/approvals/{id}/approve|reject`; `GET /api/agent-runs/{task}` (task details); `POST /api/publications/{id}/rollback` |
+| Agent console | `/w/:ws/work/investigations/:run/console` | `GET …/analysis/{run}/console` (messages, tool calls, model calls with **JEV decision** highlight for `provider == "typesafe"`, queries, cost) |
+| Finding (Outputs) | `/w/:ws/outputs/findings/:id?` | `GET …/insights` (with `verification_state`: void badge + cause), `GET /api/insights/{id}/why[?number=]` (Why this number? drawer), `GET /api/insights/{id}` (how it was checked, queries with SQL + result preview, experiments, lineage) |
+| Outputs | `/w/:ws/outputs?type=&artifact=` | `GET …/recipe-runs` (prepared data), dashboards: `POST /api/artifacts/{id}/publish` (proposal → inbox); `GET …/artifacts`, `GET /api/artifacts/{id}` (versions + lineage); dashboard preview uses `GET …/artifacts?type=chart&run_id=` for chart previews |
+| Schedules (Operate) | `/w/:ws/operate/schedules?schedule=` | `GET/POST …/schedules` (list includes `recent_runs`), `GET …/schedules/{id}` (pin status: upgrade available + diff), `POST …/schedules/{id}/upgrade` (If-Match + `upgrade_hash`), `PATCH/DELETE /api/schedules/{id}` (edit, enable toggle, delete), `POST /api/schedules/{id}/run` (run now). Form: kind-specific config (reanalysis / dataset_refresh / report / monitor / crawl: sources, mode, include/exclude), cron presets (weekly Mon 07:00, daily 06:00, monthly 1st 07:00) plus raw cron, IANA time zone; next run shown in the schedule's zone and local time; server validation errors (e.g. < 15 min interval) shown verbatim |
 | Monitors & alerts (Operate) | `/w/:ws/operate/monitoring?tab=monitors\|alerts&alert=` | `GET/POST …/monitors` (kinds: threshold, drift, change point, forecast deviation {z, history, seasonal_periods?}, data quality), `PATCH /api/monitors/{id}` (enabled, auto_investigate), `POST /api/monitors/{id}/evaluate`, `GET /api/monitors/{id}/series` (line chart, latest point marked, drift baseline median / threshold line), `GET …/artifacts?type=metric` (metric picker), `GET …/assets` (data-quality assets); `GET …/alerts?status=`, `POST /api/alerts/{id}/acknowledge\|resolve\|investigate` (JEV triage `data.triage.p_material` shown) |
-| Reports (Build) | `/w/:ws/build/reports?artifact=` | `GET …/artifacts?type=report`, `POST …/reports {run_id?, kind, formats}`, `GET /api/artifacts/{id}/download?format=` (fetch with bearer → blob → object URL; HTML **Preview** renders in `<iframe sandbox="" srcdoc>`, never in the page DOM) |
-| Approvals (Operate) | `/w/:ws/operate/approvals` | `GET …/approvals?status=pending` (inbox across runs), `POST /api/approvals/{id}/approve\|reject` |
+| Reports (an Outputs filter) | `/w/:ws/outputs?type=report&artifact=` | `GET …/artifacts?type=report`, `POST …/reports {run_id?, kind, formats}`, `GET /api/artifacts/{id}/download?format=` (fetch with bearer → blob → object URL; HTML **Preview** renders in `<iframe sandbox="" srcdoc>`, never in the page DOM) |
+| Approval inbox (Operate) | `/w/:ws/operate/approvals` | `GET …/approvals?status=pending` (inbox across runs), `POST /api/approvals/{id}/approve\|reject` |
 | Notifications (top bar) | all pages | `GET /api/notifications?unread=true` polled every 30 s for the badge, `GET /api/notifications` when the dropdown opens, `POST /api/notifications/read {ids}`; a click follows `link {type, id}` (alert → Monitoring, report artifact → Reports, other artifact → Studio, run → Run view, schedule → Schedules) |
-| Ask | `/w/:ws/ask` | `POST …/ask` (SQL, explanation, repair attempts, result, chart hint), `POST …/query` (SQL console; `sql_rejected` shown as a gateway rejection), **Explain** `POST …/query/explain` (deterministic explanation + gateway verdict, nothing executed) |
-| Policy & members (Operate) | `/w/:ws/operate/governance` | `PUT …/policy` (JSON editor), `PATCH /api/workspaces/{id}` (objective/autonomy), `POST/DELETE …/members`, `GET …/audit` (owners) |
-| Capability registry / Platform settings / Usage & cost (Operate) | `/operate/registry`, `/operate/settings`, `/operate/usage` | `GET/PATCH /api/agents`, `GET/PATCH /api/tools`, `GET /api/skills`, `GET /api/admin/models` (incl. effective mode per purpose), `GET /api/admin/usage`, `GET /api/admin/audit`; admin-only **Settings** `GET/PUT /api/admin/settings` (per-purpose off/auto/always with the rule-path flag, feature flags, numeric limits with schema ranges, enabled source kinds, disabled models, cacheable purposes; a note is required; `purpose_modes` is always sent as the complete map because the server replaces it wholesale), `POST /api/admin/settings/preset` (confirmed), `GET /api/admin/settings/history` + `POST …/rollback`; **Token savings** `GET /api/admin/token-savings?days=`; **Prompts** `GET /api/admin/prompts` |
+| Ask (Work) | `/w/:ws/work/ask` | `POST …/ask` (SQL, explanation, repair attempts, result, chart hint), `POST …/query` (SQL console; `sql_rejected` shown as a gateway rejection), **Explain** `POST …/query/explain` (deterministic explanation + gateway verdict, nothing executed) |
+| Members & policy (Settings, owners) | `/w/:ws/settings/policy` | `PUT …/policy` (form for the common fields; JSON under Advanced), `PATCH /api/workspaces/{id}` (autonomy, under Advanced), `POST/DELETE …/members`, `GET …/audit` (the one audit view; admins can switch to `GET /api/admin/audit`) |
+| Capability registry / Platform settings / Usage & cost (Settings, admins) | `/settings/registry`, `/operate/settings`, `/operate/usage` | `GET/PATCH /api/agents`, `GET/PATCH /api/tools`, `GET /api/skills`, `GET /api/admin/models` (incl. effective mode per purpose), `GET /api/admin/usage`, `GET /api/admin/audit`; admin-only **Settings** `GET/PUT /api/admin/settings` (per-purpose off/auto/always with the rule-path flag, feature flags, numeric limits with schema ranges, enabled source kinds, disabled models, cacheable purposes; a note is required; `purpose_modes` is always sent as the complete map because the server replaces it wholesale), `POST /api/admin/settings/preset` (confirmed), `GET /api/admin/settings/history` + `POST …/rollback`; **Token savings** `GET /api/admin/token-savings?days=`; **Prompts** `GET /api/admin/prompts` |
 
 ## Layout
 
@@ -143,8 +153,9 @@ has a "Table view" disclosure.
 ## Known gaps
 
 The next interaction design is [Workspace workbench](../docs/10-architecture/02-workbench-ux.md),
-with implementation tracked under P4-07, P5-03 and P6-03. It is a target design; the screen map
-above continues to describe the shipped UI.
+with implementation tracked under P4-07, P5-03 and P6-03. The five areas, Start work, the first-run
+checklist and the evidence drawer have shipped (P7-18); the specialist ML and pipeline views arrive
+as panels with P5-03 and P6-03.
 
 - There is no user-management screen. `POST /api/users` exists, but the spec does not require one here.
 - Hypothesis editing (`PATCH /api/hypotheses/{id}`) is in the client but has no UI yet.

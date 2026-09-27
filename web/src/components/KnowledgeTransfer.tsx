@@ -106,7 +106,7 @@ function ExportCard({ wsId, packs }: { wsId: string; packs: KnowledgePackInfo[] 
   };
   return (
     <Card title="Export">
-      <p className="small muted">A deterministic OKF zip of the current revision, downloaded to your browser. The publish policy applies:
+      <p className="small muted">A zip of the current revision, downloaded to your browser. The publish policy applies:
         no dangling links, safe paths, size caps.</p>
       <ul className="list" aria-label="Packs to export">
         {packs.map((p) => (

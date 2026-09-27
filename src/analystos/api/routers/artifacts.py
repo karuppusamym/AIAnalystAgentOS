@@ -27,7 +27,7 @@ from analystos.workflows.orchestrator import signal_run
 router = APIRouter(prefix="/api", tags=["artifacts"])
 
 
-class Decision(BaseModel):
+class ArtifactDecision(BaseModel):
     reason: str | None = None
 
 
@@ -98,7 +98,12 @@ def list_approvals(workspace_id: str, status: str | None = None, user: User = De
 
 @scoped_loader
 def _decide(approval_id: str, user: User, session: Session, approve: bool, reason: str | None):
-    load_in_workspace(session, Approval, approval_id, user=user, label="approval")
+    pending = load_in_workspace(session, Approval, approval_id, user=user, label="approval")
+    from analystos.semantic import ownership
+
+    if pending.action == ownership.ACTION:  # P4-05: the named new owner accepts; an approver is not the recipient
+        raise InvalidInput("an ownership transfer is accepted or declined by its recipient "
+                           "(POST /api/workspaces/{workspace_id}/semantic/ownership/{approval_id}/accept)")
     approval = approval_svc.decide(session, approval_id, session.merge(user), approve=approve, reason=reason)
     if approval.action == semantic_svc.APPROVAL_ACTION:  # a KPI decided from the approvals inbox takes effect now
         semantic_svc.apply_decision(session, approval)
@@ -119,12 +124,12 @@ def _decide(approval_id: str, user: User, session: Session, approve: bool, reaso
 
 
 @router.post("/approvals/{approval_id}/approve")
-def approve(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def approve(approval_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, True, body.reason if body else None)
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def reject(approval_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, False, body.reason if body else None)
 
 
@@ -144,7 +149,7 @@ def publish_artifact(artifact_id: str, user: User = Depends(current_user), sessi
 
 
 @router.post("/artifacts/{artifact_id}/approve")
-def approve_artifact(artifact_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def approve_artifact(artifact_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     art = load_in_workspace(session, Artifact, artifact_id, user=user, label="artifact")
     return _decide(_pending_for_artifact(session, art).id, user, session, True, body.reason if body else None)
 

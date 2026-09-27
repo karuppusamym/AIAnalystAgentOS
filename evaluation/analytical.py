@@ -179,15 +179,17 @@ def _top(stat: Any) -> Any:
     return None
 
 
-def component_tests(domain: str, seed: int, *, effects: bool = True, n: int | None = None) -> tuple[Dataset, Any, list[dict[str, Any]]]:
+def component_tests(domain: str, seed: int, *, effects: bool = True, n: int | None = None,
+                    ds: Dataset | None = None) -> tuple[Dataset, Any, list[dict[str, Any]]]:
     """Every valid proposal of the component tier tested once: (dataset, DuckDB runner, [{spec, stat, statement}]).
-    Shared by the benchmark below and the grounding suite (evaluation/grounding.py)."""
+    Shared by the benchmark below, the grounding suite (evaluation/grounding.py) and the held-out corpus
+    (evaluation/heldout, which passes its own `ds`)."""
     from analystos.agents.investigator import proposals_for_table, validate_spec
     from analystos.capabilities import packs
     from analystos.contracts.analysis import AnalysisSpec
     from analystos.skills.analysis import run_analysis
 
-    ds = build(domain, seed, effects=effects, n=n)
+    ds = ds if ds is not None else build(domain, seed, effects=effects, n=n)
     run_sql = _duck(ds)
     fq = f"{SCHEMA}.{ds.table}"
     cols = _describe(run_sql, fq)
@@ -211,12 +213,13 @@ def component_tests(domain: str, seed: int, *, effects: bool = True, n: int | No
     return ds, run_sql, tested
 
 
-def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None = None) -> ReplicateScore:
+def run_component(domain: str, seed: int, *, effects: bool = True, n: int | None = None,
+                  ds: Dataset | None = None) -> ReplicateScore:
     from analystos.skills.analysis import verify_analysis
     from analystos.skills.stats import benjamini_hochberg
 
     started = time.perf_counter()
-    ds, run_sql, tested = component_tests(domain, seed, effects=effects, n=n)
+    ds, run_sql, tested = component_tests(domain, seed, effects=effects, n=n, ds=ds)
     with_p = [t for t in tested if t["stat"].p_value is not None]
     for t, q in zip(with_p, benjamini_hochberg([t["stat"].p_value for t in with_p]), strict=True):
         t["q"] = float(q)
@@ -366,7 +369,7 @@ def _wait(run_id: str, timeout: float) -> str:
 
 
 def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None = None, timeout: float = 1200,
-                 source: str = "csv") -> ReplicateScore:
+                 source: str = "csv", ds: Dataset | None = None, objective: str | None = None) -> ReplicateScore:
     """One benchmark dataset through the real platform: Parquet upload -> file source -> discovery ->
     staged snapshot (loader) -> run (every query through QueryGateway) -> verified insights. Needs the
     control-plane database and the analytics plane; the orchestrator is whatever ANALYSTOS_ORCHESTRATOR
@@ -387,13 +390,13 @@ def run_platform(domain: str, seed: int, *, effects: bool = True, n: int | None 
     from analystos.services.workspaces import create_workspace
 
     started = time.perf_counter()
-    ds = build(domain, seed, effects=effects, n=n)
+    ds = ds if ds is not None else build(domain, seed, effects=effects, n=n)
     settings = get_settings()
     with session_scope() as s:
         admin = s.scalar(select(User).where(User.email == settings.bootstrap_admin_email))
         # No publication in a benchmark run; approved-metric gating is about publishing, not findings.
         ws = create_workspace(s, admin, name=f"V01 benchmark {domain} seed {seed}{'' if effects else ' null'} {new_id('b')[-6:]}",
-                              objective=f"Find what drives the outcomes in the {ds.table} data",
+                              objective=objective or f"Find what drives the outcomes in the {ds.table} data",
                               policy={"require_approved_metrics": False})
         s.flush()
         folder = settings.upload_dir / ws.id

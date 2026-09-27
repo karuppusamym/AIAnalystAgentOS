@@ -1,6 +1,9 @@
 # ADR-0018 — One platform; Atlas and DataPilot become donor repositories
 
-**Status:** accepted by the owner (2026-09-26); implementation tracked as P7-09..P7-15.
+**Status:** accepted by the owner (2026-09-26); implementation tracked as P7-09..P7-15. Implemented so far:
+ports carrying `repo@commit:path` in `security/injection.py`, `llm/redaction.py`, `semantic/diff.py`,
+`skills/relationships.py`, `evidence/lineage/`, `services/monitors.py` and `tools/http.py` (P7-09/10/13/15;
+P7-11 partial); unsigned parity checklists in `docs/60-delivery/donor-parity-{atlas,datapilot}.md` (P7-14).
 **Revised 2026-09-26** (same day) with measured port verdicts from the
 [build-right study](../../70-reviews/2026-09-26-build-right-study.md): the donors are mostly
 specifications and test corpora, not code to lift.

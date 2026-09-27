@@ -14,6 +14,11 @@ followed through six links, each with its **current** state:
 Link states: ``ok`` | ``changed`` | ``void`` | ``failed`` | ``broken`` | ``unknown`` | ``not_applicable``.
 A broken or voided link is returned like any other, never dropped; the number's overall ``state`` is its
 worst link. Read-only: nothing here re-runs a query or changes a record.
+
+Ask answers (`explain_ask_turn`) resolve the same six links: each numeric cell of the stored answer is the
+fact; the step is the answer's step once the thread is recorded as steps; the receipt is the turn's
+governed query; the data version is the recorded table freshness against now; the semantic version is the
+compiled model and metric versions (not applicable to an ad hoc answer); the verdict is the step's record.
 """
 from __future__ import annotations
 
@@ -245,4 +250,186 @@ def explain_run(session: Session, run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "findings": findings, "numbers": len(numbers), "by_state": counts}
 
 
-__all__ = ["LINKS", "SEVERITY", "explain_insight", "explain_run"]
+# ------------------------------------------------------------------------------------ Ask-turn numbers
+MAX_TURN_NUMBERS = 200
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def _turn_facts(turn: Any) -> tuple[list[dict[str, Any]], int]:
+    """Every numeric cell of the stored answer as a fact: its row, column, value and the row's labels."""
+    res = dict(turn.result or {})
+    cols = list(res.get("columns") or [])
+    facts: list[dict[str, Any]] = []
+    total = 0
+    for i, r in enumerate(res.get("rows") or []):
+        cells = list(r) if isinstance(r, list | tuple) else [r.get(c) for c in cols] if isinstance(r, dict) else []
+        labels = {c: v for c, v in zip(cols, cells, strict=False) if v is not None and not _is_number(v)}
+        for c, v in zip(cols, cells, strict=False):
+            if _is_number(v):
+                total += 1
+                if len(facts) < MAX_TURN_NUMBERS:
+                    facts.append({"id": f"{turn.id}:r{i}:{c}", "row": i, "column": c, "value": v, "labels": labels})
+    return facts, total
+
+
+def _turn_receipt_link(session: Session, turn: Any) -> dict[str, Any]:
+    from analystos.db.models import QueryExecution
+    from analystos.knowledge.attested import sql_hash
+
+    res = dict(turn.result or {})
+    qid, recorded = res.get("query_id"), res.get("result_hash")
+    if not qid:
+        return _link("query_receipt", "broken", "no governed query receipt is recorded for this answer", queries=[])
+    q = session.get(QueryExecution, qid)
+    if q is None or q.workspace_id != turn.workspace_id:
+        return _link("query_receipt", "broken", f"query {qid} is missing",
+                     queries=[{"query_id": qid, "kind": "sql", "state": "broken", "recorded_result_hash": recorded}])
+    problems = []
+    if recorded is not None and q.result_hash != recorded:
+        problems.append(f"query {qid} result hash differs from the receipt the answer quotes")
+    if q.status != "ok":
+        problems.append(f"query {qid} status is {q.status}")
+    entry = {"query_id": q.id, "kind": "sql", "sql": q.executed_sql or q.sql, "query_hash": sql_hash(q.executed_sql or q.sql),
+             "result_hash": q.result_hash, "recorded_result_hash": recorded, "rows": q.row_count, "source_id": q.source_id,
+             "cache_hit": bool(res.get("cache_hit")), "created_at": q.created_at.isoformat() if q.created_at else None,
+             "state": "broken" if problems else "ok"}
+    return _link("query_receipt", "broken" if problems else "ok", "; ".join(problems) or None, queries=[entry])
+
+
+def _turn_data_link(session: Session, turn: Any) -> dict[str, Any]:
+    """The tables the answer read, recorded freshness vs now (Ask answers record freshness, not a manifest)."""
+    from datetime import UTC, datetime
+
+    from analystos.db.models import Source, SourceAsset
+
+    def aware(dt: datetime) -> datetime:  # SQLite drops the zone
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+    assets = [a for a in (turn.provenance or {}).get("assets") or [] if a.get("asset_id")]
+    if not assets:
+        return _link("data_version", "unknown", "the answer recorded no catalogued table", assets=[])
+    rows_now = {a.id: a for a in session.scalars(select(SourceAsset).where(SourceAsset.id.in_([a["asset_id"] for a in assets])))}
+    out, changed, unknown = [], [], []
+    for a in assets:
+        now = rows_now.get(a["asset_id"])
+        src = session.get(Source, now.source_id) if now is not None else None
+        current = now.freshness_at.isoformat() if now is not None and now.freshness_at else None
+        state = "ok"
+        if now is None:
+            state = "broken"
+            changed.append(f"{a['asset']} is no longer catalogued")
+        elif a.get("freshness_at") and now.freshness_at and \
+                aware(now.freshness_at) > aware(datetime.fromisoformat(a["freshness_at"])):
+            state = "changed"
+            changed.append(f"{a['asset']} was refreshed after the answer")
+        elif not a.get("freshness_at") or (src is not None and src.execution_mode != "staged"):
+            state = "unknown"
+            unknown.append(a["asset"])
+        out.append({"asset": a["asset"], "source_id": a.get("source_id"), "mode": src.execution_mode if src else None,
+                    "recorded_freshness_at": a.get("freshness_at"), "current_freshness_at": current, "state": state})
+    if any(x["state"] == "broken" for x in out):
+        return _link("data_version", "broken", "; ".join(changed), assets=out)
+    if changed:
+        return _link("data_version", "changed", "; ".join(changed), assets=out)
+    if unknown:
+        return _link("data_version", "unknown", "pushdown or unversioned table(s): " + ", ".join(unknown), assets=out)
+    return _link("data_version", "ok", assets=out)
+
+
+def _turn_semantic_link(session: Session, turn: Any) -> dict[str, Any]:
+    from analystos.db.models import SemanticMetric, SemanticModel
+
+    sem = (turn.provenance or {}).get("semantic") or {}
+    if not sem:
+        return _link("semantic_version", "not_applicable",
+                     "an ad hoc answer: not compiled from an approved metric definition", metrics=[])
+    metrics, changed = [], []
+    model = session.get(SemanticModel, sem.get("model_id")) if sem.get("model_id") else None
+    if model is None or model.status != "approved" or model.content_hash != sem.get("model_hash"):
+        changed.append(f"semantic model {sem.get('model_id')} v{sem.get('model_version')}")
+    for ref in sem.get("metrics") or []:
+        row = session.get(SemanticMetric, ref.get("id"))
+        same = row is not None and row.workspace_id == turn.workspace_id and row.status == "approved" \
+            and row.content_hash == ref.get("hash")
+        if not same:
+            changed.append(f"metric {ref.get('name')} v{ref.get('version')}")
+        current = session.scalar(select(SemanticMetric).where(SemanticMetric.workspace_id == turn.workspace_id,
+                                                              SemanticMetric.name == ref.get("name"),
+                                                              SemanticMetric.status == "approved")
+                                 .order_by(SemanticMetric.version.desc()).limit(1))
+        metrics.append({"name": ref.get("name"), "recorded_version": ref.get("version"), "recorded_hash": ref.get("hash"),
+                        "approved_version": current.version if current is not None else None,
+                        "approved_hash": current.content_hash if current is not None else None,
+                        "state": "ok" if same else "changed"})
+    return _link("semantic_version", "changed" if changed else "ok",
+                 ("no longer the approved definition: " + ", ".join(changed)) if changed else None, metrics=metrics,
+                 model_id=sem.get("model_id"), model_version=sem.get("model_version"),
+                 compiler_version=sem.get("compiler_version"))
+
+
+def _turn_step(session: Session, turn: Any) -> Any | None:
+    from analystos.db.models import AnalysisStep
+
+    for st in session.scalars(select(AnalysisStep).where(AnalysisStep.container_type == "ask_thread",
+                                                         AnalysisStep.container_id == turn.thread_id)):
+        if (st.origin or {}).get("type") == "ask_turn" and (st.origin or {}).get("id") == turn.id:
+            return st
+    return None
+
+
+def explain_ask_turn(session: Session, turn: Any, *, number: str | None = None, column: str | None = None,
+                     row: int | None = None) -> dict[str, Any]:
+    """Every number of an Ask answer (or the ones asked for) resolved fact -> step -> query receipt -> data
+    version -> semantic version -> verdict. The verdict is the self-check record of the answer's step once the
+    thread is recorded as steps; before that the link says so (state `unknown`), never hides it."""
+    from analystos.evidence.verification import latest, state_of
+
+    if turn.status != "answered":
+        raise NotFound(f"question {turn.id} has no answer to explain ({turn.status})")
+    facts, total = _turn_facts(turn)
+    step = _turn_step(session, turn)
+    if step is not None:
+        state = state_of(latest(session, "step", [step.id]).get(step.id))
+        step_link = _link("step", "ok", step_id=step.id, version=step.current_version, status=step.status,
+                          origin={"type": "ask_turn", "id": turn.id})
+        verdict = _verdict_link(state)
+    else:
+        state = state_of(None)
+        step_link = _link("step", "not_applicable", "the thread has not been recorded as steps", step_id=None)
+        verdict = _link("verdict", "unknown", "no verification record: record the thread as steps to self-check this "
+                                              "answer (POST /api/workspaces/{workspace_id}/threads/ask_thread/"
+                                              "{thread_id}/ingest)",
+                        record_id=None, state=None)
+    shared = [step_link, _turn_receipt_link(session, turn), _turn_data_link(session, turn),
+              _turn_semantic_link(session, turn), verdict]
+    if column is not None:
+        facts = [f for f in facts if f["column"] == column]
+    if row is not None:
+        facts = [f for f in facts if f["row"] == row]
+    if number is not None:
+        wanted = number.strip().replace(",", "")
+        facts = [f for f in facts if wanted in (str(f["value"]), f"{f['value']:g}" if isinstance(f["value"], float) else "")]
+    if (number is not None or column is not None or row is not None) and not facts:
+        raise NotFound(f"{number or column or row!r} is not a number of this answer")
+    res = dict(turn.result or {})
+    numbers = []
+    for f in facts:
+        fact_link = _link("fact", "ok", fact_id=f["id"], row=f["row"], column=f["column"], value=f["value"],
+                          labels=f["labels"], query_ids=[res.get("query_id")] if res.get("query_id") else [],
+                          result_hashes=[res.get("result_hash")] if res.get("result_hash") else [])
+        links = [fact_link, *shared]
+        numbers.append({"text": str(f["value"]), "value": f["value"], "column": f["column"], "row": f["row"],
+                        "state": _worst(links), "links": links})
+    return {"subject": {"type": "ask_turn", "id": turn.id, "thread_id": turn.thread_id, "question": turn.question,
+                        "answered_by": turn.answered_by, "governance": (turn.provenance or {}).get("governance", "ad_hoc"),
+                        "step_id": step.id if step is not None else None},
+            "verification_state": state,
+            "state": _worst([lk for n in numbers for lk in n["links"]]) if numbers else _worst(shared),
+            "numbers": numbers, "numbers_total": total, "numbers_truncated": total > len(facts) and number is None
+            and column is None and row is None}
+
+
+__all__ = ["LINKS", "SEVERITY", "explain_ask_turn", "explain_insight", "explain_run"]

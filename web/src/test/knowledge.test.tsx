@@ -107,10 +107,11 @@ describe("knowledge helpers", () => {
     expect(filterGraph(g as never, new Set(["table"]), true).edges).toEqual([]);
   });
 
-  it("keeps the knowledge studio as one screen inside the budget", () => {
+  it("keeps Data's catalog and definitions as one screen inside the budget", () => {
     expect(SCREENS.filter((s) => s.id !== "login").length).toBeLessThanOrEqual(SCREEN_BUDGET - 1);
-    expect(to.knowledge("ws", "documents", { doc: "kdoc_1" })).toBe("/w/ws/knowledge/catalog?tab=documents&doc=kdoc_1");
-    expect(to.knowledge("ws", "catalog")).toBe("/w/ws/knowledge/catalog");
+    expect(to.knowledge("ws", "documents", { doc: "kdoc_1" })).toBe("/w/ws/data/catalog?tab=documents&doc=kdoc_1");
+    expect(to.knowledge("ws", "catalog")).toBe("/w/ws/data/catalog");
+    expect(to.knowledge("ws", "graph")).toBe("/w/ws/data/catalog?tab=definitions");
   });
 });
 
@@ -119,7 +120,7 @@ describe("Knowledge studio: documents", () => {
   it("shows trust fields, edits the workspace pack as one revision, and keeps other packs read-only", async () => {
     const f = mockFetch();
     const { container } = renderAt(`/w/${WS}/knowledge/catalog?tab=documents`);
-    expect(await screen.findByRole("heading", { name: "Knowledge studio", level: 1 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Catalog & definitions", level: 1 })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Documents", selected: true })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: /^P1/ }));
     const card = (await screen.findByRole("heading", { name: "P1", level: 2 })).closest("section")!;

@@ -76,7 +76,7 @@ function PackDocs({ wsId, pack, packs, params, set, onChanged }: {
           {packs.map((p) => <option key={p.id} value={p.id}>{p.title || p.slug} · {PACK_KIND_LABEL[p.kind] ?? p.kind}</option>)}
         </select>
         <p className="muted small">
-          {pack.head_revision ? <>Revision {pack.head_revision} · {pack.files} files · OKF {pack.okf_version}</> : "No revision yet."}
+          {pack.head_revision ? <>Revision {pack.head_revision} · {pack.files} files</> : "No revision yet."}
         </p>
         {!pack.writable && (
           <p className="small" role="note">
@@ -193,7 +193,7 @@ function DocView({ doc: d }: { doc: KnowledgeDocument }) {
           ["Path", <code key="p">{d.path}</code>],
           ["Revision", <span key="r">r{d.revision} · <code title={d.sha256}>{shortHash(d.sha256, 12)}</code></span>],
         ]} />
-      ) : <Notice tone="warning">This file has no parseable OKF frontmatter{d.problem ? ` (${d.problem})` : ""}; it is shown as text.</Notice>}
+      ) : <Notice tone="warning">This file has no readable header fields{d.problem ? ` (${d.problem})` : ""}; it is shown as text.</Notice>}
       {d.body !== null ? <div className="doc-body"><Markdown text={d.body} /></div> : <CodeBlock code={d.text} label={d.path} />}
       {d.links.length > 0 && (
         <div>
@@ -266,7 +266,7 @@ export function DocEditor({ wsId, pack, doc, onSaved, onCancel }: {
       <fieldset className="trust-fields">
         <legend>Trust fields</legend>
         <div className="form-row">
-          <Field label="Status" htmlFor={`${id}-status`} hint="OKF §5.4 lifecycle">
+          <Field label="Status" htmlFor={`${id}-status`} hint="Draft, reviewed or deprecated">
             <select id={`${id}-status`} value={draft.status} onChange={(e) => upd({ status: e.target.value })}>
               {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>

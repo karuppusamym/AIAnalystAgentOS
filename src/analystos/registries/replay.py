@@ -56,8 +56,9 @@ def replay_settings(run: Any) -> dict[str, Any] | None:
     With a frozen set the run replays exactly those specs; otherwise the registry scope decides."""
     origin = getattr(run, "origin", None) or {}
     analyses = frozen_analyses(run)
-    if origin.get("type") == "work_order" and analyses:
-        return {"novelty": dict(NOVELTY_DEFAULTS), "registry_scope": "previous_run", "analyses": analyses, "label": "work_order"}
+    if origin.get("type") in ("work_order", "reverify") and analyses:  # reverify: P7-01's explicit re-verification
+        return {"novelty": dict(NOVELTY_DEFAULTS), "registry_scope": "previous_run", "analyses": analyses,
+                "label": origin["type"]}
     if origin.get("type") != "schedule" or not origin.get("replay"):
         return None
     return {"novelty": novelty_config(origin.get("novelty")), "registry_scope": origin.get("registry_scope", "previous_run"),
