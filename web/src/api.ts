@@ -71,7 +71,17 @@ export interface Workspace {
   updated_at: string;
   counts?: WorkspaceCounts;
   role?: string;
+  owners?: Owners;
 }
+
+/** Named business and technical owner of a pilot workspace or source (P4-09): people, not platform roles. */
+export type NamedOwner = Schemas["NamedOwner"];
+export interface Owners {
+  business?: NamedOwner;
+  technical?: NamedOwner;
+}
+export type PilotCheck = Schemas["PilotCheck"];
+export type PilotReadiness = Schemas["PilotReadiness"];
 
 export interface Member {
   user_id: string;
@@ -131,6 +141,7 @@ export interface Source {
   last_discovered_at: string | null;
   last_error: string | null;
   created_at: string;
+  owners?: Owners;
 }
 
 export interface TopValue {
@@ -2980,6 +2991,13 @@ export const api = {
     post("/api/workspaces/{workspace_id}/members", { path: W(ws), body: { email, role } }) as Promise<{ user_id: string; role: string }>,
   removeMember: (ws: string, userId: string) =>
     del("/api/workspaces/{workspace_id}/members/{user_id}", { path: { workspace_id: ws, user_id: userId } }) as Promise<{ removed: boolean }>,
+  putWorkspaceOwners: (ws: string, body: Schemas["OwnersIn"]) =>
+    put("/api/workspaces/{workspace_id}/owners", { path: W(ws), body }) as Promise<{ workspace_id: string; owners: Owners }>,
+  putSourceOwners: (ws: string, sourceId: string, body: Schemas["OwnersIn"]) =>
+    put("/api/workspaces/{workspace_id}/sources/{source_id}/owners", { path: { workspace_id: ws, source_id: sourceId }, body }) as
+      Promise<{ source_id: string; owners: Owners }>,
+  pilotReadiness: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/pilot-readiness", { path: W(ws) }) as Promise<PilotReadiness>,
   workspaceAudit: (ws: string, limit = 200) =>
     get("/api/workspaces/{workspace_id}/audit", { path: W(ws), query: { limit } }) as Promise<AuditEvent[]>,
   activity: (ws: string, afterId = 0, limit = 100) =>

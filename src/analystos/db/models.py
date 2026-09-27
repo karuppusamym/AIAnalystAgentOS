@@ -91,6 +91,8 @@ class Workspace(Base):
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Named business and technical owner (P4-09, contracts/pilot.py): {"business": {name, email, user_id?}, ...}
+    owners: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
 
 
 class WorkspaceMember(Base):
@@ -131,6 +133,7 @@ class Source(Base):
     last_discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _ts()
+    owners: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # as Workspace.owners (P4-09)
 
 
 class SourceAsset(Base):
