@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun } from "../api";
+import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun, type Run } from "../api";
 import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
 import { PublishCard } from "../components/DashboardPublish";
@@ -42,6 +42,7 @@ type Item =
   | { kind: "prepared"; id: string; at: string; run: RecipeRun };
 
 const typeOf = (i: Item): OutputType => (i.kind === "artifact" ? i.type : i.kind);
+const analysisOf = (i: Item): string | null => i.kind === "finding" ? i.finding.run_id : i.kind === "artifact" ? i.artifact.run_id : null;
 
 /**
  * Outputs (spec v4 §15): one list of what work produced, filtered by type: findings, dashboards,
@@ -54,9 +55,11 @@ export function OutputsPage() {
   const requested = params.get("type") as OutputType | null;
   const type: OutputType | "" = insightId ? "finding" : OUTPUT_FILTERS.some((f) => f.id === requested) ? requested! : "";
   const selected = insightId ?? params.get("artifact") ?? params.get("dashboard") ?? params.get("run");
+  const analysis = params.get("analysis");
   const artifacts = useAsync(() => api.listArtifacts(wsId), [wsId]);
   const findings = useAsync(() => api.listInsights(wsId), [wsId]);
   const prepared = useAsync(() => api.listRecipeRuns(wsId), [wsId]);
+  const runs = useAsync(() => api.listRuns(wsId), [wsId]);
   const models = useAsync(() => api.modelVersions(wsId), [wsId]);
   const tables = useAsync(() => api.materializations(wsId), [wsId]);
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
@@ -85,14 +88,23 @@ export function OutputsPage() {
     }
     return out.sort((a, b) => b.at.localeCompare(a.at));
   }, [findings.data, artifacts.data, prepared.data]);
-  const counts = new Map<OutputType, number>();
-  for (const i of items) counts.set(typeOf(i), (counts.get(typeOf(i)) ?? 0) + 1);
-  const modelNames = new Set((Array.isArray(models.data) ? models.data : []).map((m) => m.name)).size;
-  if (modelNames) counts.set("model", modelNames);
-  const tableNames = new Set((Array.isArray(tables.data) ? tables.data : []).map((m) => `${m.schema_name}.${m.table_name}`)).size;
-  if (tableNames) counts.set("table", tableNames);
   const panel = type !== "" && PANEL_TYPES.has(type);
-  const shown = items.filter((i) => !type || typeOf(i) === type);
+  const runById = new Map((runs.data ?? []).map((r) => [r.id, r]));
+  const linkedFinding = items.find((i): i is Extract<Item, { kind: "finding" }> => i.id === insightId && i.kind === "finding");
+  const activeAnalysis = panel ? null : insightId ? linkedFinding?.finding.run_id ?? analysis : analysis;
+  const scopedItems = items.filter((i) => !activeAnalysis || analysisOf(i) === activeAnalysis);
+  const counts = new Map<OutputType, number>();
+  for (const i of scopedItems) counts.set(typeOf(i), (counts.get(typeOf(i)) ?? 0) + 1);
+  if (!activeAnalysis) {
+    const modelNames = new Set((Array.isArray(models.data) ? models.data : []).map((m) => m.name)).size;
+    if (modelNames) counts.set("model", modelNames);
+    const tableNames = new Set((Array.isArray(tables.data) ? tables.data : []).map((m) => `${m.schema_name}.${m.table_name}`)).size;
+    if (tableNames) counts.set("table", tableNames);
+  }
+  const shown = scopedItems.filter((i) => !type || typeOf(i) === type);
+  const analysisRuns = (runs.data ?? []).filter((r) => items.some((i) => analysisOf(i) === r.id));
+  const unknownRuns = [...new Set(items.map(analysisOf).filter((id): id is string => !!id && !runById.has(id)))];
+  const workspaceCount = items.filter((i) => !analysisOf(i)).length;
   const open = selected ? items.find((i) => i.id === selected) : undefined;
   const loading = (artifacts.loading && !artifacts.data) || (findings.loading && !findings.data);
   const error = artifacts.error ?? findings.error;
@@ -100,12 +112,12 @@ export function OutputsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Outputs" subtitle="Everything work produced, in one list: findings, dashboards, reports, datasets, prepared data, models and managed tables." />
+      <PageHeader title="Outputs" subtitle="Findings and stories belong to the investigation question that produced them. Choose an investigation to review its outputs." />
       <nav className="chip-row type-filter" aria-label="Filter outputs by type">
-        <Link className={`chip ${type ? "" : "active"}`} aria-current={type ? undefined : "page"} to={to.outputs(wsId)}>All ({items.length})</Link>
+        <Link className={`chip ${type ? "" : "active"}`} aria-current={type ? undefined : "page"} to={to.outputs(wsId, { analysis: activeAnalysis ?? undefined })}>All ({scopedItems.length})</Link>
         {filters.map((f) => (
           <Link key={f.id} className={`chip ${f.id === type ? "active" : ""}`} aria-current={f.id === type ? "page" : undefined}
-            to={to.outputs(wsId, { type: f.id })}>{f.label} ({counts.get(f.id) ?? 0})</Link>
+            to={to.outputs(wsId, { type: f.id, analysis: PANEL_TYPES.has(f.id) ? undefined : activeAnalysis ?? undefined })}>{f.label} ({counts.get(f.id) ?? 0})</Link>
         ))}
       </nav>
       {type === "report" && (
@@ -120,14 +132,26 @@ export function OutputsPage() {
       {type === "table" && <MaterializationsOutput wsId={wsId} role={role} table={params.get("table")} />}
       {!panel && <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />}
       {!panel && loading && <Loading />}
-      {!panel && !loading && shown.length === 0 && (
-        <EmptyState title={type ? `No ${OUTPUT_FILTERS.find((f) => f.id === type)?.label.toLowerCase()} yet` : "No outputs yet"}>
-          Investigations produce findings, charts and dashboards; reports and prepared data are made from them.
-        </EmptyState>
-      )}
-      {!panel && shown.length > 0 && (
-        <div className="split">
+      {!panel && !loading && (
+        <div className="outputs-layout">
+          <aside className="outputs-analyses" aria-label="Investigations">
+            <h2>Investigations</h2>
+            <button type="button" className={`list-button ${!activeAnalysis ? "active" : ""}`}
+              aria-current={!activeAnalysis ? "true" : undefined}
+              onClick={() => set({ analysis: null, artifact: null, dashboard: null, run: null })}>
+              <strong>All outputs</strong><span className="muted small">{items.length} across this workspace</span>
+            </button>
+            {analysisRuns.map((r) => <AnalysisChoice key={r.id} run={r} count={items.filter((i) => analysisOf(i) === r.id).length}
+              active={activeAnalysis === r.id} onClick={() => set({ analysis: r.id, artifact: null, dashboard: null, run: null })} />)}
+            {unknownRuns.map((id) => <button key={id} type="button" className={`list-button ${activeAnalysis === id ? "active" : ""}`}
+              onClick={() => set({ analysis: id, artifact: null, dashboard: null, run: null })}>
+              <strong>Earlier investigation</strong><span className="muted small">{id}</span>
+            </button>)}
+            {workspaceCount > 0 && <p className="muted small">{workspaceCount} workspace or data preparation outputs are shown in All outputs.</p>}
+          </aside>
           <div className="split-list">
+            <h2>{activeAnalysis ? runById.get(activeAnalysis)?.objective ?? "Investigation outputs" : "Recent outputs"}</h2>
+            {shown.length === 0 && <EmptyState title="No outputs for this selection">Choose another investigation or output type.</EmptyState>}
             <ul className="list selectable" aria-label="Outputs">
               {shown.map((i) => {
                 const active = i.id === selected;
@@ -135,16 +159,21 @@ export function OutputsPage() {
                   <li key={`${i.kind}-${i.id}`}>
                     {i.kind === "finding"
                       ? <Link to={to.findings(wsId, i.id)} className={`list-button ${active ? "active" : ""}`} aria-current={active ? "true" : undefined}>
-                        <OutputRow item={i} /></Link>
+                        <OutputRow item={i} run={runById.get(analysisOf(i) ?? "")} /></Link>
                       : <button type="button" className={`list-button ${active ? "active" : ""}`} aria-current={active ? "true" : undefined}
                         onClick={() => set(i.kind === "prepared" ? { run: i.id, artifact: null, dashboard: null } : { artifact: i.id, dashboard: null, run: null })}>
-                        <OutputRow item={i} /></button>}
+                        <OutputRow item={i} run={runById.get(analysisOf(i) ?? "")} /></button>}
                   </li>
                 );
               })}
             </ul>
           </div>
           <div className="split-detail">
+            {open && analysisOf(open) && <div className="output-context">
+              <span className="small muted">Investigation question</span>
+              <strong>{runById.get(analysisOf(open) ?? "")?.objective ?? "Earlier investigation"}</strong>
+              <Link className="small" to={to.run(wsId, analysisOf(open)!)}>Open investigation</Link>
+            </div>}
             {insightId ? <FindingDetail id={insightId} wsId={wsId} />
               : open?.kind === "prepared" ? <PreparedView run={open.run} wsId={wsId} />
                 : selected ? <ArtifactView id={selected} wsId={wsId} onSelect={(id) => set({ artifact: id })} />
@@ -161,7 +190,12 @@ const TYPE_WORD: Record<OutputType, string> = {
   model: "model", table: "managed table", other: "",
 };
 
-function OutputRow({ item: i }: { item: Item }) {
+function AnalysisChoice({ run, count, active, onClick }: { run: Run; count: number; active: boolean; onClick: () => void }) {
+  return <button type="button" className={`list-button ${active ? "active" : ""}`} aria-current={active ? "true" : undefined}
+    onClick={onClick}><strong>{run.objective}</strong><span className="muted small">{fmtDate(run.created_at)} · {count} outputs</span></button>;
+}
+
+function OutputRow({ item: i, run }: { item: Item; run?: Run }) {
   if (i.kind === "finding") {
     const f = i.finding;
     const cause = voidCause(f.verification_state);
@@ -174,6 +208,7 @@ function OutputRow({ item: i }: { item: Item }) {
         </span>
         {cause && <span className="small void-cause">Why void: {cause}</span>}
         <ConfidenceBar value={f.confidence} />
+        <span className="muted small clamp-1">{run?.objective ?? `Investigation ${f.run_id}`}</span>
       </>
     );
   }
@@ -193,6 +228,7 @@ function OutputRow({ item: i }: { item: Item }) {
         <span className="muted small">{TYPE_WORD[i.type] || a.type.replace(/_/g, " ")} · v{a.version}</span></span>
       <span className="chip-row"><StatusBadge status={a.status} />{a.platform && <span className="tag">{a.platform}</span>}
         <span className="muted small">{fmtDate(a.created_at)}</span></span>
+      <span className="muted small clamp-1">{run?.objective ?? (a.run_id ? `Investigation ${a.run_id}` : "Workspace output")}</span>
     </>
   );
 }

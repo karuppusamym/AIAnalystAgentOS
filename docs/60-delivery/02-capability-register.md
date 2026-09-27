@@ -5,6 +5,27 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-27 — P7-21 analysis context and output ownership
+
+`analysis_context` is a versioned definition of business purpose, starting question, source IDs and
+approved metric names. The same source may appear in several contexts. Start work selects a
+published version, allows the question to change per investigation and pins the exact context
+specification to the run. The pinned business context enters model prompts and the context artifact;
+it never widens source scope. Outputs groups findings and artifacts by run question, with a
+three-panel desktop layout and responsive two/one-panel fallbacks. Data provides a two-panel
+context editor, while its definitions panel explains semantic-model validation. Run bindings and
+metric approval now read approved semantic structure, not the newest proposal. Context text is
+screened for prompt injection before save or publication.
+
+Evidence: `tests/unit/test_analysis_context.py`, `tests/unit/test_definitions_pins.py`,
+the context compiler and semantic compiler suites (48 focused Python tests),
+`web/src/test/analysis-context.test.tsx` (289 web tests passing), production build, and 12
+mock-browser journeys including context draft → publish and Outputs accessibility in both themes.
+No AgentSwarms source or
+assets were copied. Remaining: real API browser journey across multiple source engines and a
+large-history visual pass; the workspace semantic graph is shared, so separate context-specific
+metric expressions require separately named and approved metrics.
+
 ## 2026-09-26 — P7-19 workflow step list, third slice
 
 Work has a workflow builder for registered, enabled agents with a default entry and no external

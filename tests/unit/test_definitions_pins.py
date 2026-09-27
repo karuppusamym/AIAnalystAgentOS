@@ -361,6 +361,7 @@ def test_only_an_approved_newer_semantic_model_is_an_upgrade(world):
         s.add(sch)
         s.add(model(2, "proposed"))  # an agent's proposal is not a published or approved version
         s.flush()
+        assert binding.semantic_versions(s, WS)["model"]["id"] == "smod_1"
         assert pins.status(s, sch).state == "current"
         s.add(model(3, "approved"))
         s.flush()

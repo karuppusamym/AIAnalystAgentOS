@@ -190,6 +190,16 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .split { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 1rem; align-items: start; }
 .split-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: calc(100vh - 170px); overflow-y: auto; position: sticky; top: 68px; }
 .split-detail { min-width: 0; }
+.outputs-layout { display: grid; grid-template-columns: minmax(190px, 230px) minmax(240px, 320px) minmax(0, 1fr); gap: 0.85rem; align-items: start; }
+.outputs-analyses, .outputs-layout .split-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: calc(100vh - 170px); overflow-y: auto; position: sticky; top: 68px; min-width: 0; }
+.outputs-layout h2 { font-size: 0.83rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 0.35rem; }
+.outputs-analyses .list-button { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; overflow-wrap: anywhere; }
+.output-context { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface-2); }
+.context-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.context-layout > * { min-width: 0; }
+@media (max-width: 850px) { .context-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1250px) { .outputs-layout { grid-template-columns: minmax(190px, 230px) minmax(0, 1fr); } .outputs-layout .split-detail { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .outputs-layout { grid-template-columns: minmax(0, 1fr); } .outputs-layout .split-detail { grid-column: auto; } .outputs-analyses, .outputs-layout .split-list { position: static; max-height: none; } }
 @media (max-width: 900px) {
   .split { grid-template-columns: minmax(0, 1fr); }
   .split-list { max-height: 45vh; position: static; }

@@ -4591,6 +4591,21 @@
       },
       "RunIn": {
         "properties": {
+          "analysis_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Context"
+          },
           "autonomy_level": {
             "anyOf": [
               {

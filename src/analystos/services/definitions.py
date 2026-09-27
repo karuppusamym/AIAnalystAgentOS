@@ -130,11 +130,44 @@ def _recipe(session: Session, workspace_id: str, key: str, spec: dict[str, Any])
     return validate_recipe(spec).stamped()
 
 
+def _analysis_context(session: Session, workspace_id: str, key: str, spec: dict[str, Any]) -> dict[str, Any]:
+    from pydantic import ValidationError
+    from sqlalchemy import select
+
+    from analystos.contracts.analysis_context import AnalysisContextSpec
+    from analystos.db.models import SemanticMetric, Source
+    from analystos.security.injection import is_injection
+
+    try:
+        data = AnalysisContextSpec.model_validate(spec)
+    except ValidationError as exc:
+        raise InvalidInput("; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:5])) from None
+    for field in ("purpose", "business_description", "question_template"):
+        if is_injection(getattr(data, field)):
+            raise InvalidInput(f"analysis context {field} contains instructions unrelated to the business context")
+    if len(set(data.source_ids)) != len(data.source_ids):
+        raise InvalidInput("an analysis context cannot list a source more than once")
+    found = set(session.scalars(select(Source.id).where(Source.workspace_id == workspace_id,
+                                                        Source.id.in_(data.source_ids))))
+    if found != set(data.source_ids):
+        raise InvalidInput("analysis context sources must exist in this workspace")
+    if len(set(data.metric_names)) != len(data.metric_names):
+        raise InvalidInput("an analysis context cannot list a metric more than once")
+    if data.metric_names:
+        approved = set(session.scalars(select(SemanticMetric.name).where(
+            SemanticMetric.workspace_id == workspace_id, SemanticMetric.status == "approved",
+            SemanticMetric.name.in_(data.metric_names))))
+        if approved != set(data.metric_names):
+            raise InvalidInput("analysis context metrics must be approved in this workspace")
+    return data.model_dump(mode="json")
+
+
 def _register_builtin_kinds() -> None:
     from analystos.contracts.work import MLScoringSpec, MLSpec, PipelineSpec
 
     register_kind("playbook", _playbook)
     register_kind("saved_analysis", _saved_analysis)
+    register_kind("analysis_context", _analysis_context)
     register_kind("recipe", _recipe)  # the recipe IR (P6-04)
     register_kind("pipeline", _typed(PipelineSpec))  # P6-01
     register_kind("ml_spec", _typed(MLSpec))  # P5-01 replaces the placeholder contract

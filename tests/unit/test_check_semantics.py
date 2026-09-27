@@ -13,7 +13,7 @@ import yaml
 
 from analystos.cli import main as cli
 from analystos.contracts.semantic import SemanticMetricDef
-from analystos.semantic import service
+from analystos.semantic import review, service
 from analystos.semantic.check import check_document, check_paths
 from analystos.semantic.review import definition_problems
 
@@ -110,7 +110,7 @@ def test_approval_refuses_a_definition_that_does_not_hold(monkeypatch):
     row = SimpleNamespace(workspace_id="w", name="revenue", version=2, definition={
         "name": "revenue", "expressions": [{"expression": "SUM(secret)"}], "dataset": "orders"})
     model = SimpleNamespace(datasets=[{"name": "orders", "source": "s.orders", "fields": [{"name": "amount"}]}], relationships=[])
-    monkeypatch.setattr(service, "current_model", lambda *_: model)
+    monkeypatch.setattr(review, "approved_model", lambda *_: model)
     from analystos.core.errors import InvalidInput
 
     with pytest.raises(InvalidInput, match="cannot be approved") as refused:

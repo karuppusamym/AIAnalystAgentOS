@@ -38,6 +38,7 @@ class RunIn(BaseModel):
     autonomy_level: int | None = None
     playbook: str | None = None  # a Playbook capability id or workspace playbook key; default playbook.investigate
     definition: dict | str | None = None  # an exact definition version: {key, version} or a definition id (P7-03)
+    analysis_context: dict | str | None = None  # published, versioned business purpose and source binding
 
 
 class FeedbackIn(BaseModel):

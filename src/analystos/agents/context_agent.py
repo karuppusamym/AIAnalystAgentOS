@@ -16,6 +16,9 @@ def load_context(ctx: RunContext) -> dict:
                                          user=ctx.user, run_id=ctx.run.id)
 
     package = ctx.tools().invoke("context.search", {"objective": ctx.run.objective, "assets": ctx.scope.assets}, retrieve)
+    pinned_context = (ctx.run.capabilities or {}).get("analysis_context")
+    if pinned_context:
+        package["analysis_context"] = pinned_context
     # Term resolution: map glossary entries that name columns in scope.
     in_scope = {f"{a}.{c}" for a, cols in ctx.scope.columns.items() for c in cols}
     resolved = []
