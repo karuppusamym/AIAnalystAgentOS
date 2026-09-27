@@ -107,3 +107,21 @@ def test_claim_numbers_must_bind_to_upstream_values():
     bad = sc.numbers(Observation(kind="claim", text="Breach rate is 45%.", upstream_values=[0.3121]))
     assert not bad.passed and "45%" in bad.detail
     assert sc.run(Observation(kind="claim", text="No numbers here."))[0].passed
+
+
+def test_a_recorded_finding_rebinds_to_its_rerun_method_result():
+    """Live journey 2026-09-27: editing a method step re-ran the finding that reads it, and the finding's
+    segment label ("= 1") and its rate ratio ("3.0x", in stat.highlights) did not bind, so an unchanged,
+    verified claim came back flagged. Both are in the method's result and must bind."""
+    from analystos.services.steps import numbers_of
+
+    result = {"columns": ["segment", "n", "positives", "rate"],
+              "rows": [["1", 6673, 640, 0.0959088866], ["3+", 3089, 900, 0.291356426]],
+              "stat": {"n": 20000, "p_value": 0.0, "groups": [{"segment": "1", "rate": 0.0959}],
+                       "highlights": {"top_rate": 0.2914, "rate_ratio": 3.038, "top_segment": "3+"}}}
+    text = ("Records with reassignment count = 3+ have a missed SLA rate of 29.1% versus 9.6% for "
+            "reassignment count = 1 (3.0x).")
+    r = sc.numbers(Observation(kind="claim", text=text, upstream_values=numbers_of(result)))
+    assert r.passed, r.detail
+    wrong = sc.numbers(Observation(kind="claim", text=text.replace("3.0x", "4.0x"), upstream_values=numbers_of(result)))
+    assert not wrong.passed and "4.0" in wrong.detail

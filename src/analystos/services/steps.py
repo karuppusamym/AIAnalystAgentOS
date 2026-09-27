@@ -450,16 +450,29 @@ def to_table(value: Any) -> dict[str, Any]:
     return {"columns": ["value"], "rows": [[value]], "row_count": 1}
 
 
+def _number(v: Any) -> float | None:
+    """A cell's numeric value: numbers, and numeric text such as a segment label "1" that a claim quotes."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int | float):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.replace(",", ""))
+        except ValueError:
+            return None
+    return None
+
+
 def numbers_of(content: dict[str, Any]) -> list[float]:
+    """Every number a claim reading this result may quote: result cells, the statistic, its groups, and the
+    headline numbers the method derived (`stat.highlights`, e.g. a rate ratio a finding states as "3.0x")."""
     vals: list[float] = []
     for r in content.get("rows") or []:
-        vals += [float(v) for v in r if isinstance(v, int | float) and not isinstance(v, bool)]
+        vals += [n for n in map(_number, r) if n is not None]
     stat = content.get("stat") or {}
-    for v in stat.values():
-        if isinstance(v, int | float) and not isinstance(v, bool):
-            vals.append(float(v))
-    for g in stat.get("groups") or []:
-        vals += [float(v) for v in (g or {}).values() if isinstance(v, int | float) and not isinstance(v, bool)]
+    for part in (stat, stat.get("highlights") or {}, *(stat.get("groups") or [])):
+        vals += [n for v in (part or {}).values() if not isinstance(v, str) and (n := _number(v)) is not None]
     return vals
 
 

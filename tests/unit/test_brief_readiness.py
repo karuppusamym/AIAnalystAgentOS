@@ -167,7 +167,7 @@ def test_start_work_lists_every_job_kind_with_its_reasons(world):  # noqa: F811
     assert list(analyst) == ["explain", "compare", "forecast", "predict", "prepare", "monitor"]
     assert analyst["explain"]["available"] and analyst["compare"]["available"]
     for k in ("forecast", "predict"):
-        assert not analyst[k]["available"] and {r["code"] for r in analyst[k]["reasons"]} >= {"no_executor"}
+        assert not analyst[k]["available"] and {r["code"] for r in analyst[k]["reasons"]} >= {"no_ml_spec"}
     assert [r["code"] for r in analyst["prepare"]["reasons"]] == ["role"]
     assert not viewer["explain"]["available"] and viewer["explain"]["reasons"][0]["code"] == "role"
     assert analyst["explain"]["entry"]["route"] == f"/api/workspaces/{WS}/work-orders"
