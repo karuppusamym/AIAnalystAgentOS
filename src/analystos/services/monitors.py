@@ -65,7 +65,7 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             raise InvalidInput("metric_threshold needs config.op in >,>=,<,<= and a numeric config.value")
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
-    _validate_baseline(session, workspace_id, config)
+    validate_baseline(session, workspace_id, config)
     if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
         from analystos.services.definitions import resolve_runnable
 
@@ -78,7 +78,7 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
             audit(f"user:{user.id}", "monitor.reused", workspace_id=workspace_id, target=existing.id,
                   details={"kind": kind, "requested_name": name}, session=session)
             return existing
-    m = Monitor(id=new_id("mon"), workspace_id=workspace_id, name=name, kind=kind, config=config, enabled=True,
+    m = Monitor(id=new_id("mon"), workspace_id=workspace_id, name=name, kind=kind, config=config, enabled=True, revision=1,
                 auto_investigate=auto_investigate, created_by=user.id)
     session.add(m)
     audit(f"user:{user.id}", "monitor.created", workspace_id=workspace_id, target=m.id, details={"kind": kind}, session=session)
@@ -86,7 +86,7 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
 
 
 # ------------------------------------------------------------------------------------ verified baselines (P7-01)
-def _validate_baseline(session: Session, workspace_id: str, config: dict) -> None:
+def validate_baseline(session: Session, workspace_id: str, config: dict) -> None:
     """`config.baseline = {subject_type, subject_id}` names the verified verdict this monitor compares with;
     `config.on_void_baseline` says what a VOID one does: `refuse` (default) or `relabel`."""
     from analystos.db.models import VerificationRecord

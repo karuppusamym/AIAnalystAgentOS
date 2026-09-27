@@ -72,7 +72,7 @@ def validate_spec(session: Any, workspace_id: str, key: str, spec: dict[str, Any
     except ValidationError as exc:
         raise InvalidInput("; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:5])) from None
     _, names = placeholders(s.sql)
-    props = set((s.parameters.get("properties") or {}))
+    props = set(s.parameters.get("properties") or {})
     if set(names) != props:
         raise InvalidInput(f"placeholders {sorted(names)} and parameters {sorted(props)} must be the same set")
     return s.model_dump(mode="json")

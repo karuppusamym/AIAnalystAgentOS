@@ -6,12 +6,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from tests.unit.test_verification_p701 import EXTRA, WS, _insight
 
 from analystos.core.errors import Conflict, InvalidInput
 from analystos.db.base import session_scope
 from analystos.db.models import VerificationRecord, WorkspaceMember
 from analystos.evidence import verification as V
-from tests.unit.test_verification_p701 import EXTRA, WS, _insight
 
 
 @pytest.fixture
@@ -181,8 +181,9 @@ def test_a_current_verdict_or_an_older_record_is_not_reverified(reverify_world):
 
 
 def test_an_active_record_whose_dependency_moved_silently_is_voided_first(reverify_world):
-    from analystos.db.models import Hypothesis
     from tests.unit.test_verification_p701 import SPEC
+
+    from analystos.db.models import Hypothesis
 
     w = reverify_world
     with session_scope() as s:
