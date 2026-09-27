@@ -17,6 +17,15 @@
       "title": "Label",
       "type": "string"
     },
+    "mode": {
+      "enum": [
+        "analysis",
+        "engineering",
+        "ml"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
     "work_order_kind": {
       "title": "Work Order Kind",
       "type": "string"
@@ -64,6 +73,7 @@
   "required": [
     "key",
     "label",
+    "mode",
     "work_order_kind",
     "available"
   ],
