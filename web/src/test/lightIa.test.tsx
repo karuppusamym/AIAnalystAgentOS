@@ -276,6 +276,53 @@ describe("Start work job kinds (from the capability registry)", () => {
   });
 });
 
+it("builds, publishes and runs a workspace workflow using the exact definition version", async () => {
+  let definition: Record<string, unknown> | null = null;
+  const f = mockFetch((method, path, body) => {
+    if (method === "GET" && path === `/api/workspaces/${WS}/definitions`) return { status: 200, body: { items: definition ? [definition] : [], next_cursor: null } };
+    if (method === "GET" && path === "/api/capabilities") return { status: 200, body: { digest: "d", capabilities: [
+      { id: "agent.metadata", kind: "Agent", summary: "Discover metadata", entry: "python:analystos.agents.metadata:run",
+        enabled: true, available: true, side_effect: "read_source", certification: { status: "certified" } },
+    ] } };
+    if (method === "POST" && path === `/api/workspaces/${WS}/definitions`) {
+      const input = JSON.parse(body || "{}") as Record<string, unknown>;
+      definition = { ...input, id: "defn_workflow", workspace_id: WS, version: 1, status: "draft", revision: 1 };
+      return { status: 201, body: definition };
+    }
+    if (method === "POST" && path === `/api/workspaces/${WS}/definitions/defn_workflow/publish`) {
+      definition = { ...definition, status: "published", revision: 2 };
+      return { status: 200, body: definition };
+    }
+    if (method === "GET" && path === `/api/workspaces/${WS}/definitions/defn_workflow`) return { status: 200, body: definition };
+    if (method === "POST" && path === `/api/workspaces/${WS}/analysis`) return { status: 200, body: { id: RUN } };
+    return null;
+  });
+  renderAt(`/w/${WS}/work?tab=workflows`);
+  fireEvent.click(await screen.findByRole("button", { name: "Build workflow" }));
+  const form = await screen.findByRole("form", { name: "Workflow builder" });
+  fireEvent.change(within(form).getAllByLabelText("Title")[0], { target: { value: "Metadata review" } });
+  fireEvent.change(within(form).getByLabelText("Key"), { target: { value: "metadata_review" } });
+  fireEvent.change(within(form).getByLabelText("Purpose"), { target: { value: "Review selected table metadata" } });
+  fireEvent.change(within(form).getByLabelText("Step key"), { target: { value: "metadata" } });
+  fireEvent.change(within(form).getAllByLabelText("Title")[1], { target: { value: "Discover metadata" } });
+  fireEvent.change(within(form).getByLabelText("Agent"), { target: { value: "agent.metadata" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(calls(f, "POST", /\/definitions$/)).toHaveLength(1));
+  const created = JSON.parse(String(calls(f, "POST", /\/definitions$/)[0][1]?.body));
+  expect(created.kind).toBe("playbook");
+  expect(created.spec.certification.status).toBe("draft");
+  expect(created.spec.spec.steps).toEqual([{ key: "metadata", title: "Discover metadata", use: "agent.metadata", after: [], optional: false }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Publish version" }));
+  const runButton = await screen.findByRole("button", { name: "Run" });
+  fireEvent.click(runButton);
+  const runForm = await screen.findByRole("form", { name: "Run workflow" });
+  fireEvent.change(within(runForm).getByLabelText("Goal"), { target: { value: "Review the latest table metadata" } });
+  fireEvent.click(within(runForm).getByRole("button", { name: "Start workflow" }));
+  await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work/investigations/${RUN}`));
+  const started = JSON.parse(String(calls(f, "POST", /\/analysis$/)[0][1]?.body));
+  expect(started).toMatchObject({ definition: "defn_workflow", autonomy_level: 2, source_ids: ["src_sn"] });
+});
+
 // ------------------------------------------------------------------------------------ Overview
 const src = (over: Partial<Source>): Source => ({ id: "s", workspace_id: WS, kind: "postgres", name: "S", config: {}, secret_ref: null, status: "registered",
   execution_mode: "staged", staging_schema: null, last_discovered_at: null, last_error: null, created_at: "", ...over });

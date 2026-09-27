@@ -5,6 +5,20 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-26 — P7-19 workflow step list, third slice
+
+Work has a workflow builder for registered, enabled agents with a default entry and no external
+write side effect. It saves a workspace `playbook` definition through server validation, edits
+drafts with revision checks, publishes an immutable version and starts a run bound to its exact
+definition id. New workflows carry draft certification, so schedules and autonomous runs remain
+blocked; the UI starts a manual run at autonomy level 2. Earlier-step dependencies avoid cycles,
+and the backend still validates every agent reference and dependency before save or publish.
+
+Evidence: `test_definitions_pins.py` (11 passed) validates the builder's manifest shape and
+publication; the web suite (243 passed / 1 skipped) includes create, publish and exact-version
+run from Work. TypeScript, production build, Ruff and diff checks pass. Remaining: agent
+manifest authoring, optional canvas, real API browser journeys and live category validation.
+
 ## 2026-09-26 — P7-19 guided ML start, second slice
 
 Start work routes Forecast and Predict to a published `ml_spec` selection with the plan's task,

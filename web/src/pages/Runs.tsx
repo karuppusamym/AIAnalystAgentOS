@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import { BuildPanel } from "../components/BuildPanel";
 import { PreparePanel } from "../components/PreparePanel";
 import { StartWorkButton } from "../components/StartWork";
+import { WorkflowPanel } from "../components/WorkflowPanel";
 import { EmptyState, ErrorBox, KeyValue, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
 import { durationBetween, fmtDate } from "../lib/format";
 import { useAsync } from "../lib/hooks";
@@ -12,7 +13,7 @@ import { to, type WorkTab } from "../routes";
 
 const TABS: { id: WorkTab; label: string }[] = [
   { id: "investigations", label: "Investigations" }, { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
-  { id: "ml", label: "ML experiments" },
+  { id: "ml", label: "ML experiments" }, { id: "workflows", label: "Workflows" },
 ];
 
 /**
@@ -50,6 +51,7 @@ export function WorkPage() {
           canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
         {tab === "ml" && <MLExperiments wsId={wsId} selected={params.get("experiment")}
           onSelect={(id) => set({ experiment: id })} />}
+        {tab === "workflows" && <WorkflowPanel wsId={wsId} role={ws.data?.role} />}
       </div>
     </div>
   );

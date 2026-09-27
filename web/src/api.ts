@@ -2589,6 +2589,11 @@ export const api = {
     get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
   getDefinition: (ws: string, id: string) =>
     get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
+  createDefinition: (ws: string, body: { kind: string; key: string; title: string; spec: Dict }) =>
+    post("/api/workspaces/{workspace_id}/definitions", { path: W(ws), body }) as Promise<DefinitionVersion>,
+  updateDefinition: (ws: string, id: string, revision: number, body: { title: string; spec: Dict }) =>
+    request<DefinitionVersion>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/definitions/{definition_id}",
+      { path: { workspace_id: ws, definition_id: id } }), body, { headers: { "If-Match": `"${revision}"` } }),
   startMlExperiment: (ws: string, definitionId: string) =>
     post("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), body: { definition: definitionId } }) as Promise<MlExperiment>,
   listMlExperiments: (ws: string) =>
