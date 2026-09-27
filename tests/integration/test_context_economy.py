@@ -94,6 +94,15 @@ def summarize(requests: list[dict]) -> dict:
             "breakpoint_requests": sum(1 for r in requests if r["breakpoints"]), "per_purpose": per}
 
 
+def _shared_stats() -> dict | None:
+    """Hits and misses of the shared context cache (compiled contexts, retrieval), where the tree has one."""
+    try:
+        from analystos.context import cache
+    except ImportError:  # the tree before Stream B
+        return None
+    return cache.stats()
+
+
 def test_context_economy_of_the_standard_flow(control_db, servicenow_url, monkeypatch):  # noqa: F811
     from analystos.agents import common
     from analystos.core.config import get_settings
@@ -116,7 +125,13 @@ def test_context_economy_of_the_standard_flow(control_db, servicenow_url, monkey
         return original(self, purpose, messages, **kw)
 
     monkeypatch.setattr(router_mod.ModelRouter, "complete", complete)
-    chat_always = {p: "always" for p, profile in load_models_config().routing.items() if profile != "decision"}
+    try:  # the shared context-cache counters of this measurement never mix with a dev stack's on the same Redis
+        from analystos.context import cache as context_cache
+
+        monkeypatch.setattr(context_cache, "STATS_KEY", f"aos:ctx:stats:measure:{os.getpid()}:{time.time_ns()}")
+    except ImportError:
+        pass
+    chat_always ={p: "always" for p, profile in load_models_config().routing.items() if profile != "decision"}
     REQUESTS.clear()
     clear = getattr(common, "clear_context_caches", None) or common._COMPILED.clear
     clear()
@@ -167,6 +182,7 @@ def test_context_economy_of_the_standard_flow(control_db, servicenow_url, monkey
         report = {"run_id": run.id, "seconds": round(time.perf_counter() - started, 1),
                   "flow": summarize(REQUESTS), "run_only": summarize(REQUESTS[:run_requests]),
                   "context_cache": common.compiled_context_stats(),
+                  "context_cache_shared": _shared_stats(),
                   "turns": [(t.get("refusal") or {}).get("kind") or t.get("status") for t in turns]}
         out = os.environ.get("ANALYSTOS_ECONOMY_OUT")
         if out:

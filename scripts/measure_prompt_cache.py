@@ -41,18 +41,23 @@ def from_run(run_id: str) -> dict:
 def probe(purpose: str, n: int, router=None) -> dict:  # noqa: ANN001 - a ModelRouter; tests pass one on a fake transport
     from analystos.agents.common import compact_json
     from analystos.agents.prompts import PROMPTS, prompt
+    from analystos.context.compiler import render_stable
     from analystos.llm.cache import estimate_tokens
     from analystos.llm.router import CallContext, ModelRouter
 
     router = router or ModelRouter()
     name = f"{purpose}.v1" if f"{purpose}.v1" in PROMPTS else "hypothesis_generation.v1"
     system = prompt(name, **({"dialect": "postgres"} if "{dialect}" in PROMPTS[name] else {}))
-    header = compact_json({"workspace_context": {"workspace": "prompt-cache probe", "domain_packs": ["pack.itsm@1.0.0"],
-                                                 "dialects": ["postgres"]}})
+    # the production layout (Stream B): static system text, then the run preamble (workspace header,
+    # objective, catalog as sorted text), both cached; the volatile inputs last
+    header = render_stable({"workspace": "prompt-cache probe", "domain_packs": ["pack.itsm@1.0.0"], "dialects": ["postgres"]},
+                           {"objective": "What drives SLA breaches in IT incidents?",
+                            "catalog": [{"asset": "sn.incident", "row_count": 20000, "role": "fact",
+                                         "columns": [{"name": c, "semantic_type": "categorical"}
+                                                     for c in ("made_sla", "priority", "assignment_group_name")]}]})
     calls = []
     for i in range(n):
-        variable = compact_json({"objective": f"Probe {i}: what drives SLA breaches for priority {i % 5 + 1} incidents?",
-                                 "catalog": [{"asset": "sn.incident", "columns": ["made_sla", "priority", "assignment_group_name"]}]})
+        variable = compact_json({"results": [f"Probe {i}: SLA breaches for priority {i % 5 + 1} incidents"]})
         messages = [{"role": "system", "content": system, "cache": True},
                     {"role": "user", "content": header, "cache": True},
                     {"role": "user", "content": variable}]
