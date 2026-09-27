@@ -215,8 +215,7 @@ def test_an_unjoined_table_says_why_and_a_table_from_another_source_points_at_a_
     with session_scope() as s:
         s.delete(s.get(Relationship, "rel_lines_orders"))
     issues = [i for i in _suggest()["issues"] if i["code"] == "orphan_table"]
-    assert sorted(i["message"] for i in issues) == ["Order Line joins no other selected table", "Orders joins no other selected table"] \
-        or all(i["message"].endswith("joins no other selected table") for i in issues)
+    assert len(issues) == 2 and all(i["message"].endswith("joins no other selected table") for i in issues)
     with session_scope() as s:
         s.get(SourceAsset, "ast_lines").source_id = "src_elsewhere"
     msgs = {i["asset_id"]: i["message"] for i in _suggest()["issues"] if i["code"] == "orphan_table"}
