@@ -41,10 +41,13 @@ def _wm(value: Any) -> Any:
 
 
 def measure(inc: Incremental | None, columns: Sequence[str], rows: Sequence[Sequence[Any]], *,
-            stored_watermark: Any, committed: Committed) -> dict[str, Any]:
+            stored_watermark: Any, committed: Committed, candidate_complete: bool = True) -> dict[str, Any]:
     """Count the candidate rows the next windowed run would never read (see the module docstring)."""
     if inc is None:
         return not_measured(NO_WATERMARK)
+    if not candidate_complete:
+        return not_measured(f"the dry-run candidate was truncated at {len(rows)} rows, so rows behind the window "
+                            "may be missing from it")
     detail: dict[str, Any] = {"watermark_column": inc.watermark, "key": list(inc.key),
                               "late_window_seconds": inc.late_window, "stored_watermark": as_text(stored_watermark)}
     missing = [c for c in (*inc.key, inc.watermark) if c not in columns]
@@ -58,13 +61,16 @@ def measure(inc: Incremental | None, columns: Sequence[str], rows: Sequence[Sequ
     cutoff = shift(stored, inc.late_window)
     detail["cutoff"] = as_text(cutoff)
     ki, wi = [list(columns).index(k) for k in inc.key], list(columns).index(inc.watermark)
-    behind = {}
+    behind, no_watermark = {}, 0
     for r in rows:
         w = _wm(r[wi])
-        if w is not None and w < cutoff:
+        if w is None:  # never read by a windowed run either: shown, not counted as late
+            no_watermark += 1
+        elif w < cutoff:
             key = tuple(r[i] for i in ki)
             behind[key] = max(w, behind.get(key, w))
     detail["candidate_rows_behind_window"] = len(behind)
+    detail["null_watermark_rows"] = no_watermark
     if not behind:
         return {"late_rows": 0, "late_rows_reason": None, "late": {**detail, "committed_rows_read": 0}}
     try:

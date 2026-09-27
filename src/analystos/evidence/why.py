@@ -476,17 +476,46 @@ def _step_self_link(session: Session, step: Any, ver: Any) -> dict[str, Any]:
     moved = [u for u, vid in sorted((ver.inputs or {}).items()) if current_version(session, "query", f"step:{u}") != vid]
     if moved:
         return _link("step", "changed", "upstream step(s) re-executed since: " + ", ".join(moved), **detail)
-    return _link("step", "ok", **detail)
+    # a downstream record depends on the upstream version ids only, so an upstream verdict voided by a data,
+    # policy or semantic change leaves it ACTIVE: the upstream verdicts are read here and never hidden
+    upstream, worst, why = [], "ok", []
+    for u, vid in sorted((ver.inputs or {}).items()):
+        state = _upstream_verdict(session, vid)
+        link_state = _verdict_link(state, "step")["state"]
+        upstream.append({"step_id": u, "version_id": vid, "state": link_state, "record_id": state.get("record_id"),
+                         "void": state.get("void")})
+        if SEVERITY.get(link_state, 1) > SEVERITY.get(worst, 1):
+            worst = link_state
+        if link_state != "ok":
+            v = state.get("void") or {}
+            why.append(f"{u}: {link_state}" + (f" ({v.get('kind')}: {v.get('reason')})" if v else ""))
+    if why:
+        return _link("step", worst, "upstream verdict(s): " + "; ".join(why), **detail, upstream=upstream)
+    return _link("step", "ok", **detail, upstream=upstream)
+
+
+def _upstream_verdict(session: Session, version_id: str) -> dict[str, Any]:
+    from analystos.db.models import AnalysisStepVersion, VerificationRecord
+    from analystos.evidence.verification import state_of
+
+    up = session.get(AnalysisStepVersion, version_id)
+    rec = session.get(VerificationRecord, up.verification_record_id) if up is not None and up.verification_record_id else None
+    return state_of(rec)
 
 
 def _step_receipt_link(session: Session, step: Any, ver: Any, content: Mapping[str, Any]) -> dict[str, Any]:
     from analystos.db.models import QueryExecution
 
     receipts = list(ver.receipts or [])
-    queries, problems = [], []
+    queries, problems, problems_soft = [], [], []
     for r in receipts:
         if r.get("kind") != "query":
-            queries.append({**{k: v for k, v in r.items() if k != "inputs"}, "inputs": dict(r.get("inputs") or {}), "state": "ok"})
+            # a computation receipt (sandboxed Python, a method): clean only when it says it ran network-isolated
+            isolated = r.get("network_isolated")
+            queries.append({**{k: v for k, v in r.items() if k != "inputs"}, "inputs": dict(r.get("inputs") or {}),
+                            "state": "ok" if isolated is not False else "unknown"})
+            if isolated is False:
+                problems_soft.append(f"{r.get('kind')} receipt ran without network isolation")
             continue
         qid, recorded = r.get("query_id"), r.get("result_hash")
         superseded = r.get("role") == "superseded_by_correction"
@@ -514,9 +543,12 @@ def _step_receipt_link(session: Session, step: Any, ver: Any, content: Mapping[s
         return _link("query_receipt", "broken", "; ".join(problems), queries=queries)
     if final is None:
         if step.depends_on:
-            return _link("query_receipt", "not_applicable", "computed from upstream step(s) " + ", ".join(step.depends_on)
-                         + "; their receipts carry the governed queries", queries=queries)
+            return _link("query_receipt", "unknown" if problems_soft else "not_applicable",
+                         "; ".join(problems_soft) or "computed from upstream step(s) " + ", ".join(step.depends_on)
+                         + "; their receipts carry the governed queries (their verdicts are in the step link)", queries=queries)
         return _link("query_receipt", "broken", "no governed query receipt is recorded for this step", queries=queries)
+    if problems_soft:
+        return _link("query_receipt", "unknown", "; ".join(problems_soft), queries=queries)
     return _link("query_receipt", "ok", queries=queries)
 
 
@@ -537,6 +569,14 @@ def _step_data_link(session: Session, ver: Any, record: Any | None) -> dict[str,
         (changed if state == "changed" else unknown if state == "unknown" else []).append(d["ref"])
         out.append({"asset": d["ref"], "recorded_version": d["version_hash"],
                     "current_version": None if now == UNKNOWABLE else now, "state": state})
+    # a data dependency's ref is `<source>/<asset>`: a table the step read without one (pushdown, unversioned)
+    # is listed as unknown rather than dropped because another table was staged
+    versioned = {d["ref"].split("/", 1)[-1] for d in deps}
+    for a in assets:
+        if a not in versioned:
+            unknown.append(a)
+            out.append({"asset": a, "recorded_version": None, "current_version": None, "state": "unknown",
+                        "reason": "pushdown or unversioned: no fixed snapshot"})
     if changed:
         return _link("data_version", "changed", "snapshot changed since the verdict: " + ", ".join(changed), assets=out)
     if unknown:

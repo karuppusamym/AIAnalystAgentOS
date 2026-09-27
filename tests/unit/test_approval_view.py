@@ -53,3 +53,29 @@ def test_the_route_is_read_only():
 
     methods = {m for r in router.routes if getattr(r, "path", None) == "/api/approvals/{approval_id}" for m in r.methods}
     assert methods == {"GET"}
+
+
+def test_a_requester_who_left_the_workspace_gets_the_same_404(apr):
+    from sqlalchemy import delete
+
+    from analystos.db.models import WorkspaceMember
+
+    with session_scope() as s:
+        s.execute(delete(WorkspaceMember).where(WorkspaceMember.workspace_id == WS, WorkspaceMember.user_id == "usr_analyst"))
+    with pytest.raises(NotFound) as gone:
+        _read(apr, "usr_analyst")
+    with pytest.raises(NotFound) as unknown:
+        _read("apr_missing", "usr_analyst")
+    assert str(gone.value) == str(unknown.value)
+
+
+def test_a_lapsed_pending_approval_reads_expired_without_being_written(apr):
+    from datetime import timedelta
+
+    from analystos.core.ids import utcnow
+
+    with session_scope() as s:
+        s.get(Approval, apr).expires_at = utcnow() - timedelta(minutes=1)
+    assert _read(apr, "usr_viewer")["status"] == "expired"
+    with session_scope() as s:
+        assert s.get(Approval, apr).status == "pending"

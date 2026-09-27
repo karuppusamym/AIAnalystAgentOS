@@ -389,7 +389,9 @@ class _Crawl:
                              "pii": pii.model_dump() if pii.category else None}
             if col.business_name_origin != "user":
                 source_bn = cat.screen_text(c.business_name, max_chars=120) if c.business_name else None
-                col.business_name = col.business_name or source_bn or (sem.business_name if sem else None)
+                if not col.business_name and (source_bn or (sem and sem.business_name)):
+                    col.business_name = source_bn or sem.business_name
+                    col.business_name_origin = "source" if source_bn else "rule"
             if col.description_origin == "user":
                 pass  # a person's description is never overwritten
             elif c.description and not cat.is_placeholder_description(c.description):

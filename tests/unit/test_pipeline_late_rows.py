@@ -71,3 +71,46 @@ def test_a_numeric_watermark_shifts_by_units():
     read, seen = _committed([])
     out = late.measure(inc, ["id", "seq"], [["x", 90], ["y", 97]], stored_watermark="100", committed=read)
     assert seen == [95] and out["late_rows"] == 1
+
+
+def test_a_truncated_candidate_is_not_measured_even_with_nothing_behind():
+    read, seen = _committed([])
+    out = late.measure(INC, COLS, [ROWS[3]], stored_watermark=STORED, committed=read, candidate_complete=False)
+    assert out["late_rows"] is None and "truncated at 1 rows" in out["late_rows_reason"] and seen == []
+
+
+def test_rows_without_a_watermark_are_shown_and_not_counted_as_late():
+    read, _ = _committed([["a", "2031-01-01T00:00:00"]])
+    out = late.measure(INC, COLS, [ROWS[0], ["e", 5, None]], stored_watermark=STORED, committed=read)
+    assert out["late_rows"] == 0 and out["late"]["null_watermark_rows"] == 1
+
+
+def test_the_service_checks_scope_before_reading_the_stored_watermark(monkeypatch):
+    """An output outside the requester's scope: not measured, and the loader's state is never read."""
+    from types import SimpleNamespace
+
+    from analystos.services import pipelines as svc
+    from analystos.staging import loader
+
+    monkeypatch.setattr(loader.StagingLoader, "read_state", lambda *a, **k: pytest.fail("read the stored watermark"))
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def scalar(self, _stmt):
+            return SimpleNamespace(staging_schema="stg_out", id="src_out")
+
+    monkeypatch.setattr(svc, "session_scope", Session)
+    monkeypatch.setattr("analystos.services.recipes.output_table", lambda recipe, name: "clean")
+    out_node = SimpleNamespace(name="clean")
+    p = SimpleNamespace(incremental=INC, output=SimpleNamespace(output="clean"), output_recipe=lambda: "r1")
+    v = SimpleNamespace(recipe=SimpleNamespace(incremental=None), outputs=lambda: [out_node])
+    scope = SimpleNamespace(asset_sources={})
+    res = svc._late_rows(SimpleNamespace(id="usr_1"), "ws_1", p, v, SimpleNamespace(columns=COLS, kept=ROWS), scope,
+                         "prun_1", [], candidate_complete=True)
+    assert res["late_rows"] is None and "not in your data scope" in res["late_rows_reason"]
+    assert "stored_watermark" not in res["late"]

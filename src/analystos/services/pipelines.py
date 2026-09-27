@@ -275,10 +275,10 @@ def _current(s: Session, dest_id: str, table: str) -> Materialization | None:
 
 
 def _late_rows(user: User, ws: str, p: PipelineSpec, v: Any, outcome: Any, scope: Any, run_id: str,
-               query_ids: list[str]) -> dict[str, Any]:
+               query_ids: list[str], *, candidate_complete: bool) -> dict[str, Any]:
     """`late_rows` of the reconciliation (`pipelines/late.py`): the candidate against the committed incremental
     output, whose keys behind the cutoff are read through the gateway under the requester's scope."""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from analystos.pipelines import late
     from analystos.runtime.context import default_gateway
@@ -294,21 +294,32 @@ def _late_rows(user: User, ws: str, p: PipelineSpec, v: Any, outcome: Any, scope
         schema, source_id = (src.staging_schema, src.id) if src is not None else (None, None)
     out = next(o for o in v.outputs() if o.name == p.output.output)
     table = output_table(p.output_recipe(), out.name)
-    state = StagingLoader(get_settings()).read_state(source_id, table) if source_id and schema else None
+    asset = f"{schema}.{table}"
+    if not (source_id and schema):
+        return late.not_measured("no incremental run has committed an output yet: the first run reads every row")
+    # the scope check comes first: the stored watermark describes the committed output's data
+    if scope.asset_sources.get(asset) != source_id:
+        return late.not_measured(f"the committed output {asset} is not in your data scope")
+    state = StagingLoader(get_settings()).read_state(source_id, table)
+
+    def ident(name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'
 
     def committed(cutoff: Any) -> tuple[list[Any], bool]:
-        asset = f"{schema}.{table}"
-        if scope.asset_sources.get(asset) != source_id:
-            raise late.NotMeasured(f"the committed output {asset} is not in your data scope")
-        cols = ", ".join(f'"{c}"' for c in (*inc.key, inc.watermark))
-        bound = f"'{as_text(cutoff)}'" if isinstance(cutoff, datetime) else str(cutoff)
-        res = default_gateway().execute(scope, f'SELECT {cols} FROM "{schema}"."{table}" WHERE "{inc.watermark}" < {bound}',
-                                        actor=f"user:{user.id}", purpose=f"pipeline.late_rows:{run_id}", use_cache=False)
+        cols = ", ".join(ident(c) for c in (*inc.key, inc.watermark))
+        # an explicit UTC offset: a timestamptz column is compared in UTC whatever the session time zone
+        bound = f"'{as_text(cutoff.replace(tzinfo=UTC))}'" if isinstance(cutoff, datetime) else str(cutoff)
+        try:
+            res = default_gateway().execute(scope, f"SELECT {cols} FROM {ident(schema)}.{ident(table)} "
+                                                   f"WHERE {ident(inc.watermark)} < {bound}",
+                                            actor=f"user:{user.id}", purpose=f"pipeline.late_rows:{run_id}", use_cache=False)
+        except AnalystOSError as exc:
+            raise late.NotMeasured(f"the committed output could not be read: {exc.code}: {exc.message}") from exc
         query_ids.append(res.query_id)
         return list(res.rows), not res.truncated
 
     return late.measure(inc, outcome.columns, outcome.kept, stored_watermark=(state or {}).get("watermark"),
-                        committed=committed)
+                        committed=committed, candidate_complete=candidate_complete)
 
 
 @scoped_loader
@@ -356,7 +367,14 @@ def dry_run(user: User, pipeline_id: str, workspace_id: str | None = None, *, en
     with session_scope() as s:
         manifest = _manifest(s, scope, plan, v, inputs, executor.snapshots)
     query_ids = list(executor.query_ids)
-    reconciliation = {**result["reconciliation"], **_late_rows(user, ws, p, v, outcome, scope, run_id, query_ids)}
+    complete = all(c["ok"] for c in result["checks"] if c["check"] == "complete_output")
+    try:  # a diagnostic: it never fails the dry run or strands its run row
+        late_part = _late_rows(user, ws, p, v, outcome, scope, run_id, query_ids, candidate_complete=complete)
+    except AnalystOSError as exc:
+        from analystos.pipelines.late import not_measured
+
+        late_part = not_measured(f"{exc.code}: {exc.message}")
+    reconciliation = {**result["reconciliation"], **late_part}
     plan_hash = stable_hash({"spec_hash": spec_hash, "pipeline_run": run_id,
                              "recipes": sorted((n, r.spec_hash) for n, r in resolved["recipes"].items()),
                              "inputs": {a: i.get("content_fingerprint") for a, i in sorted(inputs.items())},
