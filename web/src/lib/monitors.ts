@@ -150,7 +150,26 @@ export function describeMonitorConfig(m: Monitor): string {
         + (c.seasonal_periods ? ` · season ${c.seasonal_periods}` : "");
     case "data_quality":
       return c.assets?.length ? `assets: ${c.assets.join(", ")}` : "all assets in scope";
+    case "ml_drift":
+    case "ml_freshness":
+    case "ml_performance":
+      return describeMlMonitor(m.kind, c as Record<string, unknown>);
     default:
       return "";
   }
+}
+
+/** Model monitors (P5-03, services/monitors.py kinds added for ML): drift, freshness and label-aware performance. */
+export const ML_MONITOR_KINDS: { id: string; label: string; description: string }[] = [
+  { id: "ml_drift", label: "Input drift", description: "PSI of the latest scored input against the training profile. Drift alone never claims a loss of performance." },
+  { id: "ml_performance", label: "Performance on matured labels", description: "Joins matured labels with past scores (through the gateway) and alerts when the metric falls beyond a tolerance of the sealed holdout value; too few labels waits." },
+  { id: "ml_freshness", label: "Scoring freshness", description: "Alerts when the latest successful scoring is older than the limit." },
+];
+
+export function describeMlMonitor(kind: string, c: Record<string, unknown>): string {
+  const model = String(c.model ?? "?");
+  if (kind === "ml_drift") return `${model} · input PSI ≥ ${String(c.psi_threshold ?? 0.2)}`;
+  if (kind === "ml_freshness") return `${model} · scored within ${String(c.max_age_hours ?? "?")} hours`;
+  return `${model} · ${String(c.metric ?? "the objective metric")} on labels from ${String(c.label_asset ?? "?")}.${String(c.label_column ?? "?")} after ${String(c.label_horizon_days ?? "?")} days`
+    + ` · tolerance ${String(c.tolerance ?? 0.05)} · at least ${String(c.min_labels ?? 30)} labels`;
 }

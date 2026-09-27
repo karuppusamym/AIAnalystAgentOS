@@ -10,6 +10,9 @@ import type {
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
+import { wave2Approvals } from "./mockApprovals";
+import { mlMonitors } from "./mockMl";
+import { resetWave2, wave2Route } from "./mockWave2";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -317,6 +320,7 @@ export function resetMockState(): void {
   state.decided = {};
   resetKnowledgeState();
   resetWave1();
+  resetWave2();
 }
 
 const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
@@ -654,12 +658,24 @@ export interface MockResponse {
 
 const json = (body: unknown, status = 200): MockResponse => ({ status, body: JSON.stringify(body), contentType: "application/json" });
 
-/** Route one request. `path` is the URL path after the host, with its query string. */
-export function mockBackend(method: string, path: string, requestBody?: string | null): MockResponse {
+/** A fetch init's headers as a lower-cased record (for `If-Match` on revisioned edits). */
+export function headersOf(init: RequestInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  new Headers(init?.headers ?? {}).forEach((v, k) => { out[k.toLowerCase()] = v; });
+  return out;
+}
+
+/**
+ * Route one request. `path` is the URL path after the host, with its query string; `headers` are
+ * lower-cased (the revisioned wave-2 edits read `if-match`).
+ */
+export function mockBackend(method: string, path: string, requestBody?: string | null, headers: Record<string, string> = {}): MockResponse {
   const url = new URL(path, "http://mock.local");
   const p = url.pathname.replace(/^\/api/, "");
   const m = method.toUpperCase();
   const W = `/workspaces/${WS}`;
+  const wave2 = wave2Route(m, p, url, WS, requestBody, headers);
+  if (wave2) return wave2.status === 204 ? { status: 204, body: "", contentType: "application/json" } : json(wave2.body, wave2.status);
 
   if (m === "POST" && p === "/auth/login") {
     const body = requestBody ? JSON.parse(requestBody) as { password?: string } : {};
@@ -675,17 +691,6 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     return json({ workspace_id: WS, current: m === "PUT" ? requested : previous, selected: requested,
       capabilities: [], note: "Modes configure shortcuts and playbooks; grants remain separate." });
   }
-  if (m === "GET" && p === `${W}/capabilities`) return json({ workspace_id: WS, digest: "d1e2f3a4b5c6d7e8",
-    job_kinds: (["explain", "compare", "forecast", "predict", "prepare", "monitor"] as const).map((key) => ({
-      key, label: { explain: "Explain", compare: "Compare", forecast: "Forecast", predict: "Predict",
-        prepare: "Prepare data", monitor: "Monitor" }[key],
-      mode: key === "prepare" ? "engineering" : key === "forecast" || key === "predict" ? "ml" : "analysis",
-      available: !["forecast", "predict", "prepare"].includes(key),
-      reasons: ["forecast", "predict", "prepare"].includes(key)
-        ? [{ code: "mock_unavailable", message: `Needs a ready ${key} executor in this workspace.`, remediation: "Enable the capability." }] : [],
-      capabilities: [],
-      entry: { type: key === "prepare" ? "recipe" : key === "monitor" ? "monitor" : "work_order" },
-    })) });
   const capId = /^\/capabilities\/([^/]+)$/.exec(p);
   if (m === "GET" && capId) {
     const man = manifestFor(decodeURIComponent(capId[1]));
@@ -717,7 +722,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   if (m === "GET" && p === `${W}/approvals`) {
     const status = url.searchParams.get("status");
-    const all = state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED];
+    const all = [...wave2Approvals(), ...(state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED])];
     return json(all.filter((a) => !status || a.status === status));
   }
   const wave = wave1Route(m, p, WS, requestBody);
@@ -751,7 +756,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", `/insights/${INSIGHT}`, INSIGHT_DETAIL],
     ["GET", `/insights/${INSIGHT_VOID_ID}`, { ...INSIGHT_DETAIL, ...voidInsight(INSIGHT_ROW), queries: [], experiments: [] }],
     ["GET", `${W}/alerts`, [ALERT]],
-    ["GET", `${W}/monitors`, [MONITOR]],
+    ["GET", `${W}/monitors`, [MONITOR, ...mlMonitors()]],
     ["GET", `${W}/schedules`, [SCHEDULE]],
     ["GET", `${W}/catalog`, CATALOG],
     ["GET", `${W}/crawls`, []],

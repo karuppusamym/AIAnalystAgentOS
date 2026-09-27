@@ -20,13 +20,17 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
-import resource
 import socket
 from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
 from analystos.core.errors import AnalystOSError
+
+try:
+    import resource
+except ImportError:  # Windows: the module imports (API, tests), but no job child starts without rlimits
+    resource = None  # type: ignore[assignment]
 
 # Exactly these survive into an isolated worker; everything else is dropped.
 ALLOWED_ENV = frozenset({
@@ -169,6 +173,8 @@ def install_egress_guard(endpoints: Iterable[str] = ()) -> None:
 
 # ------------------------------------------------------------------------------------ job child limits
 def job_rlimits(budget: Mapping[str, Any]) -> list[tuple[int, tuple[int, int]]]:
+    if resource is None:
+        raise WorkerMisconfigured("an isolated worker needs POSIX resource limits; run it on Linux (or in its container)")
     cpu = int(budget["cpu_seconds"])
     memory = int(budget["memory_mb"]) * 1024 * 1024
     out = [(resource.RLIMIT_CPU, (cpu, cpu + 2)), (resource.RLIMIT_AS, (memory, memory)),

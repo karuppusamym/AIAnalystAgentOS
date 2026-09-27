@@ -28,7 +28,9 @@ export const AREAS: { id: Exclude<Area, "access">; label: string; description: s
 export const CONCEPTS = [
   "workspace", "brief", "source", "selection", "catalog", "knowledge-document", "knowledge-review", "metric",
   "relationship", "semantic-model", "definition", "question", "investigation", "recipe", "file-ingest", "dbt-build",
-  "finding", "dashboard", "report", "dataset", "chart", "approval", "monitor", "alert", "schedule", "policy",
+  "step", "branch", "notebook", "experiment", "pipeline",
+  "finding", "dashboard", "report", "dataset", "chart", "model", "scoring-run", "materialization",
+  "approval", "monitor", "alert", "schedule", "policy",
   "member", "autonomy", "audit", "capability", "platform-settings", "model-config", "usage",
 ] as const;
 export type Concept = (typeof CONCEPTS)[number];
@@ -72,16 +74,17 @@ export const SCREENS: Screen[] = [
   { id: "workspaces", area: "overview", path: "/", title: "Workspaces", nav: true, workspace: false, audience: "everyone",
     owns: ["workspace"], keywords: "home landing" },
   { id: "overview", area: "overview", path: "/w/:wsId", title: "Overview", nav: true, workspace: true, audience: "everyone",
-    owns: ["brief"], keywords: "home what needs me checklist onboarding start work objective" },
+    owns: [], keywords: "home what needs me checklist onboarding start work objective" },
 
   { id: "sources", area: "data", path: "/w/:wsId/data/sources", title: "Sources", nav: true, workspace: true, audience: "everyone",
     owns: ["source", "selection"], keywords: "connect discover crawl drift database upload" },
   { id: "catalog", area: "data", path: "/w/:wsId/data/catalog", title: "Catalog & definitions", nav: true, workspace: true, audience: "everyone",
-    owns: ["catalog", "knowledge-document", "knowledge-review", "metric", "relationship", "semantic-model", "definition"],
-    keywords: "tables columns glossary documents review metrics kpis relationships cardinality semantic diff definitions versions import export" },
+    owns: ["brief", "catalog", "knowledge-document", "knowledge-review", "metric", "relationship", "semantic-model", "definition"],
+    keywords: "brief readiness facts questions tables columns glossary aliases documents review metrics kpis relationships cardinality semantic diff definitions versions import export" },
 
   { id: "work", area: "work", path: "/w/:wsId/work", title: "Work", nav: true, workspace: true, audience: "everyone",
-    owns: ["investigation", "recipe", "file-ingest", "dbt-build"], keywords: "investigations prepare data recipes ingest file pipelines dbt builds" },
+    owns: ["investigation", "recipe", "file-ingest", "dbt-build", "step", "branch", "notebook", "experiment", "pipeline"],
+    keywords: "investigations data thread steps branches notebooks experiments models predict forecast prepare data recipes ingest file pipelines dry run dbt builds" },
   { id: "ask", area: "work", path: "/w/:wsId/work/ask", title: "Ask", nav: true, workspace: true, audience: "everyone",
     owns: ["question"], keywords: "question sql console explain quick" },
   { id: "investigation", area: "work", path: "/w/:wsId/work/investigations/:runId", title: "Investigation", nav: false, workspace: true,
@@ -90,7 +93,8 @@ export const SCREENS: Screen[] = [
     workspace: true, audience: "everyone", owns: [] },
 
   { id: "outputs", area: "outputs", path: "/w/:wsId/outputs", title: "Outputs", nav: true, workspace: true, audience: "everyone",
-    owns: ["dashboard", "report", "dataset", "chart"], keywords: "findings dashboards reports datasets charts publish download" },
+    owns: ["dashboard", "report", "dataset", "chart", "model", "scoring-run", "materialization"],
+    keywords: "findings dashboards reports datasets charts models champion scoring tables materializations rollback publish download" },
   { id: "finding", area: "outputs", path: "/w/:wsId/outputs/findings/:insightId?", title: "Findings", nav: false, workspace: true,
     audience: "everyone", owns: ["finding"], keywords: "verified evidence why this number void" },
 
@@ -157,11 +161,11 @@ function withQuery(path: string, query: Record<string, string | undefined | null
 }
 
 /** Tabs of the Data → Catalog & definitions screen. */
-export type DataTab = "catalog" | "documents" | "review" | "metrics" | "definitions" | "transfer";
+export type DataTab = "catalog" | "brief" | "documents" | "review" | "metrics" | "definitions" | "transfer";
 /** Tabs of the Work screen. */
-export type WorkTab = "investigations" | "prepare" | "builds" | "ml";
+export type WorkTab = "investigations" | "thread" | "notebooks" | "experiments" | "prepare" | "builds" | "workflows";
 /** Output types: one list, filtered (spec v4 §15). Metrics are not an output: they live in Data. */
-export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "other";
+export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "model" | "table" | "other";
 
 const P = (id: ScreenId, params: Record<string, string | undefined> = {}) => fillPath(screen(id).path, params);
 
@@ -184,7 +188,10 @@ export const to = {
   /** Older name for `data` (Knowledge studio tabs); `graph` is now inside Definitions. */
   knowledge: (ws: string, tab?: "catalog" | "documents" | "review" | "graph" | "metrics" | "transfer",
     q: { pack?: string; path?: string; doc?: string } = {}) => to.data(ws, tab === "graph" ? "definitions" : tab, q),
-  outputs: (ws: string, q: { type?: OutputType; artifact?: string; dashboard?: string } = {}) =>
+  /** Work → Data Thread of an investigation, an Ask thread or a notebook (`container` = "run:<id>", "ask_thread:<id>"). */
+  thread: (ws: string, type: "run" | "ask_thread", id: string, q: { branch?: string; step?: string } = {}) =>
+    to.work(ws, "thread", { container: `${type}:${id}`, ...q }),
+  outputs: (ws: string, q: { type?: OutputType; artifact?: string; dashboard?: string; model?: string; table?: string } = {}) =>
     withQuery(P("outputs", { wsId: ws }), q),
   studio: (ws: string, artifact?: string) => to.outputs(ws, { artifact }),
   /** The former Build studio tabs, each at its one home: dbt builds in Work, KPIs in Data, dashboards in Outputs. */

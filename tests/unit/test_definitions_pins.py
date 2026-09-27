@@ -71,6 +71,23 @@ def _playbook_spec(key: str = "playbook.weekly_sla", version: str = "1.0.0") -> 
     return {**base, "id": key, "version": version, "summary": "Weekly SLA investigation (workspace-authored)"}
 
 
+def test_linear_workflow_builder_shape_publishes_as_a_versioned_playbook(world):
+    spec = {"apiVersion": "analystos/v1", "kind": "Playbook", "id": "playbook.metadata_review",
+            "version": "1.0.0", "summary": "Review selected table metadata", "determinism": "model",
+            "side_effect": "read_source", "cost_class": "llm_large", "certification": {"status": "draft"},
+            "tags": ["workspace_workflow"], "spec": {"framing": False, "steps": [
+                {"key": "metadata", "title": "Discover metadata", "use": "agent.metadata", "after": [], "optional": False}]}}
+    with session_scope() as s:
+        owner = s.merge(world["owner"])
+        row = defs.create_draft(s, owner, WS, DefinitionDraftIn(kind="playbook", key=spec["id"],
+                                                                title="Metadata review", spec=spec))
+        assert row.status == "draft" and row.spec["certification"]["status"] == "draft"
+        defs.publish(s, owner, row, row.revision)
+        ref, published = defs.resolve(s, WS, {"id": row.id})
+        assert ref.version == 1 and ref.status == "published"
+        assert published["spec"]["steps"][0]["use"] == "agent.metadata"
+
+
 # ------------------------------------------------------------------------------------ lifecycle
 def test_draft_publish_is_immutable_and_revision_checked(world):
     owner = world["owner"]
