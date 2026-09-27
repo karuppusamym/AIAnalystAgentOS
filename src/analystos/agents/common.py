@@ -330,13 +330,14 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     key = _context_key(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
                        reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars) \
         if settings.context.cache_enabled else None
-    reused = _COMPILED.get(key, purpose) if key else None
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    reused = _COMPILED.get(key, purpose, workspace_id=workspace_id) if key else None
     if reused is not None:
         return reused
     compiled, complete = _compile(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
                                   reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars)
     if key and complete:  # a context compiled without its knowledge (load failed) is not kept
-        _COMPILED.put(key, purpose, compiled, ttl=settings.context.cache_ttl_seconds)
+        _COMPILED.put(key, purpose, compiled, ttl=settings.context.cache_ttl_seconds, workspace_id=workspace_id)
     return compiled
 
 
@@ -369,7 +370,7 @@ def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: 
     sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
     workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
     if sections and workspace_id:
-        query = " ".join(x for x in (objective, reference_text) if x) or None
+        query = _retrieval_query(objective, reference_text)
         cache_key = _retrieval_key(ctx, sections, query) if settings.context.cache_enabled else None
         cached = context_cache.get("retrieval", purpose, cache_key) if cache_key else None
         if cached is not None:
@@ -430,30 +431,36 @@ class CompiledContextCache:
         """The shared context store (Redis when configured, else an in-process LRU honouring the TTL)."""
         return self._store if self._store is not None else context_cache.store()
 
-    def _count(self, purpose: str, what: str, chars: int = 0) -> None:
+    def _count(self, purpose: str, what: str, chars: int = 0, workspace_id: str | None = None) -> None:
         with self._lock:
             row = self.stats.setdefault(purpose, {"compiled": 0, "reused": 0, "chars_reused": 0})
             row[what] += 1
             row["chars_reused"] += chars
-        context_cache.note("compiled", purpose, "hits" if what == "reused" else "misses", chars=chars)
+        context_cache.note("compiled", purpose, "hits" if what == "reused" else "misses", chars=chars,
+                           workspace_id=workspace_id)
 
-    def get(self, key: str, purpose: str) -> Any | None:
+    @staticmethod
+    def _key(key: str, workspace_id: str | None) -> str:
+        """Under the workspace's context-cache prefix, so its entries can be counted and cleared."""
+        return context_cache.entry_key("compiled", workspace_id, key)
+
+    def get(self, key: str, purpose: str, *, workspace_id: str | None = None) -> Any | None:
         from analystos.context.compiler import CompiledContext
 
         try:
-            hit = self.store.get(f"aos:ctx:compiled:{key}")
+            hit = self.store.get(self._key(key, workspace_id))
         except Exception:
             hit = None
         if not isinstance(hit, dict):
             return None
         compiled = CompiledContext.from_dict(hit)  # a JSON round trip: every hit is a fresh copy
-        self._count(purpose, "reused", compiled.chars)
+        self._count(purpose, "reused", compiled.chars, workspace_id)
         return compiled
 
-    def put(self, key: str, purpose: str, compiled: Any, *, ttl: float | None = None) -> None:
-        self._count(purpose, "compiled")
+    def put(self, key: str, purpose: str, compiled: Any, *, ttl: float | None = None, workspace_id: str | None = None) -> None:
+        self._count(purpose, "compiled", workspace_id=workspace_id)
         try:
-            self.store.set(f"aos:ctx:compiled:{key}", compiled.to_dict(), self.ttl if ttl is None else min(ttl, self.ttl))
+            self.store.set(self._key(key, workspace_id), compiled.to_dict(), self.ttl if ttl is None else min(ttl, self.ttl))
         except Exception as exc:  # pragma: no cover - reuse is an optimisation
             log.warning("compiled context not stored: %s", exc)
 
@@ -509,6 +516,26 @@ def _retrieval_key(ctx: Any, sections: list[str], query: str | None) -> str | No
     run = getattr(ctx, "run", None)
     return context_cache.key("retrieval", workspace_id, {"knowledge": knowledge, "sections": sorted(sections), "query": query,
                                                          "session": session, "run": getattr(run, "id", None)})
+
+
+def _retrieval_query(objective: str | None, reference_text: str | None) -> str | None:
+    return " ".join(x for x in (objective, reference_text) if x) or None
+
+
+def knowledge_retrieval_key(ctx: Any, purpose: str, *, objective: str | None, reference_text: str | None = None) -> str | None:
+    """The shared-cache key `compile_for` looks up for this call's knowledge retrieval (None when the purpose has
+    no knowledge sections, the cache is off, or the entry cannot be shared). The context preview reads it to say
+    whether a call would reuse retrieval work."""
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS
+    from analystos.contracts.platform import PurposeProfile
+    from analystos.services.platform_settings import get as platform
+
+    settings = platform()
+    if not settings.context.cache_enabled or not getattr(getattr(ctx, "workspace", None), "id", None):
+        return None
+    profile, _ = knowledge_scope(ctx, settings.context.profiles.get(purpose) or PurposeProfile(max_chars=1_500_000))
+    sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
+    return _retrieval_key(ctx, sections, _retrieval_query(objective, reference_text)) if sections else None
 
 
 def _knowledge_item(data: dict[str, Any]) -> Any:
@@ -628,6 +655,51 @@ def fit_payload(payload: dict[str, Any], *, max_chars: int, objective: str | Non
     return out
 
 
+@dataclass
+class PromptLayout:
+    """What `llm_json` sends after the system text: the cached preamble (workspace header and the run-stable
+    part as text) and the volatile per-call inputs, after the final `fit_payload` guard."""
+
+    header: dict[str, Any]
+    stable: dict[str, Any]
+    volatile: dict[str, Any]
+    preamble: str
+    fitted: dict[str, Any]
+    trimmed: bool
+
+    @property
+    def volatile_text(self) -> str:
+        return compact_json(self.volatile)
+
+
+def prompt_layout(ctx: Any, payload: Any, *, system: str, prompt_vars: dict[str, str] | None = None,
+                  stable: dict[str, Any] | None = None) -> PromptLayout:
+    """The prompt messages for `payload` (a CompiledContext or a plain dict) after the system text `system`: one
+    function for the model call and for the context preview (context/preview.py), so the preview cannot drift."""
+    from analystos.context.compiler import CompiledContext, render_stable
+    from analystos.services.platform_settings import get as platform
+
+    compiled = payload if isinstance(payload, CompiledContext) else None
+    body: dict[str, Any] = compiled.body if compiled is not None else payload
+    llm = platform().llm
+    header = dict(compiled.header) if compiled is not None else {}
+    if prompt_vars and "dialect" in prompt_vars:
+        header.pop("dialects", None)  # the system text already names the dialect: say it once
+    stable_part = {k: body[k] for k in compiled.stable if k in body} if compiled is not None else dict(stable or {})
+    merged = {**stable_part, **{k: v for k, v in body.items() if k not in stable_part}}
+    budget = int(llm.max_prompt_tokens * 3.6) - len(system) - len(compact_json(header)) - 200  # inverse of estimate_tokens
+    run = getattr(ctx, "run", None)
+    fitted = fit_payload(merged, max_chars=max(2_000, budget), objective=run.objective if run else None)
+    kept_stable = {k: fitted[k] for k in stable_part if k in fitted}
+    volatile = {k: v for k, v in fitted.items() if k not in kept_stable}
+    if compiled is not None:
+        preamble = render_stable(header, kept_stable, compiled.omitted) if (header or kept_stable) else ""
+    else:
+        preamble = compact_json(kept_stable) if kept_stable else ""
+    return PromptLayout(header=header, stable=kept_stable, volatile=volatile, preamble=preamble, fitted=fitted,
+                        trimmed=fitted is not merged)
+
+
 def _agent_refusal(ctx: Any, purpose: str) -> tuple[str, str] | None:
     """Agent manifest enforcement (P4-X03): only the agent's declared model purposes are routed, and
     only while its per-step budget (`llm_calls`, `usd`) lasts. Contexts without a manifest (Ask,
@@ -724,7 +796,7 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     workspace knowledge version (L0 cache key, P4-T06); the prompt is fitted to the admin prompt
     limit by dropping whole entries (fit_payload, the final guard), never by cutting JSON."""
     from analystos.agents.prompts import prompt, prompt_version_id
-    from analystos.context.compiler import CompiledContext, render_stable
+    from analystos.context.compiler import CompiledContext
     from analystos.llm.cache import estimate_tokens
     from analystos.services.platform_settings import get as platform
 
@@ -758,28 +830,18 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     llm = platform().llm
     if call.knowledge_version is None and call.workspace_id and llm.cache_enabled and purpose in llm.cacheable_purposes:
         call.knowledge_version = knowledge_version_for(ctx)
-    header = dict(compiled.header) if compiled is not None else {}
-    if prompt_vars and "dialect" in prompt_vars:
-        header.pop("dialects", None)  # the system text already names the dialect: say it once
-    stable_part = {k: body[k] for k in compiled.stable if k in body} if compiled is not None else dict(stable or {})
-    merged = {**stable_part, **{k: v for k, v in body.items() if k not in stable_part}}
-    budget = int(llm.max_prompt_tokens * 3.6) - len(system) - len(compact_json(header)) - 200  # inverse of estimate_tokens
-    run = getattr(ctx, "run", None)
-    fitted = fit_payload(merged, max_chars=max(2_000, budget), objective=run.objective if run else None)
-    if fitted is not merged:
+    layout = prompt_layout(ctx, compiled if compiled is not None else body, system=system, prompt_vars=prompt_vars,
+                           stable=stable)
+    if layout.trimmed:
+        fitted = layout.fitted
         ctx.say(f"Prompt for {purpose} trimmed to fit the model budget (~{estimate_tokens(compact_json(fitted))} tokens); "
                 f"omitted: {compact_json({k: v for k, v in fitted['omitted'].items() if k != 'reason'})[:300]}", kind="decision")
-    kept_stable = {k: fitted[k] for k in stable_part if k in fitted}
-    volatile = {k: v for k, v in fitted.items() if k not in kept_stable}
     if compiled is not None:
         call.context_receipts = compiled.receipts
-        preamble = render_stable(header, kept_stable, compiled.omitted) if (header or kept_stable) else ""
-    else:
-        preamble = compact_json(kept_stable) if kept_stable else ""
     messages: list[dict[str, Any]] = [{"role": "system", "content": system, "cache": True}]
-    if preamble:
-        messages.append({"role": "user", "content": preamble, "cache": True})
-    messages.append({"role": "user", "content": compact_json(volatile)})
+    if layout.preamble:
+        messages.append({"role": "user", "content": layout.preamble, "cache": True})
+    messages.append({"role": "user", "content": layout.volatile_text})
     spend = getattr(ctx, "spend", None)
     if spend is not None:
         spend("llm_calls")

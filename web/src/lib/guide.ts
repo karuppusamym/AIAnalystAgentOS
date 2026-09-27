@@ -57,6 +57,9 @@ export const CAPABILITIES: GuideCapability[] = [
   { id: "documents", discipline: "data", title: "Documents and glossary",
     what: "Add runbooks, definitions and business terms; they are screened and cited separately from numbers.",
     who: "Everyone", href: (ws) => to.data(ws, "documents"), needsWorkspace: true },
+  { id: "context-export", discipline: "data", title: "Download the context",
+    what: "Everything known about your data (or one source's) as an OKF bundle, JSON or Markdown, and exactly what the agents are sent for a task. Never secrets or rows.",
+    who: "Everyone", href: (ws) => to.data(ws, "transfer"), needsWorkspace: true },
 
   // Answer questions
   { id: "ask", discipline: "analysis", title: "Ask a question",

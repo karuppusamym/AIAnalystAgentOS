@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, saveBlob, type Approval, type KnowledgeImportReport, type KnowledgePackInfo } from "../api";
 import { useAction, useAsync } from "../lib/hooks";
 import { to } from "../routes";
+import { ContextExport } from "./ContextExport";
 import { Card, ErrorBox, Field, KeyValue, Loading, Notice, Tag } from "./ui";
 
 const SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -11,12 +12,14 @@ const SLUG = /^[a-z0-9][a-z0-9._-]{0,63}$/;
  * Knowledge → Import & export (P4-U04 over K02/K01): upload an OKF or Atlas bundle into a
  * read-only imported pack; download any pack as a deterministic OKF zip (a download to your own
  * browser); push the workspace pack to its git remote, which writes outside the platform and so
- * needs a hash-bound approval decided in the approvals inbox first.
+ * needs a hash-bound approval decided in the approvals inbox first. First on the tab: the whole workspace
+ * context (or one source's) as a download, and what the agents see (ContextExport).
  */
 export function KnowledgeTransfer({ wsId, canEdit, onBrowse }: { wsId: string; canEdit: boolean; onBrowse: (packId: string) => void }) {
   const packs = useAsync(() => api.knowledgePacks(wsId), [wsId]);
   return (
     <div className="stack">
+      <ContextExport wsId={wsId} canEdit={canEdit} />
       {canEdit ? <ImportCard wsId={wsId} onImported={() => void packs.reload()} onBrowse={onBrowse} />
         : <p className="small" role="note">Editors and owners can import bundles.</p>}
       <ErrorBox error={packs.error} onRetry={packs.reload} />

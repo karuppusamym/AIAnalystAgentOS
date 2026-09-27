@@ -13,6 +13,7 @@ from analystos.api.request_id import RequestIdMiddleware, current, envelope
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
 from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
+from analystos.api.routers import context_export as context_export_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
@@ -85,6 +86,7 @@ app.include_router(decisions_router.router)
 app.include_router(builds_router.router)
 app.include_router(ask_router.router)
 app.include_router(knowledge_router.router)
+app.include_router(context_export_router.router)  # download and inspect the workspace context (Stream D)
 app.include_router(evidence_router.router)
 app.include_router(definitions_router.router)
 app.include_router(work_orders_router.router)

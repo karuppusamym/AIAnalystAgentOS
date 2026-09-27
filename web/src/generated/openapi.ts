@@ -2337,6 +2337,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/context/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Context Cache Stats
+         * @description This workspace's shared context cache: live entries per kind (compiled contexts, knowledge retrievals) and
+         *     hits, misses and characters reused per kind and purpose. Redis when configured, else this API process only.
+         */
+        get: operations["context_cache_stats_api_workspaces__workspace_id__context_cache_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Clear Context Cache
+         * @description Drop this workspace's cached contexts and retrievals (owner): the next calls compile afresh.
+         */
+        delete: operations["clear_context_cache_api_workspaces__workspace_id__context_cache_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/context/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Context
+         * @description The workspace's data context as one download: `okf` (an OKF v0.2 zip that re-imports through
+         *     `POST /knowledge/import`), `json` (`analystos.context/v1` with a content digest) or `markdown`. With
+         *     `source_id`, only that source's tables and what references them. Never secrets, connection settings or rows.
+         */
+        get: operations["export_context_api_workspaces__workspace_id__context_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/context/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview Context
+         * @description What the agents see: the prompt context `purpose` would send for `question` (system text, cached workspace
+         *     preamble, per-call inputs), with token estimates, section sizes and whether the shared context cache already
+         *     holds its knowledge retrieval. No model is called and nothing is recorded as a call. `download=1` returns it
+         *     as a text file.
+         */
+        get: operations["preview_context_api_workspaces__workspace_id__context_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/context/purposes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Context Purposes
+         * @description The model purposes the preview can show, with plain-language labels.
+         */
+        get: operations["context_purposes_api_workspaces__workspace_id__context_purposes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/contracts": {
         parameters: {
             query?: never;
@@ -12361,6 +12451,182 @@ export interface operations {
                 "application/json": components["schemas"]["ContextIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    context_cache_stats_api_workspaces__workspace_id__context_cache_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_context_cache_api_workspaces__workspace_id__context_cache_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_context_api_workspaces__workspace_id__context_export_get: {
+        parameters: {
+            query?: {
+                format?: "okf" | "json" | "markdown";
+                source_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_context_api_workspaces__workspace_id__context_preview_get: {
+        parameters: {
+            query?: {
+                purpose?: string;
+                question?: string | null;
+                source_id?: string | null;
+                download?: boolean;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    context_purposes_api_workspaces__workspace_id__context_purposes_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

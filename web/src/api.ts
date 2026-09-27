@@ -1039,6 +1039,64 @@ export interface ReviewResult {
   errors: { id: string; error: string; [k: string]: unknown }[];
 }
 
+/** Stream D: the workspace context as one download (OKF zip, versioned JSON, or one Markdown file). */
+export type ContextExportFormat = "okf" | "json" | "markdown";
+
+export interface ContextPurpose {
+  purpose: string;
+  label: string;
+  description: string;
+}
+
+export interface ContextPreviewSection {
+  name: string;
+  part: "stable" | "volatile";
+  items: number;
+  chars: number;
+  no_match: boolean;
+}
+
+/** What one model purpose's prompt would carry (GET /context/preview); no model is called. */
+export interface ContextPreview {
+  purpose: string;
+  label: string;
+  question: string;
+  scope: { assets: string[]; source_ids: string[]; denied_columns: number; source_id: string | null };
+  system_prompt: string;
+  system_text: string;
+  preamble_text: string;
+  volatile_text: string;
+  stable_keys: string[];
+  omitted: Dict[];
+  no_match: string[];
+  refused: string | null;
+  trimmed: boolean;
+  receipts: number;
+  estimated_tokens: { stable: number; volatile: number; total: number };
+  budget_chars: number;
+  cache: { key: string | null; kind: string; hit: boolean; shared: boolean; enabled: boolean; ttl_seconds: number };
+  knowledge_version: string | null;
+  sections: ContextPreviewSection[];
+}
+
+export interface ContextCacheCounts {
+  hits: number;
+  misses: number;
+  chars_reused: number;
+}
+
+/** The workspace's shared context cache (GET /context/cache, editor). */
+export interface ContextCacheStats {
+  workspace_id: string;
+  shared: boolean;
+  enabled: boolean;
+  ttl_seconds: number;
+  entries: Record<string, number>;
+  total_entries: number;
+  by_kind: Record<string, Record<string, ContextCacheCounts>>;
+  totals: ContextCacheCounts;
+}
+
 export interface KnowledgeImportReport {
   pack_id: string;
   slug: string;
@@ -3492,6 +3550,20 @@ export const api = {
     post("/api/workspaces/{workspace_id}/knowledge/packs/{pack_id}/push", { path: { workspace_id: ws, pack_id: pack }, body: { approval_id: approvalId } }) as
       Promise<{ revision: number; commit: string; remote: string; branch: string }>,
   knowledgeGraph: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/graph", { path: W(ws) }) as Promise<KnowledgeGraph>,
+
+  // workspace context: download it, see what the agents see, and its shared cache (Stream D)
+  exportContext: (ws: string, format: ContextExportFormat, sourceId?: string | null) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/context/export", { path: W(ws), query: { format, source_id: sourceId || undefined } }),
+      `context.${format === "okf" ? "okf.zip" : format === "json" ? "json" : "md"}`),
+  contextPurposes: (ws: string) => get("/api/workspaces/{workspace_id}/context/purposes", { path: W(ws) }) as Promise<ContextPurpose[]>,
+  contextPreview: (ws: string, purpose: string, question?: string, sourceId?: string | null) =>
+    get("/api/workspaces/{workspace_id}/context/preview", { path: W(ws), query: { purpose, question: question || undefined,
+      source_id: sourceId || undefined } }) as Promise<ContextPreview>,
+  downloadContextPreview: (ws: string, purpose: string, question?: string, sourceId?: string | null) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/context/preview", { path: W(ws), query: { purpose, question: question || undefined,
+      source_id: sourceId || undefined, download: true } }), `context-preview-${purpose}.txt`),
+  contextCache: (ws: string) => get("/api/workspaces/{workspace_id}/context/cache", { path: W(ws) }) as Promise<ContextCacheStats>,
+  clearContextCache: (ws: string) => del("/api/workspaces/{workspace_id}/context/cache", { path: W(ws) }) as Promise<{ cleared: number }>,
 
   // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
   publishDashboard: (artifactId: string) =>
