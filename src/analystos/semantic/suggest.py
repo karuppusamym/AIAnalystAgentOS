@@ -282,6 +282,38 @@ def _count(run_sql: Any, sql: str, purpose: str) -> int:
     return int(next(iter(rows[0].values())) or 0) if rows else 0
 
 
+KEY_SEARCH_QUERIES = 10  # statements one table's key search may use (within the validation budget)
+
+
+class _Counting:
+    """A gateway runner that counts its statements against the validation budget."""
+
+    def __init__(self, inner: Any, budget: _Budget) -> None:
+        self.inner, self.budget, self.dialect = inner, budget, getattr(inner, "dialect", "postgres")
+
+    def __call__(self, sql: str, **kw: Any) -> Any:
+        self.budget.used += 1
+        return self.inner(sql, **kw)
+
+
+def _search_key(session: Session, run_sql: Any, t: dict[str, Any], readable: Any, budget: _Budget) -> list[str]:
+    """skills/relationships.discover_keys over the table's readable, non-sensitive columns, bounded by what is left
+    of the budget (keeping two statements for the uniqueness check that follows)."""
+    from analystos.skills.relationships import discover_keys
+
+    left = budget.limit - budget.used - 2
+    if left < 2:
+        return []
+    cols = [c for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == t["asset_id"])
+                                       .order_by(SourceColumn.ordinal))
+            if readable(t["fq"], [c.name]) and not column_is_sensitive(c.tags, c.semantics)]
+    if not cols:
+        return []
+    found = discover_keys(_Counting(run_sql, budget), {"asset": t["fq"], "columns": [{"name": c.name} for c in cols]},
+                          max_queries=min(KEY_SEARCH_QUERIES, left))
+    return list(found[0].columns) if found else []
+
+
 def validate(session: Session, user: User, workspace_id: str, *, max_queries: int = MAX_QUERIES) -> dict[str, Any]:
     """Measure the suggestion's keys and joins through the gateway as the caller (bounded) and persist the results."""
     from sqlglot import exp
@@ -314,7 +346,13 @@ def validate(session: Session, user: User, workspace_id: str, *, max_queries: in
     for t in doc["tables"]:
         cols = t["primary_key"]["columns"]
         run_sql = runner(t["fq"])
-        if not cols or run_sql is None or not readable(t["fq"], cols):
+        if run_sql is None:
+            continue
+        if not cols:  # no key known: a bounded search for a minimal unique column set (composite keys too)
+            cols = _search_key(session, run_sql, t, readable, budget)
+            if not cols:
+                continue
+        if not readable(t["fq"], cols):
             continue
         if not budget.take(2):
             skipped.append({"kind": "key", "asset_id": t["asset_id"], "reason": "query budget spent"})
