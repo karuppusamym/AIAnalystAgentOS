@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { BuildPanel } from "../components/BuildPanel";
 import { DataThreadPanel } from "../components/DataThread";
+import { ExperimentsPanel } from "../components/Ml";
 import { NotebooksPanel } from "../components/Notebooks";
 import { PreparePanel } from "../components/PreparePanel";
 import { StartWorkButton } from "../components/StartWork";
@@ -14,12 +15,13 @@ import { to, type WorkTab } from "../routes";
 
 const TABS: { id: WorkTab; label: string }[] = [
   { id: "investigations", label: "Investigations" }, { id: "thread", label: "Data Thread" }, { id: "notebooks", label: "Notebooks" },
+  { id: "experiments", label: "Experiments" },
   { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
 ];
 
 /**
  * Work (spec v4 §15): everything started with Start work. Investigations and their Data Thread
- * (steps, branches, merge), notebooks (cells as steps), and the data-engineering panels (Prepare data, dbt builds) that arrive
+ * (steps, branches, merge), notebooks (cells as steps), governed ML experiments, and the data-engineering panels (Prepare data, dbt builds) that arrive
  * as job kinds rather than new screens. Ask has its own entry because it is the quick box.
  */
 export function WorkPage() {
@@ -50,6 +52,8 @@ export function WorkPage() {
         {tab === "investigations" && <Investigations wsId={wsId} />}
         {tab === "thread" && <DataThreadPanel wsId={wsId} role={role} container={params.get("container")} branch={params.get("branch")}
           onChange={(patch) => set(patch as Record<string, string | null>)} />}
+        {tab === "experiments" && <ExperimentsPanel wsId={wsId} role={role} selected={params.get("experiment")} newKind={params.get("new")}
+          onSelect={(id) => set({ experiment: id, new: null })} onNew={(k) => set({ new: k, experiment: null })} />}
         {tab === "notebooks" && <NotebooksPanel wsId={wsId} role={role} selected={params.get("notebook")} onSelect={(id) => set({ notebook: id })} />}
         {tab === "prepare" && <PreparePanel wsId={wsId} role={ws.data?.role} recipe={params.get("recipe")}
           onSelectRecipe={(id) => set({ recipe: id })} />}

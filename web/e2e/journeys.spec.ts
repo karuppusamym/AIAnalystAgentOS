@@ -247,6 +247,63 @@ test.describe("Data Thread (P7-04, P7-05)", () => {
   });
 });
 
+/** An approver decides in the inbox in another tab (the requester's page keeps its state). */
+async function approveInInbox(page: Page, action: RegExp): Promise<void> {
+  const inbox = await page.context().newPage();
+  await inbox.goto(`/w/${WS}/operate/approvals`);
+  const card = inbox.locator("article.approval", { hasText: action });
+  await card.getByLabel("Reason").fill("reviewed");
+  await card.getByRole("button", { name: "Approve" }).click();
+  await expect(card).toHaveCount(0);
+  await inbox.close();
+}
+
+test.describe("governed ML (P5-03)", () => {
+  test("spec → evaluate → promote → score, without a new top-level screen", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/work`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Predict/ }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=experiments&new=predict`);
+
+    // spec: prefilled from the rules-first proposal, the baseline mandatory, the metric's direction stated
+    const what = page.getByRole("form", { name: "What to predict" });
+    await what.getByLabel("Table").fill("stg_sn.incident");
+    await what.getByLabel("Target column").fill("breached_sla");
+    await what.getByRole("button", { name: "Propose a spec" }).click();
+    const spec = page.getByRole("form", { name: "ML spec" });
+    await expect(spec.getByLabel("Feature 1", { exact: true })).toHaveValue("priority");
+    await expect(spec.getByRole("checkbox", { name: /dummy_prior \(baseline, always trained\)/ })).toBeDisabled();
+    await spec.getByRole("button", { name: "Save, publish and train" }).click();
+
+    // evaluate: split diagram, trials on one split with the metric direction, a consumed holdout, the card
+    const exp = page.getByRole("region", { name: "Experiment mlx_1" });
+    await expect(exp.getByRole("img", { name: /chronological split/ })).toBeVisible();
+    await expect(exp.getByRole("table", { name: /Baseline and candidates on split/ })).toContainText("higher is better");
+    await expect(exp.getByRole("note", { name: "Holdout consumed" })).toBeVisible();
+    await expect(exp.getByRole("region", { name: "Model card" })).toContainText("Intended use");
+
+    // promote: an approval decided in the inbox
+    await exp.getByRole("button", { name: "Request promotion of v2" }).click();
+    await approveInInbox(page, /Promote a model version to champion/);
+    await exp.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(exp.getByText("Promoted: p1_breach v2 is now the champion.")).toBeVisible();
+
+    // score approved data with the champion in Outputs; rejected rows are shown, not hidden in a green count
+    await page.goto(`/w/${WS}/outputs?type=model`);
+    const model = page.getByRole("region", { name: "Model p1_breach" });
+    await model.getByText("Score approved data with v2").click();
+    await model.getByRole("button", { name: "Prepare the scoring definition" }).click();
+    await model.getByRole("button", { name: "Request approval to score" }).click();
+    await approveInInbox(page, /Score data with the champion model/);
+    await model.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(page.getByText(/Scored 4,198 of 4,210 rows/)).toBeVisible();
+    await expect(page.getByText(/12 rejected rows are kept in/)).toBeVisible();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
 test.describe("wave-1 panels", () => {
   test("Why this number? and a void finding's cause", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/outputs?type=finding`);
@@ -545,6 +602,10 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
   ["Work · Data Thread", `/w/${WS}/work?tab=thread&container=run:run_demo`, /Mean P1 resolution hours by group/],
   ["Work · notebook", `/w/${WS}/work?tab=notebooks&notebook=nb_1`, /No cells yet/],
+  ["Work · experiment", `/w/${WS}/work?tab=experiments&experiment=mlx_0`, /Holdout consumed/],
+  ["Work · ML spec form", `/w/${WS}/work?tab=experiments&new=predict`, /Propose a spec/],
+  ["Outputs · models", `/w/${WS}/outputs?type=model`, /each version's own holdout/],
+  ["Operate · models & pipelines", `/w/${WS}/operate/monitoring?tab=health`, /drift alone does not show/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
   ["Data · brief & readiness", `/w/${WS}/data/catalog?tab=brief`, /Open questions \(2\)/],

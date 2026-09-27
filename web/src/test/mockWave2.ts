@@ -7,6 +7,8 @@
 import type {
   Assertion, JobKindAvailability, ReadinessAssessment, WorkspaceBrief,
 } from "../api";
+import { decide, resetApprovals } from "./mockApprovals";
+import { mlRoute, resetMl } from "./mockMl";
 import { resetThread, threadRoute } from "./mockThread";
 
 const T = "2026-09-26T09:00:00Z";
@@ -104,6 +106,8 @@ function fresh(ws: string): Wave2State {
 export function resetWave2(): void {
   state = fresh("ws_demo");
   resetThread();
+  resetMl();
+  resetApprovals();
 }
 
 /** Simulate a concurrent editor: the brief moves on under the person looking at it. */
@@ -175,7 +179,12 @@ export function wave2Route(m: string, p: string, url: URL, ws: string, body: str
     return ok(readinessFor(ws, String(b.job_kind ?? "explain"), state.brief.version), 201);
   }
   if (m === "POST" && p === `${W}/query`) return ok(filteredQuery(String(json().sql ?? "")));
-  return threadRoute(m, p, url, W, json(), headers);
+  const decided = /^\/approvals\/([^/]+)\/(approve|reject)$/.exec(p);
+  if (m === "POST" && decided) {
+    const a = decide(decided[1], decided[2] as "approve" | "reject", (json().reason as string | undefined) ?? null);
+    if (a) return ok(a);
+  }
+  return mlRoute(m, p, url, W, json()) ?? threadRoute(m, p, url, W, json(), headers);
 }
 
 /** The gateway's answer to a preview filter: the base rows re-read with the WHERE clause applied. */

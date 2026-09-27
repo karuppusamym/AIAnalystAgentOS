@@ -72,7 +72,7 @@ export function ReadinessResult({ assessment: a, onChooseAlternative }: {
         <span className="small muted">decided by the required checks below; advisory checks never change it.</span>
       </p>
       {[["Required checks", required], ["Advisory checks", advisory]].map(([title, list]) => (list as typeof a.checks).length > 0 && (
-        <div className="table-wrap" key={title as string}>
+        <div className="table-wrap" key={title as string} tabIndex={0}>
           <table className="table table-compact">
             <caption>{title as string}</caption>
             <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Why</th><th scope="col">What to do</th></tr></thead>

@@ -400,7 +400,7 @@ export function BranchComparison({ cmp }: { cmp: BranchCompare }) {
               {r.numbers.headline.delta !== null && <> (change {r.numbers.headline.delta > 0 ? "+" : ""}{fmtValue(r.numbers.headline.delta)})</>}</p>
           )}
           {r.numbers && r.numbers.same_result === false && !!r.numbers.cells?.length && (
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="table table-compact">
                 <caption className="sr-only">Numbers that differ in {r.a?.title ?? r.b?.title}</caption>
                 <thead><tr><th scope="col">Row</th><th scope="col">Column</th><th scope="col" className="num">{cmp.a.name}</th>

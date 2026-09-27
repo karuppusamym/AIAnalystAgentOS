@@ -1,11 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun } from "../api";
+import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
 import { PublishCard } from "../components/DashboardPublish";
 import { DashboardPreview } from "../components/DashboardPreview";
 import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
+import { ModelsOutput } from "../components/Ml";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
 import type { Preview } from "../lib/charts";
@@ -18,14 +20,20 @@ import { GenerateReportForm, ReportRow } from "./Reports";
 /** Artifact type → output filter. Metrics are not outputs: their one home is Data (spec v4 §15). */
 export function outputTypeOf(artifactType: string): OutputType | null {
   if (artifactType === "metric") return null;
+  // ML experiment records (spec, split, trials, package, evaluation, card) live with their experiment in Work
+  if (artifactType.startsWith("ml_")) return null;
   if (artifactType === "dashboard" || artifactType === "report" || artifactType === "dataset" || artifactType === "chart") return artifactType;
   return "other";
 }
 
 export const OUTPUT_FILTERS: { id: OutputType; label: string }[] = [
   { id: "finding", label: "Findings" }, { id: "dashboard", label: "Dashboards" }, { id: "report", label: "Reports" },
-  { id: "dataset", label: "Datasets" }, { id: "chart", label: "Charts" }, { id: "prepared", label: "Prepared data" }, { id: "other", label: "Other" },
+  { id: "dataset", label: "Datasets" }, { id: "chart", label: "Charts" }, { id: "prepared", label: "Prepared data" },
+  { id: "model", label: "Models & scoring" }, { id: "other", label: "Other" },
 ];
+
+/** Output types shown as their own panel rather than as rows of the one list (models and their scoring runs). */
+const PANEL_TYPES = new Set<OutputType>(["model"]);
 
 type Item =
   | { kind: "finding"; id: string; at: string; finding: Insight }
@@ -48,6 +56,10 @@ export function OutputsPage() {
   const artifacts = useAsync(() => api.listArtifacts(wsId), [wsId]);
   const findings = useAsync(() => api.listInsights(wsId), [wsId]);
   const prepared = useAsync(() => api.listRecipeRuns(wsId), [wsId]);
+  const models = useAsync(() => api.modelVersions(wsId), [wsId]);
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  const { user } = useAuth();
+  const role = user?.is_admin ? "owner" : ws.data?.role;
   const set = useCallback((patch: Record<string, string | null>) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -73,6 +85,9 @@ export function OutputsPage() {
   }, [findings.data, artifacts.data, prepared.data]);
   const counts = new Map<OutputType, number>();
   for (const i of items) counts.set(typeOf(i), (counts.get(typeOf(i)) ?? 0) + 1);
+  const modelNames = new Set((Array.isArray(models.data) ? models.data : []).map((m) => m.name)).size;
+  if (modelNames) counts.set("model", modelNames);
+  const panel = type !== "" && PANEL_TYPES.has(type);
   const shown = items.filter((i) => !type || typeOf(i) === type);
   const open = selected ? items.find((i) => i.id === selected) : undefined;
   const loading = (artifacts.loading && !artifacts.data) || (findings.loading && !findings.data);
@@ -81,7 +96,7 @@ export function OutputsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Outputs" subtitle="Everything work produced, in one list: findings, dashboards, reports, datasets and prepared data." />
+      <PageHeader title="Outputs" subtitle="Everything work produced, in one list: findings, dashboards, reports, datasets, prepared data and models." />
       <nav className="chip-row type-filter" aria-label="Filter outputs by type">
         <Link className={`chip ${type ? "" : "active"}`} aria-current={type ? undefined : "page"} to={to.outputs(wsId)}>All ({items.length})</Link>
         {filters.map((f) => (
@@ -97,14 +112,15 @@ export function OutputsPage() {
           </div>
         </details>
       )}
-      <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />
-      {loading && <Loading />}
-      {!loading && shown.length === 0 && (
+      {type === "model" && <ModelsOutput wsId={wsId} role={role} />}
+      {!panel && <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />}
+      {!panel && loading && <Loading />}
+      {!panel && !loading && shown.length === 0 && (
         <EmptyState title={type ? `No ${OUTPUT_FILTERS.find((f) => f.id === type)?.label.toLowerCase()} yet` : "No outputs yet"}>
           Investigations produce findings, charts and dashboards; reports and prepared data are made from them.
         </EmptyState>
       )}
-      {shown.length > 0 && (
+      {!panel && shown.length > 0 && (
         <div className="split">
           <div className="split-list">
             <ul className="list selectable" aria-label="Outputs">
@@ -137,7 +153,7 @@ export function OutputsPage() {
 
 const TYPE_WORD: Record<OutputType, string> = {
   finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data",
-  model: "model", scoring: "scoring run", table: "managed table", other: "",
+  model: "model", table: "managed table", other: "",
 };
 
 function OutputRow({ item: i }: { item: Item }) {

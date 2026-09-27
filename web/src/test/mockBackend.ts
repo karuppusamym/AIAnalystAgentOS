@@ -10,6 +10,8 @@ import type {
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
+import { wave2Approvals } from "./mockApprovals";
+import { mlMonitors } from "./mockMl";
 import { resetWave2, wave2Route } from "./mockWave2";
 
 export const WS = "ws_demo";
@@ -711,7 +713,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   }
   if (m === "GET" && p === `${W}/approvals`) {
     const status = url.searchParams.get("status");
-    const all = state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED];
+    const all = [...wave2Approvals(), ...(state.planned ? [buildApproval(), APPROVAL, APPROVAL_EXECUTED] : [APPROVAL, APPROVAL_EXECUTED])];
     return json(all.filter((a) => !status || a.status === status));
   }
   const wave = wave1Route(m, p, WS, requestBody);
@@ -745,7 +747,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", `/insights/${INSIGHT}`, INSIGHT_DETAIL],
     ["GET", `/insights/${INSIGHT_VOID_ID}`, { ...INSIGHT_DETAIL, ...voidInsight(INSIGHT_ROW), queries: [], experiments: [] }],
     ["GET", `${W}/alerts`, [ALERT]],
-    ["GET", `${W}/monitors`, [MONITOR]],
+    ["GET", `${W}/monitors`, [MONITOR, ...mlMonitors()]],
     ["GET", `${W}/schedules`, [SCHEDULE]],
     ["GET", `${W}/catalog`, CATALOG],
     ["GET", `${W}/crawls`, []],

@@ -49,7 +49,7 @@ export function StaleEditNotice({ what, mine, loadCurrent, onReload }: {
       <ErrorBox error={error} />
       {changes && changes.length === 0 && <p className="small">The current version has the same content as yours.</p>}
       {changes && changes.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap" tabIndex={0}>
           <table className="table table-compact diff-table">
             <caption className="sr-only">Differences between your version and the current one</caption>
             <thead><tr><th scope="col">Path</th><th scope="col">Change</th><th scope="col">Yours</th><th scope="col">Current</th></tr></thead>

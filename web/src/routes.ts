@@ -165,7 +165,7 @@ export type DataTab = "catalog" | "brief" | "documents" | "review" | "metrics" |
 /** Tabs of the Work screen. */
 export type WorkTab = "investigations" | "thread" | "notebooks" | "experiments" | "prepare" | "builds";
 /** Output types: one list, filtered (spec v4 §15). Metrics are not an output: they live in Data. */
-export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "model" | "scoring" | "table" | "other";
+export type OutputType = "finding" | "dashboard" | "report" | "dataset" | "chart" | "prepared" | "model" | "table" | "other";
 
 const P = (id: ScreenId, params: Record<string, string | undefined> = {}) => fillPath(screen(id).path, params);
 
@@ -191,7 +191,7 @@ export const to = {
   /** Work → Data Thread of an investigation, an Ask thread or a notebook (`container` = "run:<id>", "ask_thread:<id>"). */
   thread: (ws: string, type: "run" | "ask_thread", id: string, q: { branch?: string; step?: string } = {}) =>
     to.work(ws, "thread", { container: `${type}:${id}`, ...q }),
-  outputs: (ws: string, q: { type?: OutputType; artifact?: string; dashboard?: string; model?: string; scoring?: string; table?: string } = {}) =>
+  outputs: (ws: string, q: { type?: OutputType; artifact?: string; dashboard?: string; model?: string; table?: string } = {}) =>
     withQuery(P("outputs", { wsId: ws }), q),
   studio: (ws: string, artifact?: string) => to.outputs(ws, { artifact }),
   /** The former Build studio tabs, each at its one home: dbt builds in Work, KPIs in Data, dashboards in Outputs. */
