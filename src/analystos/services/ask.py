@@ -500,7 +500,12 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
                                             "mode": mode, "steps": len((analysis or {}).get("steps") or []) or None},
              actor=f"user:{user.id}", session=s)
         s.flush()
-        return turn_out(s, turn)
+        out_turn = turn_out(s, turn)
+    if status == "answered":
+        from analystos.services.steps import record_quietly
+
+        record_quietly("ask_thread", workspace_id, thread_id, user.id)
+    return out_turn
 
 
 def _sse(event: str, data: Any) -> str:

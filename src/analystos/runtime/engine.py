@@ -417,6 +417,11 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
             run.summary = {**(run.summary or {}), "cancel_outcome": "cancelled_after_publication" if published else "cancelled_before_side_effects"}
         set_run_status(s, run, outcome, **({"error": error} if error else {}))
         notify_needed = (run.origin or {}).get("type") in ("schedule", "alert")
+        workspace_id, requested_by = run.workspace_id, run.requested_by
+    if outcome == "COMPLETED":
+        from analystos.services.steps import record_quietly
+
+        record_quietly("run", workspace_id, run_id, requested_by)
     if notify_needed:
         from analystos.services.schedules import complete_from_run
 

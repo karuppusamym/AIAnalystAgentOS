@@ -190,6 +190,22 @@ def test_the_service_persists_the_analysis_mirrors_the_headline_and_keeps_a_fail
         detail = ask_svc.thread_detail(s, s.merge(admin), thread["id"])
     assert [t["analysis"] is not None for t in detail["turns"]] == [True, True, False]
 
+    # Answered turns are recorded as Data Thread steps as they happen (no "record" click): each answered step of
+    # the analyst turn (steps 1 and 3; step 2 was refused) and the quick answer; the clarify turn adds nothing.
+    from analystos.db.models import AnalysisStep
+
+    with session_scope() as s:
+        steps = list(s.scalars(select(AnalysisStep).where(AnalysisStep.container_type == "ask_thread",
+                                                           AnalysisStep.container_id == thread["id"])))
+    origins = sorted((st.origin or {}).get("id") for st in steps)
+    assert origins == sorted([f"{turn['id']}:step1", f"{turn['id']}:step3", quick["id"]])
+    assert all(st.kind == "query" for st in steps)
+    # recording again is a no-op
+    from analystos.services.steps import ingest_ask_thread
+
+    again = ingest_ask_thread(admin, world["ws"], thread["id"])
+    assert len(again["steps"]) == 3
+
 
 # ------------------------------------------------------------------------------------ HTTP, real stack
 def test_analyst_mode_over_http_plans_runs_checks_synthesizes_reruns_and_explains(api, world, transport):
