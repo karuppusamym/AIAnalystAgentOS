@@ -143,6 +143,7 @@ def test_ask_sends_tokens_and_restores_values(monkeypatch: pytest.MonkeyPatch) -
                                    fingerprint="f", records=lambda: [{"balance": 1}])
 
     monkeypatch.setattr(sql_agent, "compile_for", fake_compile_for)
+    monkeypatch.setattr(sql_agent, "defer_compile", fake_compile_for)  # repairs compile after the gate (Stream B)
     monkeypatch.setattr(sql_agent, "llm_json", fake_llm_json)
     monkeypatch.setattr(sql_agent, "catalog_for_prompt", lambda ctx, **kw: [])
     monkeypatch.setattr(sql_agent, "_result", lambda r: {"query_id": r.query_id})

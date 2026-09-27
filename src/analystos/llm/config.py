@@ -81,6 +81,15 @@ class ModelMeta(BaseModel):
     # OpenRouter). Families with automatic prefix caching (OpenAI, DeepSeek, Gemini) leave it false:
     # the cache-stable prompt order is enough for them.
     prompt_cache: bool = False
+    # Share of the input price a provider waives for prompt tokens served from its cache. None = the
+    # family default in `cached_discount` (not stated in models.yaml today).
+    cached_input_discount: float | None = Field(None, ge=0.0, le=1.0)
+
+
+# Documented provider discounts on cache reads: Anthropic and DeepSeek bill a read at ~10% of input,
+# Gemini at ~25%, OpenAI-style automatic caching at 50% (some newer models more; 0.5 is the floor).
+CACHED_INPUT_DISCOUNT = {"anthropic": 0.9, "deepseek": 0.9, "google": 0.75}
+DEFAULT_CACHED_INPUT_DISCOUNT = 0.5
 
 
 EscalationPolicy = Literal["never", "on_validation_failure", "always_large"]
@@ -129,12 +138,29 @@ class ModelsConfig(BaseModel):
         meta = self.models.get(model)
         return bool(meta and meta.prompt_cache)
 
-    def estimate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float | None:
-        """Upper-bound USD estimate for one call, or None when the model has no price metadata."""
+    def cached_discount(self, model: str) -> float:
+        """Share of the input price waived for a cached prompt token (per model, else per family)."""
+        meta = self.models.get(model)
+        if meta is not None and meta.cached_input_discount is not None:
+            return meta.cached_input_discount
+        return CACHED_INPUT_DISCOUNT.get(family(model), DEFAULT_CACHED_INPUT_DISCOUNT)
+
+    def estimate_cost(self, model: str, input_tokens: int, output_tokens: int, cached_input_tokens: int = 0) -> float | None:
+        """Upper-bound USD estimate for one call, or None when the model has no price metadata.
+        Cached prompt tokens (part of `input_tokens`) are charged at the provider's cache-read discount."""
         meta = self.models.get(model)
         if meta is None or meta.input_usd_per_mtok is None or meta.output_usd_per_mtok is None:
             return None
-        return (input_tokens * meta.input_usd_per_mtok + output_tokens * meta.output_usd_per_mtok) / 1_000_000
+        cached = max(0, min(int(cached_input_tokens or 0), int(input_tokens or 0)))
+        billed_input = input_tokens - cached * self.cached_discount(model)
+        return (billed_input * meta.input_usd_per_mtok + output_tokens * meta.output_usd_per_mtok) / 1_000_000
+
+    def cached_saving(self, model: str, cached_input_tokens: int) -> float | None:
+        """Estimated USD the provider's prompt cache saved on `cached_input_tokens` (None: no price)."""
+        meta = self.models.get(model)
+        if meta is None or meta.input_usd_per_mtok is None:
+            return None
+        return cached_input_tokens * meta.input_usd_per_mtok * self.cached_discount(model) / 1_000_000
 
     def reservation_estimate(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """What a hard spend cap reserves before a call: the price-table estimate, or for a model

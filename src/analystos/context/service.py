@@ -93,9 +93,15 @@ def external_context(session: Session, workspace_id: str, objective: str, *, use
     return out
 
 
+def _draft(origin: str | None, reviewed: bool) -> bool:
+    """An unreviewed model-written description: a draft, which never reaches a prompt (knowledge/suggestions.py)."""
+    return origin == "model" and not reviewed
+
+
 def build_context_package(session: Session, workspace_id: str, objective: str, assets: list[str],
                           extra_notes: list[str] | None = None, *, user: Any = None,
-                          run_id: str | None = None) -> dict[str, Any]:
+                          run_id: str | None = None, denied_columns: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+    denied = set(denied_columns)
     # 1 exact metadata
     tables = []
     for fq in assets:
@@ -105,13 +111,21 @@ def build_context_package(session: Session, workspace_id: str, objective: str, a
         if not asset:
             continue
         cols = list(session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id).order_by(SourceColumn.ordinal)))
+        # Same deny filter as the prompt catalog (agents.common.catalog_for_prompt): a masked column is not listed.
+        cols = [c for c in cols if f"{fq}.{c.name}" not in denied and f"*.{c.name}" not in denied]
+        sem = asset.semantics or {}
+        draft = _draft(asset.description_origin, asset.reviewed)
         # The package feeds agent prompts: catalog text of every origin is screened at build (P7-20).
-        tables.append({"table": fq, "business_name": screen_for_prompt(asset.business_name, max_chars=200) or None,
-                       "description": screen_for_prompt(asset.description) or None,
+        tables.append({"table": fq, "business_name": screen_for_prompt(
+                           sem.get("business_name") if _draft(asset.business_name_origin, asset.reviewed) else asset.business_name,
+                           max_chars=200) or None,
+                       "description": screen_for_prompt(sem.get("description") if draft else asset.description) or None,
                        "row_count": asset.row_count,
                        "columns": [{"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type,
                                     "business_name": screen_for_prompt(c.business_name, max_chars=200) or None,
-                                    "description": screen_for_prompt(c.description) or None, "tags": c.tags}
+                                    "description": screen_for_prompt(
+                                        None if _draft(c.description_origin, bool((c.semantics or {}).get("reviewed")))
+                                        else c.description) or None, "tags": c.tags}
                                    for c in cols]})
     # 2 graph neighborhood
     graph = neighborhood(assets, workspace_id, session)
