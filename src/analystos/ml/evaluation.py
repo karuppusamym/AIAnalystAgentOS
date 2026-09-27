@@ -16,6 +16,7 @@ from analystos.contracts.work import LOWER_IS_BETTER
 
 BOOTSTRAP = 200
 CI_LEVEL = 0.95
+CONFIRM_BOOTSTRAP = 1000
 
 
 def higher_is_better(metric: str) -> bool:
@@ -54,7 +55,7 @@ def classify_metric(metric: str, y: np.ndarray, proba: np.ndarray, classes: list
     binary = len(classes) == 2
     if metric == "roc_auc":
         if binary:
-            return float(skm.roc_auc_score(y == positive, proba[:, classes.index(positive)]))
+            return binary_auc(y == positive, proba[:, classes.index(positive)])
         return float(skm.roc_auc_score(y, proba, multi_class="ovr", average="weighted", labels=classes))
     if metric == "log_loss":
         return float(skm.log_loss(y, np.clip(proba, 1e-15, 1 - 1e-15), labels=classes))
@@ -72,6 +73,20 @@ def classify_metric(metric: str, y: np.ndarray, proba: np.ndarray, classes: list
     if metric == "recall":
         return float(skm.recall_score(y == positive, labels == positive, zero_division=0))
     raise ValueError(f"unknown classification metric {metric}")
+
+
+def binary_auc(truth: np.ndarray, score: np.ndarray) -> float:
+    """ROC AUC as the Mann-Whitney statistic (ties at half credit): the value `roc_auc_score` gives, without its
+    per-call validation overhead, which dominated the paired bootstrap (P5-07 reads 1000 resamples)."""
+    from scipy.stats import rankdata
+
+    t = np.asarray(truth, dtype=bool)
+    n1 = int(t.sum())
+    n0 = len(t) - n1
+    if n1 == 0 or n0 == 0:
+        return float("nan")
+    ranks = rankdata(np.asarray(score, dtype=float))
+    return float((ranks[t].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
 
 
 def predict_labels(proba: np.ndarray, classes: list[str], positive: str, threshold: float | None) -> np.ndarray:
@@ -142,9 +157,14 @@ def residuals(y: np.ndarray, pred: np.ndarray, unit: str | None) -> dict[str, An
 
 # ------------------------------------------------------------------------------------ paired bootstrap
 def paired_bootstrap(metric: str, fn: Callable[[np.ndarray], tuple[float, float]], n: int, *, seed: int,
-                     b: int = BOOTSTRAP) -> dict[str, Any]:
+                     b: int = BOOTSTRAP, confirm_level: float | None = None) -> dict[str, Any]:
     """`fn(indices) -> (candidate value, baseline value)`. The CI of the gain, of each side, and the share of
-    resamples in which the candidate was better."""
+    resamples in which the candidate was better. With `confirm_level` above `CI_LEVEL` (P5-07) the lower bound
+    of the gain at that level is added as `confirm_low`, from at least `CONFIRM_BOOTSTRAP` resamples so that a
+    far-tail quantile is not read off the one or two smallest values."""
+    confirming = confirm_level is not None and confirm_level > CI_LEVEL
+    if confirming:
+        b = max(b, CONFIRM_BOOTSTRAP)
     rng = np.random.default_rng(seed)
     gains, cands, bases = [], [], []
     for _ in range(b):
@@ -157,30 +177,81 @@ def paired_bootstrap(metric: str, fn: Callable[[np.ndarray], tuple[float, float]
         gains.append(gain(metric, c, bl))
     lo, hi = (1 - CI_LEVEL) / 2, 1 - (1 - CI_LEVEL) / 2
     if len(gains) < b // 2:
-        return {"resamples": len(gains), "ci_low": None, "ci_high": None, "p_better": None, "level": CI_LEVEL}
-    return {"resamples": len(gains), "level": CI_LEVEL,
-            "ci_low": round(float(np.quantile(gains, lo)), 6), "ci_high": round(float(np.quantile(gains, hi)), 6),
-            "candidate_ci": [round(float(np.quantile(cands, lo)), 6), round(float(np.quantile(cands, hi)), 6)],
-            "baseline_ci": [round(float(np.quantile(bases, lo)), 6), round(float(np.quantile(bases, hi)), 6)],
-            "p_better": round(float(np.mean(np.asarray(gains) > 0)), 4)}
+        out = {"resamples": len(gains), "ci_low": None, "ci_high": None, "p_better": None, "level": CI_LEVEL}
+        return {**out, "confirm_level": confirm_level, "confirm_low": None} if confirming else out
+    out = {"resamples": len(gains), "level": CI_LEVEL,
+           "ci_low": round(float(np.quantile(gains, lo)), 6), "ci_high": round(float(np.quantile(gains, hi)), 6),
+           "candidate_ci": [round(float(np.quantile(cands, lo)), 6), round(float(np.quantile(cands, hi)), 6)],
+           "baseline_ci": [round(float(np.quantile(bases, lo)), 6), round(float(np.quantile(bases, hi)), 6)],
+           "p_better": round(float(np.mean(np.asarray(gains) > 0)), 4)}
+    if confirming:
+        out.update(confirm_level=confirm_level, confirm_low=round(float(np.quantile(gains, (1 - confirm_level) / 2)), 6))
+    return out
 
 
-def decide(metric: str, candidate: float | None, baseline: float | None, boot: dict[str, Any], min_improvement: float) -> dict[str, Any]:
-    """Improvement = the point gain exceeds `min_improvement` *and* the gain's interval excludes zero.
-    Anything else is "no improvement": a valid, reportable result (the model is not promotable)."""
+def confirm_level(spec: Any) -> float | None:
+    """The holdout level the spec's confirmation asks for (None: the 95% interval alone decides)."""
+    conf = getattr(spec, "confirmation", None)
+    return float(conf.holdout_level) if conf is not None and conf.holdout_level > CI_LEVEL else None
+
+
+def cv_confirmation(metric: str, candidate_folds: list[Any] | None, baseline_folds: list[Any] | None) -> dict[str, Any]:
+    """The search's out-of-fold evidence, paired per fold (the same validation rows for both): the candidate
+    must be better in a majority of the folds and on average. No holdout row is ever in a fold."""
+    pairs = [(finite(c), finite(b)) for c, b in zip(candidate_folds or [], baseline_folds or [], strict=False)]
+    gains = [gain(metric, c, b) for c, b in pairs if c is not None and b is not None]
+    if not gains:
+        return {"folds": 0, "positive": 0, "mean_gain": None, "passed": False,
+                "reason": "no paired cross-validation folds to confirm on"}
+    positive = sum(g > 0 for g in gains)
+    mean = float(np.mean(gains))
+    return {"folds": len(gains), "positive": positive, "mean_gain": round(mean, 6),
+            "fold_gains": [round(g, 6) for g in gains], "passed": positive * 2 > len(gains) and mean > 0,
+            "reason": f"better in {positive} of {len(gains)} cross-validation folds, mean fold gain {mean:.4g}"}
+
+
+def decide(metric: str, candidate: float | None, baseline: float | None, boot: dict[str, Any], min_improvement: float,
+           *, confirmation: Any = None, folds: tuple[list[Any] | None, list[Any] | None] | None = None) -> dict[str, Any]:
+    """Improvement = the point gain exceeds `min_improvement` *and* the gain's 95% interval excludes zero *and*
+    (P5-07; `confirmation` is the spec's ImprovementConfirmation) the win is confirmed: by the search's paired
+    out-of-fold cross-validation (`folds` = (candidate folds, baseline folds)) and by the holdout interval at
+    the stricter confirmation level. Anything else is "no improvement": a valid, reportable result (the model
+    is not promotable)."""
     if candidate is None or baseline is None:
         return {"improved": False, "gain": None, "reason": "a holdout metric could not be computed"}
     g = gain(metric, candidate, baseline)
     lo = boot.get("ci_low")
     improved = g > min_improvement and lo is not None and lo > 0
+    confirmed = _confirm(metric, boot, confirmation, folds) if confirmation is not None else None
+    if improved and confirmed is not None and not confirmed["passed"]:
+        return {"improved": False, "gain": round(g, 6), "min_improvement": min_improvement, "confirmation": confirmed,
+                "reason": f"no improvement: the holdout gain {g:.4g} {metric} is not confirmed ({confirmed['reason']})"}
     if improved:
         reason = f"candidate beats the baseline by {g:.4g} {metric} (95% interval of the gain {lo:.4g}..{boot['ci_high']:.4g})"
+        if confirmed is not None:
+            reason += f"; confirmed: {confirmed['reason']}"
     elif g <= min_improvement:
         reason = f"no improvement: gain {g:.4g} {metric} is not above the declared minimum {min_improvement:g}"
     else:
         reason = (f"no improvement: gain {g:.4g} {metric} but its 95% interval reaches {lo if lo is not None else 'n/a'}; "
                   "the difference is within noise")
-    return {"improved": bool(improved), "gain": round(g, 6), "min_improvement": min_improvement, "reason": reason}
+    out = {"improved": bool(improved), "gain": round(g, 6), "min_improvement": min_improvement, "reason": reason}
+    return {**out, "confirmation": confirmed} if confirmed is not None else out
+
+
+def _confirm(metric: str, boot: dict[str, Any], confirmation: Any, folds: Any) -> dict[str, Any]:
+    level = float(confirmation.holdout_level)
+    parts: dict[str, dict[str, Any]] = {}
+    reasons = []
+    if confirmation.cross_validation:
+        parts["cross_validation"] = cv_confirmation(metric, *(folds or (None, None)))
+        reasons.append(parts["cross_validation"]["reason"])
+    if level > CI_LEVEL:
+        low = boot.get("confirm_low")
+        parts["holdout"] = {"level": level, "ci_low": low, "passed": low is not None and low > 0}
+        reasons.append(f"the {level:.1%} interval of the holdout gain starts at {low if low is not None else 'n/a'}")
+    return {"passed": all(p["passed"] for p in parts.values()), **parts,
+            "reason": "; ".join(reasons) or "no confirmation required by the spec"}
 
 
 # ------------------------------------------------------------------------------------ slices

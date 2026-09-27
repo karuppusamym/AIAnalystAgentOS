@@ -77,7 +77,7 @@ function Investigations({ wsId }: { wsId: string }) {
       {runs.data?.length === 0 && <EmptyState title="No investigations yet">Use Start work once a source has selected tables.</EmptyState>}
       {!!runs.data?.length && (
         <div className="table-wrap card">
-          <table className="table">
+          <table className="table runs-table">
             <caption className="sr-only">Investigations</caption>
             <thead>
               <tr><th>Objective</th><th>Status</th><th>Started</th><th>Duration</th><th className="num">Cost</th><th><span className="sr-only">Actions</span></th></tr>

@@ -186,6 +186,9 @@ class SourceColumn(Base):
     semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # role, unit, pii, glossary
     # Tags set by a person are never removed by a crawl; crawler tags can only be added (tighten, never loosen).
     tags_origin: Mapped[str] = mapped_column(String(20), default="crawler", server_default="crawler")  # crawler | user
+    # P7-20: a user-curated column missing from one crawl is kept (curation intact) and marked absent; it is
+    # hidden from every ORM query (`db/column_presence.py`) until a crawl sees it again and clears this.
+    absent_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Relationship(Base):
@@ -1946,3 +1949,6 @@ class MLScoringRun(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+from analystos.db import column_presence  # noqa: E402,F401  (registers the absent-column filter, P7-20)

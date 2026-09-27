@@ -4,7 +4,7 @@ import { api, type InsightDetail, type Verification } from "../api";
 import { LineageGraph } from "../components/LineageGraph";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, Notice, PreviewTable, RecordTable, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
 import { VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
-import { fmtDate, fmtMs, fmtNumber, fmtP, fmtPct, fmtValue, shortHash } from "../lib/format";
+import { fmtDate, fmtMs, fmtNumber, fmtP, fmtPct, fmtValue, plural, shortHash } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 
 /**
@@ -60,6 +60,18 @@ export function FindingDetail({ id, wsId }: { id: string; wsId: string }) {
   );
 }
 
+/** The verifier's check codes in plain words (the code stays in the cell's tooltip). */
+const CHECK_LABELS: Record<string, string> = {
+  method_fit: "Method fits the question", sample_size: "Enough data", significance_after_bh: "Significant after multiple-test correction",
+  effect_size: "Effect is large enough to matter", representative_population: "Population is representative", no_overreach: "Wording does not overclaim",
+  reproducible_rerun: "Re-run gives the same result", second_method: "A second method agrees", numbers_bound: "Numbers match the results",
+};
+
+function checkLabel(code: string): string {
+  const plain = code.replace(/_/g, " ");
+  return CHECK_LABELS[code] ?? plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
 function VerificationRecord({ v }: { v: Verification }) {
   if (!v || Object.keys(v).length === 0) return <Card title="How it was checked"><EmptyState title="Not verified yet" /></Card>;
   const jev = v.verify?.jev;
@@ -86,7 +98,7 @@ function VerificationRecord({ v }: { v: Verification }) {
               <tbody>
                 {v.evaluate.map((c) => (
                   <tr key={c.check}>
-                    <td><code>{c.check}</code></td>
+                    <td title={c.check}>{checkLabel(c.check)}</td>
                     <td><StatusBadge status={c.passed ? "ok" : "failed"} label={c.passed ? "pass" : "fail"} /></td>
                     <td className="small">{c.detail}</td>
                   </tr>
@@ -115,7 +127,7 @@ function VerificationRecord({ v }: { v: Verification }) {
 
 function EvidenceSection({ d }: { d: InsightDetail }) {
   return (
-    <Card title={`Evidence — ${d.queries.length} queries, ${d.experiments.length} tests`}>
+    <Card title={`Evidence — ${plural(d.queries.length, "query", "queries")}, ${plural(d.experiments.length, "test")}`}>
       {d.queries.length === 0 && d.experiments.length === 0 && <EmptyState title="No evidence recorded" />}
       {d.queries.map((q) => (
         <details key={q.id} className="evidence-item" open={d.queries.length <= 2}>

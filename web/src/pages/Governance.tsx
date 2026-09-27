@@ -91,9 +91,9 @@ function PolicyEditor({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => voi
           const v = fieldText(f.kind, draft[f.key]);
           if (f.kind === "bool") {
             return (
-              <label key={f.key} className="toggle">
+              <label key={f.key} className="check-row">
                 <input type="checkbox" checked={v === true} onChange={(e) => edit(setField(draft, f.key, fieldValue("bool", e.target.checked)))} />
-                {" "}{f.label}<span className="field-hint block">{f.hint}</span>
+                <span>{f.label}</span><span className="field-hint">{f.hint}</span>
               </label>
             );
           }

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.http import expected_revision, page, set_etag
+from analystos.contracts.agent_form import AgentForm
 from analystos.contracts.definition import DefinitionDraftIn, DefinitionPatch
 from analystos.core.errors import InvalidInput
 from analystos.db.models import Definition, User
@@ -161,3 +162,39 @@ def diff(workspace_id: str, definition_id: str, against: str | None = None, user
     if other is None:
         return {"from": svc.out(row, spec=False), "to": None, "changes": []}
     return {"from": svc.out(row, spec=False), "to": svc.out(other, spec=False), "changes": svc.diff(row.spec, other.spec)}
+
+
+# ------------------------------------------------------------------------------------ agent forms (P7-19)
+@router.get("/workspaces/{workspace_id}/agent-form")
+def agent_form_options(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """What a workspace owner may grant a form-authored agent here: executable capabilities with the reason any
+    one is not grantable, knowledge sections, output types and the workspace ceilings for budget and data access."""
+    from analystos.capabilities import agent_forms
+
+    require_role(session, user, workspace_id, "viewer")
+    return agent_forms.options(session, workspace_id)
+
+
+@router.post("/workspaces/{workspace_id}/agent-form", status_code=201)
+def create_agent_from_form(workspace_id: str, body: AgentForm, response: Response, user: User = Depends(current_user),
+                           session: Session = Depends(db, scope="function")):
+    """Compile the form into a `kind: Agent` manifest and save it as a draft `agent` definition (a new key, or the
+    next version of a published one). Owners only; a grant beyond the workspace's is refused (403)."""
+    from analystos.capabilities import agent_forms
+
+    row = agent_forms.save(session, session.merge(user), workspace_id, body)
+    set_etag(response, row.revision)
+    return svc.out(row)
+
+
+@router.put("/workspaces/{workspace_id}/agent-form/{definition_id}")
+def update_agent_from_form(workspace_id: str, definition_id: str, body: AgentForm, response: Response,
+                           user: User = Depends(current_user), session: Session = Depends(db, scope="function"),
+                           if_match: str | None = Header(default=None)):
+    from analystos.capabilities import agent_forms
+
+    _load(session, user, workspace_id, definition_id, "editor")
+    row = agent_forms.save(session, session.merge(user), workspace_id, body, definition_id=definition_id,
+                           expected_revision=expected_revision(if_match, required=True))
+    set_etag(response, row.revision)
+    return svc.out(row)

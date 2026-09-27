@@ -173,6 +173,46 @@ def model_diff(session: Session, workspace_id: str, version: int | None = None) 
     return {"version": row.version, "status": row.status, "base_version": base.version if base else None, **diff.as_dict()}
 
 
+def propose_structure(session: Session, workspace_id: str, user: User, datasets: list[SemanticDataset], *,
+                      description: str | None = None) -> SemanticModel:
+    """A person's structure proposal (entities as datasets, grain as their primary keys): recorded as a
+    `proposed` version that someone else approves with `decide_model`, exactly like an agent's. Each dataset
+    must read one catalogued table of the workspace and its keys must be that table's columns; joins are not
+    taken here (they are measured in the relationship queue, so no request sets a cardinality)."""
+    from analystos.semantic.service import save_model
+
+    problems = []
+    names = [d.name for d in datasets]
+    if len(set(names)) != len(names):
+        problems.append("a dataset name is used twice")
+    for d in datasets:
+        schema, _, table = d.source.strip().partition(".")
+        asset = session.scalar(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id,
+                                                         SourceAsset.schema_name == schema, SourceAsset.name == table,
+                                                         SourceAsset.lifecycle == "active")) if table else None
+        if asset is None:
+            problems.append(f"dataset {d.name}: source {d.source!r} is not a catalogued table of this workspace")
+            continue
+        cols = set(session.scalars(select(SourceColumn.name).where(SourceColumn.asset_id == asset.id)))
+        for key in [d.primary_key or [], *(d.unique_keys or [])]:
+            missing = [c for c in key if c not in cols]
+            if missing:
+                problems.append(f"dataset {d.name}: key column(s) {missing} are not columns of {d.source}")
+        unknown = [f.name for f in d.fields if f.name not in cols and not f.expressions]
+        if unknown:
+            problems.append(f"dataset {d.name}: field(s) {unknown} are not columns of {d.source} and have no expression")
+    if problems:
+        raise InvalidInput("structure proposal refused: " + "; ".join(problems),
+                           details={"problems": [{"field": "datasets", "message": p} for p in problems]})
+    cur = session.scalar(select(SemanticModel).where(SemanticModel.workspace_id == workspace_id)
+                         .order_by(SemanticModel.version.desc()).limit(1))
+    row = save_model(session, workspace_id, actor=f"user:{user.id}", origin="user_proposal", datasets=datasets,
+                     description=description, status="proposed")
+    if cur is not None and row.id == cur.id:
+        raise Conflict("the proposal changes nothing in the current structure")
+    return row
+
+
 def decide_model(session: Session, workspace_id: str, version: int, user: User, *, approve: bool,
                  reason: str | None = None) -> SemanticModel:
     """Approve or reject a proposed structure version. Hash-bound to the version's content; the approver

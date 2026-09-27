@@ -125,9 +125,10 @@ class Tabular:
 
         def pair(idx: np.ndarray) -> tuple[float, float]:
             return (self.score(preds["candidate"][idx], ho[idx]), self.score(preds["baseline"][idx], ho[idx]))
-        boot = V.paired_bootstrap(self.metric, pair, len(ho), seed=self.seed)
+        boot = V.paired_bootstrap(self.metric, pair, len(ho), seed=self.seed, confirm_level=V.confirm_level(self.spec))
         report["uncertainty"] = boot
-        report["decision"] = V.decide(self.metric, cand, base, boot, self.spec.min_improvement)
+        report["decision"] = V.decide(self.metric, cand, base, boot, self.spec.min_improvement,
+                                      confirmation=self.spec.confirmation, folds=(best.get("folds"), baseline.get("folds")))
         report["guardrails"], report["slices"] = self._slices(pair, ho)
         if self.task == "classify" and len(self.classes) == 2:
             p = {k: v[:, self.classes.index(self.positive)] for k, v in preds.items()}

@@ -9,6 +9,8 @@ Runs the pure ML job over seeded fixtures and measures what the governed-ML rule
                           holdout, the holdout was read after the selection froze, and the report is sealed;
 * null_abstain_share      a target independent of the features ends as "no improvement" (never promoted);
 * signal_detected_share   a real signal (classify, regress, forecast, cluster) ends as "improved";
+* null_rate               the share of coin-flip targets (held-out generator, fixed seeds) that end as "improved"
+                          (P5-07: the confirmation rule; `evaluation/ml_null.py` measures it over >= 200 seeds);
 * deterministic_share     a re-run from the same data, manifest and seed reproduces the manifest, selection and seal;
 * tamper_refused_share    a modified package is refused when loaded.
 """
@@ -51,25 +53,43 @@ def _parity(out: dict[str, Any]) -> bool:
             and ev["seal"] == stable_hash({k: v for k, v in ev.items() if k != "seal"}))
 
 
+def _signals(art: str, confirmation: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    """Planted signals, one per task family (P5-07 measures its power on them)."""
+    from analystos.ml.jobs import run_ml_job
+
+    def spec(s: dict[str, Any]) -> dict[str, Any]:
+        return {**s, "confirmation": confirmation} if confirmation is not None else s
+
+    churn = D.churn()
+    return {
+        "classify": run_ml_job(_job(art, churn, spec(D.spec()))),
+        "regress": run_ml_job(_job(art, churn, spec(D.spec(task="regress", target="spend_next", features=[
+            {"column": "monthly_spend"}, {"column": "support_calls"}, {"column": "region"}])))),
+        "forecast": run_ml_job(_job(art, D.weekly_series(), spec({"task": "forecast", "dataset": {"asset": "s.w"},
+                                                                   "target": "orders", "time_column": "week", "horizon": 6,
+                                                                   "season_length": 13, "seed": 1}))),
+        "cluster": run_ml_job(_job(art, D.blobs(), spec({"task": "cluster", "dataset": {"asset": "s.p"}, "k_range": [2, 4],
+                                                          "features": [{"column": "x"}, {"column": "y"}], "seed": 2}),
+                                   max_trials=6)),
+    }
+
+
+def signal_verdicts(confirmation: dict[str, Any] | None = None) -> dict[str, str | None]:
+    with tempfile.TemporaryDirectory(prefix="aos-ml-power-") as art:
+        return {k: o.get("verdict") for k, o in _signals(art, confirmation).items()}
+
+
 def run() -> dict[str, Any]:
     from analystos.core.errors import Conflict
     from analystos.ml.jobs import run_ml_job
     from analystos.ml.store import MLStore
+    from evaluation.ml_null import null_metrics
 
     art = tempfile.mkdtemp(prefix="aos-ml-gate-")
     churn = D.churn()
     refused = [run_ml_job(_job(art, churn, D.spec(**leak)))["status"] == "refused" for leak in LEAKS]
     refused.append(run_ml_job(_job(art, D.churn(n=120, repeat=3), D.spec()))["status"] == "refused")
-    signal = {
-        "classify": run_ml_job(_job(art, churn, D.spec())),
-        "regress": run_ml_job(_job(art, churn, D.spec(task="regress", target="spend_next", features=[
-            {"column": "monthly_spend"}, {"column": "support_calls"}, {"column": "region"}]))),
-        "forecast": run_ml_job(_job(art, D.weekly_series(), {"task": "forecast", "dataset": {"asset": "s.w"}, "target": "orders",
-                                                              "time_column": "week", "horizon": 6, "season_length": 13,
-                                                              "seed": 1})),
-        "cluster": run_ml_job(_job(art, D.blobs(), {"task": "cluster", "dataset": {"asset": "s.p"}, "k_range": [2, 4],
-                                                     "features": [{"column": "x"}, {"column": "y"}], "seed": 2}, max_trials=6)),
-    }
+    signal = _signals(art)
     nulls = [run_ml_job(_job(art, D.churn(signal=False, seed=s), D.spec(target="coin_flip"))) for s in (21, 22, 23)]
     trained = [o for o in [*signal.values(), *nulls] if o.get("status") == "succeeded"]
     again = run_ml_job(_job(art, churn, D.spec()))
@@ -89,4 +109,5 @@ def run() -> dict[str, Any]:
             "null_abstain_share": sum(o.get("verdict") == "no_improvement" for o in nulls) / len(nulls),
             "signal_detected_share": sum(o.get("verdict") == "improved" for o in signal.values()) / len(signal),
             "deterministic_share": 1.0 if same else 0.0, "tamper_refused_share": 1.0 if tamper else 0.0,
-            "cases": len(trained), "verdicts": {k: o.get("verdict") for k, o in signal.items()}}
+            "cases": len(trained), "verdicts": {k: o.get("verdict") for k, o in signal.items()},
+            **null_metrics()}

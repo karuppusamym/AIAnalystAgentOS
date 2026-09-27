@@ -38,6 +38,7 @@ from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError, InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
+from analystos.db import column_presence as presence
 from analystos.db.base import session_scope
 from analystos.db.models import ContextEntry, CrawlRun, Relationship, Source, SourceAsset, SourceColumn, User
 from analystos.events.bus import emit
@@ -366,7 +367,8 @@ class _Crawl:
         return ids
 
     def _apply_columns(self, s: Session, row: SourceAsset, d: DiscoveredAsset, table_sem: cat.TableSemantics) -> int:
-        existing = {c.name: c for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == row.id))}
+        existing = {c.name: c for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == row.id)
+                                                 .execution_options(**presence.INCLUDE_ABSENT))}
         col_sem = {c.name: c for c in table_sem.columns}
         seen = set()
         tagged = 0
@@ -376,6 +378,8 @@ class _Crawl:
             if col is None:
                 col = SourceColumn(asset_id=row.id, name=c.name, tags=[], profile={}, semantics={}, tags_origin="crawler")
                 s.add(col)
+            elif presence.restore(col):
+                self.stats["columns_restored"] = self.stats.get("columns_restored", 0) + 1
             col.ordinal, col.data_type, col.nullable, col.is_key = i, c.data_type, c.nullable, c.is_key
             if c.references:
                 col.profile = {**(col.profile or {}), "references": c.references}
@@ -402,9 +406,11 @@ class _Crawl:
             before = set(col.tags or [])
             col.tags = crawler_tags(col.tags or [], pii)
             tagged += int(set(col.tags) != before)
+        now = utcnow()
         for name, col in existing.items():
-            if name not in seen:
-                s.delete(col)
+            if name not in seen and presence.retire(s, col, now) == "kept":
+                # a transient discovery gap must not erase a person's curation (P7-20)
+                self.stats["columns_kept_absent"] = self.stats.get("columns_kept_absent", 0) + 1
         return tagged
 
     def _deprecate(self, diff: cat.CrawlDiff, rows_by_key: dict[str, str]) -> None:

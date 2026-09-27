@@ -20,6 +20,7 @@ from analystos.core.ids import new_id
 from analystos.core.logging import get_logger
 from analystos.db.models import ContextEntry, KnowledgeDocument, SourceAsset, SourceColumn
 from analystos.graph.projection import neighborhood
+from analystos.skills.catalog import screen_for_prompt
 
 log = get_logger(__name__)
 
@@ -104,10 +105,13 @@ def build_context_package(session: Session, workspace_id: str, objective: str, a
         if not asset:
             continue
         cols = list(session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id).order_by(SourceColumn.ordinal)))
-        tables.append({"table": fq, "business_name": asset.business_name, "description": asset.description,
+        # The package feeds agent prompts: catalog text of every origin is screened at build (P7-20).
+        tables.append({"table": fq, "business_name": screen_for_prompt(asset.business_name, max_chars=200) or None,
+                       "description": screen_for_prompt(asset.description) or None,
                        "row_count": asset.row_count,
                        "columns": [{"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type,
-                                    "business_name": c.business_name, "description": c.description, "tags": c.tags}
+                                    "business_name": screen_for_prompt(c.business_name, max_chars=200) or None,
+                                    "description": screen_for_prompt(c.description) or None, "tags": c.tags}
                                    for c in cols]})
     # 2 graph neighborhood
     graph = neighborhood(assets, workspace_id, session)

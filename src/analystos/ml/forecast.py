@@ -120,10 +120,11 @@ class Forecast:
 
         def pair(idx: np.ndarray) -> tuple[float, float]:
             return _metric(self.metric, e_c[idx]), _metric(self.metric, e_b[idx])
-        boot = V.paired_bootstrap(self.metric, pair, n, seed=self.seed)
+        boot = V.paired_bootstrap(self.metric, pair, n, seed=self.seed, confirm_level=V.confirm_level(self.spec))
         report["uncertainty"] = {**boot, "pooled_points": n, "note": "paired over backtest and holdout errors"}
         report["decision"] = V.decide(self.metric, report["candidate"][self.metric], report["baseline"][self.metric], boot,
-                                      self.spec.min_improvement)
+                                      self.spec.min_improvement, confirmation=self.spec.confirmation,
+                                      folds=(self._backtest(best)["folds"], self._backtest(baseline)["folds"]))
         report["guardrails"], report["slices"] = [], []
         report["predictions_hash"] = hashlib.sha256(np.round(fits["candidate"]["point"], 8).tobytes()).hexdigest()
         self._fits = fits

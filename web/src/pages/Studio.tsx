@@ -10,6 +10,7 @@ import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
 import { MaterializationsOutput } from "../components/Pipelines";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
+import { StartWorkButton } from "../components/StartWork";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
 import type { Preview } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct, shortHash } from "../lib/format";
@@ -134,7 +135,12 @@ export function OutputsPage() {
       {type === "table" && <MaterializationsOutput wsId={wsId} role={role} table={params.get("table")} />}
       {!panel && <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />}
       {!panel && loading && <Loading />}
-      {!panel && !loading && (
+      {!panel && !loading && !error && items.length === 0 && (
+        <EmptyState title="No outputs yet" action={<StartWorkButton wsId={wsId} />}>
+          Findings, dashboards, reports and prepared data appear here once work produces them.
+        </EmptyState>
+      )}
+      {!panel && !loading && (error || items.length > 0) && (
         <div className="outputs-layout">
           <aside className="outputs-analyses" aria-label="Investigations">
             <h2>Investigations</h2>
@@ -149,12 +155,12 @@ export function OutputsPage() {
               onClick={() => set({ analysis: id, artifact: null, dashboard: null, run: null })}>
               <strong>Earlier investigation</strong><span className="muted small">{id}</span>
             </button>)}
-            {workspaceCount > 0 && <p className="muted small">{workspaceCount} workspace or data preparation outputs are shown in All outputs.</p>}
+            {workspaceCount > 0 && <p className="muted small">{workspaceCount === 1 ? "1 output" : `${workspaceCount} outputs`} not tied to an investigation (uploads, prepared data) {workspaceCount === 1 ? "is" : "are"} listed under All outputs.</p>}
           </aside>
           <div className="split-list">
             <h2>{activeAnalysis ? runById.get(activeAnalysis)?.objective ?? "Investigation outputs" : "Recent outputs"}</h2>
             <label className="field output-search"><span className="sr-only">Search outputs</span><input type="search" placeholder="Find an output…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-            <span className="small muted">{shown.length} outputs · newest first</span>
+            <span className="small muted">{shown.length === 1 ? "1 output" : `${shown.length} outputs`} · newest first</span>
             {shown.length === 0 && <EmptyState title="No outputs for this selection">Choose another investigation or output type.</EmptyState>}
             <ul className="list selectable" aria-label="Outputs">
               {shown.map((i) => {
@@ -196,7 +202,7 @@ const TYPE_WORD: Record<OutputType, string> = {
 
 function AnalysisChoice({ run, count, active, onClick }: { run: Run; count: number; active: boolean; onClick: () => void }) {
   return <button type="button" className={`list-button ${active ? "active" : ""}`} aria-current={active ? "true" : undefined}
-    onClick={onClick}><strong>{run.objective}</strong><span className="muted small">{fmtDate(run.created_at)} · {count} outputs</span></button>;
+    onClick={onClick}><strong>{run.objective}</strong><span className="muted small">{fmtDate(run.created_at)} · {count === 1 ? "1 output" : `${count} outputs`}</span></button>;
 }
 
 function OutputRow({ item: i, run }: { item: Item; run?: Run }) {

@@ -1,0 +1,29 @@
+{
+ "rule": "confirmed (P5-07 default)",
+ "seeds": "8000-8399",
+ "null_rate": 0.0025,
+ "null_seeds": 400,
+ "null_improved": [
+  8174
+ ],
+ "null_refused_by_confirmation": [
+  8076,
+  8087,
+  8099,
+  8209,
+  8256,
+  8394
+ ],
+ "null_trained": 400,
+ "power": 0.8571428571428571,
+ "signals": {
+  "heldout:ml_pumps:classify": "improved",
+  "heldout:ml_pumps:regress": "improved",
+  "heldout:ml_calls:forecast": "no_improvement",
+  "fixture:classify": "improved",
+  "fixture:regress": "improved",
+  "fixture:forecast": "improved",
+  "fixture:cluster": "improved"
+ },
+ "seconds": 1130.8
+}

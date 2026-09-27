@@ -130,7 +130,8 @@ export function ApprovalCard({ approval, onDecided, previous, currentPolicyVersi
         <TechnicalDetails value={approval.payload.definition} label="Expression, dataset and dimensions" />
         {typeof approval.evidence?.expression === "string" && <pre className="json">{approval.evidence.expression}</pre>}
       </div>}
-      <details className="proposal-diff"><summary>Proposed content and changes</summary><PayloadDiff approval={approval} previous={previous} /></details>
+      {/* What is being approved is the decision itself: open while it waits, folded once decided. */}
+      <details className="proposal-diff" open={pending}><summary>Proposed content and changes</summary><PayloadDiff approval={approval} previous={previous} /></details>
       <GovernanceReview evidence={approval.evidence ?? {}} />
       {pending && (
         <div className="approval-actions">

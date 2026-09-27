@@ -124,12 +124,13 @@ class Cluster:
 
         def pair(idx: np.ndarray) -> tuple[float, float]:
             return float(np.mean(s_c[idx])), float(np.mean(s_b[idx]))
-        boot = V.paired_bootstrap("silhouette", pair, len(cap), seed=self.seed)
+        boot = V.paired_bootstrap("silhouette", pair, len(cap), seed=self.seed, confirm_level=V.confirm_level(self.spec))
         report["uncertainty"] = boot
         stability = self.stability(best)
         report["stability"] = stability
         decision = V.decide("silhouette", report["candidate"]["silhouette"], report["baseline"]["silhouette"], boot,
-                            self.spec.min_improvement)
+                            self.spec.min_improvement, confirmation=self.spec.confirmation,
+                            folds=(best.get("folds"), baseline.get("folds")))
         if decision["improved"] and not stability["stable"]:
             decision = {**decision, "improved": False,
                         "reason": f"no improvement: clusters are unstable (ARI {stability['score']} < {STABILITY_MIN})"}
