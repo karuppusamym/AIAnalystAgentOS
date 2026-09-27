@@ -36,7 +36,7 @@ class ProcessFilter(BaseModel):
     values: list[str | int | float | bool] | None = None
 
 
-class AnalyzeIn(BaseModel):
+class ProcessAnalyzeIn(BaseModel):
     asset_id: str
     case_column: str
     activity_column: str
@@ -129,7 +129,7 @@ def candidates(workspace_id: str, user: User = Depends(current_user), session: S
 
 
 @router.post("/workspaces/{workspace_id}/process/analyze")
-def analyze(workspace_id: str, body: AnalyzeIn, user: User = Depends(current_user),
+def analyze(workspace_id: str, body: ProcessAnalyzeIn, user: User = Depends(current_user),
             session: Session = Depends(db, scope="function")):
     """Analyse one event log through the gateway (as the caller: scope, masking, row filters and audit apply)."""
     from analystos.runtime.context import default_gateway
