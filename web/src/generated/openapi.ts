@@ -529,7 +529,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Patch Thread */
+        /**
+         * Patch Thread
+         * @description Rename or archive a thread. `If-Match` (its ETag) makes a stale edit 412; old clients may omit it (P4-06).
+         */
         patch: operations["patch_thread_api_ask_threads__thread_id__patch"];
         trace?: never;
     };
@@ -623,6 +626,28 @@ export interface paths {
         put?: never;
         /** Schedule */
         post: operations["schedule_api_ask_turns__turn_id__schedule_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask/turns/{turn_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Turn Number
+         * @description "Why this number?" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,
+         *     `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
+         *     every link with its current state; broken and voided links are returned, never dropped.
+         */
+        get: operations["why_turn_number_api_ask_turns__turn_id__why_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1099,7 +1124,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Patch Monitor */
+        /**
+         * Patch Monitor
+         * @description Edit a monitor. `If-Match` (its ETag) makes a stale edit 412; clients that predate revisions may omit it (P4-06).
+         */
         patch: operations["patch_monitor_api_monitors__monitor_id__patch"];
         trace?: never;
     };
@@ -1349,6 +1377,29 @@ export interface paths {
         put?: never;
         /** Create User */
         post: operations["create_user_api_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/verification/{record_id}/reverify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reverify Record
+         * @description Re-verify a verdict (P7-01, ADR-0020 decision 5): a new record by the subject's own deterministic path
+         *     (a step re-run, a replay run of a finding's frozen spec, or a new experiment of the same ML spec version).
+         *     The old record is never edited: a VOID verdict stays VOID and readable. 409 when it is not the subject's
+         *     latest record or is already current.
+         */
+        post: operations["reverify_record_api_verification__record_id__reverify_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2215,6 +2266,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote
+         * @description Promote a published version one environment up (dev -> test -> prod, ADR-0021 §5): the target gets the same
+         *     spec and content hash, with its connections re-bound there (`bindings`, else by connection name).
+         */
+        post: operations["promote_api_workspaces__workspace_id__definitions__definition_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish": {
         parameters: {
             query?: never;
@@ -2226,6 +2298,27 @@ export interface paths {
         put?: never;
         /** Publish */
         post: operations["publish_api_workspaces__workspace_id__definitions__definition_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/definitions/{definition_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Draft
+         * @description Run a draft of a tested kind (a query tool) once through the gateway; on success it becomes `tested`,
+         *     with the evidence bound to its content hash. Publishing such a kind requires it (P7-11).
+         */
+        post: operations["test_draft_api_workspaces__workspace_id__definitions__definition_id__test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4114,6 +4207,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/semantic/ownership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Offer Ownership
+         * @description Offer a metric or the semantic model to a new owner (P4-05): a hash-bound record the recipient accepts.
+         */
+        post: operations["offer_ownership_api_workspaces__workspace_id__semantic_ownership_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/ownership/{approval_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Ownership
+         * @description The named new owner accepts; refused (and the offer invalidated) if the definition changed since.
+         */
+        post: operations["accept_ownership_api_workspaces__workspace_id__semantic_ownership__approval_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/ownership/{approval_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decline Ownership */
+        post: operations["decline_ownership_api_workspaces__workspace_id__semantic_ownership__approval_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/semantic/reconciliation": {
         parameters: {
             query?: never;
@@ -5054,6 +5204,22 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** DefinitionPromoteIn */
+        DefinitionPromoteIn: {
+            /** Bindings */
+            bindings?: {
+                [key: string]: string;
+            } | null;
+            /** Target Workspace Id */
+            target_workspace_id: string;
+        };
+        /** DefinitionTestIn */
+        DefinitionTestIn: {
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /**
          * Derivation
          * @description A column or a safe derived expression over one column (or two for durations).
@@ -5682,6 +5848,22 @@ export interface components {
         NotebookIn: {
             /** Title */
             title: string;
+        };
+        /** OwnershipDeclineIn */
+        OwnershipDeclineIn: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /** OwnershipOfferIn */
+        OwnershipOfferIn: {
+            /** Name */
+            name: string;
+            /** Reason */
+            reason?: string | null;
+            /** Subject */
+            subject: string;
+            /** To Owner */
+            to_owner: string;
         };
         /**
          * PinIn
@@ -7636,6 +7818,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "if-match"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -7836,6 +8019,44 @@ export interface operations {
                 "application/json": components["schemas"]["AskScheduleIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    why_turn_number_api_ask_turns__turn_id__why_get: {
+        parameters: {
+            query?: {
+                number?: string | null;
+                column?: string | null;
+                row?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -8677,6 +8898,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "if-match"?: string | null;
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;
             };
@@ -9277,6 +9499,40 @@ export interface operations {
                 "application/json": components["schemas"]["NewUser"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reverify_record_api_verification__record_id__reverify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -11379,6 +11635,45 @@ export interface operations {
             };
         };
     };
+    promote_api_workspaces__workspace_id__definitions__definition_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionPromoteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     publish_api_workspaces__workspace_id__definitions__definition_id__publish_post: {
         parameters: {
             query?: never;
@@ -11394,6 +11689,46 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_draft_api_workspaces__workspace_id__definitions__definition_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionTestIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -15488,6 +15823,118 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    offer_ownership_api_workspaces__workspace_id__semantic_ownership_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnershipOfferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_ownership_api_workspaces__workspace_id__semantic_ownership__approval_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_ownership_api_workspaces__workspace_id__semantic_ownership__approval_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["OwnershipDeclineIn"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
