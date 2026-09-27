@@ -14,7 +14,9 @@ specification to the run. The pinned business context enters model prompts and t
 it never widens source scope. Outputs groups findings and artifacts by run question, with a
 three-panel desktop layout and responsive two/one-panel fallbacks. Data provides a two-panel
 context editor, while its definitions panel explains semantic-model validation. Run bindings and
-metric approval now read approved semantic structure, not the newest proposal. Context text is
+metric approval read approved semantic structure when it exists. Before the first structure approval,
+metric approval can validate against the run's proposed structure; run bindings still use approved
+structure only. Context text is
 screened for prompt injection before save or publication.
 
 Evidence: `tests/unit/test_analysis_context.py`, `tests/unit/test_definitions_pins.py`,
@@ -25,6 +27,10 @@ No AgentSwarms source or
 assets were copied. Remaining: real API browser journey across multiple source engines and a
 large-history visual pass; the workspace semantic graph is shared, so separate context-specific
 metric expressions require separately named and approved metrics.
+
+Follow-up evidence: the backend CI integration suite exposed the first-run metric approval case.
+`tests/unit/test_check_semantics.py` now covers that fallback, while existing approval and run
+binding behavior remains governed by the approved structure when one exists.
 
 ## 2026-09-26 — P7-19 workflow step list, third slice
 

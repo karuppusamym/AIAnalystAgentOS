@@ -118,6 +118,17 @@ def test_approval_refuses_a_definition_that_does_not_hold(monkeypatch):
     assert refused.value.details["problems"][0]["message"].startswith("references secret")
 
 
+def test_first_run_metric_can_use_proposed_structure_until_one_is_approved(monkeypatch):
+    row = SimpleNamespace(workspace_id="w", name="revenue", version=1, definition={
+        "name": "revenue", "expressions": [{"expression": "SUM(amount)"}], "dataset": "orders"})
+    proposed = SimpleNamespace(datasets=[{"name": "orders", "source": "s.orders", "fields": [
+        {"name": "amount"}]}], relationships=[])
+    monkeypatch.setattr(review, "approved_model", lambda *_: None)
+    monkeypatch.setattr(service, "current_model", lambda *_: proposed)
+
+    service._check_definition(None, row)
+
+
 def test_denominator_mismatch_is_a_conflict(monkeypatch):
     def row(name, expr, version=1):
         return SimpleNamespace(name=name, version=version, status="approved", expression=expr, workspace_id="w",
