@@ -99,6 +99,8 @@ test.describe("light IA (spec v4 §15)", () => {
 
 /** Top-level nav entries: job kinds and panels must never add one. */
 async function navEntries(page: Page): Promise<number> {
+  // counted once the workspace nav is rendered (right after sign-in the page may still be on /login)
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Outputs" })).toBeVisible();
   return page.getByRole("navigation", { name: "Main" }).getByRole("link").count();
 }
 

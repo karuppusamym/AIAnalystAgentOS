@@ -152,7 +152,14 @@ function patchBrief(body: { ops: BriefOp[]; reason?: string }, ifMatch: string |
 /** Route one wave-2 request (`p` is the path after /api); null when it is not a wave-2 route. */
 export function wave2Route(m: string, p: string, url: URL, ws: string, body: string | null | undefined, headers: Record<string, string> = {}): Reply {
   const W = `/workspaces/${ws}`;
-  const json = () => (body ? JSON.parse(body) as Record<string, unknown> : {});
+  // Uploads are multipart, not JSON: an unparsable body is simply not a wave-2 request body.
+  const json = (): Record<string, unknown> => {
+    try {
+      return body ? JSON.parse(body) as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  };
   if (m === "GET" && p === `${W}/capabilities`) return ok({ workspace_id: ws, digest: "d1e2f3a4", job_kinds: JOB_KINDS });
   if (p === `${W}/brief`) {
     if (m === "GET") {
