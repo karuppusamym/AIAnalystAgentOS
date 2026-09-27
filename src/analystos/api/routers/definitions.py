@@ -99,6 +99,22 @@ def publish(workspace_id: str, definition_id: str, response: Response, user: Use
     return svc.out(row)
 
 
+class DefinitionTestIn(BaseModel):
+    arguments: dict | None = None  # default: the spec's own test arguments
+
+
+@router.post("/workspaces/{workspace_id}/definitions/{definition_id}/test")
+def test_draft(workspace_id: str, definition_id: str, body: DefinitionTestIn, response: Response,
+               user: User = Depends(current_user), session: Session = Depends(db, scope="function"),
+               if_match: str | None = Header(default=None)):
+    """Run a draft of a tested kind (a query tool) once through the gateway; on success it becomes `tested`,
+    with the evidence bound to its content hash. Publishing such a kind requires it (P7-11)."""
+    row = _load(session, user, workspace_id, definition_id, "editor")
+    row = svc.test(session, session.merge(user), row, expected_revision(if_match, required=True), arguments=body.arguments)
+    set_etag(response, row.revision)
+    return svc.out(row)
+
+
 @router.post("/workspaces/{workspace_id}/definitions/{definition_id}/{action}")
 def change_status(workspace_id: str, definition_id: str, action: str, body: ReasonIn, response: Response,
                   user: User = Depends(current_user), session: Session = Depends(db, scope="function"),

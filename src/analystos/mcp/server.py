@@ -167,6 +167,112 @@ TOOL_IMPLS: dict[str, Callable[[G.ClientPrincipal, str, dict[str, Any]], dict[st
 }
 
 
+# ------------------------------------------------------------------------------------ workspace tools (P7-11)
+MCP_HTTP_STATUSES = ("tested", "certified")  # a draft HTTP tool is never offered or run over MCP
+
+
+def _http_callable(m: Any) -> str | None:
+    """None when this HTTP tool may be called over MCP, else why not."""
+    from analystos.capabilities.invoke import READ_ONLY, is_http_tool
+
+    if not is_http_tool(m):
+        return f"{m.id} is not an HTTP tool"
+    if m.certification.status not in MCP_HTTP_STATUSES:
+        return (f"HTTP tool {m.ref} is {m.certification.status}: only tested or certified tools are callable over MCP")
+    if m.side_effect not in READ_ONLY:
+        return f"HTTP tool {m.ref} has side effect {m.side_effect}: it needs an approval, which an MCP client cannot give"
+    return None
+
+
+def workspace_tools(session: Any, ws: str) -> dict[str, dict[str, Any]]:
+    """The workspace tools an MCP client can call now: published query tools and tested/certified read-only
+    HTTP tools that are enabled here. Drafts are absent from the list and refused when called by name."""
+    from analystos.capabilities import enablement
+    from analystos.capabilities.invoke import _snapshot
+    from analystos.contracts.definition import RUNNABLE_STATUSES
+    from analystos.db.models import Definition
+
+    out: dict[str, dict[str, Any]] = {}
+    newest: dict[str, Any] = {}
+    for row in session.scalars(select(Definition).where(Definition.workspace_id == ws, Definition.kind == "query_tool",
+                                                        Definition.status.in_(RUNNABLE_STATUSES))
+                               .order_by(Definition.version)):
+        newest[row.key] = row
+    for key, row in sorted(newest.items()):
+        params = dict(row.spec.get("parameters") or {"type": "object", "properties": {}})
+        schema = {**params, "properties": {"workspace_id": _ws_prop(), **(params.get("properties") or {})}}
+        out[f"query.{key}"] = {"description": row.spec.get("description") or row.title or key, "schema": schema,
+                               "read_only": True, "family": "query", "ref": f"{key}@{row.version}"}
+    snap = _snapshot(session, ws)
+    explicit = enablement.overrides(session, ws)
+    for m in snap.list("Tool"):
+        if _http_callable(m) is None and enablement.usable(m, snap, explicit, autonomous_run=False) is None:
+            schema = dict(m.input_schema or {"type": "object", "properties": {}})
+            schema = {**schema, "properties": {"workspace_id": _ws_prop(), **(schema.get("properties") or {})}}
+            out[f"http.{m.id}"] = {"description": m.summary or m.id, "schema": schema, "read_only": True,
+                                   "family": "http", "ref": m.ref}
+    return out
+
+
+def _tool_query(principal: G.ClientPrincipal, ws: str, key: str, args: dict[str, Any]) -> dict[str, Any]:
+    from analystos.contracts.definition import RUNNABLE_STATUSES
+    from analystos.core.errors import PolicyDenied
+    from analystos.db.models import Definition
+    from analystos.services.definitions import latest_published
+    from analystos.tools import query_tools
+
+    with session_scope() as s:
+        user = _service_user(s, principal)
+        s.expunge(user)
+        row = latest_published(s, ws, "query_tool", key)
+        if row is None:
+            other = s.scalar(select(Definition.status).where(Definition.workspace_id == ws, Definition.kind == "query_tool",
+                                                             Definition.key == key).order_by(Definition.version.desc()))
+            if other is not None and other not in RUNNABLE_STATUSES:
+                raise PolicyDenied(f"query tool {key} has no published version ({other}): drafts are not callable over MCP")
+            raise NotFound(f"query tool {key} not found")
+        spec, version = dict(row.spec), row.version
+    out = query_tools.run(user, ws, key, spec, {k: v for k, v in args.items() if k != "workspace_id"},
+                          actor=f"mcp_client:{principal.client_id}", purpose=f"mcp.query_tool:{key}")
+    out["rows"] = out["rows"][:MAX_ROWS_OUT]
+    return {**out, "version": version}
+
+
+def _tool_http(principal: G.ClientPrincipal, ws: str, capability_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    from analystos.capabilities.invoke import _snapshot, invoke
+    from analystos.core.errors import PolicyDenied
+
+    with session_scope() as s:
+        user = _service_user(s, principal)
+        s.expunge(user)
+        m = _snapshot(s, ws).get(capability_id)
+    if (why := _http_callable(m)) is not None:
+        raise PolicyDenied(why)
+    return invoke(user, ws, capability_id, {k: v for k, v in args.items() if k != "workspace_id"})
+
+
+def call_workspace_tool(principal: G.ClientPrincipal, ws: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    family, _, ident = name.partition(".")
+    return _tool_query(principal, ws, ident, args) if family == "query" else _tool_http(principal, ws, ident, args)
+
+
+def _call_named(name: str, principal: G.ClientPrincipal, ws: str, args: dict[str, Any]) -> dict[str, Any]:
+    return call_workspace_tool(principal, ws, name, args)
+
+
+def granted_workspace_tools(principal: G.ClientPrincipal) -> dict[str, dict[str, Any]]:
+    """Workspace tools the client's grants cover, across its workspaces (a name listed once)."""
+    out: dict[str, dict[str, Any]] = {}
+    with session_scope() as s:
+        for ws, grant in sorted(principal.grants.items()):
+            if not any(G.is_workspace_tool(t) for t in grant["tools"]):
+                continue
+            for name, d in workspace_tools(s, ws).items():
+                if G.grants_tool(grant["tools"], name):
+                    out.setdefault(name, d)
+    return out
+
+
 # ------------------------------------------------------------------------------------ resources
 def parse_uri(uri: str | None) -> tuple[str | None, str | None, str | None]:
     """`analystos://<workspace>/<kind>/<id>` -> (workspace, kind, id); anything else -> Nones."""
@@ -264,21 +370,24 @@ def build_server():
     async def list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
         principal = _principal(ctx)
         granted = {t for g in principal.grants.values() for t in g["tools"]}
+        defs = {name: d for name, d in TOOL_DEFS.items() if name in granted}
+        defs.update(await anyio.to_thread.run_sync(granted_workspace_tools, principal))
         return types.ListToolsResult(tools=[
             types.Tool(name=name, description=d["description"], input_schema=d["schema"],
                        annotations=types.ToolAnnotations(read_only_hint=d["read_only"], destructive_hint=False))
-            for name, d in TOOL_DEFS.items() if name in granted])
+            for name, d in defs.items()])
 
     async def call_tool(ctx: Any, params: Any) -> types.CallToolResult:
         principal = _principal(ctx)
         name, args = params.name, dict(params.arguments or {})
-        if name not in TOOL_IMPLS:
+        if name not in TOOL_IMPLS and not G.is_workspace_tool(name):
             raise MCPError(code=types.INVALID_PARAMS, message=f"unknown tool {name}")
         ws = G.resolve_workspace(principal, args.get("workspace_id"))
         G.check_grant(principal, ws, name)  # the gate already did; a handler never trusts that alone
         actor = f"mcp_client:{principal.client_id}"
+        impl = TOOL_IMPLS.get(name) or partial(_call_named, name)
         try:
-            out = await anyio.to_thread.run_sync(TOOL_IMPLS[name], principal, ws, args)
+            out = await anyio.to_thread.run_sync(impl, principal, ws, args)
         except AnalystOSError as exc:
             await anyio.to_thread.run_sync(partial(
                 audit, actor, "mcp.tool_result", workspace_id=ws, target=name,

@@ -1,4 +1,4 @@
-"""Definition lifecycle (ADR-0021, P7-03): draft → published → (deprecated) → retired.
+"""Definition lifecycle (ADR-0021, P7-03): draft → (tested) → published → (deprecated) → retired.
 
 Generic over `kind`: a kind registers a validator that normalizes its spec, so recipes, ML specs and
 query tools reuse the same versions, hashes, status checks and events. A published version is
@@ -6,6 +6,11 @@ immutable; editing makes a new draft (version = next number). Triggers (API, sch
 MCP) resolve what they run through `resolve` + `require_runnable`: drafts only in a workspace whose
 settings say `environment: dev`, retired never. Built-in and pack YAML playbooks resolve as
 published, identified by manifest version plus content digest (`builtin_ref`).
+
+A kind may register a *tester* (P7-11 query tools): `test` runs the draft once and, when it passes, marks it
+`tested` with the evidence bound to its content hash; for such kinds publish requires a tested draft whose
+content has not changed since. An edit of a tested draft makes it a draft again. A tested draft is still a
+draft for triggers (it runs only in a dev workspace).
 """
 from __future__ import annotations
 
@@ -25,13 +30,21 @@ from analystos.governance.audit import audit
 from analystos.governance.policy import get_workspace, require_role
 
 Validator = Callable[[Session, str, str, dict[str, Any]], dict[str, Any]]
+Tester = Callable[[Session, User, Definition, dict[str, Any] | None], dict[str, Any]]
 _KINDS: dict[str, Validator] = {}
+_TESTERS: dict[str, Tester] = {}
+EDITABLE = ("draft", "tested")
 
 
 def register_kind(kind: str, validator: Validator | None = None) -> None:
     """A new definition kind (recipe, ML spec, query tool...). The validator returns the normalized
     spec or raises InvalidInput; without one any JSON object is accepted as-is."""
     _KINDS[kind] = validator or (lambda _s, _w, _k, spec: dict(spec))
+
+
+def register_tester(kind: str, tester: Tester) -> None:
+    """A kind whose drafts must pass `test` (returning evidence, or raising) before they can be published."""
+    _TESTERS[kind] = tester
 
 
 def kinds() -> list[str]:
@@ -126,7 +139,10 @@ def _register_builtin_kinds() -> None:
     register_kind("pipeline", _typed(PipelineSpec))  # P6-01
     register_kind("ml_spec", _typed(MLSpec))  # P5-01 replaces the placeholder contract
     register_kind("ml_scoring", _typed(MLScoringSpec))  # P5-03: approved batch scoring pinned to a model version
-    register_kind("query_tool")  # P7-11
+    from analystos.tools import query_tools
+
+    register_kind("query_tool", query_tools.validate_spec)  # P7-11: draft -> tested -> published -> retired
+    register_tester("query_tool", query_tools.test)
 
 
 _register_builtin_kinds()
@@ -169,7 +185,7 @@ def create_draft(session: Session, user: User, workspace_id: str, body: Definiti
     require_role(session, user, workspace_id, "editor")
     spec = _validate(session, workspace_id, body.kind, body.key, body.spec)
     existing = session.scalar(select(Definition).where(Definition.workspace_id == workspace_id, Definition.kind == body.kind,
-                                                       Definition.key == body.key, Definition.status == "draft"))
+                                                       Definition.key == body.key, Definition.status.in_(EDITABLE)))
     if existing is not None:
         raise Conflict(f"{body.kind} {body.key} already has a draft ({existing.id}); edit it instead",
                        details={"draft_id": existing.id, "revision": existing.revision})
@@ -185,12 +201,14 @@ def create_draft(session: Session, user: User, workspace_id: str, body: Definiti
 
 def update_draft(session: Session, user: User, row: Definition, patch: DefinitionPatch, expected_revision: int | None) -> Definition:
     require_role(session, user, row.workspace_id, "editor")
-    if row.status != "draft":
+    if row.status not in EDITABLE:
         raise Conflict(f"version {row.version} is {row.status} and immutable; create a new draft to change it")
     _check_revision(row, expected_revision)
     if patch.spec is not None:
         row.spec = _validate(session, row.workspace_id, row.kind, row.key, patch.spec)
         row.content_hash = content_hash(row.kind, row.spec)
+        if row.status == "tested" and (row.test_evidence or {}).get("content_hash") != row.content_hash:
+            row.status = "draft"  # the test covered other content
     if patch.title is not None:
         row.title = patch.title
     row.revision += 1
@@ -203,16 +221,40 @@ def publish(session: Session, user: User, row: Definition, expected_revision: in
     """Freeze the draft. Re-validated against the registry as it is now, so a draft that went stale
     (an agent it uses was removed) cannot be published."""
     require_role(session, user, row.workspace_id, "editor")
-    if row.status != "draft":
+    if row.status not in EDITABLE:
         raise Conflict(f"version {row.version} is already {row.status}")
     _check_revision(row, expected_revision)
     row.spec = _validate(session, row.workspace_id, row.kind, row.key, row.spec)
     row.content_hash = content_hash(row.kind, row.spec)
+    if row.kind in _TESTERS and (row.status != "tested" or (row.test_evidence or {}).get("content_hash") != row.content_hash):
+        raise Conflict(f"{row.kind} {row.key} v{row.version} must pass its test before it is published "
+                       "(POST .../definitions/{id}/test)", details={"status": row.status})
     row.status, row.published_by, row.published_at = "published", actor or user.id, utcnow()
     row.revision += 1
     session.flush()
     _event(session, row, "definition.published", f"user:{user.id}")
     _refresh_pins(session, row.workspace_id)
+    return row
+
+
+def test(session: Session, user: User, row: Definition, expected_revision: int | None, *,
+         arguments: dict[str, Any] | None = None) -> Definition:
+    """Run a draft of a tested kind once; on success it becomes `tested` with the evidence bound to its content
+    hash. A failing test raises the tester's error and leaves the draft as it was."""
+    require_role(session, user, row.workspace_id, "editor")
+    if row.kind not in _TESTERS:
+        raise InvalidInput(f"{row.kind} definitions have no test step")
+    if row.status not in EDITABLE:
+        raise Conflict(f"version {row.version} is {row.status}; only a draft is tested")
+    _check_revision(row, expected_revision)
+    row.spec = _validate(session, row.workspace_id, row.kind, row.key, row.spec)
+    row.content_hash = content_hash(row.kind, row.spec)
+    evidence = _TESTERS[row.kind](session, user, row, arguments)
+    row.test_evidence = {**evidence, "content_hash": row.content_hash, "tested_by": user.id, "tested_at": utcnow().isoformat()}
+    row.status = "tested"
+    row.revision += 1
+    session.flush()
+    _event(session, row, "definition.tested", f"user:{user.id}", evidence={k: v for k, v in evidence.items() if k != "columns"})
     return row
 
 
@@ -315,7 +357,7 @@ def require_runnable(session: Session, workspace_id: str, ref: DefinitionRef, *,
     """Triggers run published versions only; a draft runs only in a workspace marked `environment: dev`."""
     if ref.status == "retired":
         raise PolicyDenied(f"{ref.label} is retired and cannot run", details={"definition": ref.model_dump()})
-    if ref.status == "draft" and not is_dev(session, workspace_id):
+    if ref.status in EDITABLE and not is_dev(session, workspace_id):
         raise PolicyDenied(f"{ref.label} is a draft: {trigger} runs published versions only (publish it, or mark the "
                            "workspace environment: dev to run drafts)", details={"definition": ref.model_dump()})
 
@@ -350,6 +392,8 @@ def out(row: Definition, *, spec: bool = True) -> dict[str, Any]:
     for c in ("published_at", "retired_at", "created_at", "updated_at"):
         v = getattr(row, c)
         d[c] = v.isoformat() if v else None
+    for c in ("test_evidence", "bindings", "promoted_from"):
+        d[c] = getattr(row, c, None)
     if spec:
         d["spec"] = row.spec
     return d

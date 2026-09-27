@@ -986,6 +986,7 @@ class Monitor(Base):
     last_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = _ts()
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")  # P4-06: optional If-Match on PATCH
 
 
 class Alert(Base):
@@ -1344,6 +1345,7 @@ class AskThread(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")  # P4-06: optional If-Match on PATCH
 
 
 class AskTurn(Base):
@@ -1387,13 +1389,14 @@ class Definition(Base):
     __tablename__ = "definition"
     __table_args__ = (UniqueConstraint("workspace_id", "kind", "key", "version", name="uq_definition_version"),
                       Index("uq_definition_one_draft", "workspace_id", "kind", "key", unique=True,
-                            postgresql_where=text("status = 'draft'"), sqlite_where=text("status = 'draft'")))
+                            postgresql_where=text("status IN ('draft', 'tested')"),
+                            sqlite_where=text("status IN ('draft', 'tested')")))
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(40))
     key: Mapped[str] = mapped_column(String(120))
     version: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | deprecated | retired
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | tested | published | deprecated | retired
     title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     content_hash: Mapped[str] = mapped_column(String(64))
@@ -1404,6 +1407,11 @@ class Definition(Base):
     retired_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P7-11: the test run that made a draft `tested`, bound to the content hash it tested
+    test_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # ADR-0021 §5: per-environment connection bindings (not content) and the version a promotion copied
+    bindings: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    promoted_from: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DefinitionStatus = Literal["draft", "published", "deprecated", "retired"]
+DefinitionStatus = Literal["draft", "tested", "published", "deprecated", "retired"]  # tested: a draft whose test run passed (P7-11)
 PinState = Literal["current", "upgrade_available", "deprecated", "blocked", "unpinned"]
 PinItemState = Literal["current", "newer", "deprecated", "retired", "rejected"]
 _KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,119}$")
