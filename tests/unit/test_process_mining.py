@@ -210,8 +210,15 @@ def test_a_plain_entity_table_is_not_an_event_log():
     assert pm.detect_event_log({"name": "customers", "columns": [
         _col("customer_id", is_key=True), _col("name"), _col("created_at", "timestamp")]}) is None
     # an event log needs a case column that repeats: the table's own key does not
-    assert pm.detect_event_log({"name": "t", "row_count": 10, "columns": [
+    assert pm.detect_event_log({"name": "status_log", "row_count": 10, "columns": [
         _col("id", is_key=True, profile={"distinct": 10}), _col("status"), _col("changed_at", "timestamp")]}) is None
+    # a record's current state and a repeating reference do not make an entity table a history
+    ticket = [_col("ticket_id", is_key=True, profile={"distinct": 100}), _col("caller_id", tags=["pii"], profile={"distinct": 20}),
+              _col("contact_type", profile={"distinct": 5}), _col("state", profile={"distinct": 4}), _col("opened_at", "timestamp")]
+    assert pm.detect_event_log({"name": "ticket", "row_count": 100, "columns": ticket}) is None
+    history = pm.detect_event_log({"name": "ticket_state_history", "row_count": 400, "columns": [
+        _col("ticket_id", profile={"distinct": 100}), _col("state", profile={"distinct": 4}), _col("changed_at", "timestamp")]})
+    assert history["mapping"]["activity_column"] == "state" and history["mapping"]["case_column"] == "ticket_id"
 
 
 def test_the_itsm_pack_declares_the_task_activity_log():

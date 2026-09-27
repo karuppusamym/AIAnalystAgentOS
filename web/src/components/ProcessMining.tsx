@@ -262,7 +262,7 @@ export function ProcessAnalysisView({ analysis: a, wsId }: { analysis: ProcessAn
         <p className="muted small">Circles are steps (bigger = more events); arrows are “then directly”, thicker = more often, labelled with how
           often and the median wait. Orange arrows go back to an earlier step (rework).</p>
         {canvasSupported()
-          ? <EChart option={option} height={Math.max(360, 120 * (new Set(shownEdges.map((e) => e.target)).size + 1))}
+          ? <EChart option={option} height={Math.min(640, Math.max(360, 70 * (new Set(shownEdges.map((e) => e.target)).size + 1)))}
             label={`Process map of ${a.summary.activities} steps and ${shownEdges.length} transitions`} />
           : null}
         <details open={!canvasSupported()}>

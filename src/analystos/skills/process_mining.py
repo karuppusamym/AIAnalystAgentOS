@@ -547,7 +547,7 @@ _CASE_TOKENS = {"case", "ticket", "task", "order", "request", "issue", "claim", 
                 "instance", "document", "parent", "record", "session", "trace"}
 _ID_TOKENS = {"id", "number", "no", "num", "key", "ref", "code", "uuid", "guid"}
 _ACTIVITY_STRONG = {"activity", "event", "action", "step", "operation", "transition", "task", "milestone"}
-_ACTIVITY_WEAK = {"status", "state", "stage", "phase", "type", "name"}
+_ACTIVITY_WEAK = {"status", "state", "stage", "phase"}
 _BEFORE = {"before", "from", "previous", "prev", "old", "prior", "source"}
 _TIME_STRONG = {"activity", "event", "action", "step", "occurred", "happened", "performed", "logged", "recorded"}
 _TIME_WEAK = {"at", "time", "timestamp", "ts", "date", "datetime", "on", "when"}
@@ -599,6 +599,9 @@ def detect_event_log(asset: dict[str, Any]) -> dict[str, Any] | None:
     if t is None:
         return None
 
+    # A status/state column names a step only in a table that reads as a log; in an entity table it is the
+    # record's current state (one row per case), not a history.
+    log_like = asset.get("role") in ("event", "audit") or bool(name_tokens & _LOG_NAME)
     acts = []
     for c in cols:
         if not _is_text(str(c.get("data_type", ""))) or c["name"] == t[1]:
@@ -606,9 +609,9 @@ def detect_event_log(asset: dict[str, Any]) -> dict[str, Any] | None:
         toks = set(split_tokens(c["name"]))
         if toks & _BEFORE or (toks & _ID_TOKENS and not toks & _ACTIVITY_STRONG):
             continue
-        score = 3 * bool(toks & _ACTIVITY_STRONG) + 1 * bool(toks & _ACTIVITY_WEAK)
+        score = 3 * bool(toks & _ACTIVITY_STRONG) + (1 if log_like and toks & _ACTIVITY_WEAK else 0)
         d = _distinct(c)
-        if d is not None:
+        if d is not None and score > 0:  # cardinality confirms a named step column; it never makes one
             score += 1 if 2 <= d <= 200 else -3
         if score > 0:
             acts.append((float(score), c["name"]))
@@ -627,6 +630,8 @@ def detect_event_log(asset: dict[str, Any]) -> dict[str, Any] | None:
         score = 1.0 + 2 * bool(tset & _CASE_TOKENS) + (2 if toks and toks[-1] == "id" else 1 if toks and toks[-1] in _ID_TOKENS else 0)
         if c.get("is_key"):
             score -= 4  # the event's own key identifies an event, not a case
+        if set(c.get("tags") or []) & {"pii", "restricted", "sensitive"}:
+            score -= 3  # a person is not a case
         d = _distinct(c)
         if d is not None and rows:
             ratio = d / rows
