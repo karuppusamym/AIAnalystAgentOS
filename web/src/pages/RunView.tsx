@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { to } from "../routes";
-import { api, subscribeRunEvents, type ConsoleCost, type FeedbackResponse, type Publication, type RunDetail, type RunEvent, type RunOrigin, type RunTask,
+import { api, subscribeRunEvents, type ConsoleCost, type EventStreamHandle, type StreamInfo, type FeedbackResponse, type Publication, type RunDetail, type RunEvent, type RunOrigin, type RunTask,
   type WorkspacePolicy } from "../api";
 import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import { ChangesPanel } from "../components/ChangesPanel";
@@ -29,7 +29,8 @@ export function RunViewPage() {
   const { wsId = "", runId = "" } = useParams();
   const run = useAsync(() => api.getRun(wsId, runId), [wsId, runId]);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [stream, setStream] = useState<{ state: StreamState; error?: string }>({ state: "connecting" });
+  const [stream, setStream] = useState<{ state: StreamState; error?: string; info?: StreamInfo; lastUpdate?: Date }>({ state: "connecting" });
+  const handleRef = useRef<EventStreamHandle | null>(null);
   const [tab, setTab] = useState<"board" | "tree" | "tasks" | "events">("board");
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const control = useAction();
@@ -49,12 +50,19 @@ export function RunViewPage() {
     const h = subscribeRunEvents(wsId, runId, {
       onEvent: (ev) => {
         setEvents((prev) => (prev.length > 500 ? [...prev.slice(-400), ev] : [...prev, ev]));
+        setStream((s) => ({ ...s, lastUpdate: new Date() }));
         scheduleRefresh();
       },
       onEnd: () => scheduleRefresh(),
-      onStatus: (state, error) => setStream({ state, error }),
+      onStatus: (state, error, info) => {
+        setStream((s) => ({ state, error, info, lastUpdate: state === "open" ? new Date() : s.lastUpdate }));
+        // Back after a drop: missed events replay from the cursor, and the detail is re-read so nothing shown is stale.
+        if (state === "open" && info?.resumed) scheduleRefresh();
+      },
     });
+    handleRef.current = h;
     return () => {
+      handleRef.current = null;
       h.close();
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
@@ -81,7 +89,8 @@ export function RunViewPage() {
           <StatusBadge status={r.status} /> <OriginBadge wsId={wsId} origin={r.origin} />
         </>}
         actions={<>
-          <StreamIndicator state={stream.state} error={stream.error} />
+          <StreamIndicator state={stream.state} error={stream.error} info={stream.info} lastUpdate={stream.lastUpdate}
+            onReconnect={() => handleRef.current?.reconnectNow()} />
           <button type="button" className="btn btn-sm" onClick={() => doControl("pause")} disabled={terminal || r.status === "PAUSED" || control.busy}>Pause</button>
           <button type="button" className="btn btn-sm" onClick={() => doControl("resume")} disabled={terminal || r.status !== "PAUSED" || control.busy}>Resume</button>
           <button type="button" className="btn btn-sm btn-danger" onClick={() => doControl("cancel")} disabled={terminal || control.busy}>Cancel</button>
@@ -183,11 +192,27 @@ export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin 
   return <Tag>{origin.type}</Tag>;
 }
 
-function StreamIndicator({ state, error }: { state: StreamState; error?: string }) {
+/**
+ * The live-update state (workbench-ux §3): a dropped stream says "Reconnecting" with the attempt,
+ * when it retries and the time of the last update, and offers to reconnect now; it resumes from the
+ * persisted cursor, so no event is lost or shown twice.
+ */
+export function StreamIndicator({ state, error, info, lastUpdate, onReconnect }: {
+  state: StreamState; error?: string; info?: StreamInfo; lastUpdate?: Date; onReconnect?: () => void;
+}) {
   const label = state === "open" ? "Live" : state === "connecting" ? "Connecting" : state === "reconnecting" ? "Reconnecting" : "Stream closed";
+  const since = lastUpdate ? lastUpdate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : null;
+  const detail = state === "reconnecting"
+    ? [info?.attempt ? `attempt ${info.attempt}` : null, info?.retryInMs ? `retry in ${Math.ceil(info.retryInMs / 1000)} s` : null,
+      since ? `last update ${since}` : "no update yet"].filter(Boolean).join(" · ")
+    : state === "closed" && error ? error : null;
   return (
     <span className={`stream stream-${state}`} role="status" title={error ?? label}>
       <span className="stream-dot" aria-hidden="true" />{label}
+      {detail && <span className="small muted"> ({detail})</span>}
+      {state === "reconnecting" && onReconnect && (
+        <button type="button" className="btn btn-xs btn-ghost" onClick={onReconnect}>Reconnect now</button>
+      )}
     </span>
   );
 }

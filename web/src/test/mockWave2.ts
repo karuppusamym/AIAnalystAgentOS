@@ -181,6 +181,11 @@ export function wave2Route(m: string, p: string, url: URL, ws: string, body: str
     return ok(readinessFor(ws, String(b.job_kind ?? "explain"), state.brief.version), 201);
   }
   if (m === "POST" && p === `${W}/query`) return ok(filteredQuery(String(json().sql ?? "")));
+  const tags = /^\/assets\/([^/]+)\/columns\/([^/]+)\/tags$/.exec(p);
+  if (m === "PUT" && tags) {
+    return ok({ id: 1, asset_id: tags[1], name: decodeURIComponent(tags[2]), ordinal: 1, data_type: "TEXT", semantic_type: null, nullable: true, is_key: false,
+      business_name: null, description: null, tags: (json().tags as string[]) ?? [], profile: {} });
+  }
   const decided = /^\/approvals\/([^/]+)\/(approve|reject)$/.exec(p);
   if (m === "POST" && decided) {
     const a = decide(decided[1], decided[2] as "approve" | "reject", (json().reason as string | undefined) ?? null);

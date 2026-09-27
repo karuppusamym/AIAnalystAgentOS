@@ -2,6 +2,7 @@ import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useState, type
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { to, type DataTab } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
+import { ColumnCurationForm } from "../components/ColumnCuration";
 import { KpiEditor } from "../components/KpiEditor";
 import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card, Tabs } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
@@ -188,7 +189,7 @@ function CatalogTab({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
                       <tr className="row-detail" id={`cat-${a.id}`}>
                         <td colSpan={8}>
                           <AssetCuration asset={a} canEdit={canEdit} onCurated={onCurated} />
-                          <CatalogColumns columns={a.columns} />
+                          <CatalogColumns columns={a.columns} curate={canEdit ? { wsId, assetId: a.id, fq: a.fq } : undefined} />
                         </td>
                       </tr>
                     )}
@@ -278,16 +279,25 @@ export function AssetCuration({ asset, canEdit, onCurated }: {
   );
 }
 
-export function CatalogColumns({ columns }: { columns: CatalogColumn[] }) {
+/**
+ * The columns of a table; with `curate`, an editor curates each column's tags, unit and glossary alias
+ * in place (P4-07). The one home of column curation is here, in Data.
+ */
+export function CatalogColumns({ columns, curate }: { columns: CatalogColumn[]; curate?: { wsId: string; assetId: string; fq: string } }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
   if (!columns.length) return <p className="muted small">No columns recorded.</p>;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" tabIndex={curate ? 0 : undefined}>
+      {saved && <Notice tone="success">{saved}</Notice>}
       <table className="table table-compact">
         <caption className="sr-only">Columns</caption>
-        <thead><tr><th>Column</th><th>Type</th><th>Role</th><th>Unit</th><th>Tags</th><th>PII</th><th>Glossary</th><th>Description</th></tr></thead>
+        <thead><tr><th>Column</th><th>Type</th><th>Role</th><th>Unit</th><th>Tags</th><th>PII</th><th>Glossary</th><th>Description</th>
+          {curate && <th><span className="sr-only">Curate</span></th>}</tr></thead>
         <tbody>
           {columns.map((c) => (
-            <tr key={c.name}>
+            <Fragment key={c.name}>
+            <tr>
               <td><code>{c.name}</code>{c.business_name && <div className="muted small">{c.business_name}</div>}</td>
               <td className="small">{c.data_type}</td>
               <td className="small">{c.role ?? <span className="muted">—</span>}</td>
@@ -309,7 +319,18 @@ export function CatalogColumns({ columns }: { columns: CatalogColumn[] }) {
                 ) : <span className="muted">—</span>}
               </td>
               <td className="small clamp-2">{c.description ?? <span className="muted">—</span>}</td>
+              {curate && (
+                <td><button type="button" className="btn btn-xs btn-ghost" aria-expanded={open === c.name}
+                  onClick={() => { setSaved(null); setOpen((o) => (o === c.name ? null : c.name)); }} aria-label={`Curate ${c.name}`}>Curate</button></td>
+              )}
             </tr>
+            {curate && open === c.name && (
+              <tr className="row-detail"><td colSpan={9}>
+                <ColumnCurationForm wsId={curate.wsId} assetId={curate.assetId} fq={curate.fq} column={c} onCancel={() => setOpen(null)}
+                  onDone={(msg) => { setOpen(null); setSaved(msg); }} />
+              </td></tr>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>

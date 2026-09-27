@@ -75,8 +75,9 @@ export function DashboardPreview({ wsId, artifact }: { wsId: string; artifact: A
             if (kind === "filters") {
               return (
                 <div key={i} className="dash-cell dash-filters" style={cellStyle(cell)}>
-                  <span className="muted small">Filters:</span>
-                  {(content.native_filters ?? []).map((f) => <span key={f} className="chip">{f} ▾</span>)}
+                  {/* Not interactive here: a filter that changed its value without re-querying would show wrong numbers (workbench-ux §4). */}
+                  <span className="muted small">Filters, applied once published (not interactive in this preview):</span>
+                  {(content.native_filters ?? []).map((f) => <span key={f} className="tag tag-neutral">{f}</span>)}
                   {!content.native_filters?.length && <span className="muted small">none</span>}
                 </div>
               );

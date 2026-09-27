@@ -3372,25 +3372,41 @@ export const api = {
 // ----------------------------------------------------------------------------------- run events (SSE)
 export interface EventStreamHandle {
   close: () => void;
+  /** Skip the backoff wait and reconnect at once (a person pressed "Reconnect now"). */
+  reconnectNow: () => void;
+}
+
+/** Where a reconnecting stream stands: which attempt, when it retries, and the last event it has. */
+export interface StreamInfo {
+  attempt: number;
+  /** Milliseconds until the next attempt (only while reconnecting). */
+  retryInMs?: number;
+  /** The persisted cursor it resumes from (`after_id`). */
+  lastEventId: number;
+  /** True when this `open` follows a drop: the caller should re-read state it may have missed. */
+  resumed?: boolean;
 }
 
 export interface EventStreamCallbacks {
   onEvent: (ev: RunEvent) => void;
   onEnd?: (status: string | null) => void;
-  onStatus?: (state: "connecting" | "open" | "reconnecting" | "closed", error?: string) => void;
+  onStatus?: (state: "connecting" | "open" | "reconnecting" | "closed", error?: string, info?: StreamInfo) => void;
 }
 
 /**
  * Subscribe to GET /api/workspaces/{ws}/analysis/{run}/events with the bearer header.
  * Reconnects with ?after_id=<last seen id> (exponential backoff, max 15 s) until the server sends
- * `event: end` (terminal run) or the caller closes the handle.
+ * `event: end` (terminal run) or the caller closes the handle. `onStatus` reports the attempt, the
+ * retry delay and the cursor, and marks the first `open` after a drop as `resumed`.
  */
 export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallbacks, afterId = 0): EventStreamHandle {
   const controller = new AbortController();
   let last = afterId;
   let ended = false;
   let attempt = 0;
+  let dropped = false;
   let closedReason: string | undefined;
+  let wake: (() => void) | null = null;
 
   const handle = (m: SSEMessage) => {
     if (m.event === "expired" || m.event === "revoked") {
@@ -3426,7 +3442,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
 
   const loop = async () => {
     while (!controller.signal.aborted && !ended) {
-      cb.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
+      cb.onStatus?.(attempt === 0 && !dropped ? "connecting" : "reconnecting", undefined, { attempt, lastEventId: last });
       let opened = false;
       try {
         await readSSE({
@@ -3437,7 +3453,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
           onOpen: () => {
             opened = true;
             attempt = 0;
-            cb.onStatus?.("open");
+            cb.onStatus?.("open", undefined, { attempt: 0, lastEventId: last, resumed: dropped });
           },
           onMessage: handle,
         });
@@ -3453,17 +3469,24 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
           cb.onStatus?.("closed", err instanceof Error ? err.message : String(err));
           return;
         }
-        cb.onStatus?.("reconnecting", err instanceof Error ? err.message : String(err));
+        const next = attempt + 1;
+        cb.onStatus?.("reconnecting", err instanceof Error ? err.message : String(err),
+          { attempt: next, retryInMs: Math.min(15000, 500 * 2 ** Math.min(next, 5)), lastEventId: last });
       }
+      dropped = true;
       // A stream that opened and then dropped reconnects quickly; repeated failures back off.
       attempt = opened ? 1 : attempt + 1;
       const delay = Math.min(15000, 500 * 2 ** Math.min(attempt, 5));
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, delay);
+        wake = () => { clearTimeout(t); r(); };
+      });
+      wake = null;
     }
     cb.onStatus?.("closed", closedReason);
   };
   void loop();
-  return { close: () => controller.abort() };
+  return { close: () => controller.abort(), reconnectNow: () => wake?.() };
 }
 
 /**
