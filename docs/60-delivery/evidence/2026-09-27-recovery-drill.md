@@ -64,9 +64,11 @@ Generated 2026-09-27 15:56 UTC by `scripts/recovery_drill.py` at `unknown`. Sour
   created by the test fixture (`create_all`), so it carries no Alembic revision. `--files` is the artifact directory
   the same run wrote (recipe snapshots, ML artifacts); `ANALYSTOS_ARTIFACT_DIR` pointed at it so that ML dependencies
   resolve against the restored files (all 269 dependencies of the 55 live records equal their recorded versions).
-* **Migrated schema.** A second drill on a freshly migrated (`alembic upgrade head` = `0043`, after a `downgrade -1` /
+* **Migrated schema.** A second drill on a freshly migrated (`alembic upgrade head` = `0044`, after a `downgrade -1` /
   `upgrade head` round trip) and seeded database passed the same checks with the working-tree code and kept the
-  revision: `2026-09-27-recovery-drill-migrated-schema.md`.
+  revision: `2026-09-27-recovery-drill-migrated-schema.md`. (It was first run when the named-owners migration was
+  numbered `0043`; after main's `0043_column_absent_since` was merged the migration became `0044` and the drill was
+  run again on the merged chain.)
 * **Recovery time.** Create + restore of a 2.9 MB dump (20,245 rows) and the artifact tar took about 6-7 s on a shared
   4-CPU host under load; it scales with the dump size. The recovery point is the time of the dump (no WAL archiving).
 * **Not covered.** The analytics database (staged snapshots, managed outputs) was not drilled here; the same script

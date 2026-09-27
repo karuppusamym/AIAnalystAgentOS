@@ -1,22 +1,22 @@
 # Recovery drill (P4-09) — 2026-09-27
 
-Generated 2026-09-27 15:56 UTC by `scripts/recovery_drill.py` at `1d8d26c`. Source database `analystos_b2_migrated` on localhost:5432 (91 tables, 136 rows, Alembic revision `0043`); scratch database `analystos_b2_migrated_drill` (dropped after the drill).
+Generated 2026-09-27 16:30 UTC by `scripts/recovery_drill.py` at `30ab6b3`. Source database `analystos_b2_migrated` on localhost:5432 (91 tables, 136 rows, Alembic revision `0044`); scratch database `analystos_b2_migrated_drill` (dropped after the drill).
 
-**Result: PASSED** — backup `analystos_b2_migrated.dump` 275203 bytes, sha256 `f5ec51352f522df1…`
+**Result: PASSED** — backup `analystos_b2_migrated.dump` 275270 bytes, sha256 `a0d217d0cdec90d0…`
 
 ## Steps
 
 | Step | Seconds |
 |---|---|
-| inventory source | 0.624 |
-| resolve records on source | 1.138 |
-| pg_dump (custom format) | 0.394 |
-| create scratch database | 0.34 |
-| pg_restore into scratch (copy 1) | 3.22 |
-| destroy scratch database | 0.612 |
-| recover: create + pg_restore (+ untar) | 4.211 |
-| inventory restored copy | 0.111 |
-| resolve records on restored copy | 0.033 |
+| inventory source | 0.534 |
+| resolve records on source | 0.776 |
+| pg_dump (custom format) | 0.176 |
+| create scratch database | 0.055 |
+| pg_restore into scratch (copy 1) | 3.257 |
+| destroy scratch database | 1.316 |
+| recover: create + pg_restore (+ untar) | 3.154 |
+| inventory restored copy | 0.103 |
+| resolve records on restored copy | 0.024 |
 
 ## Checks on the recovered copy
 
@@ -25,7 +25,7 @@ Generated 2026-09-27 15:56 UTC by `scripts/recovery_drill.py` at `1d8d26c`. Sour
 | copy 1 equals the source | pass | 91 tables |
 | scratch database destroyed | pass | analystos_b2_migrated_drill no longer exists |
 | every table: same rows and checksum | pass | identical |
-| alembic revision | pass | 0043 |
+| alembic revision | pass | 0044 |
 | runs resolve | pass | 0 runs {}; orphans: tasks 0, events 0 |
 | approvals keep their hash binding | pass | 0/0 payloads hash to their approval {} |
 | evidence resolves | pass | 0 insights; 0/0 bound evidence bundles hash to their record (source: 0/0) |
