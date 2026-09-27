@@ -1,17 +1,11 @@
 {
   "$defs": {
     "ArtifactRef": {
-      "additionalProperties": true,
-      "description": "A stored result snapshot. The compute-worker contract (P7-06, `contracts/worker.py`) may widen\nthis; the fields here are the ones a step reads (the artifact row, its version and content hash).",
+      "additionalProperties": false,
+      "description": "An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same\nartifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this\ntype). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step\nsnapshots stored or read as `{\"kind\": \"artifact\", \"id\": ...}` keep their shape.",
       "properties": {
-        "kind": {
-          "const": "artifact",
-          "default": "artifact",
-          "title": "Kind",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
+        "artifact_id": {
+          "title": "Artifact Id",
           "type": "string"
         },
         "version": {
@@ -19,18 +13,36 @@
           "title": "Version",
           "type": "integer"
         },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
         "content_hash": {
           "title": "Content Hash",
           "type": "string"
         },
         "media_type": {
-          "default": "application/json",
+          "default": "application/octet-stream",
           "title": "Media Type",
           "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
         }
       },
       "required": [
-        "id",
+        "artifact_id",
+        "kind",
         "content_hash"
       ],
       "title": "ArtifactRef",

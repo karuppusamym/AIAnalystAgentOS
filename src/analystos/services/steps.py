@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from analystos.contracts.step import ArtifactRef, Step, StepCheck, StepEdit, StepIn
+from analystos.contracts.step import STEP_SNAPSHOT_KIND, ArtifactRef, Step, StepCheck, StepEdit, StepIn
 from analystos.core.errors import AnalystOSError, InvalidInput, NotFound, PreconditionFailed
 from analystos.core.ids import new_id, stable_hash, utcnow
 from analystos.core.logging import get_logger
@@ -325,7 +325,8 @@ def _save_snapshot(session: Session, step: AnalysisStep, ver: AnalysisStepVersio
     art = save_artifact(session, workspace_id=step.workspace_id, type_="step_result", name=f"{step.id}@v{ver.version}",
                         content=content, creator_user=actor.removeprefix("user:") if actor.startswith("user:") else None,
                         status="final")
-    return ArtifactRef(id=art.id, version=art.version, content_hash=art.content_hash).model_dump(mode="json")
+    return ArtifactRef(artifact_id=art.id, version=art.version, kind=STEP_SNAPSHOT_KIND, content_hash=art.content_hash,
+                       media_type="application/json").model_dump(mode="json")
 
 
 def snapshot_content(session: Session, ref: dict[str, Any] | None) -> dict[str, Any]:

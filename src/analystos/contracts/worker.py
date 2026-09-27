@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from analystos.core.ids import stable_hash
 
@@ -26,14 +26,27 @@ class _Strict(BaseModel):
 
 
 class ArtifactRef(_Strict):
-    """An immutable artifact in the store. Content-addressed: the same bytes in a workspace are the same artifact."""
+    """An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same
+    artifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this
+    type). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step
+    snapshots stored or read as `{"kind": "artifact", "id": ...}` keep their shape."""
 
     artifact_id: str
     version: int = 1
     kind: str
-    content_hash: str  # sha256 of the bytes
+    content_hash: str  # sha256 of the bytes (worker) or of the canonical JSON content (registry)
     media_type: str = "application/octet-stream"
-    bytes: int = Field(ge=0)
+    bytes: int | None = Field(default=None, ge=0)  # known for worker artifacts; None for registry content
+
+    @model_validator(mode="before")
+    @classmethod
+    def _id_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "id" in data:
+            data = dict(data)
+            alias = data.pop("id")
+            if data.setdefault("artifact_id", alias) != alias:
+                raise ValueError("id and artifact_id name different artifacts")
+        return data
 
     @field_validator("content_hash")
     @classmethod
@@ -41,6 +54,11 @@ class ArtifactRef(_Strict):
         if not _HEX64.match(v):
             raise ValueError("content_hash must be a lowercase sha256 hex digest")
         return v
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def id(self) -> str:
+        return self.artifact_id
 
 
 class CapabilityRef(_Strict):

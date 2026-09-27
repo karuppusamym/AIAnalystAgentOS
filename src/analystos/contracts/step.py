@@ -21,23 +21,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from analystos.contracts.worker import ArtifactRef  # one definition (ADR-0022): a step's snapshot is an ArtifactRef
+
 StepKind = Literal["plan", "query", "method", "recipe", "train", "chart", "claim"]
 StepStatus = Literal["pending", "ok", "flagged", "failed", "unsupported", "recorded"]
 ContainerType = Literal["run", "ask_thread", "notebook"]
 CellType = Literal["markdown", "sql", "python"]
 STEP_SCHEMA_VERSION = 1
-
-
-class ArtifactRef(BaseModel):
-    """A stored result snapshot. The compute-worker contract (P7-06, `contracts/worker.py`) may widen
-    this; the fields here are the ones a step reads (the artifact row, its version and content hash)."""
-
-    model_config = ConfigDict(extra="allow")
-    kind: Literal["artifact"] = "artifact"
-    id: str
-    version: int = 1
-    content_hash: str
-    media_type: str = "application/json"
+STEP_SNAPSHOT_KIND = "artifact"  # the `kind` of a step's registry-backed result snapshot
 
 
 class StepCheck(BaseModel):

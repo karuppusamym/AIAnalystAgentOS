@@ -2,7 +2,7 @@
   "$defs": {
     "ArtifactRef": {
       "additionalProperties": false,
-      "description": "An immutable artifact in the store. Content-addressed: the same bytes in a workspace are the same artifact.",
+      "description": "An immutable artifact: a worker artifact (content-addressed: the same bytes in a workspace are the same\nartifact) or a registry artifact such as a step's result snapshot (`contracts/step.py` re-exports this\ntype). `id` is a read-only alias of `artifact_id`, accepted on input and always emitted, so step\nsnapshots stored or read as `{\"kind\": \"artifact\", \"id\": ...}` keep their shape.",
       "properties": {
         "artifact_id": {
           "title": "Artifact Id",
@@ -27,16 +27,23 @@
           "type": "string"
         },
         "bytes": {
-          "minimum": 0,
-          "title": "Bytes",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
         }
       },
       "required": [
         "artifact_id",
         "kind",
-        "content_hash",
-        "bytes"
+        "content_hash"
       ],
       "title": "ArtifactRef",
       "type": "object"

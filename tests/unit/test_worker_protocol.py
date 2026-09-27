@@ -329,6 +329,26 @@ def test_step_python_goes_to_compute_py_only_when_the_pool_is_configured(monkeyp
     assert steps.execute_python("result = 1", {})["isolation"] == "process" and len(calls) == 1
 
 
+def test_a_step_snapshot_and_a_worker_artifact_are_one_artifact_ref_type():
+    from analystos.contracts import step, worker
+
+    assert step.ArtifactRef is worker.ArtifactRef
+    assert step.Step.model_fields["result_snapshot"].annotation == worker.ArtifactRef | None
+    h = "ab" * 32
+    stored = {"kind": "artifact", "id": "art_1", "version": 2, "content_hash": h, "media_type": "application/json"}
+    ref = worker.ArtifactRef.model_validate(stored)  # a snapshot stored before the types were unified
+    assert ref.artifact_id == "art_1" and ref.bytes is None
+    dumped = ref.model_dump(mode="json")
+    assert {k: dumped[k] for k in stored} == stored and dumped["artifact_id"] == "art_1"  # old readers keep `id`
+    assert worker.ArtifactRef.model_validate(dumped) == ref
+    w = worker.ArtifactRef(artifact_id="wa_" + "0" * 32, kind="blob", content_hash=h, bytes=3)
+    assert worker.ArtifactRef.model_validate(w.model_dump()) == w and w.id == w.artifact_id
+    with pytest.raises(ValueError, match="different artifacts"):
+        worker.ArtifactRef.model_validate({**stored, "artifact_id": "art_2"})
+    with pytest.raises(ValueError):
+        worker.ArtifactRef.model_validate({**stored, "unexpected": 1})
+
+
 def test_the_ml_capability_hash_covers_the_ml_package():
     from analystos.workers import handlers
 
