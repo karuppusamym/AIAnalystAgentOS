@@ -3,9 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, type DefinitionVersion, type Source } from "../api";
 import { useAction, useAsync } from "../lib/hooks";
 import { roleAtLeast, to } from "../routes";
+import { agentDefinitions, AgentsPanel } from "./AgentForms";
 import { Drawer } from "./Drawer";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge } from "./ui";
 
+type AgentChoice = { id: string; summary: string; side_effect: string };
 type StepDraft = { key: string; title: string; use: string; after: string; optional: boolean };
 type Editor = { mode: "new" | "edit" | "copy"; id?: string };
 const NEW_STEP: StepDraft = { key: "", title: "", use: "", after: "", optional: false };
@@ -18,7 +20,7 @@ async function workflowDefinitions(wsId: string): Promise<DefinitionVersion[]> {
   let cursor: string | null = null;
   do {
     const page = await api.listDefinitions(wsId, { kind: "playbook", ...(cursor ? { cursor } : {}) });
-    result.push(...page.items);
+    result.push(...page.items.filter((d) => d.kind === "playbook"));
     cursor = page.next_cursor;
   } while (cursor);
   return result;
@@ -32,7 +34,9 @@ export function WorkflowPanel({ wsId, role }: { wsId: string; role: string | und
   const [editor, setEditor] = useState<Editor | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const canEdit = roleAtLeast(role, "editor");
-  return <Card title="Workflows" actions={canEdit && <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditor({ mode: "new" })}>Build workflow</button>}>
+  return <div className="stack">
+  <AgentsPanel wsId={wsId} role={role} />
+  <Card title="Workflows" actions={canEdit && <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditor({ mode: "new" })}>Build workflow</button>}>
     <p className="small muted">Compose registered agents into steps. Drafts are checked before saving; published versions can be run manually and stay pinned for history.</p>
     <ErrorBox error={defs.error} onRetry={defs.reload} />
     {defs.loading && !defs.data && <Loading />}
@@ -51,12 +55,14 @@ export function WorkflowPanel({ wsId, role }: { wsId: string; role: string | und
     {editor && <WorkflowEditor wsId={wsId} editor={editor} onClose={() => setEditor(null)}
       onSaved={() => { setEditor(null); void defs.reload(); }} />}
     {runId && <RunWorkflow wsId={wsId} definitionId={runId} onClose={() => setRunId(null)} />}
-  </Card>;
+  </Card>
+  </div>;
 }
 
 function WorkflowEditor({ wsId, editor, onClose, onSaved }: { wsId: string; editor: Editor; onClose: () => void; onSaved: () => void }) {
   const id = useId();
   const agents = useAsync(() => api.listCapabilities({ kind: "Agent", workspace_id: wsId }), [wsId]);
+  const wsAgents = useAsync(() => agentDefinitions(wsId, "published"), [wsId]);
   const playbooks = useAsync(() => api.listCapabilities({ kind: "Playbook" }), []);
   const original = useAsync(() => editor.id ? api.getDefinition(wsId, editor.id) : Promise.resolve(null), [wsId, editor.id]);
   const act = useAction();
@@ -77,8 +83,12 @@ function WorkflowEditor({ wsId, editor, onClose, onSaved }: { wsId: string; edit
     setSteps(rows.map((s) => ({ key: String(s.key || ""), title: String(s.title || ""), use: String(s.use || ""),
       after: Array.isArray(s.after) ? String(s.after[0] || "") : "", optional: Boolean(s.optional) })));
   }, [source]);
-  const choices = (agents.data?.capabilities ?? []).filter((a) => a.entry && a.available !== false && a.enabled !== false
+  const installed: AgentChoice[] = (agents.data?.capabilities ?? []).filter((a) => a.entry && a.available !== false && a.enabled !== false
     && a.side_effect !== "write_external" && a.certification.status !== "deprecated");
+  // The workspace's own published agents (P7-19); a run binds their newest published version.
+  const own: AgentChoice[] = [...new Map((wsAgents.data ?? []).filter((d) => !installed.some((a) => a.id === d.key))
+    .map((d) => [d.key, { id: d.key, summary: `${d.title || d.key} (workspace agent)`, side_effect: "write_internal" }])).values()];
+  const choices = [...installed, ...own];
   const key = `playbook.${slug.trim()}`;
   const duplicate = !!playbooks.data?.capabilities.some((p) => p.id === key) && editor.mode === "new";
   const stepKeys = steps.map((s) => s.key);
@@ -124,7 +134,7 @@ function WorkflowEditor({ wsId, editor, onClose, onSaved }: { wsId: string; edit
     <Notice tone="warning">This workflow has advanced manifest fields. Its version is preserved; edit it through the manifest API.</Notice>
   </Drawer>;
   return <Drawer title={editor.mode === "new" ? "Build workflow" : editor.mode === "copy" ? "New workflow version" : "Edit workflow"} onClose={onClose} className="drawer-wide">
-    <ErrorBox error={agents.error ?? playbooks.error ?? original.error} />
+    <ErrorBox error={agents.error ?? wsAgents.error ?? playbooks.error ?? original.error} />
     {(!agents.data || !playbooks.data || (editor.id && !original.data)) && <Loading />}
     {agents.data && !choices.length && <Notice tone="warning">No available agents with a default action are enabled here. Ask an owner to enable agents in Capabilities.</Notice>}
     {!saved && <form className="form" onSubmit={save} aria-label="Workflow builder">

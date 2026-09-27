@@ -9,7 +9,10 @@ tasks, frozen by `corpus.lock.json`), its runner (`scripts/benchmark_heldout.py`
 `heldout` tier of `config/eval_gates.yaml`), the first dated result
 ([`evidence/2026-09-27-heldout-component-platform-off.md`](evidence/2026-09-27-heldout-component-platform-off.md))
 and the paired practitioner-baseline protocol ([`06-practitioner-baseline-protocol.md`](06-practitioner-baseline-protocol.md),
-not yet run).
+not yet run). Corpus v2 (2026-09-27, 75 tasks: 31 analysis incl. retail, logistics, SaaS ops and the transfer suite,
+15 engineering, 16 ML, 8 governance, 5 UX/recovery; 32 abstain) is measured in
+[`evidence/2026-09-27-heldout-v2-component-platform-off.md`](evidence/2026-09-27-heldout-v2-component-platform-off.md);
+it meets §2's counts but not 10 tasks per domain.
 
 ## 1. Unit of evaluation
 

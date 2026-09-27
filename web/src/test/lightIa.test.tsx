@@ -243,6 +243,29 @@ describe("Start work job kinds (from the P4-04 endpoint)", () => {
     expect(SCREENS.length).toBeLessThanOrEqual(20);
   });
 
+  it("Predict without a published spec still opens its form so the spec can be written (live regression)", async () => {
+    const noSpec = { code: "no_ml_spec", message: "Predict needs a published ml_spec definition for this task, and this workspace has none yet",
+      remediation: "Publish an ml_spec definition (a reviewed MLSpec)." };
+    const kindsNoSpec = JOB_KINDS.map((k) => (k.key === "predict" ? { ...k, available: false, reasons: [noSpec] } : k));
+    const mapped = Object.fromEntries(jobKindsFromAvailability(kindsNoSpec).map((k) => [k.id, k]));
+    expect(mapped.predict.enabled).toBe(false);
+    expect(mapped.predict.specFirst).toBe(true);
+    // any other reason (a role, a turned-off mode) keeps it closed
+    const withRole = kindsNoSpec.map((k) => (k.key === "predict" ? { ...k, reasons: [noSpec, { code: "role", message: "role", remediation: "" }] } : k));
+    expect(jobKindsFromAvailability(withRole)[3].specFirst).toBe(false);
+
+    mockFetch((method, path) => (method === "GET" && path === `/api/workspaces/${WS}/capabilities`
+      ? { status: 200, body: { digest: "d", job_kinds: kindsNoSpec } } : null));
+    renderAt(`/w/${WS}/work`);
+    fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
+    const kinds = await screen.findByRole("list", { name: "Job kinds" });
+    fireEvent.click(within(kinds).getByRole("button", { name: /Predict.*Needs a published model spec first/ }));
+    const form = await screen.findByRole("form", { name: "Start predict" });
+    expect(within(form).getByRole("button", { name: "Start experiment" })).toHaveProperty("disabled", true);
+    fireEvent.click(within(form).getByRole("button", { name: "Write a new spec" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=experiments&new=predict`));
+  });
+
   it("Prepare data opens its panel in Work when the server says it can run (no new screen)", async () => {
     mockFetch();
     renderAt(`/w/${WS}/work`);

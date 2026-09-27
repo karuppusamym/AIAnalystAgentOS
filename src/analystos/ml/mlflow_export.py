@@ -9,6 +9,12 @@ Layout (what `mlflow.tracking.MlflowClient(tracking_uri="file:<dir>/mlruns")` re
 
 One MLflow run per platform experiment; each search trial is a step of the `cv_<metric>` metric, the holdout
 metrics are single values. The import side (a customer's MLflow) is out of scope.
+
+Opened with a real client (MLflow 3.16, 2026-09-27; `tests/unit/test_mlflow_client.py`): artifact locations are
+relative (`mlruns/1`), so open the unzipped folder as the working directory. MLflow 3.x keeps the file store in
+maintenance mode: set `MLFLOW_ALLOW_FILE_STORE=true`, or `mlflow migrate-filestore --source . --target sqlite:///...`.
+The model's input is the platform model matrix (`ml/data.model_matrix`): numeric, boolean and datetime (days since
+epoch) features are doubles, categoricals strings; MLflow's schema check refuses integer columns for a double.
 """
 from __future__ import annotations
 
@@ -80,7 +86,8 @@ def files(view: dict[str, Any], records: dict[str, Any], package: bytes, *, unpi
             "analystos.evaluation_seal": view.get("evaluation_seal"), "analystos.code_digest": view.get("code_digest"),
             "analystos.definition": f"{view['definition_key']}@{view.get('definition_version')}"}
     for k, v in tags.items():
-        put(f"{run_dir}/tags/{_name(k)}", str(v))
+        if v is not None:  # MLflow shows a tag file's text verbatim: an unknown value is left out, not "None"
+            put(f"{run_dir}/tags/{_name(k)}", str(v))
     art = f"{run_dir}/artifacts"
     put(f"{art}/evaluation_report.json", json.dumps(records.get("ml_evaluation"), indent=1, default=str))
     put(f"{art}/split_manifest.json", json.dumps(records.get("ml_split_manifest"), indent=1, default=str))

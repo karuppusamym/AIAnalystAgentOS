@@ -134,7 +134,7 @@ def test_start_work_and_readiness_refuse_what_cannot_run(api, world):
     ws, analyst = world["ws"], world["analyst"]
     kinds = {k["key"]: k for k in api.get(f"/api/workspaces/{ws}/capabilities", headers=analyst).json()["job_kinds"]}
     assert kinds["explain"]["available"] and not kinds["predict"]["available"]
-    assert "no_executor" in {r["code"] for r in kinds["predict"]["reasons"]}
+    assert "no_ml_spec" in {r["code"] for r in kinds["predict"]["reasons"]}
     r = api.post(f"/api/workspaces/{ws}/readiness", headers=analyst, json={"job_kind": "predict", "assets": [world["table"]]})
     assert r.status_code == 201
     out = r.json()

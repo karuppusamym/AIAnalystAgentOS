@@ -91,6 +91,8 @@ class Workspace(Base):
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Named business and technical owner (P4-09, contracts/pilot.py): {"business": {name, email, user_id?}, ...}
+    owners: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
 
 
 class WorkspaceMember(Base):
@@ -131,6 +133,7 @@ class Source(Base):
     last_discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _ts()
+    owners: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # as Workspace.owners (P4-09)
 
 
 class SourceAsset(Base):
@@ -183,6 +186,9 @@ class SourceColumn(Base):
     semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # role, unit, pii, glossary
     # Tags set by a person are never removed by a crawl; crawler tags can only be added (tighten, never loosen).
     tags_origin: Mapped[str] = mapped_column(String(20), default="crawler", server_default="crawler")  # crawler | user
+    # P7-20: a user-curated column missing from one crawl is kept (curation intact) and marked absent; it is
+    # hidden from every ORM query (`db/column_presence.py`) until a crawl sees it again and clears this.
+    absent_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Relationship(Base):
@@ -1943,3 +1949,6 @@ class MLScoringRun(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+from analystos.db import column_presence  # noqa: E402,F401  (registers the absent-column filter, P7-20)

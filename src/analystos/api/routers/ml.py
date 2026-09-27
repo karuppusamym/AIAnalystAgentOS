@@ -82,14 +82,17 @@ def start_experiment(workspace_id: str, body: ExperimentIn, user: User = Depends
 @router.get("/workspaces/{workspace_id}/ml/experiments")
 def list_experiments(workspace_id: str, definition: str | None = None, user: User = Depends(current_user),
                      session: Session = Depends(db, scope="function")):
-    return [ml_svc.experiment_view(e) for e in ml_svc.list_experiments(session, user, workspace_id, definition)]
+    exps = ml_svc.list_experiments(session, user, workspace_id, definition)
+    versions = ml_svc.registered_versions(session, exps)
+    return [ml_svc.experiment_view(e, version=versions.get(e.id)) for e in exps]
 
 
 @router.get("/workspaces/{workspace_id}/ml/experiments/{experiment_id}")
 def get_experiment(workspace_id: str, experiment_id: str, user: User = Depends(current_user),
                    session: Session = Depends(db, scope="function")):
     exp = ml_svc.get_experiment(session, user, experiment_id, workspace_id)
-    return {**ml_svc.experiment_view(exp), "verification": ml_svc.verification_of(session, exp)}
+    return {**ml_svc.experiment_view(exp, version=ml_svc.registered_versions(session, [exp]).get(exp.id)),
+            "verification": ml_svc.verification_of(session, exp)}
 
 
 @router.get("/workspaces/{workspace_id}/ml/experiments/{experiment_id}/records/{record}")

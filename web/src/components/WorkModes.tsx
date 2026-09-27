@@ -21,7 +21,7 @@ export function WorkModeChoices({ selected, onChange }: { selected: WorkMode[]; 
 }
 
 /** Owners review the exact playbook changes before applying a preset. */
-export function WorkModesSettings({ wsId }: { wsId: string }) {
+export function WorkModesSettings({ wsId, collapsed = false }: { wsId: string; collapsed?: boolean }) {
   const loaded = useAsync(() => api.getWorkModes(wsId), [wsId]);
   const [selected, setSelected] = useState<WorkMode[]>([]);
   const [plan, setPlan] = useState<WorkModesPlan | null>(null);
@@ -37,7 +37,7 @@ export function WorkModesSettings({ wsId }: { wsId: string }) {
     const result = await action.run(() => api.setWorkModes(wsId, selected));
     if (result) { loaded.setData(result); setPlan(null); }
   };
-  return <Card title="Workspace work modes">
+  const body = <>
     <p className="small muted">Choose one or more. This changes work shortcuts and playbook enablement. Data grants, roles and approvals are managed separately.</p>
     <ErrorBox error={loaded.error ?? action.error} onRetry={loaded.reload} />
     {!loaded.data ? <Loading /> : <>
@@ -52,5 +52,8 @@ export function WorkModesSettings({ wsId }: { wsId: string }) {
         <button type="button" className="btn btn-primary" disabled={action.busy} onClick={() => void save()}>Save work modes</button>
       </div>}
     </>}
-  </Card>;
+  </>;
+  // Configuration, not something that needs the person: on the Overview it stays closed until asked for.
+  if (collapsed) return <details className="card at-a-glance"><summary>Work modes</summary><div className="card-body">{body}</div></details>;
+  return <Card title="Workspace work modes">{body}</Card>;
 }

@@ -90,11 +90,15 @@ export function RunViewPage() {
           <StatusBadge status={r.status} /> <OriginBadge wsId={wsId} origin={r.origin} />
         </>}
         actions={<>
-          <StreamIndicator state={stream.state} error={stream.error} info={stream.info} lastUpdate={stream.lastUpdate}
-            onReconnect={() => handleRef.current?.reconnectNow()} />
-          <button type="button" className="btn btn-sm" onClick={() => doControl("pause")} disabled={terminal || r.status === "PAUSED" || control.busy}>Pause</button>
-          <button type="button" className="btn btn-sm" onClick={() => doControl("resume")} disabled={terminal || r.status !== "PAUSED" || control.busy}>Resume</button>
-          <button type="button" className="btn btn-sm btn-danger" onClick={() => doControl("cancel")} disabled={terminal || control.busy}>Cancel</button>
+          {/* A finished investigation has nothing to pause or stream: its controls leave rather than sit disabled. */}
+          {!terminal && <>
+            <StreamIndicator state={stream.state} error={stream.error} info={stream.info} lastUpdate={stream.lastUpdate}
+              onReconnect={() => handleRef.current?.reconnectNow()} />
+            {r.status === "PAUSED"
+              ? <button type="button" className="btn btn-sm" onClick={() => doControl("resume")} disabled={control.busy}>Resume</button>
+              : <button type="button" className="btn btn-sm" onClick={() => doControl("pause")} disabled={control.busy}>Pause</button>}
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => doControl("cancel")} disabled={control.busy}>Cancel</button>
+          </>}
           <Link to={to.thread(wsId, "run", runId)} className="btn btn-sm btn-ghost">Data Thread</Link>
           <Link to={to.runConsole(wsId, runId)} className="btn btn-sm btn-ghost">Agent console</Link>
         </>}
@@ -207,7 +211,7 @@ export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin 
 export function StreamIndicator({ state, error, info, lastUpdate, onReconnect }: {
   state: StreamState; error?: string; info?: StreamInfo; lastUpdate?: Date; onReconnect?: () => void;
 }) {
-  const label = state === "open" ? "Live" : state === "connecting" ? "Connecting" : state === "reconnecting" ? "Reconnecting" : "Stream closed";
+  const label = state === "open" ? "Live" : state === "connecting" ? "Connecting" : state === "reconnecting" ? "Reconnecting" : "Not live";
   const since = lastUpdate ? lastUpdate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : null;
   const detail = state === "reconnecting"
     ? [info?.attempt ? `attempt ${info.attempt}` : null, info?.retryInMs ? `retry in ${Math.ceil(info.retryInMs / 1000)} s` : null,

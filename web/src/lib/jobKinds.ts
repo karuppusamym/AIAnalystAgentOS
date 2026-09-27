@@ -20,6 +20,11 @@ export interface JobKind {
   description: string;
   action: JobAction;
   enabled: boolean;
+  /**
+   * An ML kind whose only missing piece is a published spec: it cannot train yet, but Start work opens
+   * its form so the person can write the spec (the remedy) instead of meeting a dead end.
+   */
+  specFirst: boolean;
   /** Every reason it cannot start, each with its remediation (empty when enabled). */
   reasons: JobKindReason[];
   /** The first reason in plain words (null when enabled). */
@@ -54,8 +59,10 @@ export function jobKindsFromAvailability(list: JobKindAvailability[]): JobKind[]
   return list.map((a) => {
     const copy = DESCRIPTIONS[a.key] ?? { description: "" };
     const reasons = a.available ? [] : (a.reasons.length ? a.reasons : [{ code: "unknown", message: "The server did not say why.", remediation: "" }]);
+    const action = actionOf(a);
     return {
-      id: a.key, label: a.label, description: copy.description, action: actionOf(a), enabled: a.available, reasons,
+      id: a.key, label: a.label, description: copy.description, action, enabled: a.available,
+      specFirst: !a.available && action === "ml" && reasons.every((r) => r.code === "no_ml_spec"), reasons,
       reason: reasons[0]?.message ?? null, uses: a.capabilities.filter((c) => c.usable).map((c) => c.id),
       readinessChecks: a.readiness_checks, minRole: a.min_role, objectivePrefix: copy.objectivePrefix,
     };

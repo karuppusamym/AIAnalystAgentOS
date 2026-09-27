@@ -122,11 +122,13 @@ class Anomaly:
         def pair(idx: np.ndarray) -> tuple[float, float]:
             return self._metric(self.metric, flags["candidate"][idx], ho[idx]), \
                 self._metric(self.metric, flags["baseline"][idx], ho[idx])
-        boot = V.paired_bootstrap(self.metric, pair, len(ho), seed=self.seed)
+        boot = V.paired_bootstrap(self.metric, pair, len(ho), seed=self.seed, confirm_level=V.confirm_level(self.spec))
         report["uncertainty"] = boot
         if self.has_labels:
             report["decision"] = V.decide(self.metric, report["candidate"].get(self.metric),
-                                          report["baseline"].get(self.metric), boot, self.spec.min_improvement)
+                                          report["baseline"].get(self.metric), boot, self.spec.min_improvement,
+                                          confirmation=self.spec.confirmation,
+                                          folds=(best.get("folds"), baseline.get("folds")))
         else:
             report["decision"] = {"improved": False, "gain": None, "reason": "no labels: detection quality cannot be "
                                   "evaluated; thresholds are calibrated and alarm rates reported only"}

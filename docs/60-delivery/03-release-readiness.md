@@ -26,17 +26,17 @@ implementation and release readiness are separate claims.
 | | Isolated development environment | ✅ Compose stack |
 | | Read-only access | ✅ Enforced at 3 layers: validator, read-only transaction, reader role with `default_transaction_read_only` |
 | | Visible limits and unsupported paths | ✅ Phase-3 endpoints return explicit errors; fallbacks are labelled; this document |
-| Controlled pilot | Named owners and users | ❌ Needs the business owner to nominate |
+| Controlled pilot | Named owners and users | ⚠️ Recorded per workspace and source, shown missing by pilot readiness (`GET /api/workspaces/{id}/pilot-readiness`, 2026-09-27); the business owner still has to nominate the people |
 | | Workspace access checks, positive + negative | ✅ Integration tests (scope, roles, SoD, revocation, expiry, cross-workspace 404) |
-| | Each pilot connector tested against a real source | ⚠️ Live against a real engine: PostgreSQL, MySQL 8.4, SQLite, DuckDB. Mock only: ServiceNow. Catalog and unit tests only: SQL Server, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, MariaDB |
+| | Each pilot connector tested against a real source | ⚠️ Live against a real engine: PostgreSQL, MySQL 8.4 (2026-09-25), SQLite, DuckDB, file sources (CSV/JSON/Excel/Parquet; re-run 2026-09-27). Mock only: ServiceNow. Catalog and unit tests only: SQL Server, Oracle, Snowflake, BigQuery, Databricks, Trino, Redshift, ClickHouse, MariaDB |
 | | Audit and approval paths exercised | ✅ Live e2e exercises approval, role denial, pause/redirect |
-| | Operational monitoring, rollback/recovery documented | ⚠️ Health endpoint, usage/audit APIs, rollback endpoint and runbook exist; no alerting/dashboards |
+| | Operational monitoring, rollback/recovery documented | ⚠️ Health endpoint, usage/audit APIs, rollback endpoint and runbook exist; failed runs, schedules and connectors show their cause in the API and UI (tested 2026-09-27); backup/restore runbook and drill (`docs/30-runbooks/06-backup-and-recovery.md`); no alerting/dashboards |
 | | Unverified capabilities labelled | ✅ SSO, residency, connectors, scale are labelled here and in the tracker |
-| Production | SSO + role mapping | ❌ Local JWT (OIDC-shaped claims) |
+| Production | SSO + role mapping | ⚠️ OIDC with PKCE, JWKS validation and group → workspace-role mapping, tested against a local HTTP identity provider (`scripts/fake_idp.py`); not yet run against the company IdP |
 | | Independent security review | ❌ |
 | | Secret rotation | ⚠️ Secrets are env/file references resolved just in time; rotation procedure documented, not automated |
 | | Live connector certification (all connectors) | ❌ |
-| | Backup/restore, DR tested | ❌ |
+| | Backup/restore, DR tested | ⚠️ Logical backup/restore drill of the control plane passed (`evidence/2026-09-27-recovery-drill.md`); no point-in-time recovery or failover |
 | | Deployment/schema parity | ⚠️ Alembic migrations; no multi-environment deploy yet |
 | | Measured SLOs, load tests | ❌ |
 | | Risk-tier evaluation thresholds (adversarial false-approval corpus) | ❌ Human approval stays mandatory for every external side effect until this exists |

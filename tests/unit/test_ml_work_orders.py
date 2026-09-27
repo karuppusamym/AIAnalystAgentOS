@@ -95,7 +95,34 @@ def test_start_work_offers_ml_once_an_ml_spec_is_published(world):  # noqa: F811
             kinds = {k["key"]: k for k in job_kinds.availability(s, s.get(User, "usr_analyst"), WS)}
         return {r["code"] for r in kinds[key]["reasons"]}
 
-    assert "no_executor" in reasons("predict")
+    assert "no_ml_spec" in reasons("predict")
     _definition(world["owner"], "published")
-    assert "no_executor" not in reasons("predict")
-    assert "no_executor" in reasons("forecast")
+    assert "no_ml_spec" not in reasons("predict")
+    assert "no_ml_spec" in reasons("forecast")
+
+
+def test_a_read_of_an_improved_experiment_shows_its_registered_version(world, sqlite_db, monkeypatch):  # noqa: F811
+    """Live journey 2026-09-27: only the call that trained returned the model version; every later read of the
+    experiment (the page reloads it) omitted it, so the UI said "No model version was registered" and offered no
+    promotion. A read now carries the version the experiment registered, and only that one."""
+    from analystos.api.routers import ml as ml_router
+    from analystos.db import models
+    from analystos.services import ml as ml_svc
+
+    models.Base.metadata.create_all(sqlite_db.kw["bind"], tables=[models.Base.metadata.tables[t] for t in ("ml_experiment", "ml_model_version")])
+    monkeypatch.setattr(ml_svc, "verification_of", lambda session, exp: {"badge": "verified"})
+    with session_scope() as s:
+        for eid, verdict in (("mlx_better", "improved"), ("mlx_worse", "no_improvement")):
+            s.add(models.MLExperiment(id=eid, workspace_id=WS, definition_key="late_orders", task="classify", spec_hash="h",
+                                      status="succeeded", verdict=verdict, dataset_asset="sales.orders", created_by="usr_owner"))
+        s.flush()
+        s.add(models.MLModelVersion(id="mlv_1", workspace_id=WS, name="late_orders", version=1, experiment_id="mlx_better",
+                                    task="classify", package_hash="p", status="candidate", created_by="usr_owner"))
+    with session_scope() as s:
+        analyst = s.get(User, "usr_analyst")
+        one = ml_router.get_experiment(WS, "mlx_better", user=analyst, session=s)
+        listed = {e["id"]: e for e in ml_router.list_experiments(WS, None, user=analyst, session=s)}
+        worse = ml_router.get_experiment(WS, "mlx_worse", user=analyst, session=s)
+    assert one["model_version"]["id"] == "mlv_1" and one["model_version"]["version"] == 1
+    assert listed["mlx_better"]["model_version"]["id"] == "mlv_1"
+    assert "model_version" not in listed["mlx_worse"] and "model_version" not in worse

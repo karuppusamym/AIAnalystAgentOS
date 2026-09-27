@@ -308,6 +308,20 @@ def test_a_pinned_snapshot_that_changed_is_refused(tmp_path):
         ex.take_snapshots()
 
 
+def test_a_pinned_source_is_never_pushed_down():
+    """Held-out HO-REC-05 (2026-09-27): a single-source recipe on a pushdown-capable source ran in place and
+    published from changed data, because only the snapshot engine checks `SourceNode.snapshot`."""
+    spec = recipe()
+    _node(spec, "orders")["snapshot"] = "0" * 64
+    v = validate_recipe(spec)
+    plan = plan_execution(v, scope_for())
+    assert plan.engine == "duckdb" and plan.reasons == ["node orders pins a source snapshot; only the snapshot engine "
+                                                        "can verify the pin"]
+    with pytest.raises(InvalidInput, match="pins a source snapshot"):
+        plan_execution(v, scope_for(), prefer="sql")
+    assert plan_execution(validate_recipe(RECIPE), scope_for()).engine == "sql"  # unpinned recipes still push down
+
+
 def test_join_preflight_measures_keys_overlap_and_multiplication(tmp_path):
     ex, _ = _executor(tmp_path)
     stats = ex.preflight("with_customer")

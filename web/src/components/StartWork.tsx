@@ -66,7 +66,7 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
   const { kinds, digest, error } = useJobKinds(wsId);
   const [draft, setDraft] = useState<Draft>(() => ({ ...loadDraft(wsId), ...(initialKind ? { kind: initialKind } : {}) }));
   const nav = useNavigate();
-  const chosen = kinds?.find((k) => k.id === draft.kind && k.enabled && (k.action === "investigate" || k.action === "ml"));
+  const chosen = kinds?.find((k) => k.id === draft.kind && ((k.enabled && k.action === "investigate") || (k.action === "ml" && (k.enabled || k.specFirst))));
 
   const update = (patch: Draft) => setDraft((d) => {
     const next = { ...d, ...patch };
@@ -75,7 +75,7 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
   });
 
   const pick = (k: JobKind) => {
-    if (!k.enabled) return;
+    if (!k.enabled && !k.specFirst) return;
     if (k.action === "prepare") {
       onClose();
       nav(to.work(wsId, "prepare"));
@@ -98,11 +98,12 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
           <p className="small muted">What do you want to do? Choices that cannot run here say what they need.</p>
           <ul className="job-kinds" aria-label="Job kinds">
             {kinds.map((k) => (
-              <li key={k.id} className={`job-kind ${k.enabled ? "" : "job-kind-disabled"}`}>
-                {k.enabled ? (
+              <li key={k.id} className={`job-kind ${k.enabled || k.specFirst ? "" : "job-kind-disabled"}`}>
+                {k.enabled || k.specFirst ? (
                   <button type="button" className="job-kind-button" onClick={() => pick(k)}>
                     <strong>{k.label}</strong>
                     <span className="small muted block">{k.description}</span>
+                    {k.specFirst && <span className="small block">Needs a published model spec first: write one here.</span>}
                   </button>
                 ) : (
                   <div className="job-kind-button" aria-disabled="true">

@@ -159,7 +159,7 @@ function SuggestionCard({ s, selectable, selected, onSelect, busy, onEditApprove
         <p className="small muted">Writes <code>{s.path}</code> · subject <code>{s.subject}</code>{s.revision ? <> · revision {s.revision}</> : null}</p>
         {s.reason && <p className="small">Reason: {s.reason}</p>}
         {!editing && (
-          <table className="table table-compact suggestion-fields">
+          <div className="table-wrap"><table className="table table-compact suggestion-fields">
             <caption className="sr-only">Fields of {s.title}</caption>
             <thead><tr><th scope="col">Field</th><th scope="col">Value</th><th scope="col">Confidence</th><th scope="col">Provenance</th></tr></thead>
             <tbody>
@@ -178,7 +178,7 @@ function SuggestionCard({ s, selectable, selected, onSelect, busy, onEditApprove
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
         {editing && (
           <form className="form" aria-label={`Edit ${s.title}`} onSubmit={(e) => { e.preventDefault(); onEditApprove(editedFields(s, edits)); }}>

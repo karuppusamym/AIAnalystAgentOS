@@ -702,7 +702,7 @@ const SCREENS: [string, string, RegExp][] = [
   ["Data · documents", `/w/${WS}/data/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
   ["Data · review queue", `/w/${WS}/data/catalog?tab=review`, /crawl-enrich-v2/],
   ["Data · metrics", `/w/${WS}/data/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
-  ["Data · definitions", `/w/${WS}/data/catalog?tab=definitions`, /Governed \(/],
+  ["Data · definitions", `/w/${WS}/data/catalog?tab=definitions`, /Review proposed structure and changes/],
   ["Data · import & export", `/w/${WS}/data/catalog?tab=transfer`, /Push to a git remote/],
   ["Outputs", `/w/${WS}/outputs`, /P1 resolution/],
   ["Outputs · finding", `/w/${WS}/outputs/findings/${INSIGHT}`, /How it was checked/],

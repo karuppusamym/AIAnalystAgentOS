@@ -496,13 +496,27 @@ def _columns_of(cur: Any, ident: sql.Composable) -> list[tuple[str, str]]:
     return [(r[0], r[1]) for r in cur.fetchall()]
 
 
+# (type in the new file, type of the staged column) pairs that INSERT ... SELECT converts without losing a
+# value: a file whose amounts happen to be whole numbers infers bigint for a double precision column.
+_WIDENS = {
+    ("smallint", "integer"), ("smallint", "bigint"), ("integer", "bigint"),
+    *((i, t) for i in ("smallint", "integer", "bigint") for t in ("numeric", "double precision")),
+    ("real", "double precision"),
+}
+
+
+def _same_or_widens(new_type: str, staged_type: str) -> bool:
+    return new_type == staged_type or (new_type, staged_type) in _WIDENS
+
+
 def _check_same_columns(cur: Any, final_ident: sql.Composable, load_ident: sql.Composable, what: str) -> None:
-    """Append and merge write into the existing table: same columns, same types, or nothing is written."""
+    """Append and merge write into the existing table: same columns, the same types (or a lossless
+    widening into the staged type), or nothing is written."""
     old, new = dict(_columns_of(cur, final_ident)), dict(_columns_of(cur, load_ident))
     problems = [f"column {c} ({t}) of the staged table is missing from {what}" for c, t in old.items() if c not in new]
     problems += [f"column {c} ({t}) of {what} is not in the staged table" for c, t in new.items() if c not in old]
     problems += [f"column {c} is {old[c]} in the staged table but {t} in {what}"
-                 for c, t in new.items() if c in old and old[c] != t]
+                 for c, t in new.items() if c in old and not _same_or_widens(t, old[c])]
     if problems:
         raise InvalidInput("; ".join(problems) + " (load with mode replace to change the table's shape)",
                            details={"columns": sorted({p.split()[1] for p in problems})})

@@ -406,6 +406,15 @@ def register_version(session: Session, exp: MLExperiment) -> MLModelVersion:
     return mv
 
 
+def registered_versions(session: Session, experiments: list[MLExperiment]) -> dict[str, MLModelVersion]:
+    """The model version each experiment registered (only an improved one registers), by experiment id, so a
+    read of an experiment shows what the create call returned: its version, promotable through an approval."""
+    ids = [e.id for e in experiments]
+    if not ids:
+        return {}
+    return {mv.experiment_id: mv for mv in session.scalars(select(MLModelVersion).where(MLModelVersion.experiment_id.in_(ids)))}
+
+
 def current_champion(session: Session, workspace_id: str, name: str) -> MLModelVersion | None:
     return session.scalar(select(MLModelVersion).where(MLModelVersion.workspace_id == workspace_id, MLModelVersion.name == name,
                                                        MLModelVersion.status == "champion"))

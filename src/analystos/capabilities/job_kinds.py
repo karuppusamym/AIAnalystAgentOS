@@ -98,7 +98,9 @@ def executor_reason(job: JobKind, session: Session | None = None, workspace_id: 
     if job.entry["type"] == "work_order" and job.entry["payload_type"] == "ml" and session is not None and workspace_id:
         if published_ml_specs(session, workspace_id, job.key):
             return None
-        return _reason("no_executor", f"{job.label} needs a published ml_spec definition for this task, and this workspace has none yet",
+        # Its own code: the remedy (write and publish a spec) starts from Start work's spec form, so the UI can
+        # offer that path while the kind stays unavailable for training.
+        return _reason("no_ml_spec", f"{job.label} needs a published ml_spec definition for this task, and this workspace has none yet",
                        "Publish an ml_spec definition (a reviewed MLSpec) and start the work order with that exact spec; "
                        "or choose Explain or Compare explicitly. Nothing is started in its place.")
     if job.entry["type"] == "work_order" and job.entry["payload_type"] not in EXECUTABLE_TYPES:

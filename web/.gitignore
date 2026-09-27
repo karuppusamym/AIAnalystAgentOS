@@ -3,3 +3,8 @@ dist
 *.tsbuildinfo
 test-results
 playwright-report
+test-results-live
+playwright-report-live
+e2e-live/.live-state.json
+e2e-live/screenshots/*
+!e2e-live/screenshots/key-*.png

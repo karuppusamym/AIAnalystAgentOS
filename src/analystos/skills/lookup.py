@@ -26,6 +26,7 @@ def _visible(ctx: Any, fq_asset: str, col: Any) -> bool:
 
 def catalog_lookup(ctx: Any, assets: list[str], max_columns: int = 40) -> dict[str, Any]:
     from analystos.agents.common import asset_rows
+    from analystos.skills.catalog import screen_for_prompt
 
     wanted = {_in_scope(ctx, a) for a in assets}
     tables = []
@@ -34,11 +35,14 @@ def catalog_lookup(ctx: Any, assets: list[str], max_columns: int = 40) -> dict[s
         if fq not in wanted:
             continue
         visible = [c for c in cols if _visible(ctx, fq, c)]
-        tables.append({"asset": fq, "business_name": asset.business_name, "description": asset.description,
+        # tool results reach the agent's model: owner/user text is screened like crawled text (P7-20)
+        tables.append({"asset": fq, "business_name": screen_for_prompt(asset.business_name, max_chars=200) or None,
+                       "description": screen_for_prompt(asset.description) or None,
                        "role": (asset.semantics or {}).get("role"), "row_count": asset.row_count,
                        "column_count": len(visible), "key_columns": [c.name for c in visible if c.is_key],
                        "columns": [{"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type,
-                                    "business_name": c.business_name, "description": c.description}
+                                    "business_name": screen_for_prompt(c.business_name, max_chars=200) or None,
+                                    "description": screen_for_prompt(c.description) or None}
                                    for c in visible[:max_columns]]})
     return {"tables": tables}
 

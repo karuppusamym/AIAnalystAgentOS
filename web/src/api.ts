@@ -71,7 +71,17 @@ export interface Workspace {
   updated_at: string;
   counts?: WorkspaceCounts;
   role?: string;
+  owners?: Owners;
 }
+
+/** Named business and technical owner of a pilot workspace or source (P4-09): people, not platform roles. */
+export type NamedOwner = Schemas["NamedOwner"];
+export interface Owners {
+  business?: NamedOwner;
+  technical?: NamedOwner;
+}
+export type PilotCheck = Schemas["PilotCheck"];
+export type PilotReadiness = Schemas["PilotReadiness"];
 
 export interface Member {
   user_id: string;
@@ -131,6 +141,7 @@ export interface Source {
   last_discovered_at: string | null;
   last_error: string | null;
   created_at: string;
+  owners?: Owners;
 }
 
 export interface TopValue {
@@ -1292,6 +1303,33 @@ export interface DefinitionVersion {
   created_at: string | null;
   updated_at: string | null;
   spec?: Dict;
+  /** Agent definitions: the form the manifest was built from (null when it uses fields the form cannot show). */
+  form?: AgentFormInput | null;
+}
+
+/** An agent form (P7-19): compiled by the server into the Agent manifest the YAML path loads. */
+export type AgentFormInput = Schemas["AgentForm"];
+
+/** GET .../agent-form: what an owner may grant here, with the reason a capability is not grantable. */
+export interface AgentFormCapability {
+  id: string;
+  ref: string;
+  summary: string;
+  side_effect: string;
+  tool: string | null;
+  certification: string;
+  enabled: boolean;
+  grantable: boolean;
+  reason: string | null;
+  default_input: Dict | null;
+  default_reason: string | null;
+}
+
+export interface AgentFormOptions {
+  capabilities: AgentFormCapability[];
+  knowledge_sections: string[];
+  output_types: string[];
+  limits: { llm_calls: number; usd: number; queries: number; max_rows: number; max_steps: number; pii_access: string[] };
 }
 
 export interface DefinitionRef {
@@ -2185,7 +2223,7 @@ export type BriefPatchBody = Schemas["BriefPatch"];
 export type JobKindKey = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
 
 export interface JobKindReason {
-  code: "no_executor" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
+  code: "no_executor" | "no_ml_spec" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
   message: string;
   remediation: string;
 }
@@ -2384,7 +2422,8 @@ export interface BranchCompare {
 export interface MergeResult {
   report: { id: string; version: number; name: string; content: { kind: "data_thread"; title: string; sections: Dict[]; branches: Dict[] } };
   branch: Branch;
-  included: string[];
+  /** services/branches.py `merge`: how many sections the report took from the branch (a count, not ids). */
+  included: number;
   excluded: Dict[];
 }
 
@@ -2980,6 +3019,13 @@ export const api = {
     post("/api/workspaces/{workspace_id}/members", { path: W(ws), body: { email, role } }) as Promise<{ user_id: string; role: string }>,
   removeMember: (ws: string, userId: string) =>
     del("/api/workspaces/{workspace_id}/members/{user_id}", { path: { workspace_id: ws, user_id: userId } }) as Promise<{ removed: boolean }>,
+  putWorkspaceOwners: (ws: string, body: Schemas["OwnersIn"]) =>
+    put("/api/workspaces/{workspace_id}/owners", { path: W(ws), body }) as Promise<{ workspace_id: string; owners: Owners }>,
+  putSourceOwners: (ws: string, sourceId: string, body: Schemas["OwnersIn"]) =>
+    put("/api/workspaces/{workspace_id}/sources/{source_id}/owners", { path: { workspace_id: ws, source_id: sourceId }, body }) as
+      Promise<{ source_id: string; owners: Owners }>,
+  pilotReadiness: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/pilot-readiness", { path: W(ws) }) as Promise<PilotReadiness>,
   workspaceAudit: (ws: string, limit = 200) =>
     get("/api/workspaces/{workspace_id}/audit", { path: W(ws), query: { limit } }) as Promise<AuditEvent[]>,
   activity: (ws: string, afterId = 0, limit = 100) =>
@@ -3154,6 +3200,13 @@ export const api = {
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/{action}",
       { path: { workspace_id: ws, definition_id: id, action } }), { reason: reason ?? null } satisfies Schemas["ReasonIn"],
     { headers: { "If-Match": `"${revision}"` } }),
+  agentFormOptions: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/agent-form", { path: W(ws) }) as Promise<AgentFormOptions>,
+  createAgentFromForm: (ws: string, body: AgentFormInput) =>
+    post("/api/workspaces/{workspace_id}/agent-form", { path: W(ws), body }) as Promise<DefinitionVersion>,
+  updateAgentFromForm: (ws: string, id: string, revision: number, body: AgentFormInput) =>
+    request<DefinitionVersion>("PUT", apiPath("put", "/api/workspaces/{workspace_id}/agent-form/{definition_id}",
+      { path: { workspace_id: ws, definition_id: id } }), body, { headers: { "If-Match": `"${revision}"` } }),
   definitionDiff: (ws: string, id: string, against?: string) =>
     get("/api/workspaces/{workspace_id}/definitions/{definition_id}/diff",
       { path: { workspace_id: ws, definition_id: id }, query: { against } }) as Promise<DefinitionDiff>,
@@ -3397,6 +3450,8 @@ export const api = {
       { path: { workspace_id: ws, materialization_id: id } }) as Promise<Materialization>,
   writerDestinations: (ws: string) =>
     get("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws) }) as Promise<WriterDestination[]>,
+  designateDestination: (ws: string, body: Schemas["DestinationIn"]) =>
+    post("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws), body }) as Promise<WriterDestination>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)

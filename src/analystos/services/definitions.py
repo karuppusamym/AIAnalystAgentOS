@@ -34,6 +34,12 @@ Tester = Callable[[Session, User, Definition, dict[str, Any] | None], dict[str, 
 _KINDS: dict[str, Validator] = {}
 _TESTERS: dict[str, Tester] = {}
 EDITABLE = ("draft", "tested")
+# Kinds whose authoring needs more than an editor: an agent definition composes workspace grants (P7-19).
+_AUTHOR_ROLE: dict[str, str] = {"agent": "owner"}
+
+
+def author_role(kind: str) -> str:
+    return _AUTHOR_ROLE.get(kind, "editor")
 
 
 def register_kind(kind: str, validator: Validator | None = None) -> None:
@@ -98,9 +104,13 @@ def _playbook(session: Session, workspace_id: str, key: str, spec: dict[str, Any
         raise InvalidInput("a playbook definition's spec must be a kind: Playbook manifest")
     if m.id != key:
         raise InvalidInput(f"the manifest id ({m.id}) must equal the definition key ({key})")
+    from analystos.capabilities.agent_forms import grant_problems, playbook_uses, workspace_agents
+
     snap = registry.current()
     where = f"{source}: {m.id}"
-    problems = [p for p in validate_kinds({**snap.manifests, m.id: m}) if p.startswith(where)]
+    agents = workspace_agents(session, workspace_id, playbook_uses(m))  # the workspace's own agents (P7-19)
+    problems = [p for p in validate_kinds({**snap.manifests, **agents, m.id: m}) if p.startswith(where)]
+    problems += [f"{where}: agent {a.id}: {p}" for a in agents.values() for p in grant_problems(session, workspace_id, a)]
     if problems:
         raise InvalidInput("playbook does not validate: " + "; ".join(problems[:5]), details={"problems": problems})
     return m.model_dump(mode="json", exclude={"source"})
@@ -176,6 +186,9 @@ def _register_builtin_kinds() -> None:
 
     register_kind("query_tool", query_tools.validate_spec)  # P7-11: draft -> tested -> published -> retired
     register_tester("query_tool", query_tools.test)
+    from analystos.capabilities import agent_forms
+
+    register_kind("agent", agent_forms.validate_definition)  # P7-19: a declarative agent authored in the workspace
 
 
 _register_builtin_kinds()
@@ -193,6 +206,11 @@ def _validate(session: Session, workspace_id: str, kind: str, key: str, spec: di
 def _latest_version(session: Session, workspace_id: str, kind: str, key: str) -> int:
     return session.scalar(select(func.max(Definition.version)).where(
         Definition.workspace_id == workspace_id, Definition.kind == kind, Definition.key == key)) or 0
+
+
+def next_version(session: Session, workspace_id: str, kind: str, key: str) -> int:
+    """The version number a new draft of `key` gets."""
+    return _latest_version(session, workspace_id, kind, key) + 1
 
 
 def latest_published(session: Session, workspace_id: str, kind: str, key: str) -> Definition | None:
@@ -215,7 +233,7 @@ def _event(session: Session, row: Definition, type_: str, actor: str, **extra: A
 
 
 def create_draft(session: Session, user: User, workspace_id: str, body: DefinitionDraftIn) -> Definition:
-    require_role(session, user, workspace_id, "editor")
+    require_role(session, user, workspace_id, author_role(body.kind))
     spec = _validate(session, workspace_id, body.kind, body.key, body.spec)
     existing = session.scalar(select(Definition).where(Definition.workspace_id == workspace_id, Definition.kind == body.kind,
                                                        Definition.key == body.key, Definition.status.in_(EDITABLE)))
@@ -233,7 +251,7 @@ def create_draft(session: Session, user: User, workspace_id: str, body: Definiti
 
 
 def update_draft(session: Session, user: User, row: Definition, patch: DefinitionPatch, expected_revision: int | None) -> Definition:
-    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
     if row.status not in EDITABLE:
         raise Conflict(f"version {row.version} is {row.status} and immutable; create a new draft to change it")
     _check_revision(row, expected_revision)
@@ -253,7 +271,7 @@ def publish(session: Session, user: User, row: Definition, expected_revision: in
             actor: str | None = None) -> Definition:
     """Freeze the draft. Re-validated against the registry as it is now, so a draft that went stale
     (an agent it uses was removed) cannot be published."""
-    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
     if row.status not in EDITABLE:
         raise Conflict(f"version {row.version} is already {row.status}")
     _check_revision(row, expected_revision)
@@ -274,7 +292,7 @@ def test(session: Session, user: User, row: Definition, expected_revision: int |
          arguments: dict[str, Any] | None = None) -> Definition:
     """Run a draft of a tested kind once; on success it becomes `tested` with the evidence bound to its content
     hash. A failing test raises the tester's error and leaves the draft as it was."""
-    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
     if row.kind not in _TESTERS:
         raise InvalidInput(f"{row.kind} definitions have no test step")
     if row.status not in EDITABLE:
@@ -311,7 +329,7 @@ def publish_frozen(session: Session, workspace_id: str, kind: str, key: str, spe
 
 
 def deprecate(session: Session, user: User, row: Definition, *, reason: str | None = None) -> Definition:
-    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
     if row.status != "published":
         raise Conflict(f"only a published version can be deprecated (this one is {row.status})")
     row.status, row.reason = "deprecated", reason or "deprecated"
@@ -323,7 +341,7 @@ def deprecate(session: Session, user: User, row: Definition, *, reason: str | No
 
 def retire(session: Session, user: User, row: Definition, *, reason: str | None = None) -> Definition:
     """Retired versions never run again; schedules pinned to one are blocked and their owners notified."""
-    require_role(session, user, row.workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
     if row.status not in RUNNABLE_STATUSES:
         raise Conflict(f"only a published or deprecated version can be retired (this one is {row.status})")
     row.status, row.reason, row.retired_by, row.retired_at = "retired", reason or "retired", user.id, utcnow()
@@ -422,8 +440,8 @@ def promote(session: Session, user: User, row: Definition, target_workspace_id: 
     """Copy a published version to the next environment (dev -> test -> prod) by content hash: the spec and its
     hash are identical; only the connection bindings differ, stored beside it. Promoting the same content again
     returns the version already there."""
-    require_role(session, user, row.workspace_id, "editor")
-    require_role(session, user, target_workspace_id, "editor")
+    require_role(session, user, row.workspace_id, author_role(row.kind))
+    require_role(session, user, target_workspace_id, author_role(row.kind))
     if row.status != "published":
         raise Conflict(f"only a published version is promoted (this one is {row.status})")
     source_env, target_env = workspace_environment(session, row.workspace_id), workspace_environment(session, target_workspace_id)
@@ -559,6 +577,10 @@ def out(row: Definition, *, spec: bool = True) -> dict[str, Any]:
         d[c] = getattr(row, c, None)
     if spec:
         d["spec"] = row.spec
+        if row.kind == "agent":
+            from analystos.capabilities.agent_forms import form_of
+
+            d["form"] = form_of(row.spec)  # None: the manifest uses fields the form cannot show
     return d
 
 

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun, type Run } from "../api";
 import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
@@ -10,6 +10,7 @@ import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
 import { MaterializationsOutput } from "../components/Pipelines";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
+import { StartWorkButton } from "../components/StartWork";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
 import type { Preview } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct, shortHash } from "../lib/format";
@@ -51,6 +52,7 @@ const analysisOf = (i: Item): string | null => i.kind === "finding" ? i.finding.
  */
 export function OutputsPage() {
   const { wsId = "", insightId } = useParams();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const requested = params.get("type") as OutputType | null;
   const type: OutputType | "" = insightId ? "finding" : OUTPUT_FILTERS.some((f) => f.id === requested) ? requested! : "";
@@ -106,8 +108,8 @@ export function OutputsPage() {
     `${i.kind === "finding" ? i.finding.title : i.kind === "artifact" ? i.artifact.name : i.run.recipe_name} ${runById.get(analysisOf(i) ?? "")?.objective ?? ""}`.toLowerCase().includes(search.toLowerCase()));
   const analysisRuns = (runs.data ?? []).filter((r) => items.some((i) => analysisOf(i) === r.id));
   const unknownRuns = [...new Set(items.map(analysisOf).filter((id): id is string => !!id && !runById.has(id)))];
-  const workspaceCount = items.filter((i) => !analysisOf(i)).length;
   const open = selected ? items.find((i) => i.id === selected) : undefined;
+  const selectedForPicker = shown.some((i) => i.id === selected) ? selected ?? "" : "";
   const loading = (artifacts.loading && !artifacts.data) || (findings.loading && !findings.data);
   const error = artifacts.error ?? findings.error;
   const filters = OUTPUT_FILTERS.filter((f) => counts.has(f.id) || f.id === type || f.id === "report" || f.id === "dashboard");
@@ -122,6 +124,42 @@ export function OutputsPage() {
             to={to.outputs(wsId, { type: f.id, analysis: PANEL_TYPES.has(f.id) ? undefined : activeAnalysis ?? undefined })}>{f.label} ({counts.get(f.id) ?? 0})</Link>
         ))}
       </nav>
+      <section className="card outputs-controls" aria-label="Choose outputs">
+        <div className="outputs-control">
+          <label htmlFor="output-investigation">Investigation</label>
+          <select id="output-investigation" value={activeAnalysis ?? ""} onChange={(e) => set({
+            analysis: e.target.value || null, artifact: null, dashboard: null, run: null,
+          })}>
+            <option value="">All investigations</option>
+            {analysisRuns.map((r) => <option key={r.id} value={r.id}>{r.objective} · {items.filter((i) => analysisOf(i) === r.id).length} outputs</option>)}
+            {unknownRuns.map((id) => <option key={id} value={id}>Earlier investigation · {id}</option>)}
+          </select>
+          <span className="muted small">Scope the list by the question that produced the output.</span>
+        </div>
+        <div className="outputs-control">
+          <label htmlFor="output-item">Output item</label>
+          <select id="output-item" value={selectedForPicker} disabled={!shown.length} onChange={(e) => {
+            const item = shown.find((i) => i.id === e.target.value);
+            if (!item) {
+              set({ artifact: null, dashboard: null, run: null });
+            } else if (item.kind === "finding") {
+              navigate(to.findings(wsId, item.id));
+            } else if (item.kind === "prepared") {
+              set({ run: item.id, artifact: null, dashboard: null });
+            } else {
+              set({ artifact: item.id, dashboard: null, run: null });
+            }
+          }}>
+            <option value="">{shown.length ? "Select an output" : "No matching outputs"}</option>
+            {shown.map((item) => <option key={`${item.kind}-${item.id}`} value={item.id}>
+              {item.kind === "finding" ? `${item.finding.code} · ${item.finding.title}`
+                : item.kind === "prepared" ? `${item.run.recipe_name} · prepared data`
+                  : `${item.artifact.name} · ${TYPE_WORD[item.type] || item.artifact.type.replace(/_/g, " ")}`}
+            </option>)}
+          </select>
+          <span className="muted small">Choose an item to open its detail and lineage.</span>
+        </div>
+      </section>
       {type === "report" && (
         <details className="card generate-report">
           <summary>Generate a report</summary>
@@ -134,27 +172,17 @@ export function OutputsPage() {
       {type === "table" && <MaterializationsOutput wsId={wsId} role={role} table={params.get("table")} />}
       {!panel && <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />}
       {!panel && loading && <Loading />}
-      {!panel && !loading && (
+      {!panel && !loading && !error && items.length === 0 && (
+        <EmptyState title="No outputs yet" action={<StartWorkButton wsId={wsId} />}>
+          Findings, dashboards, reports and prepared data appear here once work produces them.
+        </EmptyState>
+      )}
+      {!panel && !loading && (error || items.length > 0) && (
         <div className="outputs-layout">
-          <aside className="outputs-analyses" aria-label="Investigations">
-            <h2>Investigations</h2>
-            <button type="button" className={`list-button ${!activeAnalysis ? "active" : ""}`}
-              aria-current={!activeAnalysis ? "true" : undefined}
-              onClick={() => set({ analysis: null, artifact: null, dashboard: null, run: null })}>
-              <strong>All outputs</strong><span className="muted small">{items.length} across this workspace</span>
-            </button>
-            {analysisRuns.map((r) => <AnalysisChoice key={r.id} run={r} count={items.filter((i) => analysisOf(i) === r.id).length}
-              active={activeAnalysis === r.id} onClick={() => set({ analysis: r.id, artifact: null, dashboard: null, run: null })} />)}
-            {unknownRuns.map((id) => <button key={id} type="button" className={`list-button ${activeAnalysis === id ? "active" : ""}`}
-              onClick={() => set({ analysis: id, artifact: null, dashboard: null, run: null })}>
-              <strong>Earlier investigation</strong><span className="muted small">{id}</span>
-            </button>)}
-            {workspaceCount > 0 && <p className="muted small">{workspaceCount} workspace or data preparation outputs are shown in All outputs.</p>}
-          </aside>
           <div className="split-list">
-            <h2>{activeAnalysis ? runById.get(activeAnalysis)?.objective ?? "Investigation outputs" : "Recent outputs"}</h2>
+            <div className="outputs-list-heading"><h2>{activeAnalysis ? runById.get(activeAnalysis)?.objective ?? "Investigation outputs" : "Recent outputs"}</h2><span className="muted small">{shown.length} item{shown.length === 1 ? "" : "s"}</span></div>
             <label className="field output-search"><span className="sr-only">Search outputs</span><input type="search" placeholder="Find an output…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-            <span className="small muted">{shown.length} outputs · newest first</span>
+            <span className="small muted">{shown.length === 1 ? "1 output" : `${shown.length} outputs`} · newest first</span>
             {shown.length === 0 && <EmptyState title="No outputs for this selection">Choose another investigation or output type.</EmptyState>}
             <ul className="list selectable" aria-label="Outputs">
               {shown.map((i) => {
@@ -193,11 +221,6 @@ const TYPE_WORD: Record<OutputType, string> = {
   finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data",
   model: "model", table: "managed table", other: "",
 };
-
-function AnalysisChoice({ run, count, active, onClick }: { run: Run; count: number; active: boolean; onClick: () => void }) {
-  return <button type="button" className={`list-button ${active ? "active" : ""}`} aria-current={active ? "true" : undefined}
-    onClick={onClick}><strong>{run.objective}</strong><span className="muted small">{fmtDate(run.created_at)} · {count} outputs</span></button>;
-}
 
 function OutputRow({ item: i, run }: { item: Item; run?: Run }) {
   if (i.kind === "finding") {

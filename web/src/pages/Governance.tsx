@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, type WorkspaceDetail } from "../api";
 import { useAuth } from "../auth";
 import { AutonomyPicker } from "../components/AutonomyPicker";
+import { PilotReadiness } from "../components/PilotReadiness";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, StateView } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
 import { fieldText, fieldValue, parsePolicy, POLICY_FIELDS, setField } from "../lib/policy";
@@ -43,6 +44,7 @@ export function GovernancePage() {
           <Autonomy ws={ws.data} onSaved={ws.reload} />
         </div>
       </div>
+      <PilotReadiness wsId={wsId} owners={ws.data.owners} canEdit />
       <Audit wsId={wsId} isAdmin={!!user?.is_admin} />
     </div>
   );
@@ -89,9 +91,9 @@ function PolicyEditor({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => voi
           const v = fieldText(f.kind, draft[f.key]);
           if (f.kind === "bool") {
             return (
-              <label key={f.key} className="toggle">
+              <label key={f.key} className="check-row">
                 <input type="checkbox" checked={v === true} onChange={(e) => edit(setField(draft, f.key, fieldValue("bool", e.target.checked)))} />
-                {" "}{f.label}<span className="field-hint block">{f.hint}</span>
+                <span>{f.label}</span><span className="field-hint">{f.hint}</span>
               </label>
             );
           }

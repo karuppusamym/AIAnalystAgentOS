@@ -26,6 +26,10 @@ Two tiers run the same tasks and the same judges:
   `services.recipes.run_recipe` (preview for the rows, materialize for the published outcome), ML is
   `services.ml.start_experiment` on a published `ml_spec`. Models answer only when a provider key is set.
 
+Governance and recovery tasks (corpus v2) are scenarios (`evaluation/heldout/scenarios.py`) run on both tiers: the
+component tier over DuckDB behind the gateway validator and a SQLite control plane, the platform tier over uploaded
+workspaces, `QueryGateway.execute`, recipe runs and the Postgres control plane.
+
 Cost per accepted output = measured model spend / accepted outputs, plus CPU and wall seconds. Infrastructure is
 not priced unless `cpu_usd_per_hour` is given: unknown cost is reported as unpriced, never as zero.
 """
@@ -49,7 +53,9 @@ HERE = Path(__file__).resolve().parent
 CORPUS = HERE / "corpus.yaml"
 LOCK = HERE / "corpus.lock.json"
 ACTOR = "benchmark:heldout"
-FAMILIES = ("analysis", "engineering", "ml")
+FAMILIES = ("analysis", "engineering", "ml", "governance", "recovery")
+ABSTAIN_KINDS = {"analysis": ("no_finding",), "engineering": ("refused", "blocked"), "ml": ("no_finding", "refused"),
+                 "governance": ("denied",), "recovery": ("refused", "blocked")}
 STATUSES = ("accepted", "correct_abstention", "confident_wrong", "incomplete", "unnecessary_abstention",
             "wrong_abstention", "error")
 # Proposed thresholds for the owner (evaluation plan §3); wired into config/eval_gates.yaml as a non-blocking report.
@@ -70,6 +76,7 @@ class Task:
     effects: bool = True
     degenerate: str | None = None
     variant: str | None = None
+    transform: dict[str, Any] | None = None  # transfer suite: rename/reorder the generated table
 
     @property
     def expect(self) -> str:
@@ -93,7 +100,7 @@ def load_corpus(path: Path = CORPUS) -> Corpus:
     doc = yaml.safe_load(raw)
     tasks = [Task(id=t["id"], family=t["family"], domain=t["domain"], generator=t["generator"], seed=int(t["seed"]),
                   objective=t["objective"], rubric=t["rubric"], effects=t.get("effects", True),
-                  degenerate=t.get("degenerate"), variant=t.get("variant")) for t in doc["tasks"]]
+                  degenerate=t.get("degenerate"), variant=t.get("variant"), transform=t.get("transform")) for t in doc["tasks"]]
     return Corpus(version=int(doc["version"]), frozen=str(doc["frozen"]), tasks=tasks, digest=hashlib.sha256(raw).hexdigest())
 
 
@@ -113,8 +120,17 @@ def corpus_problems(corpus: Corpus) -> list[str]:
             out.append(f"{t.id}: unknown family {t.family}")
         if t.expect not in ("deliver", "abstain"):
             out.append(f"{t.id}: expect must be deliver or abstain")
-        if t.expect == "abstain" and t.abstain_kind not in ("no_finding", "refused", "blocked"):
-            out.append(f"{t.id}: an abstain task needs abstain_kind no_finding, refused or blocked")
+        if t.expect == "abstain" and t.abstain_kind not in ABSTAIN_KINDS.get(t.family, ()):
+            out.append(f"{t.id}: an abstain {t.family} task needs abstain_kind in {ABSTAIN_KINDS.get(t.family)}")
+        if t.family in ("governance", "recovery"):
+            from evaluation.heldout import scenarios
+
+            if t.generator not in scenarios.SCENARIOS:
+                out.append(f"{t.id}: unknown scenario {t.generator}")
+            elif scenarios.SCENARIOS[t.generator].expect != t.expect:
+                out.append(f"{t.id}: scenario {t.generator} is written for expect {scenarios.SCENARIOS[t.generator].expect}")
+        if t.transform and t.family != "analysis":
+            out.append(f"{t.id}: a transform applies to analysis tasks only")
         if t.family == "analysis":
             if t.generator not in G.ANALYSIS:
                 out.append(f"{t.id}: unknown analysis generator {t.generator}")
@@ -142,6 +158,10 @@ def task_digest(task: Task) -> str:
     elif task.family == "engineering":
         tables, spec, ref = G.engineering(task.generator, task.seed, task.variant or "clean")
         h.update(json.dumps({"tables": tables, "spec": spec, "ref": ref}, sort_keys=True, default=str).encode())
+    elif task.family in ("governance", "recovery"):
+        from evaluation.heldout import scenarios
+
+        h.update(json.dumps(scenarios.fixture(task), sort_keys=True, default=str).encode())
     else:
         data, spec = G.ml_task(task.generator, task.seed, task.variant or "")
         h.update(json.dumps({"data": data, "spec": spec}, sort_keys=True, default=str).encode())
@@ -196,7 +216,9 @@ def analysis_dataset(task: Task):
     if task.degenerate:
         kwargs["degenerate"] = task.degenerate
     ds = gen(task.seed, **kwargs)
-    ds.parents = {k: list(v) for k, v in (task.rubric.get("truth") or {}).items()}
+    if task.transform:
+        ds = G.transfer(ds, task.transform, task.seed)
+    ds.parents ={k: list(v) for k, v in (task.rubric.get("truth") or {}).items()}
     ds.planted = [Planted(p["id"], p["method"], p["outcome"], p["segment"], p.get("top")) for p in task.rubric.get("planted") or []]
     return ds
 
@@ -307,8 +329,13 @@ class DuckGateway:
         from analystos.gateway.validator import validate_sql
 
         def run(sql: str, *, purpose: str, max_rows: int, use_cache: bool = False) -> Any:
+            from analystos.core.errors import UpstreamUnavailable
+
             validate_sql(scope, sql, max_rows=max_rows)  # refuses exactly what the gateway would
-            cur = self.con.execute(sql)
+            try:
+                cur = self.con.execute(sql)
+            except Exception as exc:  # noqa: BLE001 - surfaced exactly as QueryGateway.execute surfaces an engine failure
+                raise UpstreamUnavailable(f"Query execution failed: {exc.__class__.__name__}") from exc
             columns = [d[0] for d in cur.description]
             rows = [list(r) for r in cur.fetchmany(max_rows + 1)]
             self.statements += 1
@@ -325,19 +352,21 @@ def _scope(tables: dict[str, dict[str, Any]]):
                      columns={a: t["columns"] for a, t in tables.items()}, source_dialects={"src_heldout": "postgres"})
 
 
-def run_engineering_component(task: Task) -> TaskResult:
+def component_recipe(tables: dict[str, dict[str, Any]], spec: dict[str, Any], *, loaded: set[str] | None = None) -> dict[str, Any]:
+    """One recipe preview on the component tier, as keyword arguments for `judge_engineering`: refused,
+    blocked, or the published columns/rows/dropped count. `loaded`: the tables actually present in the
+    engine (default all); the scope still lists every table, as a catalog would before a load finished."""
     from analystos.contracts.recipe import RecipeInvalid, validate_recipe
     from analystos.core.errors import AnalystOSError
     from analystos.recipes.execute import RecipeExecutor, SnapshotStore, plan_execution
     from analystos.recipes.gates import evaluate, row_gates
 
-    tables, spec, _ = G.engineering(task.generator, task.seed, task.variant or "clean")
     try:
         validated = validate_recipe(spec)
     except RecipeInvalid as exc:
-        return judge_engineering(task, refused=f"validation: {'; '.join(exc.problems)[:300]}")
+        return {"refused": f"validation: {'; '.join(exc.problems)[:300]}"}
     scope = _scope(tables)
-    gateway = DuckGateway(tables)
+    gateway = DuckGateway({a: t for a, t in tables.items() if loaded is None or a in loaded})
     with tempfile.TemporaryDirectory(prefix="aos-heldout-") as tmp:
         try:
             plan = plan_execution(validated, scope, prefer="duckdb")
@@ -347,18 +376,25 @@ def run_engineering_component(task: Task) -> TaskResult:
             violated = [p for p in preflight if not p["ok"]]
             if violated:
                 v = violated[0]
-                return judge_engineering(task, refused=f"join pre-flight: {v['join']} declared {v['declared']}, observed {v['observed']}",
-                                         detail={"preflight": preflight})
+                return {"refused": f"join pre-flight: {v['join']} declared {v['declared']}, observed {v['observed']}",
+                        "detail": {"preflight": preflight}}
             out = validated.outputs()[0]
             res = ex.query(ex.compiler.output_query(out.id, gates=row_gates(out)), purpose="recipe.preview:heldout")
             outcome = evaluate(out, res.columns, res.rows)
+            snapshots = {a: s["snapshot"] for a, s in ex.snapshots.items()}
         except AnalystOSError as exc:
-            return judge_engineering(task, refused=f"{type(exc).__name__}: {exc.message[:300]}")
-    detail = {"preflight": preflight, "gates": outcome.summary()["gates"], "engine": plan.engine, "statements": gateway.statements}
+            return {"refused": f"{type(exc).__name__}: {exc.message[:300]}"}
+    detail = {"preflight": preflight, "gates": outcome.summary()["gates"], "engine": plan.engine, "statements": gateway.statements,
+              "snapshots": snapshots}
     if outcome.blocked:
         failed = [g["gate"] for g in outcome.results if g["status"] == "failed"]
-        return judge_engineering(task, blocked=f"fail gate {', '.join(failed)}", detail=detail)
-    return judge_engineering(task, columns=outcome.columns, rows=outcome.kept, dropped=len(outcome.dropped), detail=detail)
+        return {"blocked": f"fail gate {', '.join(failed)}", "detail": detail}
+    return {"columns": outcome.columns, "rows": outcome.kept, "dropped": len(outcome.dropped), "detail": detail}
+
+
+def run_engineering_component(task: Task) -> TaskResult:
+    tables, spec, _ = G.engineering(task.generator, task.seed, task.variant or "clean")
+    return judge_engineering(task, **component_recipe(tables, spec))
 
 
 # ----------------------------------------------------------------------------- ML
@@ -406,7 +442,7 @@ def _admin():
 
 
 def _upload_workspace(name: str, objective: str, files: dict[str, tuple[list[str], list[list[Any]]]], *,
-                      enable: tuple[str, ...] = ()) -> dict[str, Any]:
+                      enable: tuple[str, ...] = (), policy: dict[str, Any] | None = None, stage: bool = True) -> dict[str, Any]:
     """A fresh workspace with the given CSV files as one staged file source."""
     import csv
 
@@ -429,7 +465,7 @@ def _upload_workspace(name: str, objective: str, files: dict[str, tuple[list[str
             w.writerows([["" if v is None else v for v in r] for r in rows])
     with session_scope() as s:
         ws = create_workspace(s, s.merge(admin), name=f"P4-08 held-out {name} {folder[-6:]}", objective=objective,
-                              policy={"require_approved_metrics": False}, autonomy_level=3)
+                              policy={"require_approved_metrics": False, **(policy or {})}, autonomy_level=3)
         s.flush()
         src = register_source(s, s.merge(admin), ws.id, kind="csv", name=f"held-out {name}", config={"path": folder},
                               secret_ref=None)
@@ -437,49 +473,59 @@ def _upload_workspace(name: str, objective: str, files: dict[str, tuple[list[str
         for cap in enable:
             enablement.set_enabled(s, s.merge(admin), ws.id, cap, True, registry.current())
         ws_id, src_id = ws.id, src.id
-    discover_source(admin, src_id, ws_id)
-    select_assets(admin, src_id, list(files), ws_id)
+    if stage:
+        discover_source(admin, src_id, ws_id)
+        select_assets(admin, src_id, list(files), ws_id)
     with session_scope() as s:
         schema = s.get(Source, src_id).staging_schema or f"src_{src_id}"
-    return {"ws": ws_id, "src": src_id, "schema": schema, "admin": admin}
+    return {"ws": ws_id, "src": src_id, "schema": schema, "admin": admin, "folder": upload}
 
 
-def run_engineering_platform(task: Task) -> TaskResult:
+def platform_recipe(env: dict[str, Any], spec: dict[str, Any], *, engine: str | None = None) -> dict[str, Any]:
+    """Save and run one recipe (preview for the rows, then materialize for the published outcome) in an
+    uploaded workspace, as keyword arguments for `judge_engineering`; `denied` when authorization stopped it."""
     from analystos.contracts.recipe import RecipeInvalid
     from analystos.core.errors import AnalystOSError, Forbidden, PolicyDenied
     from analystos.db.base import session_scope
     from analystos.services.recipes import run_recipe, save_recipe
 
-    tables, spec, _ = G.engineering(task.generator, task.seed, task.variant or "clean")
-    env = _upload_workspace(task.id, task.objective, {a.split(".")[1]: (t["columns"], t["rows"]) for a, t in tables.items()})
     spec = json.loads(json.dumps(spec).replace(f'"{G.SCHEMA}.', f'"{env["schema"]}.'))
     try:
         with session_scope() as s:
             rid = save_recipe(s, s.merge(env["admin"]), env["ws"], spec).id
     except RecipeInvalid as exc:
-        return judge_engineering(task, refused=f"validation: {'; '.join(exc.problems)[:300]}")
+        return {"refused": f"validation: {'; '.join(exc.problems)[:300]}"}
     try:
-        preview = run_recipe(env["admin"], rid, env["ws"], mode="preview", limit=100_000)
-        done = run_recipe(env["admin"], rid, env["ws"], mode="materialize")
+        preview = run_recipe(env["admin"], rid, env["ws"], mode="preview", limit=100_000, engine=engine)
+        done = run_recipe(env["admin"], rid, env["ws"], mode="materialize", engine=engine)
     except RecipeInvalid as exc:
-        return judge_engineering(task, refused=f"validation: {'; '.join(exc.problems)[:300]}")
+        return {"refused": f"validation: {'; '.join(exc.problems)[:300]}"}
     except (Forbidden, PolicyDenied) as exc:
-        return judge_abstention(task, "denied", f"{type(exc).__name__}: {exc.message[:300]}")
+        return {"denied": f"{type(exc).__name__}: {exc.message[:300]}"}
     except AnalystOSError as exc:
-        return judge_engineering(task, refused=f"{type(exc).__name__}: {exc.message[:300]}",
-                                 run_ref=(exc.details or {}).get("recipe_run_id"))
+        return {"refused": f"{type(exc).__name__}: {exc.message[:300]}", "run_ref": (exc.details or {}).get("recipe_run_id")}
     name = next(iter(preview["preview"]))
     shown = preview["preview"][name]
     gates = done["gates"].get(name, {})
     detail = {"preflight": done.get("preflight"), "gates": gates.get("gates"), "engine": (done.get("plan") or {}).get("engine"),
-              "materialized": done["outputs"].get(name, {}).get("table"), "written_rows": done["outputs"].get(name, {}).get("row_count")}
+              "materialized": done["outputs"].get(name, {}).get("table"), "written_rows": done["outputs"].get(name, {}).get("row_count"),
+              "snapshots": {a: s.get("snapshot") for a, s in (preview.get("snapshots") or {}).items()}}
     if done["status"] == "blocked":
         failed = [g["gate"] for g in gates.get("gates") or [] if g["status"] == "failed"]
-        return judge_engineering(task, blocked=f"fail gate {', '.join(failed) or '(schema policy)'}", detail=detail, run_ref=done["id"])
+        return {"blocked": f"fail gate {', '.join(failed) or '(schema policy)'}", "detail": detail, "run_ref": done["id"]}
     if detail["written_rows"] is not None and detail["written_rows"] != shown["row_count"]:
         detail["note"] = f"materialized {detail['written_rows']} rows, preview kept {shown['row_count']}"
-    return judge_engineering(task, columns=shown["columns"], rows=shown["rows"], dropped=shown["dropped_rows"],
-                             detail=detail, run_ref=done["id"])
+    return {"columns": shown["columns"], "rows": shown["rows"], "dropped": shown["dropped_rows"], "detail": detail,
+            "run_ref": done["id"]}
+
+
+def run_engineering_platform(task: Task) -> TaskResult:
+    tables, spec, _ = G.engineering(task.generator, task.seed, task.variant or "clean")
+    env = _upload_workspace(task.id, task.objective, {a.split(".")[1]: (t["columns"], t["rows"]) for a, t in tables.items()})
+    out = platform_recipe(env, spec)
+    if "denied" in out:
+        return judge_abstention(task, "denied", out["denied"])
+    return judge_engineering(task, **out)
 
 
 def run_ml_platform(task: Task) -> TaskResult:
@@ -511,10 +557,40 @@ def run_ml_platform(task: Task) -> TaskResult:
     return judge_ml(task, out, run_ref=out.get("id"))
 
 
+# ----------------------------------------------------------------------------- governance and recovery
+def judge_scenario(task: Task, out: dict[str, Any]) -> TaskResult:
+    """A scenario ends `acted` (the action went through), `stopped` (a deterministic check stopped it, with
+    its kind and reason) or `delivered` (a deliver scenario finished; `ok` says whether it met the rubric)."""
+    detail, reason = dict(out.get("detail") or {}), str(out.get("reason") or "")
+    if out["outcome"] == "stopped":
+        return judge_abstention(task, out["kind"], reason, detail=detail)
+    if out["outcome"] == "acted":
+        if task.expect == "abstain":
+            return _result(task, "confident_wrong", "output", detail=detail,
+                           reason=f"the action went through where the rubric requires {task.abstain_kind}: {reason}")
+        return _result(task, "incomplete", "output", detail=detail, reason=reason or "acted without meeting the rubric")
+    if task.expect == "abstain":
+        return _result(task, "confident_wrong", "output", detail=detail, reason=f"completed where the rubric requires "
+                                                                               f"{task.abstain_kind}: {reason}")
+    if out.get("wrong"):
+        return _result(task, "confident_wrong", "output", detail=detail, reason=reason)
+    return _result(task, "accepted" if out.get("ok") else "incomplete", "output", detail=detail, reason=reason)
+
+
+def _scenario_runner(tier: str):
+    def run(task: Task) -> TaskResult:
+        from evaluation.heldout import scenarios
+
+        return judge_scenario(task, scenarios.run(task, tier))
+    return run
+
+
 # ----------------------------------------------------------------------------- orchestration
 RUNNERS = {
-    "component": {"analysis": run_analysis_component, "engineering": run_engineering_component, "ml": run_ml_component},
-    "platform": {"analysis": run_analysis_platform, "engineering": run_engineering_platform, "ml": run_ml_platform},
+    "component": {"analysis": run_analysis_component, "engineering": run_engineering_component, "ml": run_ml_component,
+                  "governance": _scenario_runner("component"), "recovery": _scenario_runner("component")},
+    "platform": {"analysis": run_analysis_platform, "engineering": run_engineering_platform, "ml": run_ml_platform,
+                 "governance": _scenario_runner("platform"), "recovery": _scenario_runner("platform")},
 }
 
 

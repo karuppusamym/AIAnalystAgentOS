@@ -1,0 +1,203 @@
+{
+ "source": {
+  "host": "localhost",
+  "port": "5432",
+  "db": "analystos_test_b2"
+ },
+ "scratch": "analystos_test_b2_drill",
+ "backup": {
+  "file": "analystos_test_b2.dump",
+  "bytes": 2912830,
+  "sha256": "44f876c23f3042bd868bcca60d6e7ddf627cae92319b04f7dca2a7cc4a2f6588",
+  "files": {
+   "archive": "files.tar.gz",
+   "bytes": 294523,
+   "count": 43
+  }
+ },
+ "tables": 90,
+ "rows": 20245,
+ "alembic": null,
+ "steps": [
+  {
+   "step": "inventory source",
+   "seconds": 0.941
+  },
+  {
+   "step": "resolve records on source",
+   "seconds": 2.954
+  },
+  {
+   "step": "pg_dump (custom format)",
+   "seconds": 0.929
+  },
+  {
+   "step": "tar artifact files",
+   "seconds": 0.161
+  },
+  {
+   "step": "create scratch database",
+   "seconds": 0.159
+  },
+  {
+   "step": "pg_restore into scratch (copy 1)",
+   "seconds": 5.593
+  },
+  {
+   "step": "destroy scratch database",
+   "seconds": 0.81
+  },
+  {
+   "step": "recover: create + pg_restore (+ untar)",
+   "seconds": 6.011
+  },
+  {
+   "step": "inventory restored copy",
+   "seconds": 0.467
+  },
+  {
+   "step": "resolve records on restored copy",
+   "seconds": 0.992
+  }
+ ],
+ "checks": [
+  {
+   "check": "copy 1 equals the source",
+   "ok": true,
+   "detail": "90 tables"
+  },
+  {
+   "check": "scratch database destroyed",
+   "ok": true,
+   "detail": "analystos_test_b2_drill no longer exists"
+  },
+  {
+   "check": "every table: same rows and checksum",
+   "ok": true,
+   "detail": "identical"
+  },
+  {
+   "check": "alembic revision",
+   "ok": true,
+   "detail": "none on the source either (the schema was not created by migrations)"
+  },
+  {
+   "check": "runs resolve",
+   "ok": true,
+   "detail": "31 runs {'COMPLETED': 31}; orphans: tasks 0, events 0"
+  },
+  {
+   "check": "approvals keep their hash binding",
+   "ok": true,
+   "detail": "38/38 payloads hash to their approval {'approved': 1, 'executed': 1, 'expired': 1, 'invalidated': 1, 'pending': 34}"
+  },
+  {
+   "check": "evidence resolves",
+   "ok": true,
+   "detail": "45 insights; 45/45 bound evidence bundles hash to their record (source: 45/45)"
+  },
+  {
+   "check": "verification records resolve",
+   "ok": true,
+   "detail": "55/55 fingerprints recompute; 269 dependencies of 55 live records resolve to the same current version as on the source (269 still equal the recorded version)"
+  },
+  {
+   "check": "schema matches this code",
+   "ok": true,
+   "detail": "every table and column the code maps exists"
+  },
+  {
+   "check": "files restore byte-for-byte",
+   "ok": true,
+   "detail": "43 files"
+  }
+ ],
+ "resolved_source": {
+  "runs": {
+   "total": 31,
+   "statuses": {
+    "COMPLETED": 31
+   },
+   "without_workspace": 0,
+   "orphan_tasks": 0,
+   "orphan_events": 0
+  },
+  "approvals": {
+   "total": 38,
+   "statuses": {
+    "approved": 1,
+    "executed": 1,
+    "expired": 1,
+    "invalidated": 1,
+    "pending": 34
+   },
+   "payload_hash_ok": 38,
+   "without_workspace": 0,
+   "run_missing": 0
+  },
+  "evidence": {
+   "insights": 45,
+   "insight_hypothesis_missing": 0,
+   "insight_run_missing": 0,
+   "bundles_bound": 45,
+   "bundles_hash_ok": 45
+  },
+  "verification": {
+   "records": 55,
+   "states": {
+    "ACTIVE": 55
+   },
+   "fingerprint_ok": 55,
+   "live": 55,
+   "live_dependencies": 269,
+   "live_dependencies_current": 269,
+   "live_dependency_errors": 0,
+   "first_error": null
+  }
+ },
+ "resolved_restored": {
+  "runs": {
+   "total": 31,
+   "statuses": {
+    "COMPLETED": 31
+   },
+   "without_workspace": 0,
+   "orphan_tasks": 0,
+   "orphan_events": 0
+  },
+  "approvals": {
+   "total": 38,
+   "statuses": {
+    "approved": 1,
+    "executed": 1,
+    "expired": 1,
+    "invalidated": 1,
+    "pending": 34
+   },
+   "payload_hash_ok": 38,
+   "without_workspace": 0,
+   "run_missing": 0
+  },
+  "evidence": {
+   "insights": 45,
+   "insight_hypothesis_missing": 0,
+   "insight_run_missing": 0,
+   "bundles_bound": 45,
+   "bundles_hash_ok": 45
+  },
+  "verification": {
+   "records": 55,
+   "states": {
+    "ACTIVE": 55
+   },
+   "fingerprint_ok": 55,
+   "live": 55,
+   "live_dependencies": 269,
+   "live_dependencies_current": 269,
+   "live_dependency_errors": 0,
+   "first_error": null
+  }
+ },
+ "kept": false,
+ "passed": true
+}

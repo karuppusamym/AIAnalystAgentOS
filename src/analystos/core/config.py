@@ -5,6 +5,7 @@ because it is shared with the sibling projects and the OpenRouter tooling conven
 """
 from __future__ import annotations
 
+import importlib.util
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,13 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _installed(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 class Settings(BaseSettings):
@@ -24,7 +32,8 @@ class Settings(BaseSettings):
     # Temporal, one worker, a scheduler process; `scale` = standard with per-queue pools and HA values.
     # The profile only fills defaults of settings the environment leaves unset (see `_profile_defaults`).
     # The code default stays `standard` so an existing deployment that sets nothing keeps its behaviour;
-    # the install defaults (compose, .env.example, values-small) choose `lite`.
+    # the install defaults (compose, .env.example, values-small) choose `lite`. Without the `temporal` extra
+    # (a core install) an unset profile is `lite` (`_profile_defaults`).
     profile: Literal["lite", "standard", "scale"] = "standard"
     # Control plane (application state). Never reachable from user/model SQL.
     database_url: str = "postgresql+psycopg://analystos:analystos@localhost:5432/analystos"
@@ -214,9 +223,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _profile_defaults(self) -> Settings:
         """`lite` needs no Redis, Temporal or Superset: settings the environment did not set take the
-        lite values. An explicit variable always wins, so a lite install can still add `bi` (Superset)."""
+        lite values. An explicit variable always wins, so a lite install can still add `bi` (Superset).
+        A core install without the `temporal` extra that names no profile or orchestrator is lite: the
+        `standard` default could not start a run there (P7-17: `pip install analystos` + 3 variables)."""
+        given = self.model_fields_set
+        if not {"profile", "orchestrator"} & given and not _installed("temporalio"):
+            self.profile = "lite"
         if self.profile == "lite":
-            given = self.model_fields_set
             if "orchestrator" not in given:
                 self.orchestrator = "local"
             if "redis_url" not in given:

@@ -1,6 +1,6 @@
 """Run a source kind's real-engine tests and, only if they pass, write its dated certification evidence.
 
-    python scripts/certify_connectors.py [--kinds postgres mysql sqlite duckdb] [--out docs/60-delivery/evidence]
+    python scripts/certify_connectors.py [--kinds postgres mysql sqlite duckdb csv] [--out docs/60-delivery/evidence]
 
 A connector is certified by live evidence, never by mock tests (spec v1 §62). For each kind the
 script runs that kind's integration tests against the real engine (tests/integration/
@@ -23,12 +23,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_FILE = "tests/integration/test_generic_sources.py"
-LIVE_TESTS = {  # kind -> pytest -k expression selecting its real-engine tests
+LIVE_TESTS = {  # kind -> pytest -k expression selecting its real-engine tests (in TEST_FILE unless TEST_FILES names one)
     "postgres": "postgres",
     "mysql": "mysql",
     "sqlite": "file_database and sqlite",
     "duckdb": "file_database and duckdb",
+    "csv": "",  # real CSV/JSON/NDJSON/Excel/Parquet files: ingest, stage, gateway read under the workspace role
 }
+TEST_FILES = {"csv": "tests/integration/test_file_ingest_loads.py"}
+# Kinds whose only test here is a double: never certified by this script (spec v1 §62), listed so a run says so.
+MOCK_ONLY = {"servicenow": "tests/integration/test_staging_servicenow_load.py (the Table-API mock)"}
 
 
 def engine(kind: str) -> str:
@@ -38,6 +42,8 @@ def engine(kind: str) -> str:
         import duckdb
 
         return f"DuckDB {duckdb.__version__} (file database)"
+    if kind == "csv":
+        return "real CSV, JSON, NDJSON, Excel and Parquet files staged into the test PostgreSQL"
     if kind == "mysql":
         return f"MySQL (docker image {os.environ.get('ANALYSTOS_TEST_MYSQL_IMAGE', 'mysql:8.4')})"
     try:
@@ -45,16 +51,22 @@ def engine(kind: str) -> str:
 
         url = os.environ.get("ANALYSTOS_TEST_ADMIN_URL", "postgresql+psycopg://analystos:analystos@localhost:5432/analystos")
         with create_engine(url).connect() as c:
-            return "PostgreSQL " + str(c.execute(text("SHOW server_version")).scalar()) + " (compose)"
+            return "PostgreSQL " + str(c.execute(text("SHOW server_version")).scalar()) + f" ({c.engine.url.host}:{c.engine.url.port})"
     except Exception:  # noqa: BLE001 - the version is descriptive only
-        return "PostgreSQL (compose)"
+        return "PostgreSQL"
+
+
+def test_target(kind: str) -> str:
+    target = TEST_FILES.get(kind, TEST_FILE)
+    return f'{target} -k "{LIVE_TESTS[kind]}"' if LIVE_TESTS[kind] else target
 
 
 def run(kind: str) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         xml = Path(tmp) / "junit.xml"
-        cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-m", "integration", TEST_FILE,
-               "-k", LIVE_TESTS[kind], f"--junitxml={xml}"]
+        select = ["-k", LIVE_TESTS[kind]] if LIVE_TESTS[kind] else []
+        cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-m", "integration",
+               TEST_FILES.get(kind, TEST_FILE), *select, f"--junitxml={xml}"]
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
         cases = []
         if xml.exists():
@@ -80,6 +92,12 @@ def main() -> int:
     now =datetime.now(UTC)
     failed = 0
     for kind in args.kinds:
+        if kind in MOCK_ONLY:
+            print(f"{kind}: NOT CERTIFIABLE HERE (only a test double: {MOCK_ONLY[kind]}); needs a live instance")
+            continue
+        if kind not in LIVE_TESTS:
+            print(f"{kind}: NOT CERTIFIABLE HERE (no real-engine test in this repository; needs a live system)")
+            continue
         r = run(kind)
         ok = r["returncode"] == 0 and r["cases"] and all(s == "passed" for _, s, _ in r["cases"])
         print(f"{kind}: {'PASS' if ok else 'NOT CERTIFIED'} ({len(r['cases'])} tests) {' '.join(r['tail'][-1:])}")
@@ -88,7 +106,7 @@ def main() -> int:
             continue
         path = Path(args.out) / f"connector-{kind}-{now:%Y%m%d}.md"
         lines = ["---", f"kind: {kind}", f"date: {now:%Y-%m-%d}", f"engine: {engine(kind)}",
-                 f"test: {TEST_FILE} -k \"{LIVE_TESTS[kind]}\"", "result: pass", f"commit: {at}", "---",
+                 f"test: {test_target(kind)}", "result: pass", f"commit: {at}", "---",
                  f"# Connector certification evidence: {kind}", "",
                  f"Live run {now:%Y-%m-%d %H:%M} UTC at `{at}`, written by `scripts/certify_connectors.py` after every "
                  "selected real-engine test passed (none skipped).", "",

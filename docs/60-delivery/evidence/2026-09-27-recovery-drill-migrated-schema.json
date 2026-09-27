@@ -1,0 +1,169 @@
+{
+ "source": {
+  "host": "localhost",
+  "port": "5432",
+  "db": "analystos_b2_migrated"
+ },
+ "scratch": "analystos_b2_migrated_drill",
+ "backup": {
+  "file": "analystos_b2_migrated.dump",
+  "bytes": 275270,
+  "sha256": "a0d217d0cdec90d0fde9f85a73732af8d9b7f73d28c2bd10f9f934decf25b886"
+ },
+ "tables": 91,
+ "rows": 136,
+ "alembic": "0044",
+ "steps": [
+  {
+   "step": "inventory source",
+   "seconds": 0.534
+  },
+  {
+   "step": "resolve records on source",
+   "seconds": 0.776
+  },
+  {
+   "step": "pg_dump (custom format)",
+   "seconds": 0.176
+  },
+  {
+   "step": "create scratch database",
+   "seconds": 0.055
+  },
+  {
+   "step": "pg_restore into scratch (copy 1)",
+   "seconds": 3.257
+  },
+  {
+   "step": "destroy scratch database",
+   "seconds": 1.316
+  },
+  {
+   "step": "recover: create + pg_restore (+ untar)",
+   "seconds": 3.154
+  },
+  {
+   "step": "inventory restored copy",
+   "seconds": 0.103
+  },
+  {
+   "step": "resolve records on restored copy",
+   "seconds": 0.024
+  }
+ ],
+ "checks": [
+  {
+   "check": "copy 1 equals the source",
+   "ok": true,
+   "detail": "91 tables"
+  },
+  {
+   "check": "scratch database destroyed",
+   "ok": true,
+   "detail": "analystos_b2_migrated_drill no longer exists"
+  },
+  {
+   "check": "every table: same rows and checksum",
+   "ok": true,
+   "detail": "identical"
+  },
+  {
+   "check": "alembic revision",
+   "ok": true,
+   "detail": "0044"
+  },
+  {
+   "check": "runs resolve",
+   "ok": true,
+   "detail": "0 runs {}; orphans: tasks 0, events 0"
+  },
+  {
+   "check": "approvals keep their hash binding",
+   "ok": true,
+   "detail": "0/0 payloads hash to their approval {}"
+  },
+  {
+   "check": "evidence resolves",
+   "ok": true,
+   "detail": "0 insights; 0/0 bound evidence bundles hash to their record (source: 0/0)"
+  },
+  {
+   "check": "verification records resolve",
+   "ok": true,
+   "detail": "0/0 fingerprints recompute; 0 dependencies of 0 live records resolve to the same current version as on the source (0 still equal the recorded version)"
+  },
+  {
+   "check": "schema matches this code",
+   "ok": true,
+   "detail": "every table and column the code maps exists"
+  }
+ ],
+ "resolved_source": {
+  "runs": {
+   "total": 0,
+   "statuses": {},
+   "without_workspace": 0,
+   "orphan_tasks": 0,
+   "orphan_events": 0
+  },
+  "approvals": {
+   "total": 0,
+   "statuses": {},
+   "payload_hash_ok": 0,
+   "without_workspace": 0,
+   "run_missing": 0
+  },
+  "evidence": {
+   "insights": 0,
+   "insight_hypothesis_missing": 0,
+   "insight_run_missing": 0,
+   "bundles_bound": 0,
+   "bundles_hash_ok": 0
+  },
+  "verification": {
+   "records": 0,
+   "states": {},
+   "fingerprint_ok": 0,
+   "live": 0,
+   "live_dependencies": 0,
+   "live_dependencies_current": 0,
+   "live_dependency_errors": 0,
+   "first_error": null
+  }
+ },
+ "resolved_restored": {
+  "runs": {
+   "total": 0,
+   "statuses": {},
+   "without_workspace": 0,
+   "orphan_tasks": 0,
+   "orphan_events": 0
+  },
+  "approvals": {
+   "total": 0,
+   "statuses": {},
+   "payload_hash_ok": 0,
+   "without_workspace": 0,
+   "run_missing": 0
+  },
+  "evidence": {
+   "insights": 0,
+   "insight_hypothesis_missing": 0,
+   "insight_run_missing": 0,
+   "bundles_bound": 0,
+   "bundles_hash_ok": 0
+  },
+  "verification": {
+   "records": 0,
+   "states": {},
+   "fingerprint_ok": 0,
+   "live": 0,
+   "live_dependencies": 0,
+   "live_dependencies_current": 0,
+   "live_dependency_errors": 0,
+   "first_error": null
+  }
+ },
+ "kept": false,
+ "passed": true
+}

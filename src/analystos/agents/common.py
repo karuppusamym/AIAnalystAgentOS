@@ -11,6 +11,7 @@ from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import RunTask, SourceAsset, SourceColumn
 from analystos.runtime.context import RunContext
+from analystos.skills.catalog import screen_for_prompt
 
 log = get_logger(__name__)
 
@@ -85,8 +86,10 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
                 continue
             p = c.profile or {}
             entry: dict[str, Any] = {"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type or p.get("semantic_type")}
-            if c.business_name or c.description:
-                entry["meaning"] = (c.business_name or "") + (f" - {c.description}" if c.description else "")
+            # Owner- and user-written text is as untrusted as crawled text here: screened at build (P7-20).
+            meaning = _meaning(c.business_name, c.description)
+            if meaning:
+                entry["meaning"] = meaning
             if p.get("distinct") is not None:
                 entry["distinct"] = p.get("distinct")
             if p.get("null_rate") is not None:
@@ -101,11 +104,18 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
         if capped and llm.compact_prompts and len(entries) > llm.catalog_max_columns_per_table:
             entries.sort(key=lambda e: column_rank(e, tokens))
             entries = entries[:llm.catalog_max_columns_per_table]
-        catalog.append({"asset": fq, "business_name": asset.business_name, "row_count": asset.row_count, "columns": entries})
+        catalog.append({"asset": fq, "business_name": screen_for_prompt(asset.business_name, max_chars=200) or None,
+                        "row_count": asset.row_count, "columns": entries})
     if capped and llm.compact_prompts and len(catalog) > llm.catalog_max_tables:
         catalog.sort(key=lambda t: -table_relevance(t, tokens))
         catalog = catalog[:llm.catalog_max_tables]
     return catalog
+
+
+def _meaning(business_name: str | None, description: str | None) -> str:
+    name = screen_for_prompt(business_name, max_chars=200)
+    desc = screen_for_prompt(description)
+    return name + (f" - {desc}" if desc else "")
 
 
 def model_gate(ctx: RunContext, purpose: str, payload: Any, *, deterministic_ok: bool) -> bool:
