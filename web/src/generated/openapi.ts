@@ -416,8 +416,9 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description One approval's status for its requester or anyone who sees the workspace's approvals inbox; anyone
-         *     else gets the same 404 as an unknown id. Read only: no decision is possible here.
+         * @description One approval's status for anyone who sees the workspace's approvals inbox (a requester is a member);
+         *     anyone else, including a requester who has left the workspace, gets the same 404 as an unknown id.
+         *     Read only: no decision is possible here.
          */
         get: operations["get_approval_api_approvals__approval_id__get"];
         put?: never;
