@@ -130,7 +130,23 @@ def _services(proposals=None, *, key: bool = True):
     from analystos.runtime.usage import DbUsageSink
 
     def chat(payload):
-        state = json.loads(payload["messages"][1]["content"])
+        # The prompt is static system text, then a cached preamble (role, goal, capabilities), then this round's
+        # state (history, remaining rounds): merge every JSON message so the fake reads the whole state.
+        state: dict = {}
+        for m in payload["messages"][1:]:
+            content = m["content"] if isinstance(m["content"], str) else "".join(
+                part.get("text", "") for part in m["content"] if isinstance(part, dict))
+            decoder, i = json.JSONDecoder(), 0
+            while i < len(content):  # consecutive user messages arrive merged: several JSON documents in one
+                if content[i].isspace():
+                    i += 1
+                    continue
+                try:
+                    parsed, i = decoder.raw_decode(content, i)
+                except ValueError:
+                    break
+                if isinstance(parsed, dict):
+                    state.update(parsed)
         return chat_json(proposals(state) if proposals else {})
 
     transport = FakeTransport(chat=chat)
