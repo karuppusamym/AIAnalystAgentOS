@@ -277,9 +277,11 @@ function UsageView() {
   if (!u.data) return <Loading />;
   const total = u.data.models.reduce((s, m) => s + m.cost_usd, 0);
   const calls = u.data.models.reduce((s, m) => s + m.calls, 0);
+  const complete = u.data.models.every((m) => m.cost_complete !== false);
   return (
     <div className="stack">
-      <Card title={`Model usage — ${calls.toLocaleString()} calls, ${fmtUsd(total)}`}>
+      <Card title={`Model usage — ${calls.toLocaleString()} calls, ${complete ? fmtUsd(total) : "cost incomplete"}`}>
+        {!complete && <Notice tone="warning">Some calls have no known price. Their costs are unknown; the recorded amounts are only a subtotal.</Notice>}
         {u.data.models.length === 0 ? <EmptyState title="No model calls yet" /> : (
           <div className="table-wrap">
             <table className="table">
@@ -292,7 +294,7 @@ function UsageView() {
                     <td className="num"><Value value={m.calls} format="int" /></td>
                     <td className="num"><Value value={m.failed} format="int" /></td>
                     <td className="num"><Value value={m.avg_latency_ms} format="ms" /></td>
-                    <td className="num"><Value value={m.cost_usd} format="usd" /></td>
+                    <td className="num">{m.cost_complete === false ? "Incomplete" : <Value value={m.cost_usd} format="usd" />}</td>
                   </tr>
                 ))}
               </tbody>

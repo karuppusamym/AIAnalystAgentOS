@@ -7,6 +7,7 @@ import { api, type LLMMode, type PlatformSettings, type RungSpend, type Settings
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StateView, StatusBadge, Tag, Value } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, type AsyncState } from "../lib/hooks";
+import { ModelReadiness } from "../components/ModelReadiness";
 import {
   LIMIT_SECTIONS, LLM_MODES, MODE_TEXT, SECTION_LABELS, fieldSchema, humanKey, modeOf, pendingChanges, presetEffect, savedShare,
   settingsPatch, statusCount, validateLimits, withPurposeMode,
@@ -31,6 +32,7 @@ export function SettingsEditor() {
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [purposeSearch, setPurposeSearch] = useState("");
   const act = useAction();
 
   // A new server version (load, save, preset, rollback) resets the draft to what is now effective.
@@ -106,6 +108,7 @@ export function SettingsEditor() {
 
   return (
     <div className="stack settings-editor">
+      <ModelReadiness />
       <Notice tone="info">
         Version <strong>{d.version}</strong> is in effect. Changes apply to every workspace within seconds; workspace policy may only
         tighten them. Every save is versioned and audited, and can be rolled back.
@@ -121,7 +124,7 @@ export function SettingsEditor() {
         </div>
       </Card>
 
-      <Card title="Model use per purpose">
+      <Card title="Model use per purpose" actions={<input type="search" aria-label="Search model purposes" placeholder="Search purposes…" value={purposeSearch} onChange={(e) => setPurposeSearch(e.target.value)} />}>
         <p className="muted small">
           <strong>off</strong>: {MODE_TEXT.off}; <strong>auto</strong>: {MODE_TEXT.auto}; <strong>always</strong>: {MODE_TEXT.always}.
           A purpose without a rule path has no fallback: turning it off disables that capability.
@@ -131,19 +134,20 @@ export function SettingsEditor() {
         {models.data && (
           <div className="table-wrap">
             <table className="table table-compact">
-              <thead><tr><th>Purpose</th><th>Profile</th><th>Rule path</th><th>Available</th><th>In effect</th><th>Mode</th></tr></thead>
+              <thead><tr><th>Purpose</th><th>Profile</th><th>Rule path</th><th>Connection</th><th>Effective mode</th><th>Requested mode</th></tr></thead>
               <tbody>
-                {purposes.map((p) => {
+                {purposes.filter((p) => humanKey(p).toLowerCase().includes(purposeSearch.toLowerCase()) || p.includes(purposeSearch.toLowerCase())).map((p) => {
                   const eff = effective[p];
                   const mode = modeOf(draft.llm.purpose_modes, p);
                   const changed = mode !== modeOf(saved.llm.purpose_modes, p);
                   const risky = mode === "off" && eff && !eff.deterministic_path;
                   return (
                     <tr key={p} className={eff?.decision_model ? "row-jev" : undefined}>
-                      <td><code>{p}</code>{eff?.decision_model && <span className="tag tag-jev">JEV</span>}</td>
+                      <td><strong>{humanKey(p)}</strong><div className="muted small">{p}</div></td>
                       <td className="small"><code>{eff?.profile ?? models.data?.routing[p]}</code></td>
                       <td>{eff?.deterministic_path ? <Tag tone="success">rule path</Tag> : <Tag>model only</Tag>}</td>
-                      <td><StatusBadge status={eff?.available ? "ok" : "failed"} label={eff?.available ? "available" : "unavailable"} /></td>
+                      <td><StatusBadge status={eff?.available ? "ok" : "failed"} label={eff?.available ? "available" : "unavailable"} />
+                        {!eff?.available && <div className="muted small route-reason">{eff?.unavailable_reason ?? "See Models & routing for provider configuration."}</div>}</td>
                       <td className="small">{eff?.mode ?? "—"}</td>
                       <td>
                         <select aria-label={`Mode for ${p}`} value={mode}
@@ -368,6 +372,7 @@ export function TokenSavingsView() {
   const t = s.data?.totals;
   return (
     <div className="stack">
+      <ModelReadiness />
       <div className="toolbar">
         <label className="inline-field small">Period
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period in days">
@@ -380,15 +385,18 @@ export function TokenSavingsView() {
       {!s.data && !s.error && <Loading />}
       {t && (
         <>
+          {t.calls === 0 && <Notice tone="info"><strong>No provider calls recorded in this period.</strong> The {t.deterministic_skips} rule-based steps and {t.cache_hits} cache hits did not incur a model charge. Estimated avoided tokens are hypothetical usage, not tokens sent to an LLM.</Notice>}
           {s.data?.cost_complete === false && <Notice tone="warning">
             Spend is incomplete: {s.data.missing_price?.reduce((n, row) => n + row.calls, 0) ?? 0} model call(s) had no provider cost or price-table entry.
             Update the model price table before using this total as a budget report.
           </Notice>}
-          <div className="stats-row">
-            <Stat label="Estimated tokens avoided" value={<Value value={t.tokens_saved} format="int" />} hint={`${fmtPct(t.saved_share)} of actual plus estimated tokens`} />
-            <Stat label="Tokens used" value={<Value value={t.tokens_used} format="int" />} />
+          <div className="stats-row usage-summary">
+            <Stat label="Recorded model cost" value={s.data?.cost_complete === false ? <>Incomplete</> : <Value value={t.cost_usd} format="usd" />} hint={s.data?.cost_complete === false ? "Some calls have unknown prices" : "Actual calls only"} />
             <Stat label="Model calls" value={<Value value={t.calls} format="int" />} />
-            <Stat label="Recorded model cost" value={<Value value={t.cost_usd} format="usd" />} hint={s.data?.prices_version ? `Price table ${s.data.prices_version} when provider cost is unavailable` : undefined} />
+            <Stat label="Tokens used" value={<Value value={t.tokens_used} format="int" />} />
+            <Stat label="Estimated tokens avoided" value={<Value value={t.tokens_saved} format="int" />} hint={`${fmtPct(t.saved_share)} of actual plus estimated tokens`} />
+          </div>
+          <div className="stats-row usage-secondary">
             <Stat label="Cache hits" value={<Value value={t.cache_hits} format="int" />} />
             <Stat label="Deterministic skips" value={<Value value={t.deterministic_skips} format="int" />} />
             <Stat label="Refused (oversize)" value={<Value value={t.refused} format="int" />} />
@@ -409,7 +417,7 @@ export function TokenSavingsView() {
                           <td className="num">{fmtNumber(r.calls, 0)}</td>
                           <td className="num">{fmtNumber(r.tokens_used, 0)}</td>
                           <td className="num">{fmtNumber(r.tokens_saved, 0)}</td>
-                          <td className="num"><Value value={r.cost_usd} format="usd" /></td>
+                          <td className="num">{r.cost_complete === false ? "Incomplete" : <Value value={r.cost_usd} format="usd" />}</td>
                           <td className="num">{fmtNumber(statusCount(r, "cache_hit"), 0)}</td>
                           <td className="num">{fmtNumber(statusCount(r, "skipped"), 0)}</td>
                           <td className="num">{fmtNumber(statusCount(r, "refused"), 0)}</td>
@@ -421,6 +429,7 @@ export function TokenSavingsView() {
               </div>
             )}
           </Card>
+          <details className="card diagnostics"><summary>Execution details and model breakdown</summary><div className="card-body stack">
           <SpendBreakdown title="By rung" by={s.data?.by_rung} keyLabel="Rung"
             missing="The server does not report the execution-ladder rung (L0 cache … L5 strong model) per call yet." />
           <Card title="Escalations (small answer failed a check, large tier answered)">
@@ -445,6 +454,7 @@ export function TokenSavingsView() {
           </Card>
           <SpendBreakdown title="By model" by={s.data?.by_model} keyLabel="Model"
             missing="Not in this report; the Usage tab lists calls and spend per provider and model." />
+          </div></details>
         </>
       )}
     </div>
@@ -469,7 +479,7 @@ function SpendBreakdown({ title, by, keyLabel, missing }: { title: string; by: R
                   <td className="num"><Value value={r.calls} format="int" /></td>
                   <td className="num"><Value value={r.tokens_used} format="int" /></td>
                   <td className="num"><Value value={r.tokens_saved} format="int" /></td>
-                  <td className="num"><Value value={r.cost_usd} format="usd" /></td>
+                  <td className="num">{r.cost_complete === false ? "Incomplete" : <Value value={r.cost_usd} format="usd" />}</td>
                 </tr>
               ))}
             </tbody>

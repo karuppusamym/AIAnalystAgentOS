@@ -21,14 +21,29 @@ const cols = (asset: string, columns: string[]) => `${asset}.${columns.length > 
  * other than the proposer; the server enforces both.
  */
 export function DefinitionsPanel({ wsId, role }: { wsId: string; role: string | undefined }) {
+  const [section, setSection] = useState("model");
+  const sections = [
+    { id: "model", title: "Data model", detail: "Review proposed structure and changes" },
+    { id: "joins", title: "Joins to confirm", detail: "Measured relationships between tables" },
+    { id: "library", title: "Saved definitions", detail: "Versioned analyses, recipes and playbooks" },
+    { id: "graph", title: "Semantic graph", detail: "Explore datasets, metrics and joins" },
+  ];
   return (
-    <div className="stack">
-      <RelationshipQueue wsId={wsId} role={role} />
-      <ModelChanges wsId={wsId} role={role} />
-      <Definitions wsId={wsId} role={role} />
-      <Card title="Semantic graph">
+    <div className="definitions-layout">
+      <nav className="definition-nav" aria-label="Definition sections">
+        {sections.map((s) => <button key={s.id} type="button" className={`list-button ${section === s.id ? "active" : ""}`}
+          aria-current={section === s.id ? "true" : undefined} onClick={() => setSection(s.id)}>
+          <strong>{s.title}</strong><span className="muted small">{s.detail}</span></button>)}
+        <p className="muted small">A source supplies data. The model defines shared meaning. Analysis contexts give that data a purpose for each investigation.</p>
+      </nav>
+      <div className="definition-content">
+      {section === "joins" && <RelationshipQueue wsId={wsId} role={role} />}
+      {section === "model" && <ModelChanges wsId={wsId} role={role} />}
+      {section === "library" && <Definitions wsId={wsId} role={role} />}
+      {section === "graph" && <Card title="Semantic graph">
         <Suspense fallback={<Loading />}><SemanticGraph wsId={wsId} /></Suspense>
-      </Card>
+      </Card>}
+      </div>
     </div>
   );
 }
@@ -90,7 +105,14 @@ function Candidate({ wsId, c, role, onDecided }: { wsId: string; c: Relationship
   );
 }
 
-const fmtVal = (v: unknown) => (v === undefined || v === null ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
+function DiffValue({ value }: { value: unknown }) {
+  if (value === undefined || value === null) return <span className="muted">Not present</span>;
+  if (typeof value !== "object") return <span className="diff-value">{String(value)}</span>;
+  const record = value as Record<string, unknown>;
+  const summary = Array.isArray(value) ? `${value.length} item${value.length === 1 ? "" : "s"}`
+    : String(record.name ?? record.label ?? record.description ?? `${Object.keys(record).length} properties`);
+  return <details className="diff-object"><summary>{summary}</summary><pre className="json">{JSON.stringify(value, null, 2)}</pre></details>;
+}
 
 function ModelChanges({ wsId, role }: { wsId: string; role: string | undefined }) {
   const diff = useAsync(() => api.semanticModelDiff(wsId), [wsId]);
@@ -108,7 +130,7 @@ function ModelChanges({ wsId, role }: { wsId: string; role: string | undefined }
   };
   return (
     <Card title="Changes to the data model">
-      <p className="muted small">This workspace model maps catalog datasets and measured joins. AI can propose a version, but the compiler uses approved structure; metric expressions are checked against that structure before approval. Review the diff and evidence below before deciding.</p>
+      <p className="muted small">Review how datasets, fields and joins change before approving this version. Proposals remain separate from the approved structure used by governed queries.</p>
       {noModel ? <EmptyState title="No data model yet">It is built from the catalog and confirmed joins.</EmptyState> : <ErrorBox error={diff.error} onRetry={diff.reload} />}
       {!d && !diff.error && <Loading />}
       {d && (
@@ -117,16 +139,17 @@ function ModelChanges({ wsId, role }: { wsId: string; role: string | undefined }
             {d.base_version !== null ? <> compared with the approved version {d.base_version}</> : <> (the first version: everything is new)</>}.</p>
           {!d.has_changes ? <p className="muted small">No changes.</p> : (
             <div className="table-wrap">
-              <table className="table table-compact" aria-label="Data model changes">
+              <table className="table table-compact model-diff-table" aria-label="Data model changes">
                 <thead><tr><th>Field</th><th>Change</th><th>Before</th><th>After</th></tr></thead>
                 <tbody>
                   {d.entries.slice(0, 100).map((e) => (
-                    <tr key={e.field}><td><code>{e.field}</code></td><td>{e.change}</td><td className="small">{fmtVal(e.before)}</td><td className="small">{fmtVal(e.after)}</td></tr>
+                    <tr key={e.field}><td><code>{e.field}</code></td><td><StatusBadge status={e.change} /></td><td className="small"><DiffValue value={e.before} /></td><td className="small"><DiffValue value={e.after} /></td></tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+          {d.entries.length > 100 && <p className="muted small">Showing the first 100 of {d.entries.length} changes.</p>}
           {d.status === "proposed" && canDecide && !done && (
             <div className="form-actions">
               <button type="button" className="btn btn-sm btn-danger" disabled={act.busy} onClick={() => void decide("reject")}>Reject version {d.version}</button>
@@ -229,7 +252,7 @@ function DefinitionDiff({ wsId, id }: { wsId: string; id: string }) {
       <table className="table table-compact" aria-label={`Changes against version ${diff.data.to.version}`}>
         <thead><tr><th>Field</th><th>This version</th><th>Version {diff.data.to.version}</th></tr></thead>
         <tbody>
-          {diff.data.changes.map((c) => <tr key={c.path}><td><code>{c.path}</code></td><td className="small">{fmtVal(c.from)}</td><td className="small">{fmtVal(c.to)}</td></tr>)}
+          {diff.data.changes.map((c) => <tr key={c.path}><td><code>{c.path}</code></td><td className="small"><DiffValue value={c.from} /></td><td className="small"><DiffValue value={c.to} /></td></tr>)}
         </tbody>
       </table>
     </div>

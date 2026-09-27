@@ -13,6 +13,8 @@ describe("formatting & status", () => {
     expect(fmtP(0.00001)).toBe("< 0.0001");
     expect(fmtP(0.04213)).toBe("0.0421");
     expect(fmtUsd(0.01234)).toBe("$0.0123");
+    expect(fmtUsd(0.000001)).toBe("<$0.0001");
+    expect(fmtUsd(0)).toBe("$0.0000");
     expect(fmtMs(1500)).toBe("1.5 s");
   });
 
