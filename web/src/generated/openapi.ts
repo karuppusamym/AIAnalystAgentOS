@@ -4255,6 +4255,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/semantic/model/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose Model
+         * @description Propose entities and grain (datasets and their primary keys) as a `proposed` structure version (P4-05):
+         *     another person approves it through `/model/approve`; joins go through the relationship queue.
+         */
+        post: operations["propose_model_api_workspaces__workspace_id__semantic_model_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/semantic/model/reject": {
         parameters: {
             query?: never;
@@ -5559,6 +5580,16 @@ export interface components {
             /** Tables */
             tables?: string[];
         };
+        /** DialectExpression */
+        DialectExpression: {
+            /**
+             * Dialect
+             * @default ANSI_SQL
+             */
+            dialect?: string;
+            /** Expression */
+            expression: string;
+        };
         /** DiscoverIn */
         DiscoverIn: {
             /** Assets */
@@ -5780,6 +5811,27 @@ export interface components {
             status?: string | null;
         };
         /**
+         * ImprovementConfirmation
+         * @description P5-07: `improved` needs more than one lucky holdout. On top of the declared minimum gain, the candidate
+         *     must beat the baseline (a) on the search's out-of-fold cross-validation, paired per fold: positive in a
+         *     majority of folds and on average, evidence from rows the holdout never saw; and (b) with the holdout gain's
+         *     interval at `holdout_level` excluding zero. Defaults measured to hold coin-flip targets at or below 0.5%
+         *     `improved` (evidence/2026-09-27-ml-null-rate.md); `cross_validation: false, holdout_level: 0.95` is the
+         *     unconfirmed pre-P5-07 rule.
+         */
+        ImprovementConfirmation: {
+            /**
+             * Cross Validation
+             * @default true
+             */
+            cross_validation?: boolean;
+            /**
+             * Holdout Level
+             * @default 0.99
+             */
+            holdout_level?: number;
+        };
+        /**
          * Incremental
          * @description Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a
          *     staged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.
@@ -5902,6 +5954,7 @@ export interface components {
          *     readiness checks decide.
          */
         MLSpec: {
+            confirmation?: components["schemas"]["ImprovementConfirmation"];
             /**
              * Contamination
              * @default 0.02
@@ -6072,6 +6125,13 @@ export interface components {
             reason?: string | null;
             /** Version */
             version: number;
+        };
+        /** ModelProposalIn */
+        ModelProposalIn: {
+            /** Datasets */
+            datasets: components["schemas"]["SemanticDataset"][];
+            /** Description */
+            description?: string | null;
         };
         /** MonitorIn */
         MonitorIn: {
@@ -6645,12 +6705,61 @@ export interface components {
             /** Assets */
             assets: string[];
         };
+        /** SemanticDataset */
+        SemanticDataset: {
+            /** Ai Context */
+            ai_context?: string | {
+                [key: string]: unknown;
+            } | null;
+            /** Custom Extensions */
+            custom_extensions?: {
+                [key: string]: unknown;
+            }[];
+            /** Description */
+            description?: string | null;
+            /** Fields */
+            fields?: components["schemas"]["SemanticField"][];
+            /** Name */
+            name: string;
+            /** Primary Key */
+            primary_key?: string[] | null;
+            /** Source */
+            source: string;
+            /** Unique Keys */
+            unique_keys?: string[][] | null;
+        };
         /** SemanticDecision */
         SemanticDecision: {
             /** Reason */
             reason?: string | null;
             /** Version */
             version?: number | null;
+        };
+        /**
+         * SemanticField
+         * @description A row-level attribute; `dimension` is kept as Ossie spells it ({is_time}) so None stays None.
+         */
+        SemanticField: {
+            /** Ai Context */
+            ai_context?: string | {
+                [key: string]: unknown;
+            } | null;
+            /** Custom Extensions */
+            custom_extensions?: {
+                [key: string]: unknown;
+            }[];
+            /** Description */
+            description?: string | null;
+            /** Dimension */
+            dimension?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expressions */
+            expressions: components["schemas"]["DialectExpression"][];
+            /** Label */
+            label?: string | null;
+            /** Name */
+            name: string;
         };
         /** ServerIn */
         ServerIn: {
@@ -16229,6 +16338,44 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_model_api_workspaces__workspace_id__semantic_model_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelProposalIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
