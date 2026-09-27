@@ -26,7 +26,7 @@ from analystos.contracts.step import CellEdit, CellIn, NotebookIn, StepEdit, Ste
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
 from analystos.db.base import session_scope
-from analystos.db.models import AnalysisStep, Notebook, User
+from analystos.db.models import AnalysisStep, AnalysisStepVersion, Notebook, User
 from analystos.events.bus import emit
 from analystos.governance.policy import require_role
 from analystos.services import steps as steps_svc
@@ -48,14 +48,16 @@ def cell_spec(cell: str, source: str, source_id: str | None = None) -> dict[str,
     raise InvalidInput("cell must be markdown, sql or python")
 
 
+def cell_view(session: Session, step: AnalysisStep, ver: AnalysisStepVersion | None = None, *, inherited: bool = False) -> dict[str, Any]:
+    """A cell as the notebook shows it: the step view plus its cell type and source (one shape for GET and POST)."""
+    view = steps_svc.view(session, step, ver, inherited=inherited)
+    spec = view["spec"]
+    return {**view, "cell": cell_type(step, spec), "source": spec.get("sql") or spec.get("code") or spec.get("text") or ""}
+
+
 def notebook_view(session: Session, nb: Notebook) -> dict[str, Any]:
     branch = steps_svc.main_branch(session, nb.workspace_id, "notebook", nb.id, nb.created_by)
-    cells = []
-    for st, v, inh in steps_svc.effective_steps(session, branch):
-        view = steps_svc.view(session, st, v, inherited=inh)
-        spec = view["spec"]
-        cells.append({**view, "cell": cell_type(st, spec),
-                      "source": spec.get("sql") or spec.get("code") or spec.get("text") or ""})
+    cells = [cell_view(session, st, v, inherited=inh) for st, v, inh in steps_svc.effective_steps(session, branch)]
     return {"id": nb.id, "workspace_id": nb.workspace_id, "title": nb.title, "revision": nb.revision, "archived": nb.archived,
             "branch_id": branch.id, "created_by": nb.created_by,
             "created_at": nb.created_at.isoformat() if nb.created_at else None,
@@ -107,7 +109,8 @@ def add_cell(user: User, workspace_id: str, notebook_id: str, body: CellIn, *, r
                            runtime=runtime, origin={"type": "cell", "notebook_id": notebook_id})
     with session_scope() as s:
         _touch(s, notebook_id, f"user:{user.id}", "cell_added", step_id=out["id"])
-    return out
+        step = s.get(AnalysisStep, out["id"])
+        return cell_view(s, step, steps_svc.version_row(s, step, out["version"]))
 
 
 def edit_cell(user: User, step_id: str, body: CellEdit, *, expected_version: int | None, runtime: Any = None) -> dict[str, Any]:
