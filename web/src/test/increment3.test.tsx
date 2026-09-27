@@ -267,6 +267,28 @@ function renderCatalog() {
 }
 
 describe("CatalogPage", () => {
+  it("shows measured profiles and explains when values are withheld", async () => {
+    const a = ASSET();
+    mockApi([
+      ["GET", /\/api\/workspaces\/ws_1$/, { id: "ws_1", name: "W", role: "viewer", counts: {}, policy: {}, members: [] }],
+      ["GET", /\/catalog/, [{ ...a, profile_meta: { profiled_at: "2026-09-25T10:00:00Z", rows_profiled: 1200,
+        source: "snapshot", truncated: true }, columns: [
+        { ...a.columns[0], profile: { non_null: 1100, null_rate: 0.0833, distinct: 600 } },
+        { ...a.columns[1], profile: { non_null: 1200, null_rate: 0, distinct: 50, min: 2, max: 90,
+          mean: 24, histogram: [{ bin: 0, low: 2, high: 46, count: 500 }, { bin: 1, low: 46, high: 90, count: 700 }] } },
+      ] }]],
+    ]);
+    renderCatalog();
+    fireEvent.click(await screen.findByRole("button", { name: "Columns (2)" }));
+    expect(screen.getByText(/staged copy is truncated/)).toBeTruthy();
+    const buttons = screen.getAllByRole("button", { name: "View profile" });
+    fireEvent.click(buttons[0]);
+    expect(screen.getByText(/withheld for this sensitive column/)).toBeTruthy();
+    fireEvent.click(buttons[1]);
+    expect(screen.getByText("Range")).toBeTruthy();
+    expect(screen.getByText("Distribution")).toBeTruthy();
+  });
+
   it("lists assets with origin badges, filters server-side, expands columns and lets an editor curate", async () => {
     const fetchMock = mockApi([
       ["GET", /\/api\/workspaces\/ws_1$/, { id: "ws_1", name: "W", role: "editor", counts: {}, policy: {}, members: [] }],

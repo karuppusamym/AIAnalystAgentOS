@@ -68,7 +68,31 @@ async def _main(workloads: list[str]) -> None:
     client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
     with contextlib.ExitStack() as stack:
         workers = build_workers(client, workloads, prefix=settings.temporal_queue_prefix, stack=stack)
-        await asyncio.gather(*(w.run() for w in workers))
+        await _serve_until_terminated(workers)
+
+
+async def _serve_until_terminated(workers: list[Any]) -> None:
+    """Run the workers; on SIGTERM (`kill`, `docker stop`, a service manager) shut them down so the caller's
+    ExitStack closes the compute process pool and its manager. Without this the default SIGTERM action ends
+    this process at once and leaves the pool processes running as orphans, holding database connections."""
+    import signal
+
+    loop = asyncio.get_running_loop()
+    terminated = asyncio.Event()
+    with contextlib.suppress(NotImplementedError, AttributeError, RuntimeError):  # Windows / not the main thread
+        loop.add_signal_handler(signal.SIGTERM, terminated.set)
+    runs = asyncio.ensure_future(asyncio.gather(*(w.run() for w in workers)))
+    waiter = asyncio.ensure_future(terminated.wait())
+    try:
+        await asyncio.wait({runs, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if terminated.is_set() and not runs.done():
+            log.info("SIGTERM: shutting down %d workers", len(workers))
+            await asyncio.gather(*(w.shutdown() for w in workers))
+        await runs
+    finally:
+        waiter.cancel()
+        with contextlib.suppress(NotImplementedError, AttributeError, RuntimeError):
+            loop.remove_signal_handler(signal.SIGTERM)
 
 
 def run_worker(queues: str | None = None, *, conformance: bool = False) -> int:

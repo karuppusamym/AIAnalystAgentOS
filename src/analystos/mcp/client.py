@@ -109,17 +109,18 @@ def _bearer(server: McpServer) -> dict[str, str]:
 
 
 async def _with_client(server: McpServer, fn: Callable[[Any], Awaitable[T]]) -> T:
-    import httpx2
-    from mcp import Client
-    from mcp.client.streamable_http import streamable_http_client
+    import httpx
 
     timeout = float((server.config or {}).get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
     # P7-11: the owner's `allowed` flag is this server's allowlist; the address must still be public
     # (or listed by the operator), and every request goes to the address vetted here (no rebinding,
     # no redirects, no environment proxies).
     target = outbound.pin(server.url, allowlist=None, private_hosts=_private_hosts())
-    async with (httpx2.AsyncClient(headers=_bearer(server), timeout=httpx2.Timeout(timeout), follow_redirects=False,
-                                   trust_env=False, transport=outbound.pinned_async_transport(target, httpx2)) as http,
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    async with (httpx.AsyncClient(headers=_bearer(server), timeout=httpx.Timeout(timeout), follow_redirects=False,
+                                  trust_env=False, transport=outbound.pinned_async_transport(target, httpx)) as http,
                 Client(streamable_http_client(server.url, http_client=http), read_timeout_seconds=timeout,
                        cache=None) as client):
         return await fn(client)

@@ -8,7 +8,7 @@ import { Card, ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, Tag } from 
 const STATUSES = ["pending", "approved", "rejected", "superseded"] as const;
 const KIND_LABEL: Record<string, string> = {
   term: "glossary term", definition: "definition", metric: "metric", rule: "business rule", note: "note", negative: "negative knowledge",
-  attested_computation: "attested computation", table_description: "table description",
+  attested_computation: "attested computation", table_description: "table description", domain_candidate: "domain candidate",
 };
 
 /**
@@ -29,8 +29,9 @@ export function ReviewQueue({ wsId, canDecide, onOpenDocument }: {
   const [result, setResult] = useState<ReviewResult | null>(null);
   const act = useAction();
   const rows = useMemo(() => list.data ?? [], [list.data]);
+  const batchable = rows.filter((r) => r.kind !== "domain_candidate");
   const pending = status === "pending";
-  const allOn = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  const allOn = batchable.length > 0 && batchable.every((r) => selected.has(r.id));
 
   const toggle = (sid: string, on: boolean) => setSelected((s) => {
     const n = new Set(s);
@@ -89,8 +90,8 @@ export function ReviewQueue({ wsId, canDecide, onOpenDocument }: {
         <Card>
           <div className="review-batch">
             <label className="toggle small">
-              <input type="checkbox" checked={allOn} onChange={(e) => setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} />
-              Select all ({rows.length})
+              <input type="checkbox" checked={allOn} onChange={(e) => setSelected(e.target.checked ? new Set(batchable.map((r) => r.id)) : new Set())} />
+              Select all ({batchable.length})
             </label>
             <label className="sr-only" htmlFor={`${id}-reason`}>Reason for rejecting the selection</label>
             <input id={`${id}-reason`} value={reason} placeholder="Reason (required to reject)" maxLength={2000}
@@ -109,7 +110,7 @@ export function ReviewQueue({ wsId, canDecide, onOpenDocument }: {
         <ul className="stack review-list" aria-label="Knowledge drafts">
           {rows.map((s) => (
             <li key={s.id}>
-              <SuggestionCard s={s} selectable={pending && canDecide} selected={selected.has(s.id)} onSelect={(on) => toggle(s.id, on)}
+              <SuggestionCard s={s} selectable={pending && canDecide && s.kind !== "domain_candidate"} selected={selected.has(s.id)} onSelect={(on) => toggle(s.id, on)}
                 busy={act.busy} onEditApprove={(fields) => void decide([{ id: s.id, action: "edit", fields }])} />
             </li>
           ))}
@@ -157,6 +158,7 @@ function SuggestionCard({ s, selectable, selected, onSelect, busy, onEditApprove
           <div className="suggestion-confidence" title="The least confident field"><ConfidenceBar value={s.confidence} /></div>
         </div>
         <p className="small muted">Writes <code>{s.path}</code> · subject <code>{s.subject}</code>{s.revision ? <> · revision {s.revision}</> : null}</p>
+        {s.kind === "domain_candidate" && <Notice tone="info">Choose a keyword from the table name or a non-sensitive column name, then approve with edits. That reviewed rule applies in this workspace on the next full crawl; the suggestion alone cannot change the catalog.</Notice>}
         {s.reason && <p className="small">Reason: {s.reason}</p>}
         {!editing && (
           <div className="table-wrap"><table className="table table-compact suggestion-fields">
@@ -184,7 +186,7 @@ function SuggestionCard({ s, selectable, selected, onSelect, busy, onEditApprove
           <form className="form" aria-label={`Edit ${s.title}`} onSubmit={(e) => { e.preventDefault(); onEditApprove(editedFields(s, edits)); }}>
             {editable.map((name) => (
               <div className="field" key={name}>
-                <label htmlFor={`${id}-${name}`}><code>{name}</code>{Array.isArray(s.fields[name].value) ? " (comma-separated)" : ""}</label>
+                <label htmlFor={`${id}-${name}`}><code>{name}</code>{Array.isArray(s.fields[name]?.value) ? " (comma-separated)" : ""}</label>
                 <textarea id={`${id}-${name}`} rows={name === main ? 4 : 1} value={edits[name] ?? ""}
                   onChange={(e) => setEdits((x) => ({ ...x, [name]: e.target.value }))} />
               </div>

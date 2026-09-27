@@ -6,7 +6,10 @@ import { nextThemePref, setThemePref, useTheme } from "../lib/theme";
 import { AREAS, canSee, fillPath, SCREENS } from "../routes";
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { GuideButton } from "./Guide";
 import { NotificationBell } from "./NotificationBell";
+import { StatusBanner } from "./StatusBanner";
+import { TourProvider } from "./Tour";
 
 const THEME_LABEL = { system: "System theme", light: "Light theme", dark: "Dark theme" } as const;
 const THEME_ICON = { system: "◐", light: "☀", dark: "☾" } as const;
@@ -67,7 +70,7 @@ function AreaNav({ wsId, wsName, role }: { wsId?: string; wsName?: string; role?
             {screens.map((s) => (
               <li key={s.id}>
                 <NavLink to={fillPath(s.path, { wsId })} end={s.id === "overview" || s.id === "workspaces" || s.id === "work"}
-                  className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
+                  data-tour={`nav-${s.id}`} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
                   {s.title}
                 </NavLink>
               </li>
@@ -100,6 +103,7 @@ export function Layout() {
   }, []);
 
   return (
+    <TourProvider>
     <div className="shell">
       <a href="#main" className="skip-link">Skip to content</a>
       <header className="topbar">
@@ -116,6 +120,7 @@ export function Layout() {
           aria-keyshortcuts="Control+K Meta+K">
           <span>Go to…</span> <kbd className="kbd">Ctrl K</kbd>
         </button>
+        <GuideButton wsId={wsId} />
         <ThemeToggle />
         {user && (
           <div className="topbar-user">
@@ -126,6 +131,7 @@ export function Layout() {
           </div>
         )}
       </header>
+      <StatusBanner />
       <div className="body">
         <nav id="sidenav" className={`sidenav ${navOpen ? "open" : ""}`} aria-label="Main">
           <AreaNav wsId={wsId} wsName={ws?.name} role={ws?.role} />
@@ -138,5 +144,6 @@ export function Layout() {
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} wsId={wsId} role={ws?.role} />
     </div>
+    </TourProvider>
   );
 }

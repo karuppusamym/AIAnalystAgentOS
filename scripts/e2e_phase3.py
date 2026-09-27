@@ -102,6 +102,8 @@ def main() -> int:
     analyst = Api(args.api, "analyst@analystos.local")
     ev: dict = {"api": args.api, "workspace_id": ws, "started_at": started.isoformat(), "checks": {}}
     check = ev["checks"]
+    jev_available = bool(analyst.get("/api/health")["checks"].get("models", {}).get("jev"))
+    ev["jev_available"] = jev_available
     runs = analyst.get(f"/api/workspaces/{ws}/analysis")
     baseline = next(r for r in runs if r["status"] == "COMPLETED" and (r.get("origin") or {}).get("type", "user") in ("user", "schedule"))
     print("workspace", ws, "baseline run", baseline["id"])
@@ -152,10 +154,17 @@ def main() -> int:
     mrun = analyst.post(f"/api/schedules/{msch['id']}/run")
     results = mrun["result"].get("monitors", {})
     alerts = analyst.get(f"/api/workspaces/{ws}/alerts")
-    threshold_alert = next((a for a in alerts if a["monitor_id"] == mons[2]["id"]), None)
+    # One open alert per condition and period, whichever monitor observed it (services/monitors.alert_dedupe_key):
+    # on a re-run the evaluation returns the alert an earlier monitor for the same condition raised.
+    threshold_id = (results.get(mons[2]["id"]) or {}).get("alert_id")
+    threshold_alert = next((a for a in alerts if a["id"] == threshold_id), None)
     check["monitor_schedule_evaluated_all"] = mrun["status"] == "succeeded" and len(results) == len(mons) and not any("error" in r for r in results.values())
     check["threshold_alert_raised"] = threshold_alert is not None
-    check["alert_triaged_by_jev"] = bool(threshold_alert and (threshold_alert["data"].get("triage") or {}).get("model", "").startswith("typesafe/jev"))
+    triage = (threshold_alert or {}).get("data", {}).get("triage") or {}
+    if jev_available:
+        check["alert_triaged_by_jev"] = str(triage.get("model") or "").startswith("typesafe/jev")
+    else:  # no decision-model route (no key): JEV cannot be proven; the rule's triage must be recorded as such
+        check["alert_triaged_by_rules_jev_unavailable"] = triage.get("by") == "rules" and bool(triage.get("decision_id"))
     check["data_quality_baseline_recorded"] = bool(next(m for m in analyst.get(f"/api/workspaces/{ws}/monitors") if m["id"] == mons[3]["id"])["last_result"].get("issues") is not None)
     series = analyst.get(f"/api/monitors/{mons[0]['id']}/series")
     check["metric_series_governed"] = len(series["points"]) >= 20

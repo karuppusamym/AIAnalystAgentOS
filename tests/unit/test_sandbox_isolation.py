@@ -293,7 +293,7 @@ def test_gate_refusal_is_visible_in_tool_policy_and_health(gate, monkeypatch):
     gate("auto")
     assert TestClient(app).get("/api/health").json()["checks"]["sandbox"] | {"enforced": None} == {
         "ok": True, "mode": "auto", "backend": "process", "available": True, "isolated": True, "enforced": None,
-        "detail": "namespaces"}
+        "detail": "namespaces", "state": "up"}
 
 
 def test_auto_prefers_the_container_then_the_process_backend(gate):

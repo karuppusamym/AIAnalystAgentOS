@@ -137,8 +137,10 @@ export function fieldText(f: SuggestionField | undefined): string {
 
 /** Editable fields: text and lists of text (a computation stays as proposed). */
 export function editableFields(s: KnowledgeSuggestion): string[] {
-  return Object.entries(s.fields).filter(([, f]) => typeof f.value === "string" || (Array.isArray(f.value) && f.value.every((x) => typeof x === "string")))
-    .map(([k]) => k).sort((a, b) => (a === primaryField(s.kind) ? -1 : b === primaryField(s.kind) ? 1 : a.localeCompare(b)));
+  const names = Object.entries(s.fields).filter(([, f]) => typeof f.value === "string" || (Array.isArray(f.value) && f.value.every((x) => typeof x === "string")))
+    .map(([k]) => k);
+  if (s.kind === "domain_candidate" && !names.includes("keyword")) names.push("keyword");
+  return names.sort((a, b) => (a === primaryField(s.kind) ? -1 : b === primaryField(s.kind) ? 1 : a.localeCompare(b)));
 }
 
 /** Edited values back to the field's type; unchanged fields are left out (they keep their provenance). */
@@ -146,8 +148,10 @@ export function editedFields(s: KnowledgeSuggestion, edits: Record<string, strin
   const out: Dict = {};
   for (const [name, text] of Object.entries(edits)) {
     const f = s.fields[name];
-    if (!f || text === fieldText(f)) continue;
-    out[name] = Array.isArray(f.value) ? text.split(",").map((x) => x.trim()).filter(Boolean) : text;
+    if (!f && !(s.kind === "domain_candidate" && name === "keyword")) continue;
+    if (f && text === fieldText(f)) continue;
+    if (!f && !text.trim()) continue;
+    out[name] = Array.isArray(f?.value) ? text.split(",").map((x) => x.trim()).filter(Boolean) : text;
   }
   return out;
 }

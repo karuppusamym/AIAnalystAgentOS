@@ -214,6 +214,12 @@ def build_chart(
         if not column:
             raise InvalidInput(f"chart {chart.key!r}: histogram needs a numeric column")
         row_limit = limit or 10000
+        # Superset 4.1's histogram operator refuses a column holding any NULL ("contains non-numeric values"), and
+        # a duration is NULL for every open record: the chart counts the rows that have a value, both in the saved
+        # explore filters and in the query (live 2026-09-27: the operations dashboard's histogram failed without it).
+        params["adhoc_filters"] = [*params["adhoc_filters"], {
+            "expressionType": "SIMPLE", "subject": column, "operator": "IS NOT NULL", "comparator": None,
+            "clause": "WHERE", "isExtra": False, "isNew": False, "filterOptionName": "aos_not_null"}]
         params.update(column=column, groupby=series, bins=10, normalize=False, cumulative=False, row_limit=row_limit,
                       x_axis_title=column, y_axis_title="Count", show_legend=bool(series))
         query = _query(
@@ -228,6 +234,7 @@ def build_chart(
             ],
             chart=chart,
         )
+        query["filters"].append({"col": column, "op": "IS NOT NULL"})
 
     elif t == "heatmap":
         y_col = chart.series or time_col

@@ -110,6 +110,7 @@ ladders:
   agent_actions: [cache, rules, llm_small]
   ml_spec_proposal: [cache, rules, llm_small]  # P5-06: the ml_practitioner proposes MLSpec inputs; rules = default_actions
   metadata_enrichment: [cache, rules, llm_small]
+  domain_classification_assist: [cache, rules, llm_small]
   verification: [cache, llm_large]  # runs only when the workspace policy opts in (independent_model_verification)
   hypothesis_priority: [cache, rules, decision]
   risk_check: [cache, decision]  # escalate-only; no longer called at publish (the tier is fixed high)
@@ -145,6 +146,7 @@ routing:
   ml_spec_proposal: low_cost  # proposals only: skill.ml_propose_spec validates, readiness checks decide
   agent_actions: low_cost  # declarative agents (agents/generic.py) propose typed actions; default_actions are the rule path
   metadata_enrichment: low_cost
+  domain_classification_assist: low_cost
   verification: independent_model_family
   # JEV decision purposes
   hypothesis_priority: decision
@@ -168,6 +170,7 @@ escalation:
   default: on_validation_failure
   purposes:
     metadata_enrichment: never   # batch crawl prompts; the deterministic semantics already ran
+    domain_classification_assist: never  # proposals only; the catalog keeps its rule classification
     decision_structured: never   # the DecisionService falls back to its rules backend
     agent_actions: never         # declarative agents have default_actions
     pipeline_proposal: never     # the engineer agent has default_actions (rules)

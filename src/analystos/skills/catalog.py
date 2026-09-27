@@ -585,17 +585,22 @@ def _inbound_references(asset: DiscoveredAsset, entity: str, all_assets: Iterabl
     return n
 
 
-def _domain(name_tokens: list[str], cols: list[DiscoveredColumn]) -> tuple[str, float, list[str]]:
+def _domain(name_tokens: list[str], cols: list[DiscoveredColumn],
+            reviewed_keywords: dict[str, frozenset[str]] | None = None) -> tuple[str, float, list[str]]:
     scores: dict[str, float] = {}
     hits: dict[str, list[str]] = {}
     tset = {singularize(t) for t in name_tokens} | set(name_tokens)
     col_tokens: set[str] = set()
     for c in cols:
         col_tokens |= {singularize(t) for t in split_tokens(c.name)} | set(split_tokens(c.name))
-    for dom, kws in domain_keywords().items():
+    reviewed_keywords = reviewed_keywords or {}
+    vocabulary = domain_keywords()
+    for dom, kws in vocabulary.items():
+        kws = kws | reviewed_keywords.get(dom, frozenset())
         th = sorted(tset & kws)
         ch = sorted((col_tokens & kws) - set(th))
-        s = 3.0 * len(th) + 1.0 * len(ch)
+        reviewed_hits = set(ch) & reviewed_keywords.get(dom, frozenset())
+        s = 3.0 * len(th) + 1.0 * len(ch) + 1.0 * len(reviewed_hits)
         if s:
             scores[dom], hits[dom] = s, th + ch
     if not scores:
@@ -662,7 +667,8 @@ def _describe(role: str, business_name: str, domain: str, grain: str, sem: list[
     return " ".join(parts)
 
 
-def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[DiscoveredAsset] | None = None) -> TableSemantics:
+def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[DiscoveredAsset] | None = None,
+                          reviewed_keywords: dict[str, frozenset[str]] | None = None) -> TableSemantics:
     """Business name, role, domain, grain and a factual template description for one asset.
 
     Naming conventions (dim_/fact_/stg_ ...) and structure (references, measures, time columns,
@@ -719,7 +725,7 @@ def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[Discovered
     business_name = asset.business_name or humanize(bn_tokens)
     if asset.business_name:
         evidence.append("business name declared by the source")
-    domain, d_conf, d_ev = _domain(rest, asset.columns)
+    domain, d_conf, d_ev = _domain(rest, asset.columns, reviewed_keywords)
     evidence.extend(d_ev)
     grain, g_conf = _grain(role, entity, sem, asset.columns, name_set)
     evidence.append(f"grain confidence {g_conf}")
@@ -731,6 +737,58 @@ def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[Discovered
     return TableSemantics(key=asset_key(asset), business_name=business_name, entity=entity, domain=domain,
                           role=role, grain=grain, description=description, confidence=_conf(conf),  # type: ignore[arg-type]
                           evidence=evidence, columns=sem)
+
+
+def confirm_table_semantics(sem: TableSemantics, profile: dict[str, Any], *, representative: bool,
+                            reviewed_keywords: dict[str, frozenset[str]] | None = None) -> TableSemantics:
+    """Corroborate rule classifications with measured facts, without changing the class itself.
+
+    A capped/truncated population can describe the sample, but cannot increase classification
+    confidence. Raw sampled values are never included in the returned evidence.
+    """
+    rows = int(profile.get("row_count") or 0)
+    if not representative or rows < 20:
+        return sem
+    measured = {c.get("name"): c for c in profile.get("columns") or [] if isinstance(c, dict)}
+    signals: list[str] = []
+    key_names = {c.name for c in sem.columns if c.semantic_role == "identifier"}
+    unique_keys = {k.get("column") for k in profile.get("candidate_keys") or []
+                   if isinstance(k, dict) and k.get("unique") and not k.get("null_count")}
+    if sem.role in {"dimension", "reference"} and key_names & unique_keys:
+        signals.append("measured non-null unique entity key")
+    elif sem.role == "bridge":
+        fks = [c.name for c in sem.columns if c.semantic_role == "foreign_key"]
+        if len(fks) >= 2 and all(measured.get(n, {}).get("non_null", 0) / rows >= 0.95 for n in fks):
+            signals.append("measured coverage of two or more references")
+    elif sem.role in {"fact", "event"}:
+        times = [c.name for c in sem.columns if c.semantic_role in {"timestamp", "date"}]
+        if times and any(measured.get(n, {}).get("non_null", 0) / rows >= 0.95 for n in times):
+            signals.append("measured time-column coverage")
+
+    if sem.domain != "generic":
+        vocabulary = domain_keywords()
+        for domain, words in (reviewed_keywords or {}).items():
+            if domain in vocabulary:
+                vocabulary[domain] |= words
+        keywords = vocabulary.get(sem.domain, frozenset())
+        competing = set().union(*(words for domain, words in vocabulary.items() if domain != sem.domain))
+        for c in profile.get("columns") or []:
+            if not isinstance(c, dict) or c.get("semantic_type") != "categorical":
+                continue
+            if not c.get("top_values") or not c.get("non_null"):
+                continue
+            token_counts = [(set(split_tokens(v["value"])), int(v.get("count") or 0))
+                            for v in c["top_values"] if isinstance(v, dict) and isinstance(v.get("value"), str)]
+            matched = sum(count for tokens, count in token_counts if tokens & keywords)
+            conflicting = sum(count for tokens, count in token_counts if tokens & competing and not tokens & keywords)
+            if matched / int(c["non_null"]) >= 0.6 and conflicting == 0:
+                signals.append("measured categorical values corroborate the named domain")
+                break
+    signals = [signal for signal in signals if signal not in sem.evidence]
+    if not signals:
+        return sem
+    return sem.model_copy(update={"confidence": _conf(min(0.95, sem.confidence + 0.05 * len(signals))),
+                                  "evidence": [*sem.evidence, *signals]})
 
 
 # --------------------------------------------------------------------------------------------

@@ -9,6 +9,7 @@ Markdown/PDF upload through the HTTP API.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -157,7 +158,9 @@ def test_crawl_writes_okf_documents_mines_query_history_and_survives_a_refused_f
     _conformant(files)
     assert b"owner text" in files[region_path]  # curated document kept byte for byte
     qp = files[f"sources/{world['src']}.query-patterns.md"].decode()
-    assert "alice" not in qp and "777" not in qp and "open" not in qp.replace("opened", "") and "rejected-literal" not in qp
+    # the document's own timestamps can contain any digits (e.g. 17:41:02.777311); literals must appear nowhere else
+    body = re.sub(r"\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2}|Z)?", "<ts>", qp)
+    assert "alice" not in body and "777" not in body and "open" not in body.replace("opened", "") and "rejected-literal" not in body
     patterns = okf.parse_document("q.md", qp.encode())
     assert patterns.type == "Query Patterns" and patterns.frontmatter["sources"][0]["usage_count"] == 2
     assert f"{stage}.orders.customer_email" in qp and f"{stage}.orders.region_id" in qp  # filter column and join path

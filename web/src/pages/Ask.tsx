@@ -589,7 +589,7 @@ export function AskPage() {
     <div className="page">
       <PageHeader title="Ask" subtitle="Questions answered from governed data: verified answers first, generated SQL only through the same gateway as every investigation." />
       <div className="ask-layout">
-        <nav className="card ask-threads" aria-label="Threads">
+        <nav className="card ask-threads" aria-label="Threads" data-tour="ask-threads">
           <div className="card-body stack">
             <button type="button" className="btn btn-sm" onClick={() => openThread(null)}>New thread</button>
             <Field label="Search threads" htmlFor="ask-search">
@@ -632,7 +632,7 @@ export function AskPage() {
                   {live.length ? <Stages stages={live} live /> : <Loading label="Starting…" />}
                 </article>
               )}
-              <form className="form" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
+              <form className="form" data-tour="ask-box" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
                 <Field label="Question" htmlFor="ask-q">
                   <textarea id="ask-q" ref={questionRef} rows={2} value={question} onChange={(e) => setQuestion(e.target.value)} required
                     placeholder="How many P1 incidents were opened per month this year?"
