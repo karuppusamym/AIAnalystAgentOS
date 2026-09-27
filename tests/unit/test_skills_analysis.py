@@ -208,3 +208,18 @@ def test_postgres_planted_effects_match_duckdb(pg, results):
                 assert prim.stat.highlights[key] == duck_h[key], (name, key)
     for name, spec in null_controls(f"{schema}.incident").items():
         assert run_analysis(spec, run).stat.supported is False, name
+
+
+def test_trend_leaves_out_periods_dated_after_today():
+    """Future-dated rows (a planted ServiceNow data-quality defect) must not read as a volume collapse."""
+    from analystos.contracts.analysis import AnalysisSpec
+    from analystos.contracts.analysis import Derivation as D
+    from analystos.methods.trend import series
+
+    spec = AnalysisSpec(method="trend", asset="s.t", time=D(type="date_trunc", column="opened_at", grain="month"))
+    rows = [{"period": f"2026-0{m}-01", "n_rows": 400} for m in range(1, 9)] + [
+        {"period": "2026-11-01", "n_rows": 3}, {"period": "2027-01-01", "n_rows": 2}]
+    periods, y, raw, excluded = series(rows, spec, today="2026-09-27")
+    assert len(periods) == 8 and y == [400.0] * 8 and len(raw) == 8
+    assert excluded["excluded_future_periods"] == 2 and excluded["excluded_future_rows"] == 5
+    assert "excluded_future_periods" not in series(rows[:8], spec, today="2026-09-27")[3]

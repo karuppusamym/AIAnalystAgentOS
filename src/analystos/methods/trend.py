@@ -32,14 +32,27 @@ from analystos.skills import sqlbuild as sb
 from analystos.skills import stats as st
 
 
-def series(rows: list[dict[str, Any]], spec: AnalysisSpec) -> tuple[list[Any], list[float], list[dict], dict]:
+def _today() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+def series(rows: list[dict[str, Any]], spec: AnalysisSpec, *, today: str | None = None) -> tuple[list[Any], list[float], list[dict], dict]:
+    """The ordered series. Periods that start after today are future-dated rows (a data-entry or timezone
+    defect, as monitors treat them): they are left out and counted, never fitted as a collapse in volume."""
     null_period = sum(int(r["n_rows"] or 0) for r in rows if r["period"] is None)
-    rows = sorted((r for r in rows if r["period"] is not None), key=lambda r: r["period"])
+    cut = today or _today()
+    future = [r for r in rows if r["period"] is not None and str(json_value(r["period"]))[:10] > cut]
+    rows = sorted((r for r in rows if r["period"] is not None and r not in future), key=lambda r: r["period"])
+    excluded = {"excluded_null_period_rows": null_period}
+    if future:
+        excluded |= {"excluded_future_periods": len(future), "excluded_future_rows": sum(int(r["n_rows"] or 0) for r in future)}
     if spec.outcome is None:
         pts = [(r["period"], float(r["n_rows"])) for r in rows]
     else:
         pts = [(r["period"], float(r["value"])) for r in rows if (r.get("n") or 0) > 0 and r.get("value") is not None]
-    return [p for p, _ in pts], [v for _, v in pts], rows, {"excluded_null_period_rows": null_period}
+    return [p for p, _ in pts], [v for _, v in pts], rows, excluded
 
 
 class Trend(AnalysisMethod):
@@ -88,6 +101,9 @@ class Trend(AnalysisMethod):
                                     "change_period": cp.highlights.get("change_period"),
                                     "change_before_mean": cp.highlights.get("before_mean"),
                                     "change_after_mean": cp.highlights.get("after_mean")})
+        if excl.get("excluded_future_periods"):
+            stat.warnings.append(f"{excl['excluded_future_periods']} period(s) dated after today ({excl['excluded_future_rows']} rows) "
+                                 "were left out of the trend")
         counts = [float(r["n_rows"]) for r in raw]
         if len(counts) >= 3 and counts[-1] < 0.5 * float(np.median(counts)):
             stat.warnings.append("last period has < 50% of the median period volume; it may be incomplete")
