@@ -155,7 +155,10 @@ def test_one_approval_is_visible_to_its_requester_and_the_inbox_not_to_an_outsid
     assert api.get(f"/api/approvals/{apr_id}", headers=world["viewer"]).status_code == 200  # the inbox's own rule
     hidden = api.get(f"/api/approvals/{apr_id}", headers=world["outsider"])
     unknown = api.get("/api/approvals/apr_does_not_exist", headers=world["outsider"])
-    assert hidden.status_code == unknown.status_code == 404 and hidden.json() == unknown.json()
+    hidden_body, unknown_body = hidden.json(), unknown.json()
+    # each response carries its own request id; apart from it the two 404s are identical
+    assert hidden_body["error"].pop("request_id") and unknown_body["error"].pop("request_id")
+    assert hidden.status_code == unknown.status_code == 404 and hidden_body == unknown_body
     assert api.get(f"/api/approvals/{apr_id}").status_code == 401
     for method in ("POST", "PATCH", "PUT", "DELETE"):  # read only: decisions are the approve/reject POSTs
         assert api.request(method, f"/api/approvals/{apr_id}", headers=world["analyst"]).status_code == 405
