@@ -643,6 +643,44 @@ test.describe("operate and the gear (P4-U06, P4-U07)", () => {
 });
 
 /** Main screen of each area and panel: [name, path, text that shows the data has loaded]. */
+test("a business context is drafted, reviewed and published for a source", async ({ page }) => {
+  let row: Record<string, unknown> | null = null;
+  await page.route(new RegExp(`/api/workspaces/${WS}/definitions(?:/.*)?(?:\\?.*)?$`), async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    if (req.method() === "GET" && url.pathname.endsWith("/definitions")) {
+      await route.fulfill({ json: { items: row ? [row] : [], next_cursor: null } }); return;
+    }
+    if (req.method() === "GET" && url.pathname.endsWith("/defn_context")) {
+      await route.fulfill({ json: row }); return;
+    }
+    if (req.method() === "POST" && url.pathname.endsWith("/definitions")) {
+      const body = req.postDataJSON() as { key: string; spec: { source_ids: string[]; purpose: string }; title: string };
+      expect(body.spec.source_ids).toEqual(["src_sn"]);
+      row = { ...body, id: "defn_context", workspace_id: WS, kind: "analysis_context", version: 1, revision: 1,
+        status: "draft", content_hash: "hash", created_by: USER.id, published_by: null, retired_by: null, reason: null,
+        created_at: "2026-09-27T00:00:00Z", updated_at: "2026-09-27T00:00:00Z", published_at: null, retired_at: null };
+      await route.fulfill({ status: 201, json: row }); return;
+    }
+    if (req.method() === "POST" && url.pathname.endsWith("/defn_context/publish")) {
+      row = { ...row, status: "published", revision: 2, published_by: USER.id };
+      await route.fulfill({ json: row }); return;
+    }
+    await route.fallback();
+  });
+  await signIn(page, `/w/${WS}/data/catalog?tab=contexts`);
+  await expect(page.getByRole("heading", { name: "Analysis contexts" })).toBeVisible();
+  await page.getByLabel("Name").fill("P1 service health");
+  await page.getByLabel("Business purpose").fill("Understand service health by priority");
+  await page.getByLabel("Starting question").fill("Why are P1 incidents taking longer to resolve?");
+  await page.getByRole("checkbox", { name: /ServiceNow/ }).check();
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText(/Draft saved/)).toBeVisible();
+  await page.getByRole("button", { name: "Publish reviewed version" }).click();
+  await expect(page.getByText(/Version 1 published/)).toBeVisible();
+  expect(await axeViolations(page)).toEqual([]);
+});
+
 const SCREENS: [string, string, RegExp][] = [
   ["Overview", `/w/${WS}`, /What needs you/],
   ["Work · Ask", `/w/${WS}/work/ask`, /SQL console/],

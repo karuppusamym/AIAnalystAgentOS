@@ -493,6 +493,7 @@ export interface Run {
   error: string | null;
   summary: RunSummary;
   origin?: RunOrigin | null;
+  capabilities?: Dict;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

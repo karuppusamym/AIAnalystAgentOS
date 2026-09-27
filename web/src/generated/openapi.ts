@@ -6422,6 +6422,10 @@ export interface components {
         };
         /** RunIn */
         RunIn: {
+            /** Analysis Context */
+            analysis_context?: {
+                [key: string]: unknown;
+            } | string | null;
             /** Autonomy Level */
             autonomy_level?: number | null;
             /** Definition */

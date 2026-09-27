@@ -12,6 +12,7 @@ import { useAction, useAsync } from "../lib/hooks";
 const KnowledgeDocs = lazy(() => import("../components/KnowledgeDocs").then((m) => ({ default: m.KnowledgeDocs })));
 const ReviewQueue = lazy(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
 const DefinitionsPanel = lazy(() => import("../components/DefinitionsPanel").then((m) => ({ default: m.DefinitionsPanel })));
+const AnalysisContexts = lazy(() => import("../components/AnalysisContexts").then((m) => ({ default: m.AnalysisContexts })));
 const KnowledgeTransfer = lazy(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
 const BriefPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.BriefPanel })));
 const ReadinessPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.ReadinessPanel })));
@@ -35,7 +36,7 @@ const EDITOR_ROLES = new Set(["editor", "owner"]);
 type StudioTab = DataTab;
 const TABS: { id: StudioTab; label: string }[] = [
   { id: "catalog", label: "Catalog" }, { id: "brief", label: "Brief & readiness" }, { id: "documents", label: "Documents" },
-  { id: "review", label: "Review queue" }, { id: "metrics", label: "Metrics" }, { id: "definitions", label: "Definitions" },
+  { id: "contexts", label: "Analysis contexts" }, { id: "review", label: "Review queue" }, { id: "metrics", label: "Metrics" }, { id: "definitions", label: "Definitions" },
   { id: "transfer", label: "Import & export" },
 ];
 
@@ -73,6 +74,7 @@ export function CatalogPage() {
       <div className="tab-panel">
         <Suspense fallback={<Loading />}>
           {tab === "catalog" && <CatalogTab wsId={wsId} canEdit={canEdit} />}
+          {tab === "contexts" && <AnalysisContexts wsId={wsId} canEdit={canEdit} />}
           {tab === "brief" && (
             <div className="stack">
               <BriefPanel wsId={wsId} role={ws.data?.role} />

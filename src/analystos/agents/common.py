@@ -175,6 +175,15 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     profile = settings.context.profiles.get(purpose) or PurposeProfile(max_chars=1_500_000)
     profile, knowledge_chars = knowledge_scope(ctx, profile)
     run = getattr(ctx, "run", None)
+    context = ((getattr(run, "capabilities", None) or {}).get("analysis_context") or {}) if run else {}
+    if context:
+        spec = context.get("spec") or {}
+        # The reviewed, pinned business lens travels with every model purpose; it never changes
+        # the authorized catalog or substitutes for the run's own question.
+        required = {**required, "analysis_context": {
+            "purpose": spec.get("purpose"), "business_description": spec.get("business_description"),
+            "relevant_metrics": spec.get("metric_names"),
+            "version": (context.get("definition") or {}).get("version")}}
     if objective is None:
         objective = getattr(run, "objective", None) or str(required.get("objective") or required.get("question") or "")
     if catalog is _SCOPE_CATALOG:

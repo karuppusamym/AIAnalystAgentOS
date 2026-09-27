@@ -36,6 +36,7 @@ class Binding:
     methods: list[str] = field(default_factory=list)
     pinned: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    analysis_context: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         out = {"playbook": self.playbook.manifest.id, "refs": self.refs, "manifests": self.manifests, "skipped": self.skipped,
@@ -44,6 +45,8 @@ class Binding:
             out["pinned"] = self.pinned
         if self.warnings:
             out["warnings"] = self.warnings
+        if self.analysis_context:
+            out["analysis_context"] = self.analysis_context
         return out
 
 
@@ -53,9 +56,10 @@ def requested_playbook(run: Any) -> str:
 
 def semantic_versions(session: Session, workspace_id: str) -> dict[str, Any]:
     """The semantic model version and approved metric versions current in the workspace now."""
-    from analystos.semantic.service import approved_metrics, current_model
+    from analystos.semantic.review import approved_model
+    from analystos.semantic.service import approved_metrics
 
-    model = current_model(session, workspace_id)
+    model = approved_model(session, workspace_id)
     return {"model": {"id": model.id, "version": model.version, "content_hash": model.content_hash} if model else None,
             "metrics": {name: {"id": m.id, "version": m.version, "content_hash": m.content_hash}
                         for name, m in sorted(approved_metrics(session, workspace_id).items())}}
@@ -129,7 +133,7 @@ def bind_run(session: Session, run: Any, snapshot: registry.Snapshot | None = No
                    definition=definition,
                    semantic=pinned.get("semantic") or semantic_versions(session, run.workspace_id),
                    methods=list(pinned.get("methods") or sorted(m.ref for m in snap.list("Method"))),
-                   pinned=pinned, warnings=warnings)
+                   pinned=pinned, warnings=warnings, analysis_context=caps.get("analysis_context") or {})
 
 
 def bound_manifest(run: Any, cap_id: str) -> CapabilityManifest | None:
