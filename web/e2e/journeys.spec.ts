@@ -266,6 +266,7 @@ test.describe("governed ML (P5-03)", () => {
     const before = await navEntries(page);
     await page.getByRole("button", { name: "Start work" }).click();
     await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Predict/ }).click();
+    await page.getByRole("form", { name: "Start predict" }).getByRole("button", { name: "Write a new spec" }).click();
     await expect(page).toHaveURL(`/w/${WS}/work?tab=experiments&new=predict`);
 
     // spec: prefilled from the rules-first proposal, the baseline mandatory, the metric's direction stated

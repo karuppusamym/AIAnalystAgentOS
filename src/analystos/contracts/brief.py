@@ -179,6 +179,7 @@ class JobKindAvailability(BaseModel):
 
     key: Literal["explain", "compare", "forecast", "predict", "prepare", "monitor"]
     label: str
+    mode: Literal["analysis", "engineering", "ml"]
     work_order_kind: str
     available: bool
     reasons: list[dict[str, str]] = Field(default_factory=list)  # {code, message, remediation}

@@ -16,7 +16,7 @@ import { fieldText, fieldValue, setField } from "../lib/policy";
 import { autonomyInWords } from "../lib/status";
 import { firstRunSteps, nextStep } from "../pages/WorkspaceHome";
 import { canSee, CONCEPTS, SCREENS } from "../routes";
-import { headersOf, INSIGHT, mockBackend, RUN, USER, WORKSPACE, WS } from "./mockBackend";
+import { headersOf, INSIGHT, mockBackend, resetMockState, RUN, USER, WORKSPACE, WS } from "./mockBackend";
 import { JOB_KINDS } from "./mockWave2";
 import { INSIGHT_VOID_ID } from "./mockWave1";
 
@@ -153,6 +153,21 @@ describe("the gear: admin screens are hidden from analysts and viewers", () => {
 });
 
 // ------------------------------------------------------------------------------------ Start work
+it("lets an owner review and save combined workspace work modes", async () => {
+  resetMockState();
+  const f = mockFetch();
+  renderAt("/");
+  fireEvent.click(await screen.findByRole("button", { name: "Work modes" }));
+  const choice = await screen.findByRole("checkbox", { name: /ML and experiments/ });
+  fireEvent.click(choice);
+  fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save work modes" }));
+  await waitFor(() => expect(calls(f, "PUT", /\/work-modes$/)).toHaveLength(1));
+  const [, init] = calls(f, "PUT", /\/work-modes$/)[0];
+  expect(JSON.parse(String(init?.body))).toEqual({ modes: ["analysis", "engineering"] });
+  resetMockState();
+});
+
 describe("Start work job kinds (from the P4-04 endpoint)", () => {
   it("maps the server's six kinds to actions, keeping every reason and never re-deriving availability", () => {
     const kinds = jobKindsFromAvailability(JOB_KINDS);
@@ -216,12 +231,14 @@ describe("Start work job kinds (from the P4-04 endpoint)", () => {
     expect(JSON.parse(String(init!.body))).toEqual({ objective: "Why are P1 resolution times rising?", source_ids: ["src_sn"] });
   });
 
-  it("Predict opens the ML spec form in Work (no new screen)", async () => {
+  it("Predict offers published plans, and a new spec opens the ML spec form in Work (no new screen)", async () => {
     mockFetch();
     renderAt(`/w/${WS}/work`);
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
     const kinds = await screen.findByRole("list", { name: "Job kinds" });
     fireEvent.click(within(kinds).getByRole("button", { name: /Predict/ }));
+    const form = await screen.findByRole("form", { name: "Start predict" });
+    fireEvent.click(within(form).getByRole("button", { name: "Write a new spec" }));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=experiments&new=predict`));
     expect(SCREENS.length).toBeLessThanOrEqual(20);
   });
@@ -235,6 +252,41 @@ describe("Start work job kinds (from the P4-04 endpoint)", () => {
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=prepare`));
     expect(await screen.findByRole("form", { name: "Load a file" })).toBeTruthy();
     expect(SCREENS.length).toBeLessThanOrEqual(20);
+  });
+
+  it("starts Forecast from an exact published ML plan and shows it in Work → Experiments", async () => {
+    const plan = { id: "defn_forecast", workspace_id: WS, kind: "ml_spec", key: "weekly_volume", version: 2,
+      status: "published", title: "Weekly volume", spec: { task: "forecast", target: "orders",
+        dataset: { asset: "sales.orders" }, search: { max_trials: 4, max_seconds: 120 } } };
+    const experiment = { id: "mlx_forecast", workspace_id: WS, definition_id: plan.id, definition_key: plan.key,
+      definition_version: 2, task: "forecast", status: "succeeded", verdict: "verified",
+      dataset_asset: "sales.orders", summary: { metric: "mae", candidate: 4.2 }, readiness: {}, artifacts: {},
+      error: null, created_at: "2026-09-26T12:00:00Z", finished_at: "2026-09-26T12:01:00Z" };
+    const f = mockFetch((method, path) => {
+      if (method === "GET" && path === `/api/workspaces/${WS}/capabilities`) return { status: 200, body: {
+        workspace_id: WS, digest: "d", job_kinds: [{ key: "forecast", label: "Forecast", mode: "ml", work_order_kind: "forecast",
+          available: true, reasons: [], capabilities: [], entry: { type: "work_order", payload_type: "ml" },
+          readiness_checks: [], min_role: "analyst" }],
+      } };
+      if (method === "GET" && path === `/api/workspaces/${WS}/definitions`) return { status: 200, body: { items: [plan], next_cursor: null } };
+      if (method === "GET" && path === `/api/workspaces/${WS}/definitions/${plan.id}`) return { status: 200, body: plan };
+      if (method === "POST" && path === `/api/workspaces/${WS}/ml/experiments`) return { status: 201, body: experiment };
+      if (method === "GET" && path === `/api/workspaces/${WS}/ml/experiments`) return { status: 200, body: [experiment] };
+      if (method === "GET" && path === `/api/workspaces/${WS}/ml/experiments/${experiment.id}`) return { status: 200, body: { ...experiment, verification: { status: "passed" } } };
+      return null;
+    });
+    renderAt(`/w/${WS}/work`);
+    fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Forecast/ }));
+    const form = await screen.findByRole("form", { name: "Start forecast" });
+    fireEvent.change(await within(form).findByLabelText("Published model plan"), { target: { value: plan.id } });
+    expect(within(form).getByText("sales.orders")).toBeTruthy();
+    fireEvent.click(within(form).getByRole("button", { name: "Start experiment" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=experiments&experiment=${experiment.id}`));
+    expect(await screen.findByRole("region", { name: `Experiment ${experiment.id}` })).toBeTruthy();
+    expect(calls(f, "POST", /\/analysis$/)).toHaveLength(0);
+    const [, init] = calls(f, "POST", /\/ml\/experiments$/)[0];
+    expect(JSON.parse(String(init?.body))).toEqual({ definition: plan.id });
   });
 });
 

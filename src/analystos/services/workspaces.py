@@ -57,6 +57,8 @@ def update_workspace(session: Session, user: User, workspace_id: str, patch: dic
         require_role(session, user, workspace_id, "owner")
         ws.autonomy_level = int(patch["autonomy_level"])
     if patch.get("settings") is not None:
+        if "work_modes" in patch["settings"]:
+            raise InvalidInput("change work modes through the work-modes endpoint so playbook settings stay in sync")
         ws.settings = {**(ws.settings or {}), **patch["settings"]}
     emit(ws.id, "workspace.updated", {k: v for k, v in patch.items() if v is not None}, actor=f"user:{user.id}", session=session)
     audit(f"user:{user.id}", "workspace.updated", workspace_id=ws.id, details=patch, session=session)

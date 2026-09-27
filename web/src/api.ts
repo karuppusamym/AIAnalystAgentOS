@@ -87,6 +87,15 @@ export interface WorkspaceDetail extends Workspace {
   members: Member[];
 }
 
+export type WorkMode = "analysis" | "engineering" | "ml";
+export interface WorkModesPlan {
+  workspace_id: string;
+  current: WorkMode[];
+  selected: WorkMode[];
+  capabilities: { capability_id: string; mode: WorkMode; enabled: boolean; available: boolean; changed: boolean }[];
+  note: string;
+}
+
 export interface WorkspacePolicy {
   max_rows?: number;
   query_timeout_seconds?: number;
@@ -1297,6 +1306,7 @@ export interface DefinitionPage {
   builtin?: DefinitionRef[];
 }
 
+/** Governed training result; a refusal remains visible in Work with its reason. */
 export interface DefinitionDiff {
   from: DefinitionVersion;
   to: DefinitionVersion | null;
@@ -2170,7 +2180,7 @@ export type BriefPatchBody = Schemas["BriefPatch"];
 export type JobKindKey = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
 
 export interface JobKindReason {
-  code: "no_executor" | "not_registered" | "capability_unusable" | "role" | "no_data" | string;
+  code: "no_executor" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
   message: string;
   remediation: string;
 }
@@ -2179,6 +2189,8 @@ export interface JobKindReason {
 export interface JobKindAvailability {
   key: JobKindKey;
   label: string;
+  /** The workspace work mode the kind belongs to; a kind whose mode is not selected carries a `work_mode` reason. */
+  mode: WorkMode;
   work_order_kind: string;
   available: boolean;
   reasons: JobKindReason[];
@@ -2943,6 +2955,12 @@ export const api = {
   createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
   getWorkspace: (ws: string) =>
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  getWorkModes: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/work-modes", { path: W(ws) }) as Promise<WorkModesPlan>,
+  previewWorkModes: (ws: string, modes: WorkMode[]) =>
+    post("/api/workspaces/{workspace_id}/work-modes/preview", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
+  setWorkModes: (ws: string, modes: WorkMode[]) =>
+    put("/api/workspaces/{workspace_id}/work-modes", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
   workspaceInventory: (ws: string) =>
     get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
@@ -3115,8 +3133,10 @@ export const api = {
     { headers: { "If-Match": `"${revision}"` } }),
 
   // definitions: drafts, publish, deprecate, retire, diff (P7-03)
-  listDefinitions: (ws: string, q: { kind?: string; status?: string; include_builtin?: boolean } = {}) =>
+  listDefinitions: (ws: string, q: { kind?: string; status?: string; include_builtin?: boolean; cursor?: string } = {}) =>
     get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
+  getDefinition: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
   publishDefinition: (ws: string, id: string, revision: number) =>
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish",
       { path: { workspace_id: ws, definition_id: id } }), {}, { headers: { "If-Match": `"${revision}"` } }),

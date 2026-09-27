@@ -27,7 +27,9 @@ const TABS: { id: WorkTab; label: string }[] = [
 export function WorkPage() {
   const { wsId = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab = (TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "investigations") as WorkTab;
+  // `?tab=ml` links (the first ML tab) open the Experiments tab, the one home for experiments
+  const requested = params.get("tab") === "ml" ? "experiments" : params.get("tab");
+  const tab = (TABS.some((t) => t.id === requested) ? requested : "investigations") as WorkTab;
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
   const { user } = useAuth();
   const set = useCallback((patch: Record<string, string | null>) => {
