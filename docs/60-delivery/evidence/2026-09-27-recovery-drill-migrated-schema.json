@@ -7,48 +7,48 @@
  "scratch": "analystos_b2_migrated_drill",
  "backup": {
   "file": "analystos_b2_migrated.dump",
-  "bytes": 275203,
-  "sha256": "f5ec51352f522df10f8d769439ea97675c11a412ed347ec6d56323df6cdfdcfd"
+  "bytes": 275270,
+  "sha256": "a0d217d0cdec90d0fde9f85a73732af8d9b7f73d28c2bd10f9f934decf25b886"
  },
  "tables": 91,
  "rows": 136,
- "alembic": "0043",
+ "alembic": "0044",
  "steps": [
   {
    "step": "inventory source",
-   "seconds": 0.624
+   "seconds": 0.534
   },
   {
    "step": "resolve records on source",
-   "seconds": 1.138
+   "seconds": 0.776
   },
   {
    "step": "pg_dump (custom format)",
-   "seconds": 0.394
+   "seconds": 0.176
   },
   {
    "step": "create scratch database",
-   "seconds": 0.34
+   "seconds": 0.055
   },
   {
    "step": "pg_restore into scratch (copy 1)",
-   "seconds": 3.22
+   "seconds": 3.257
   },
   {
    "step": "destroy scratch database",
-   "seconds": 0.612
+   "seconds": 1.316
   },
   {
    "step": "recover: create + pg_restore (+ untar)",
-   "seconds": 4.211
+   "seconds": 3.154
   },
   {
    "step": "inventory restored copy",
-   "seconds": 0.111
+   "seconds": 0.103
   },
   {
    "step": "resolve records on restored copy",
-   "seconds": 0.033
+   "seconds": 0.024
   }
  ],
  "checks": [
@@ -70,7 +70,7 @@
   {
    "check": "alembic revision",
    "ok": true,
-   "detail": "0043"
+   "detail": "0044"
   },
   {
    "check": "runs resolve",
