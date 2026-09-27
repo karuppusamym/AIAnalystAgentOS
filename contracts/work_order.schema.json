@@ -173,6 +173,47 @@
       "title": "Column",
       "type": "object"
     },
+    "DatasetRef": {
+      "additionalProperties": false,
+      "description": "The table an ML spec learns from, read through the gateway into an immutable snapshot. `version`\npins that snapshot (its content hash): data that changed since refuses the experiment.",
+      "properties": {
+        "asset": {
+          "pattern": "^[A-Za-z0-9_$-]+\\.[A-Za-z0-9_$-]+$",
+          "title": "Asset",
+          "type": "string"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "asset"
+      ],
+      "title": "DatasetRef",
+      "type": "object"
+    },
     "Derivation": {
       "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)",
       "properties": {
@@ -274,9 +315,28 @@
       "title": "Derivation",
       "type": "object"
     },
+    "ErrorCosts": {
+      "additionalProperties": false,
+      "properties": {
+        "false_positive": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "title": "False Positive",
+          "type": "number"
+        },
+        "false_negative": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "title": "False Negative",
+          "type": "number"
+        }
+      },
+      "title": "ErrorCosts",
+      "type": "object"
+    },
     "ExperimentSpec": {
-      "additionalProperties": true,
-      "description": "Placeholder for P5 experiment design. Not executable yet.",
+      "additionalProperties": false,
+      "description": "One bounded experiment over a *published* `ml_spec` definition (P5-01/P5-02): which version, an\noptional hypothesis, and budget overrides that can only tighten the definition's own.",
       "properties": {
         "type": {
           "const": "experiment",
@@ -287,6 +347,7 @@
         "hypothesis": {
           "anyOf": [
             {
+              "maxLength": 2000,
               "type": "string"
             },
             {
@@ -295,9 +356,107 @@
           ],
           "default": null,
           "title": "Hypothesis"
+        },
+        "definition": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Definition"
+        },
+        "max_trials": {
+          "anyOf": [
+            {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Trials"
+        },
+        "max_seconds": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Seconds"
         }
       },
       "title": "ExperimentSpec",
+      "type": "object"
+    },
+    "FeatureSpec": {
+      "additionalProperties": false,
+      "description": "One candidate feature and when its value is known relative to the prediction cutoff.",
+      "properties": {
+        "column": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Column",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "numeric",
+                "categorical",
+                "boolean",
+                "datetime"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "available_at": {
+          "default": "cutoff",
+          "enum": [
+            "cutoff",
+            "known_in_advance",
+            "after_outcome"
+          ],
+          "title": "Available At",
+          "type": "string"
+        },
+        "timestamp_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timestamp Column"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "FeatureSpec",
       "type": "object"
     },
     "Filter": {
@@ -532,8 +691,8 @@
       "type": "object"
     },
     "MLSpec": {
-      "additionalProperties": true,
-      "description": "Placeholder for P5-01 (ADR-0024). Envelope-level fields only; not executable yet.",
+      "additionalProperties": false,
+      "description": "P5-01 (ADR-0024, workspace spec \u00a76): what a governed model learns from and how it is judged. It pins\nthe dataset version, entity/group keys, target, feature availability, prediction cutoff, label\nhorizon, split strategy, preprocessing, allowed estimators, search budget, objective metric, slice\nguardrails, seed and (optionally) the runtime environment digest.\n\nEnvelope use stays light (a work order may name only `task`); `executable_problems` lists what a spec\nstill lacks before an experiment may start. A model may *propose* a spec; this contract and the\nreadiness checks decide.",
       "properties": {
         "type": {
           "const": "ml",
@@ -552,6 +711,29 @@
           "title": "Task",
           "type": "string"
         },
+        "dataset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DatasetRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
         "target_metric": {
           "anyOf": [
             {
@@ -563,6 +745,53 @@
           ],
           "default": null,
           "title": "Target Metric"
+        },
+        "positive_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Positive Class"
+        },
+        "target_unit": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Unit"
+        },
+        "entity_keys": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Entity Keys",
+          "type": "array"
+        },
+        "group_keys": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Group Keys",
+          "type": "array"
         },
         "time_column": {
           "anyOf": [
@@ -576,9 +805,60 @@
           "default": null,
           "title": "Time Column"
         },
+        "cutoff_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cutoff Column"
+        },
+        "prediction_cutoff": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prediction Cutoff"
+        },
+        "outcome_time_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome Time Column"
+        },
+        "label_horizon": {
+          "anyOf": [
+            {
+              "maximum": 3650,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label Horizon"
+        },
         "horizon": {
           "anyOf": [
             {
+              "maximum": 366,
               "minimum": 1,
               "type": "integer"
             },
@@ -588,6 +868,106 @@
           ],
           "default": null,
           "title": "Horizon"
+        },
+        "season_length": {
+          "anyOf": [
+            {
+              "maximum": 366,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Season Length"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/$defs/FeatureSpec"
+          },
+          "maxItems": 500,
+          "title": "Features",
+          "type": "array"
+        },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SplitSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preprocessing": {
+          "$ref": "#/$defs/Preprocessing"
+        },
+        "estimators": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Estimators",
+          "type": "array"
+        },
+        "search": {
+          "$ref": "#/$defs/SearchBudget"
+        },
+        "objective_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective Metric"
+        },
+        "min_improvement": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Min Improvement",
+          "type": "number"
+        },
+        "error_costs": {
+          "$ref": "#/$defs/ErrorCosts"
+        },
+        "guardrails": {
+          "items": {
+            "$ref": "#/$defs/SliceGuardrail"
+          },
+          "maxItems": 10,
+          "title": "Guardrails",
+          "type": "array"
+        },
+        "k_range": {
+          "default": [
+            2,
+            8
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "K Range",
+          "type": "array"
+        },
+        "contamination": {
+          "default": 0.02,
+          "exclusiveMaximum": 0.5,
+          "exclusiveMinimum": 0,
+          "title": "Contamination",
+          "type": "number"
         },
         "seed": {
           "anyOf": [
@@ -600,6 +980,18 @@
           ],
           "default": null,
           "title": "Seed"
+        },
+        "runtime_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Digest"
         }
       },
       "required": [
@@ -893,6 +1285,45 @@
       "title": "PipelineSpec",
       "type": "object"
     },
+    "Preprocessing": {
+      "additionalProperties": false,
+      "description": "Fitted on training folds only and carried unchanged into validation, holdout and scoring.",
+      "properties": {
+        "numeric_impute": {
+          "default": "median",
+          "enum": [
+            "median",
+            "mean",
+            "zero"
+          ],
+          "title": "Numeric Impute",
+          "type": "string"
+        },
+        "scale": {
+          "default": true,
+          "title": "Scale",
+          "type": "boolean"
+        },
+        "categorical_impute": {
+          "default": "constant",
+          "enum": [
+            "most_frequent",
+            "constant"
+          ],
+          "title": "Categorical Impute",
+          "type": "string"
+        },
+        "max_categories": {
+          "default": 30,
+          "maximum": 500,
+          "minimum": 2,
+          "title": "Max Categories",
+          "type": "integer"
+        }
+      },
+      "title": "Preprocessing",
+      "type": "object"
+    },
     "RecipeRef": {
       "additionalProperties": false,
       "description": "A recipe step of a pipeline: its name, and a version to pin (None = the published version at run time).",
@@ -981,6 +1412,116 @@
         "input_node"
       ],
       "title": "ReconciliationCheck",
+      "type": "object"
+    },
+    "SearchBudget": {
+      "additionalProperties": false,
+      "description": "Requested caps; the platform clamps each to its hard ceiling (settings ml_max_*).",
+      "properties": {
+        "max_trials": {
+          "default": 12,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Max Trials",
+          "type": "integer"
+        },
+        "max_seconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Max Seconds",
+          "type": "integer"
+        },
+        "max_rows": {
+          "default": 100000,
+          "maximum": 5000000,
+          "minimum": 50,
+          "title": "Max Rows",
+          "type": "integer"
+        }
+      },
+      "title": "SearchBudget",
+      "type": "object"
+    },
+    "SliceGuardrail": {
+      "additionalProperties": false,
+      "description": "Within every slice of `column` with at least `min_rows` holdout rows, the candidate may be worse than\nthe baseline by at most `max_degradation` (objective metric units); otherwise it is not promotable.",
+      "properties": {
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "min_rows": {
+          "default": 30,
+          "minimum": 5,
+          "title": "Min Rows",
+          "type": "integer"
+        },
+        "max_degradation": {
+          "default": 0.05,
+          "minimum": 0,
+          "title": "Max Degradation",
+          "type": "number"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "SliceGuardrail",
+      "type": "object"
+    },
+    "SplitSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": [
+            "chronological",
+            "group",
+            "group_chronological",
+            "random"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "holdout_fraction": {
+          "default": 0.2,
+          "maximum": 0.5,
+          "minimum": 0.05,
+          "title": "Holdout Fraction",
+          "type": "number"
+        },
+        "validation_folds": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 2,
+          "title": "Validation Folds",
+          "type": "integer"
+        },
+        "embargo_periods": {
+          "default": 0,
+          "maximum": 365,
+          "minimum": 0,
+          "title": "Embargo Periods",
+          "type": "integer"
+        },
+        "independence_justification": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Independence Justification"
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "title": "SplitSpec",
       "type": "object"
     },
     "ValidationPolicy": {

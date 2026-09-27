@@ -50,6 +50,10 @@ EVENT_TYPES = {
     "pipeline.rolled_back", "pipeline.freshness.breached",
     # Isolated compute pools (P7-06, ADR-0022): a task dispatched to compute-py / compute-ml, as its worker reports it
     "task.started", "task.progress", "task.completed", "task.failed",
+    # Governed classical ML (P5-01..P5-06, ADR-0024): experiments, the model registry, approved batch scoring
+    "ml.experiment.started", "ml.experiment.completed", "ml.experiment.refused", "ml.experiment.failed",
+    "ml.model.registered", "ml.model.promoted", "ml.model.rolled_back", "ml.scoring.planned", "ml.scoring.completed",
+    "ml.scoring.refused", "ml.scoring.duplicate",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

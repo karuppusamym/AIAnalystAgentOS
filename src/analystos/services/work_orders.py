@@ -94,8 +94,9 @@ def start(user: User, workspace_id: str, work_order_id: str, *, expected_revisio
                                details={"assessment_id": assessment["id"], "checks": failing,
                                         "alternatives": assessment["alternatives"]})
     if not spec.executable:
-        raise UnsupportedCapability(f"a {spec.spec.type} work order is a typed contract without an executor yet "
-                                    "(P5 ML / P6 pipelines); it was saved but cannot start",
+        raise UnsupportedCapability(f"a {spec.spec.type} work order is a typed contract without a work-order executor "
+                                    "(ML trains a published ml_spec definition: POST .../ml/experiments or "
+                                    "playbook.train; pipelines: P6); it was saved but cannot start",
                                     details={"type": spec.spec.type})
     statements = list(getattr(spec.spec, "statements", []) or [])
     analyses = []

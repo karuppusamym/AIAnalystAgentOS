@@ -31,12 +31,13 @@ def build_workers(client: Any, workloads: list[str], *, prefix: str, stack: cont
         AnalysisWorkflow,
         CrawlWorkflow,
         IsolatedTaskWorkflow,
+        MLComputeWorkflow,
         RecipeComputeWorkflow,
     )
 
     specs = specs or load_config()[0]
     activities = activities or BY_WORKLOAD
-    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow, IsolatedTaskWorkflow],
+    workflows = workflows or {"analysis": [AnalysisWorkflow, RecipeComputeWorkflow, IsolatedTaskWorkflow, MLComputeWorkflow],
                               "crawl": [CrawlWorkflow]}
     workers = []
     for workload in workloads:

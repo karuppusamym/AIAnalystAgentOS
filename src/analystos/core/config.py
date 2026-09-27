@@ -171,6 +171,12 @@ class Settings(BaseSettings):
     query_max_rows: int = 50_000
     query_cache_ttl_seconds: int = 3600
 
+    # Governed ML (P5-01, ADR-0024): hard ceilings every MLSpec search budget is clamped to.
+    ml_max_trials: int = Field(default=50, ge=1, le=1000)
+    ml_max_seconds: int = Field(default=900, ge=1)
+    ml_max_rows: int = Field(default=200_000, ge=100)
+    ml_max_features: int = Field(default=200, ge=1)
+
     sandbox_timeout_seconds: int = 60
     sandbox_memory_mb: int = 1024
     # Isolation of sandbox children (P4-02, sandbox/isolation.py): container = docker run per execution

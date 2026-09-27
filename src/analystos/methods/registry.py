@@ -63,6 +63,8 @@ def build(extra: list[tuple[str, dict[str, Any]]] | None = None, *, entry_points
     problems = list(snap.problems)
     chosen: list[CapabilityManifest] = []
     for m in snap.list("Method"):
+        if (m.spec or {}).get("family") == "ml":
+            continue  # the ML method pack (P5-04) runs through experiments, not the analysis vocabulary
         if m.source.startswith("pack:"):
             problems.append(f"{m.source}: {m.id} ignored: directory packs are config-only; ship a method as code")
             continue

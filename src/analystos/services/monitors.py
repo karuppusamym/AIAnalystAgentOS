@@ -31,7 +31,8 @@ from analystos.governance.policy import require_role, resolve_scope
 from analystos.services.notifications import notify
 
 log = get_logger(__name__)
-KINDS = {"metric_threshold", "metric_drift", "change_point", "forecast_deviation", "data_quality"}
+ML_KINDS = {"ml_drift", "ml_freshness", "ml_performance"}  # P5-03: analystos/ml/monitoring.py
+KINDS = {"metric_threshold", "metric_drift", "change_point", "forecast_deviation", "data_quality"} | ML_KINDS
 OPS = {">": lambda a, b: a > b, ">=": lambda a, b: a >= b, "<": lambda a, b: a < b, "<=": lambda a, b: a <= b}
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
 PERCENT_TOLERANCE = 1e-9
@@ -50,7 +51,11 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
     require_role(session, user, workspace_id, "editor")
     if kind not in KINDS:
         raise InvalidInput(f"kind must be one of {sorted(KINDS)}")
-    if kind != "data_quality":
+    if kind in ML_KINDS:
+        from analystos.ml.monitoring import validate
+
+        validate(kind, config)
+    elif kind != "data_quality":
         if not (config.get("metric") or config.get("sql_expression")):
             raise InvalidInput("metric monitors need config.metric (a validated metric name) or config.sql_expression")
         if kind == "metric_threshold" and (config.get("op") not in OPS or not isinstance(config.get("value"), (int, float))):
@@ -442,6 +447,10 @@ def evaluate_monitor(monitor_id: str, *, trigger: str = "manual") -> dict[str, A
         try:
             if monitor.kind == "data_quality":
                 result = _evaluate_quality(s, owner, monitor)
+            elif monitor.kind in ML_KINDS:
+                from analystos.ml.monitoring import evaluate as evaluate_ml
+
+                result = evaluate_ml(s, owner, monitor)
             else:
                 series = metric_series(s, owner, monitor)
                 result = {**_evaluate_metric(monitor, series), "metric": series["label"], "query_id": series["query_id"],
