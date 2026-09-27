@@ -11,6 +11,12 @@ const ACTION_LABEL: Record<string, string> = {
   mcp_tool_call: "Call an external MCP tool",
   elt_build: "Build with dbt (write to a target schema)",
   "semantic_metric.approve": "Approve a KPI definition",
+  "ml.promote": "Promote a model version to champion",
+  "ml.rollback": "Roll a model back to its previous champion",
+  "ml.score": "Score data with the champion model (writes a managed table)",
+  pipeline_materialize: "Materialize a pipeline's output (writes a managed table)",
+  "step.pin_tile": "Pin a verified step to a dashboard tile",
+  "step.pin_schedule": "Pin a verified step to a schedule",
 };
 
 function GovernanceReview({ evidence }: { evidence: Record<string, unknown> }) {

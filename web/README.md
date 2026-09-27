@@ -49,17 +49,20 @@ and viewers see no admin screen.
 | Area | Screens |
 |---|---|
 | Overview | Workspaces `/`, Overview `/w/:ws` (first run: a checklist from real state; after it: what needs you + Start work) |
-| Data | Sources `/w/:ws/data/sources`; Catalog & definitions `/w/:ws/data/catalog?tab=catalog\|documents\|review\|metrics\|definitions\|transfer` |
-| Work | Work `/w/:ws/work?tab=investigations\|prepare\|builds`, Ask `/w/:ws/work/ask`, investigation `/w/:ws/work/investigations/:run`, agent console `…/:run/console` |
-| Outputs | Outputs `/w/:ws/outputs?type=finding\|dashboard\|report\|dataset\|chart\|prepared\|other`, finding `/w/:ws/outputs/findings/:id?` |
-| Operate | Approval inbox, Monitors & alerts, Schedules (`/w/:ws/operate/*`) |
+| Data | Sources `/w/:ws/data/sources`; Catalog & definitions `/w/:ws/data/catalog?tab=catalog\|brief\|documents\|review\|metrics\|definitions\|transfer` (column curation in the catalog; the brief and readiness under `brief`) |
+| Work | Work `/w/:ws/work?tab=investigations\|thread\|notebooks\|experiments\|prepare\|builds` (Data Thread `&container=run:<id>\|ask_thread:<id>&branch=`, notebook `&notebook=`, experiment `&experiment=` or `&new=predict\|forecast`, pipeline `tab=prepare&pipeline=`), Ask `/w/:ws/work/ask`, investigation `/w/:ws/work/investigations/:run`, agent console `…/:run/console` |
+| Outputs | Outputs `/w/:ws/outputs?type=finding\|dashboard\|report\|dataset\|chart\|prepared\|model\|table\|other`, finding `/w/:ws/outputs/findings/:id?` |
+| Operate | Approval inbox, Monitors & alerts (`?tab=monitors\|alerts\|health`: model monitors and pipeline health), Schedules (`/w/:ws/operate/*`) |
 | ⚙ Settings | Members & policy `/w/:ws/settings/policy` (owners); Capability registry `/settings/registry`, Platform settings `/settings/platform`, Usage & cost `/settings/usage` (platform admins) |
 | (access) | Sign in `/login` |
 
-**Start work** (Overview, Work) lists Explain, Compare, Forecast, Predict, Prepare data and Monitor.
-Their availability is derived from `GET /api/capabilities?workspace_id=` in one function
-(`lib/jobKinds.ts`) until the job-kind endpoint (P4-04) exists; a disabled kind shows its reason and
-has no start button. Hashes, JEV, rungs, REV, OKF and Ossie appear only under *Technical details*.
+**Start work** (Overview, Work) lists Explain, Compare, Forecast, Predict, Prepare data and Monitor
+as the server decides them (`GET /api/workspaces/{ws}/capabilities`, P4-04); a disabled kind shows
+every reason with its remediation and has no start button. Explain and Compare show the readiness
+assessment check by check before starting; Predict and Forecast open the ML spec form in Work →
+Experiments. Wave-2 panels: the Data Thread (steps, versions, pins, branches, merge), notebooks,
+governed ML (Outputs → Models & scoring), pipelines (Prepare data; Outputs → Managed tables); every
+side effect is a two-step approval (`components/ApprovalStepper.tsx`). Hashes, JEV, rungs, REV, OKF and Ossie appear only under *Technical details*.
 
 Old URLs (`/admin`, `/operate/*`, `/w/:ws/runs/…`, `/insights/…`, `/investigate/…`, `/knowledge/…`,
 `/build/…`, `/ask`, `/sources`, `/catalog`, `/studio`, `/reports`, `/schedules`, `/monitoring`,

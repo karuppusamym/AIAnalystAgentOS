@@ -2,24 +2,29 @@ import { useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { to } from "../routes";
 import { api, type Alert, type Monitor } from "../api";
+import { useAuth } from "../auth";
 import { EChart, canvasSupported } from "../components/Chart";
+import { OperateHealth } from "../components/OperateHealth";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails } from "../components/ui";
 import { buildMonitorOption, DARK, LIGHT } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, usePrefersDark } from "../lib/hooks";
 import {
-  GRAINS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, explainTriage, monitorMessage, monitorOverlay,
+  GRAINS, ML_MONITOR_KINDS, MONITOR_KINDS, OPS, buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, explainTriage, monitorMessage, monitorOverlay,
   validateMonitorForm, type MonitorFormState,
 } from "../lib/monitors";
 import { severityTone } from "../lib/status";
 
-type Tab = "monitors" | "alerts";
+type Tab = "monitors" | "alerts" | "health";
 const ALERT_FILTERS = ["open", "acknowledged", "resolved", ""] as const;
 
 export function MonitoringPage() {
   const { wsId = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab: Tab = params.get("tab") === "alerts" ? "alerts" : "monitors";
+  const tab: Tab = params.get("tab") === "alerts" ? "alerts" : params.get("tab") === "health" ? "health" : "monitors";
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  const { user } = useAuth();
+  const role = user?.is_admin ? "owner" : ws.data?.role;
   const monitors = useAsync(() => api.listMonitors(wsId), [wsId]);
   const openAlerts = useAsync(() => api.listAlerts(wsId, "open"), [wsId]);
   const setTab = (t: Tab) => {
@@ -35,9 +40,10 @@ export function MonitoringPage() {
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "monitors", label: `Monitors${monitors.data ? ` (${monitors.data.length})` : ""}` },
         { id: "alerts", label: `Alerts${openAlerts.data?.length ? ` (${openAlerts.data.length} open)` : ""}` },
+        { id: "health", label: "Models & pipelines" },
       ]} />
       <div className="tab-panel" role="tabpanel">
-        {tab === "monitors" ? (
+        {tab === "health" ? <OperateHealth wsId={wsId} role={role} /> : tab === "monitors" ? (
           <MonitorsSection wsId={wsId} monitors={monitors.data} error={monitors.error} loading={monitors.loading} startCreating={params.get("new") === "1"}
             reload={() => { void monitors.reload(); void openAlerts.reload(); }}
             onPatched={(m) => monitors.setData((prev) => prev?.map((x) => (x.id === m.id ? m : x)))} />
@@ -96,13 +102,13 @@ function MonitorCard({ monitor: m, onPatched, onEvaluated }: { monitor: Monitor;
   return (
     <section className="card monitor-card" aria-label={`Monitor ${m.name}`}>
       <header className="card-header">
-        <h2 className="card-title">{m.name} <Tag tone="info">{MONITOR_KINDS.find((k) => k.id === m.kind)?.label ?? m.kind}</Tag></h2>
+        <h2 className="card-title">{m.name} <Tag tone="info">{[...MONITOR_KINDS, ...ML_MONITOR_KINDS].find((k) => k.id === m.kind)?.label ?? m.kind}</Tag></h2>
         <div className="card-actions"><StatusBadge status={m.state} /></div>
       </header>
       <div className="card-body">
         <p className="small muted">{describeMonitorConfig(m)}</p>
         {msg && <p className={`small ${m.state === "alerting" || m.state === "error" ? "warn-text" : ""}`}>{msg}</p>}
-        {m.kind !== "data_quality" && <MonitorChart monitor={m} refreshKey={seriesKey} />}
+        {m.kind !== "data_quality" && !m.kind.startsWith("ml_") && <MonitorChart monitor={m} refreshKey={seriesKey} />}
         <p className="small muted">Last evaluated {fmtDate(m.last_evaluated_at)}</p>
         <div className="chip-row">
           <label className="switch">

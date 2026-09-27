@@ -5,6 +5,7 @@ import { parsePolicy } from "../lib/policy";
 import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { roleAtLeast, to } from "../routes";
+import { PipelinesCard } from "./Pipelines";
 import { Card, DataTable, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, TechnicalDetails } from "./ui";
 
 const FILE_KINDS = new Set(["csv"]);
@@ -14,8 +15,9 @@ const FILE_KINDS = new Set(["csv"]);
  * recipes. A preview writes nothing; a run keeps the last good output when a check fails. What a run
  * produced is listed in Outputs.
  */
-export function PreparePanel({ wsId, role, recipe, onSelectRecipe }: {
+export function PreparePanel({ wsId, role, recipe, onSelectRecipe, pipeline = null, onSelectPipeline = () => undefined }: {
   wsId: string; role: string | undefined; recipe: string | null; onSelectRecipe: (id: string | null) => void;
+  pipeline?: string | null; onSelectPipeline?: (id: string | null) => void;
 }) {
   const canEdit = roleAtLeast(role, "editor");
   return (
@@ -26,6 +28,7 @@ export function PreparePanel({ wsId, role, recipe, onSelectRecipe }: {
         <IngestCard wsId={wsId} canEdit={canEdit} />
         <RecipesCard wsId={wsId} canEdit={canEdit} selected={recipe} onSelect={onSelectRecipe} />
       </div>
+      <PipelinesCard wsId={wsId} role={role} selected={pipeline} onSelect={onSelectPipeline} />
     </div>
   );
 }

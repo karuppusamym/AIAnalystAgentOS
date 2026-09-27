@@ -3,6 +3,7 @@ import { api, type DefinitionVersion, type RelationshipCandidate } from "../api"
 import { fmtDate, fmtPct, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { roleAtLeast } from "../routes";
+import { isStaleEdit, StaleEditNotice } from "./StaleEdit";
 import { Card, EmptyState, ErrorBox, Loading, Notice, StatusBadge, TechnicalDetails } from "./ui";
 
 const SemanticGraph = lazy(() => import("./SemanticGraph").then((m) => ({ default: m.SemanticGraph })));
@@ -202,7 +203,14 @@ function DefinitionRow({ wsId, d, role, open, onToggle, onChanged }: {
         </span>
       </div>
       {d.reason && <p className="small muted">{d.reason}</p>}
-      <ErrorBox error={act.error} />
+      {isStaleEdit(act.failure)
+        ? <StaleEditNotice what={`${d.key} version ${d.version}`} mine={{ status: d.status, revision: d.revision, content_hash: d.content_hash }}
+          loadCurrent={async () => {
+            const cur = (await api.listDefinitions(wsId, { kind: d.kind })).items.find((x) => x.id === d.id);
+            return cur ? { status: cur.status, revision: cur.revision, content_hash: cur.content_hash } : null;
+          }}
+          onReload={() => { act.clear(); onChanged(); }} />
+        : <ErrorBox error={act.error} />}
       {open && <DefinitionDiff wsId={wsId} id={d.id} />}
       <TechnicalDetails><p className="small">Key <code>{d.key}</code> · content hash <code>{shortHash(d.content_hash, 12)}</code> · revision {d.revision}</p></TechnicalDetails>
     </article>

@@ -96,16 +96,6 @@ export interface WorkModesPlan {
   note: string;
 }
 
-export interface JobAvailability {
-  key: "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
-  label: string;
-  mode: WorkMode;
-  available: boolean;
-  reasons: { code: string; message: string; remediation: string }[];
-  capabilities: { id: string; usable: boolean; reason?: string | null }[];
-  entry: { type: string; payload_type?: string; route?: string };
-}
-
 export interface WorkspacePolicy {
   max_rows?: number;
   query_timeout_seconds?: number;
@@ -1317,25 +1307,6 @@ export interface DefinitionPage {
 }
 
 /** Governed training result; a refusal remains visible in Work with its reason. */
-export interface MlExperiment {
-  id: string;
-  workspace_id: string;
-  definition_id: string;
-  definition_key: string;
-  definition_version: number;
-  task: string;
-  status: string;
-  verdict: string | null;
-  dataset_asset: string;
-  summary: Dict;
-  readiness: Dict;
-  artifacts: Dict;
-  error: string | null;
-  created_at: string | null;
-  finished_at: string | null;
-  verification?: Dict | null;
-}
-
 export interface DefinitionDiff {
   from: DefinitionVersion;
   to: DefinitionVersion | null;
@@ -2144,6 +2115,583 @@ export interface MetricProposalResult {
   conflicts: SemanticConflictRow[];
 }
 
+// ----------------------------------------------------------------------------------- brief, readiness, job kinds (P4-04)
+/** contracts/brief.py (docs/20-contracts/04-brief-steps-api.md §1–3). */
+export type AssertionOrigin = "source" | "rule" | "model" | "user";
+export type ReviewState = "suggested" | "reviewed" | "validated" | "rejected";
+export type BriefGroup = "decision" | "domain" | "data_semantics" | "time_measures" | "ml_objective" | "constraints" | "knowledge";
+
+export interface BriefEvidence {
+  kind: string;
+  ref: string;
+  detail?: Dict | null;
+}
+
+export interface Assertion {
+  key: string;
+  group: BriefGroup | string;
+  field: string;
+  subject?: string | null;
+  value: unknown;
+  origin: AssertionOrigin | string;
+  evidence: BriefEvidence[];
+  review_state: ReviewState | string;
+  version: number;
+  confidence?: number | null;
+  note?: string | null;
+  updated_by?: string | null;
+  updated_at?: string | null;
+}
+
+export interface WorkspaceBrief {
+  schema_version?: number;
+  workspace_id: string;
+  /** 0 = no brief yet; the ETag and If-Match are this number. */
+  version: number;
+  content_hash: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  reason: string | null;
+  assertions: Assertion[];
+}
+
+export interface BriefVersion {
+  version: number;
+  content_hash: string | null;
+  reason: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  assertions: number | Assertion[];
+}
+
+export interface BriefPatchResult extends WorkspaceBrief {
+  changed?: string[];
+  impact?: { readiness_assessments_outdated?: number };
+}
+
+export interface BriefRefreshResult extends WorkspaceBrief {
+  added?: string[];
+  updated?: string[];
+  new_version?: boolean;
+}
+
+export type BriefPatchBody = Schemas["BriefPatch"];
+
+export type JobKindKey = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
+
+export interface JobKindReason {
+  code: "no_executor" | "not_registered" | "capability_unusable" | "role" | "no_data" | "work_mode" | string;
+  message: string;
+  remediation: string;
+}
+
+/** capabilities/job_kinds.py `availability` (GET /workspaces/{ws}/capabilities). */
+export interface JobKindAvailability {
+  key: JobKindKey;
+  label: string;
+  /** The workspace work mode the kind belongs to; a kind whose mode is not selected carries a `work_mode` reason. */
+  mode: WorkMode;
+  work_order_kind: string;
+  available: boolean;
+  reasons: JobKindReason[];
+  capabilities: { id: string; ref: string; kind: string; usable: boolean; reason: string | null; certification: string }[];
+  entry: { type: "work_order" | "recipe" | "monitor" | string; payload_type?: string; route?: string };
+  readiness_checks: string[];
+  min_role: string;
+}
+
+export interface WorkspaceJobKinds {
+  workspace_id: string;
+  digest: string;
+  job_kinds: JobKindAvailability[];
+}
+
+export type ReadinessStatus = "ready" | "needs_input" | "blocked" | "unsupported";
+export type ReadinessCheckStatus = "pass" | "fail" | "needs_input" | "warn" | "not_applicable" | "unsupported";
+
+export interface ReadinessCheck {
+  check: string;
+  status: ReadinessCheckStatus | string;
+  required: boolean;
+  reason: string;
+  remediation?: string | null;
+  subject?: string | null;
+  evidence?: BriefEvidence[];
+}
+
+export interface ReadinessAssessment {
+  id: string | null;
+  workspace_id: string;
+  job_kind: string;
+  status: ReadinessStatus | string;
+  brief_version: number;
+  work_order_id?: string | null;
+  work_order_revision?: number | null;
+  checks: ReadinessCheck[];
+  inputs: Dict;
+  inputs_hash: string | null;
+  alternatives: { job_kind: string; requires_explicit_choice?: boolean; note?: string }[];
+  created_at?: string | null;
+}
+
+export type ReadinessInput = Schemas["ReadinessIn"];
+
+// ----------------------------------------------------------------------------------- steps, branches, notebooks (P7-04/05/12)
+export type StepKind = "plan" | "query" | "method" | "recipe" | "train" | "chart" | "claim";
+export type StepStatus = "pending" | "ok" | "flagged" | "failed" | "unsupported" | "recorded";
+export type ContainerType = "run" | "ask_thread" | "notebook";
+
+export interface StepCheck {
+  check: string;
+  passed: boolean;
+  severity: "error" | "warning" | "info" | string;
+  detail: string;
+  evidence?: Dict;
+  corrected?: boolean;
+}
+
+export interface StepCorrection {
+  check: string;
+  reason: string;
+  from_sql?: string | null;
+  to_sql?: string | null;
+  round?: number;
+}
+
+/** contracts/step.py `Step`: one version of a step. */
+export interface Step {
+  schema_version?: number;
+  id: string;
+  version: number;
+  current_version: number;
+  kind: StepKind | string;
+  title: string;
+  status: StepStatus | string;
+  spec: Dict;
+  spec_hash: string;
+  receipts: Dict[];
+  result_snapshot: { kind: "artifact"; id: string; version: number; content_hash: string; media_type: string } | null;
+  chart_spec?: { type?: string; x?: string; y?: string } | null;
+  checks: StepCheck[];
+  corrections: StepCorrection[];
+  verification_record: VerificationState | null;
+  depends_on: string[];
+  inputs: Record<string, string>;
+  branch_id: string;
+  container: { type: ContainerType | string; id: string };
+  seq: number;
+  origin: Dict;
+  forked_from?: { step_id?: string; version?: number } | null;
+  reason: "created" | "edited" | "rerun" | "upstream_changed" | "forked" | "ingested" | string;
+  error?: string | null;
+  inherited: boolean;
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+/** A step's stored result (services/steps.py `to_table`, plus `stat` for a method). */
+export interface StepResult {
+  columns?: string[];
+  rows?: unknown[][];
+  row_count?: number;
+  truncated?: boolean;
+  stat?: Dict;
+  text?: string;
+  [k: string]: unknown;
+}
+
+export interface StepWithResult extends Step {
+  result: StepResult;
+}
+
+export interface Branch {
+  id: string;
+  name: string;
+  container: { type: string; id: string };
+  parent_branch_id: string | null;
+  forked_from: { step_id?: string; version?: number } | null;
+  base?: Dict[];
+  status: "open" | "merged" | string;
+  merged_into: string[];
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface ThreadView {
+  branch: Branch;
+  steps: Step[];
+  branches?: Branch[];
+}
+
+export interface StepVersions {
+  step_id: string;
+  current_version: number;
+  versions: Step[];
+}
+
+export interface StepRevision {
+  step: Step;
+  rerun: Step[];
+  voided_records: string[];
+}
+
+export type PinBody = Schemas["PinIn"];
+
+export interface PinResult {
+  status: "approval_required" | "pinned" | string;
+  approval_id?: string;
+  payload_hash?: string;
+  frozen?: Dict;
+  pin?: Dict & { id: string };
+}
+
+export interface ForkResult {
+  branch: Branch;
+  steps: Step[];
+  edited?: Step | null;
+}
+
+export type BranchMatch = "shared" | "equivalent" | "diverged" | "only_a" | "only_b";
+
+export interface BranchCompareRow {
+  match: BranchMatch | string;
+  root: string | null;
+  a: Step | null;
+  b: Step | null;
+  spec_diff?: { path: string; a: unknown; b: unknown }[] | Dict | null;
+  numbers?: {
+    same_result?: boolean;
+    headline?: { a: number | null; b: number | null; delta: number | null } | null;
+    row_count?: { a: number | null; b: number | null } | null;
+    cells?: { key: string; column: string; a: unknown; b: unknown; delta: number | null }[];
+    stat?: Dict | null;
+  } | null;
+  verdicts?: { a: VerificationState | null; b: VerificationState | null };
+}
+
+export interface BranchCompare {
+  a: Branch;
+  b: Branch;
+  steps: BranchCompareRow[];
+  summary: Dict;
+}
+
+export interface MergeResult {
+  report: { id: string; version: number; name: string; content: { kind: "data_thread"; title: string; sections: Dict[]; branches: Dict[] } };
+  branch: Branch;
+  included: string[];
+  excluded: Dict[];
+}
+
+export type CellType = "markdown" | "sql" | "python";
+
+export interface NotebookCell extends Step {
+  cell: CellType | string;
+  source: string;
+}
+
+export interface NotebookSummary {
+  id: string;
+  title: string;
+  revision: number;
+  branch_id?: string;
+  created_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  cells?: number | NotebookCell[];
+}
+
+export interface Notebook {
+  id: string;
+  title: string;
+  revision: number;
+  branch_id: string;
+  cells: NotebookCell[];
+  executed?: string[];
+}
+
+// ----------------------------------------------------------------------------------- governed ML (P5-01..06)
+export type MLTask = "classify" | "regress" | "forecast" | "cluster" | "anomaly";
+
+/** contracts/work.py `MLSpec` (the fields the form edits; the rest travel through as they came). */
+export interface MLSpecDoc {
+  type?: "ml";
+  task: MLTask | string;
+  dataset?: { asset: string; source_id?: string | null; version?: string | null } | null;
+  target?: string | null;
+  positive_class?: string | number | boolean | null;
+  target_unit?: string | null;
+  entity_keys?: string[];
+  group_keys?: string[];
+  time_column?: string | null;
+  cutoff_column?: string | null;
+  prediction_cutoff?: string | null;
+  outcome_time_column?: string | null;
+  label_horizon?: number | null;
+  horizon?: number | null;
+  season_length?: number | null;
+  features?: { column: string; type?: string | null; available_at?: "cutoff" | "known_in_advance" | "after_outcome" | string }[];
+  split?: { strategy: string; holdout_fraction?: number; validation_folds?: number; embargo_periods?: number;
+    independence_justification?: string | null } | null;
+  estimators?: string[];
+  search?: { max_trials?: number; max_seconds?: number; max_rows?: number };
+  objective_metric?: string | null;
+  min_improvement?: number;
+  guardrails?: Dict[];
+  [k: string]: unknown;
+}
+
+export interface MLProposal {
+  proposal: MLSpecDoc | null;
+  problems: string[];
+  source: string;
+}
+
+export type ProposalInput = Schemas["ProposalIn"];
+
+export interface MLReadinessCheck {
+  check: string;
+  status?: string;
+  outcome?: string;
+  reason?: string;
+  rows?: Dict | null;
+  [k: string]: unknown;
+}
+
+export interface MLExperiment {
+  id: string;
+  workspace_id: string;
+  run_id: string | null;
+  definition_id: string;
+  definition_key: string;
+  definition_version: number;
+  task: MLTask | string;
+  spec_hash: string;
+  status: "running" | "succeeded" | "failed" | "refused" | string;
+  verdict: "improved" | "no_improvement" | "guardrail_failed" | "invalid" | null | string;
+  dataset_asset: string;
+  dataset_source_id?: string | null;
+  dataset_version: string | null;
+  split_id: string | null;
+  manifest_hash: string | null;
+  selection_hash: string | null;
+  evaluation_seal: string | null;
+  package_hash: string | null;
+  code_digest?: string | null;
+  environment_digest?: string | null;
+  readiness: { status?: string; checks?: MLReadinessCheck[]; excluded?: unknown; [k: string]: unknown } | null;
+  artifacts: Record<string, string> | null;
+  verification_record_id: string | null;
+  query_ids?: string[];
+  reproduction_of?: string | null;
+  error: string | null;
+  created_by: string;
+  created_at: string | null;
+  finished_at: string | null;
+  summary: {
+    metric?: string;
+    baseline?: Dict;
+    candidate?: Dict;
+    decision?: { improved?: boolean; gain?: number | null; min_improvement?: number; reason?: string };
+    estimator?: string;
+    trials_run?: number;
+    stopped?: string | null;
+    seconds?: number;
+    rows_read?: number;
+    [k: string]: unknown;
+  };
+  verification?: VerificationState;
+  model_version?: ModelVersion;
+}
+
+export type MLRecordType = "ml_spec" | "ml_split_manifest" | "ml_trials" | "ml_model" | "ml_evaluation" | "ml_model_card";
+
+export interface MLRecord<T = Dict> {
+  artifact_id: string;
+  type: MLRecordType | string;
+  version: number;
+  content_hash: string;
+  content: T;
+}
+
+/** ml/splits.py manifest. */
+export interface SplitManifest {
+  version?: string;
+  dataset_version?: string;
+  strategy: string;
+  seed?: number;
+  holdout_fraction?: number | null;
+  embargo_periods?: number;
+  independence_justification?: string | null;
+  time_column?: string | null;
+  group_columns?: string[];
+  rows: { usable: number; train: number; holdout: number; folds: { train: number; validation: number }[] };
+  boundaries?: { holdout_from?: string; embargo_from?: string | null; holdout_periods?: number; distinct_periods?: number } | null;
+  groups?: { columns?: string[]; train_groups?: number; holdout_groups?: number; overlap?: number } | null;
+  excluded?: unknown;
+}
+
+export interface MLTrial {
+  trial: number;
+  role: "baseline" | "candidate" | string;
+  estimator: string;
+  params: Dict;
+  status: string;
+  error: string | null;
+  folds: (number | null)[] | null;
+  mean: number | null;
+}
+
+export interface ModelVersion {
+  id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  experiment_id: string;
+  task: string;
+  package_hash: string;
+  status: "candidate" | "challenger" | "champion" | "retired" | string;
+  feature_schema: Dict[];
+  metrics: { metric?: string; candidate?: Dict; baseline?: Dict };
+  approval_id: string | null;
+  previous_champion_id: string | null;
+  promoted_by: string | null;
+  reason: string | null;
+  created_by: string;
+  promoted_at: string | null;
+  retired_at: string | null;
+  created_at: string | null;
+}
+
+export interface ApprovalStep {
+  status: "approval_required" | "promoted" | "rolled_back" | "succeeded" | "duplicate" | string;
+  approval_id?: string;
+  payload_hash?: string;
+  expires_at?: string | null;
+  model_version?: ModelVersion;
+  retired?: ModelVersion;
+  scoring_run_id?: string;
+  scoring_run?: ScoringRun;
+}
+
+export interface ScoringRun {
+  id: string;
+  workspace_id: string;
+  definition_id: string;
+  definition_key: string;
+  definition_version: number;
+  model_version_id: string;
+  package_hash: string;
+  input_asset: string;
+  input_version: string | null;
+  status: string;
+  approval_id: string | null;
+  rows_input: number | null;
+  rows_scored: number | null;
+  rows_rejected: number | null;
+  output_table: string | null;
+  rejected_table: string | null;
+  details?: Dict | null;
+  error: string | null;
+  created_by: string;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+// ----------------------------------------------------------------------------------- pipelines (P6-01..03)
+export interface Pipeline {
+  id: string;
+  workspace_id: string;
+  name: string;
+  version: number;
+  status: "draft" | "published" | string;
+  spec: Dict;
+  spec_hash: string;
+  created_by: string;
+  created_at: string | null;
+  published_at: string | null;
+}
+
+/** pipelines/dryrun.py checks: every one carries `ok`. */
+export interface PipelineCheck {
+  check: string;
+  ok: boolean;
+  [k: string]: unknown;
+}
+
+export interface PipelineReconciliation {
+  inputs: Record<string, number>;
+  input_rows: number;
+  output_rows: number;
+  rejected_rows: number;
+  dropped_rows: number;
+  blocked: boolean;
+  /** Rows that arrived after the watermark's late window: not reported by the API yet (unknown, never 0). */
+  late_rows?: number | null;
+  unmatched: Record<string, { unmatched_left_rows: number; unmatched_left_pct: number; unmatched_left_keys: number; unmatched_right_keys: number;
+    row_multiplication: number | null }>;
+  aggregates: { name: string; func: string; input: { node: string; column: string | null; value: number }; output: { column: string | null; value: number };
+    difference: number; difference_pct: number; tolerance_pct: number; ok: boolean }[];
+}
+
+export interface PipelineRun {
+  id: string;
+  workspace_id: string;
+  pipeline_id: string;
+  pipeline_name: string;
+  pipeline_version: number;
+  spec_hash: string;
+  mode: string;
+  status: "running" | "succeeded" | "blocked" | "awaiting_approval" | "failed" | string;
+  recipes: Dict | null;
+  plan: Dict | null;
+  manifest: { scope_hash?: string; engine?: string; cross_source?: boolean; join_strategy?: string; sources?: Record<string, Dict> } | null;
+  sql: { output?: string; dialect?: string; preflight?: Record<string, string> } | null;
+  checks: PipelineCheck[] | null;
+  reconciliation: PipelineReconciliation | null;
+  candidate: { snapshot: string; row_count: number; columns: { name: string; type?: string }[]; keys: string[]; preview: unknown[][];
+    gates?: { blocked: boolean; kept_rows: number; dropped_rows: number; gates: Dict[]; warnings: string[] } } | null;
+  recipe_run_ids?: string[] | null;
+  query_ids?: string[] | null;
+  plan_hash: string | null;
+  approval_id: string | null;
+  error: string | null;
+  created_by: string;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+export interface Materialization {
+  id: string;
+  workspace_id: string;
+  destination_id: string;
+  schema_name: string;
+  table_name: string;
+  version: number;
+  version_table: string;
+  pipeline_id: string;
+  pipeline_run_id: string;
+  approval_id: string | null;
+  status: "promoted" | "superseded" | "rolled_back" | "failed" | "staged" | string;
+  row_count: number | null;
+  content_fingerprint: string | null;
+  previous_id: string | null;
+  checkpoint?: Dict | null;
+  error: string | null;
+  created_by: string;
+  created_at: string | null;
+  promoted_at: string | null;
+}
+
+export interface WriterDestination {
+  id: string;
+  workspace_id: string;
+  engine?: string;
+  schema_name: string;
+  tables: string[] | null;
+  status: string;
+}
+
 // ----------------------------------------------------------------------------------- errors
 export class ApiError extends Error {
   readonly status: number;
@@ -2392,6 +2940,8 @@ export function saveBlob(file: DownloadedFile): void {
 
 // ----------------------------------------------------------------------------------- endpoints
 const W = (ws: string) => ({ workspace_id: ws });
+/** The `If-Match` of an edit: the revision (version) the person was looking at. */
+const ifMatch = (revision: number): RequestInit => ({ headers: { "If-Match": `"${revision}"` } });
 
 export const api = {
   // auth
@@ -2411,8 +2961,6 @@ export const api = {
     post("/api/workspaces/{workspace_id}/work-modes/preview", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
   setWorkModes: (ws: string, modes: WorkMode[]) =>
     put("/api/workspaces/{workspace_id}/work-modes", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
-  jobAvailability: (ws: string) =>
-    get("/api/workspaces/{workspace_id}/capabilities", { path: W(ws) }) as Promise<{ workspace_id: string; digest: string; job_kinds: JobAvailability[] }>,
   workspaceInventory: (ws: string) =>
     get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>
@@ -2589,17 +3137,9 @@ export const api = {
     get("/api/workspaces/{workspace_id}/definitions", { path: W(ws), query: q }) as Promise<DefinitionPage>,
   getDefinition: (ws: string, id: string) =>
     get("/api/workspaces/{workspace_id}/definitions/{definition_id}", { path: { workspace_id: ws, definition_id: id } }) as Promise<DefinitionVersion>,
-  createDefinition: (ws: string, body: { kind: string; key: string; title: string; spec: Dict }) =>
-    post("/api/workspaces/{workspace_id}/definitions", { path: W(ws), body }) as Promise<DefinitionVersion>,
   updateDefinition: (ws: string, id: string, revision: number, body: { title: string; spec: Dict }) =>
     request<DefinitionVersion>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/definitions/{definition_id}",
       { path: { workspace_id: ws, definition_id: id } }), body, { headers: { "If-Match": `"${revision}"` } }),
-  startMlExperiment: (ws: string, definitionId: string) =>
-    post("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), body: { definition: definitionId } }) as Promise<MlExperiment>,
-  listMlExperiments: (ws: string) =>
-    get("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws) }) as Promise<MlExperiment[]>,
-  getMlExperiment: (ws: string, id: string) =>
-    get("/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}", { path: { workspace_id: ws, experiment_id: id } }) as Promise<MlExperiment>,
   publishDefinition: (ws: string, id: string, revision: number) =>
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/publish",
       { path: { workspace_id: ws, definition_id: id } }), {}, { headers: { "If-Match": `"${revision}"` } }),
@@ -2742,30 +3282,154 @@ export const api = {
     request<{ status: string; approval_id?: string; expires_at?: string; id?: string }>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/schedule`, body),
   promoteTurn: (turnId: string, body: AskPromoteBody) =>
     post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
+
+  // brief, readiness and Start-work job kinds (P4-04)
+  jobKinds: (ws: string) => get("/api/workspaces/{workspace_id}/capabilities", { path: W(ws) }) as Promise<WorkspaceJobKinds>,
+  brief: (ws: string, version?: number) =>
+    get("/api/workspaces/{workspace_id}/brief", { path: W(ws), query: { version } }) as Promise<WorkspaceBrief>,
+  briefVersions: (ws: string) => get("/api/workspaces/{workspace_id}/brief/versions", { path: W(ws) }) as Promise<BriefVersion[]>,
+  refreshBrief: (ws: string) => post("/api/workspaces/{workspace_id}/brief/suggestions", { path: W(ws) }) as Promise<BriefRefreshResult>,
+  /** `version` is the brief the edit was made against: a newer one answers 412 (someone changed it). */
+  patchBrief: (ws: string, version: number, body: BriefPatchBody) =>
+    request<BriefPatchResult>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/brief", { path: W(ws), body }), body, ifMatch(version)),
+  assessReadiness: (ws: string, body: ReadinessInput) =>
+    post("/api/workspaces/{workspace_id}/readiness", { path: W(ws), body }) as Promise<ReadinessAssessment>,
+
+  // steps and the Data Thread (P7-04/05)
+  thread: (ws: string, type: ContainerType, id: string) =>
+    get("/api/workspaces/{workspace_id}/threads/{container_type}/{container_id}",
+      { path: { workspace_id: ws, container_type: type, container_id: id } }) as Promise<ThreadView>,
+  ingestThread: (ws: string, type: "run" | "ask_thread", id: string) =>
+    post("/api/workspaces/{workspace_id}/threads/{container_type}/{container_id}/ingest",
+      { path: { workspace_id: ws, container_type: type, container_id: id } }) as Promise<Dict>,
+  branch: (ws: string, branch: string) =>
+    get("/api/workspaces/{workspace_id}/branches/{branch_id}", { path: { workspace_id: ws, branch_id: branch } }) as Promise<ThreadView>,
+  addStep: (ws: string, branch: string, body: Schemas["StepIn"]) =>
+    post("/api/workspaces/{workspace_id}/branches/{branch_id}/steps", { path: { workspace_id: ws, branch_id: branch }, body }) as Promise<Step>,
+  step: (ws: string, step: string, version?: number) =>
+    get("/api/workspaces/{workspace_id}/steps/{step_id}", { path: { workspace_id: ws, step_id: step }, query: { version } }) as Promise<StepWithResult>,
+  stepVersions: (ws: string, step: string) =>
+    get("/api/workspaces/{workspace_id}/steps/{step_id}/versions", { path: { workspace_id: ws, step_id: step } }) as Promise<StepVersions>,
+  /** `version` is the step's current version the edit was made against (412 when someone edited it since). */
+  editStep: (ws: string, step: string, version: number, body: Schemas["StepEdit"]) =>
+    request<StepRevision>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/steps/{step_id}",
+      { path: { workspace_id: ws, step_id: step }, body }), body, ifMatch(version)),
+  rerunStep: (ws: string, step: string) =>
+    post("/api/workspaces/{workspace_id}/steps/{step_id}/runs", { path: { workspace_id: ws, step_id: step } }) as Promise<StepRevision>,
+  pinStep: (ws: string, step: string, body: PinBody) =>
+    post("/api/workspaces/{workspace_id}/steps/{step_id}/pins", { path: { workspace_id: ws, step_id: step }, body }) as Promise<PinResult>,
+  fork: (ws: string, branch: string, body: Schemas["ForkIn"]) =>
+    post("/api/workspaces/{workspace_id}/branches/{branch_id}/forks", { path: { workspace_id: ws, branch_id: branch }, body }) as Promise<ForkResult>,
+  compareBranches: (ws: string, a: string, b: string) =>
+    get("/api/workspaces/{workspace_id}/branches/{branch_id}/compare",
+      { path: { workspace_id: ws, branch_id: a }, query: { with: b } }) as Promise<BranchCompare>,
+  mergeBranch: (ws: string, branch: string, body: Schemas["MergeIn"]) =>
+    post("/api/workspaces/{workspace_id}/branches/{branch_id}/merge", { path: { workspace_id: ws, branch_id: branch }, body }) as Promise<MergeResult>,
+
+  // notebooks (P7-12)
+  notebooks: (ws: string) => get("/api/workspaces/{workspace_id}/notebooks", { path: W(ws) }) as Promise<NotebookSummary[]>,
+  createNotebook: (ws: string, title: string) =>
+    post("/api/workspaces/{workspace_id}/notebooks", { path: W(ws), body: { title } }) as Promise<NotebookSummary>,
+  notebook: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/notebooks/{notebook_id}", { path: { workspace_id: ws, notebook_id: id } }) as Promise<Notebook>,
+  addCell: (ws: string, id: string, body: Schemas["CellIn"]) =>
+    post("/api/workspaces/{workspace_id}/notebooks/{notebook_id}/cells", { path: { workspace_id: ws, notebook_id: id }, body }) as Promise<NotebookCell>,
+  editCell: (ws: string, id: string, step: string, version: number, body: Schemas["CellEdit"]) =>
+    request<StepRevision>("PATCH", apiPath("patch", "/api/workspaces/{workspace_id}/notebooks/{notebook_id}/cells/{step_id}",
+      { path: { workspace_id: ws, notebook_id: id, step_id: step }, body }), body, ifMatch(version)),
+  runNotebook: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/notebooks/{notebook_id}/runs", { path: { workspace_id: ws, notebook_id: id } }) as Promise<Notebook>,
+
+  // governed ML (P5-01..06)
+  createDefinition: (ws: string, body: Schemas["DefinitionDraftIn"]) =>
+    post("/api/workspaces/{workspace_id}/definitions", { path: W(ws), body }) as Promise<DefinitionVersion>,
+  mlPropose: (ws: string, body: ProposalInput) =>
+    post("/api/workspaces/{workspace_id}/ml/proposals", { path: W(ws), body }) as Promise<MLProposal>,
+  startExperiment: (ws: string, definition: string | { key: string; version: number }) =>
+    post("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), body: { definition } }) as Promise<MLExperiment>,
+  experiments: (ws: string, definition?: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments", { path: W(ws), query: { definition } }) as Promise<MLExperiment[]>,
+  experiment: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}", { path: { workspace_id: ws, experiment_id: id } }) as Promise<MLExperiment>,
+  experimentRecord: <T = Dict>(ws: string, id: string, record: MLRecordType) =>
+    get("/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}/records/{record}",
+      { path: { workspace_id: ws, experiment_id: id, record } }) as Promise<MLRecord<T>>,
+  modelVersions: (ws: string, name?: string) =>
+    get("/api/workspaces/{workspace_id}/ml/models", { path: W(ws), query: { name } }) as Promise<ModelVersion[]>,
+  promoteModel: (ws: string, versionId: string, approvalId?: string) =>
+    post("/api/workspaces/{workspace_id}/ml/models/{version_id}/promote",
+      { path: { workspace_id: ws, version_id: versionId }, body: { approval_id: approvalId ?? null } }) as Promise<ApprovalStep>,
+  rollbackModel: (ws: string, name: string, approvalId?: string) =>
+    post("/api/workspaces/{workspace_id}/ml/model-names/{name}/rollback",
+      { path: { workspace_id: ws, name }, body: { approval_id: approvalId ?? null } }) as Promise<ApprovalStep>,
+  planScoring: (ws: string, definition: string | { key: string; version: number }) =>
+    post("/api/workspaces/{workspace_id}/ml/scoring", { path: W(ws), body: { definition } }) as Promise<ApprovalStep>,
+  executeScoring: (ws: string, id: string, approvalId?: string) =>
+    post("/api/workspaces/{workspace_id}/ml/scoring/{scoring_id}/execute",
+      { path: { workspace_id: ws, scoring_id: id }, body: { approval_id: approvalId ?? null } }) as Promise<ApprovalStep>,
+  scoringRuns: (ws: string) => get("/api/workspaces/{workspace_id}/ml/scoring", { path: W(ws) }) as Promise<ScoringRun[]>,
+
+  // pipelines, managed writer, materializations (P6-01..03)
+  pipelines: (ws: string) => get("/api/workspaces/{workspace_id}/pipelines", { path: W(ws) }) as Promise<Pipeline[]>,
+  savePipeline: (ws: string, spec: Dict) => post("/api/workspaces/{workspace_id}/pipelines", { path: W(ws), body: { spec } }) as Promise<Pipeline>,
+  publishPipeline: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/pipelines/{pipeline_id}/publish", { path: { workspace_id: ws, pipeline_id: id } }) as Promise<Pipeline>,
+  dryRunPipeline: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/pipelines/{pipeline_id}/dry-run", { path: { workspace_id: ws, pipeline_id: id }, body: {} }) as Promise<PipelineRun>,
+  pipelineRuns: (ws: string, pipeline?: string) =>
+    get("/api/workspaces/{workspace_id}/pipeline-runs", { path: W(ws), query: { pipeline } }) as Promise<PipelineRun[]>,
+  pipelineRun: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/pipeline-runs/{run_id}", { path: { workspace_id: ws, run_id: id } }) as Promise<PipelineRun>,
+  materialize: (ws: string, runId: string, approvalId: string) =>
+    post("/api/workspaces/{workspace_id}/pipeline-runs/{run_id}/materialize",
+      { path: { workspace_id: ws, run_id: runId }, body: { approval_id: approvalId } }) as Promise<Materialization>,
+  materializations: (ws: string, table?: string) =>
+    get("/api/workspaces/{workspace_id}/materializations", { path: W(ws), query: { table } }) as Promise<Materialization[]>,
+  rollbackMaterialization: (ws: string, id: string) =>
+    post("/api/workspaces/{workspace_id}/materializations/{materialization_id}/rollback",
+      { path: { workspace_id: ws, materialization_id: id } }) as Promise<Materialization>,
+  writerDestinations: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws) }) as Promise<WriterDestination[]>,
 };
 
 // ----------------------------------------------------------------------------------- run events (SSE)
 export interface EventStreamHandle {
   close: () => void;
+  /** Skip the backoff wait and reconnect at once (a person pressed "Reconnect now"). */
+  reconnectNow: () => void;
+}
+
+/** Where a reconnecting stream stands: which attempt, when it retries, and the last event it has. */
+export interface StreamInfo {
+  attempt: number;
+  /** Milliseconds until the next attempt (only while reconnecting). */
+  retryInMs?: number;
+  /** The persisted cursor it resumes from (`after_id`). */
+  lastEventId: number;
+  /** True when this `open` follows a drop: the caller should re-read state it may have missed. */
+  resumed?: boolean;
 }
 
 export interface EventStreamCallbacks {
   onEvent: (ev: RunEvent) => void;
   onEnd?: (status: string | null) => void;
-  onStatus?: (state: "connecting" | "open" | "reconnecting" | "closed", error?: string) => void;
+  onStatus?: (state: "connecting" | "open" | "reconnecting" | "closed", error?: string, info?: StreamInfo) => void;
 }
 
 /**
  * Subscribe to GET /api/workspaces/{ws}/analysis/{run}/events with the bearer header.
  * Reconnects with ?after_id=<last seen id> (exponential backoff, max 15 s) until the server sends
- * `event: end` (terminal run) or the caller closes the handle.
+ * `event: end` (terminal run) or the caller closes the handle. `onStatus` reports the attempt, the
+ * retry delay and the cursor, and marks the first `open` after a drop as `resumed`.
  */
 export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallbacks, afterId = 0): EventStreamHandle {
   const controller = new AbortController();
   let last = afterId;
   let ended = false;
   let attempt = 0;
+  let dropped = false;
   let closedReason: string | undefined;
+  let wake: (() => void) | null = null;
 
   const handle = (m: SSEMessage) => {
     if (m.event === "expired" || m.event === "revoked") {
@@ -2801,7 +3465,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
 
   const loop = async () => {
     while (!controller.signal.aborted && !ended) {
-      cb.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
+      cb.onStatus?.(attempt === 0 && !dropped ? "connecting" : "reconnecting", undefined, { attempt, lastEventId: last });
       let opened = false;
       try {
         await readSSE({
@@ -2812,7 +3476,7 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
           onOpen: () => {
             opened = true;
             attempt = 0;
-            cb.onStatus?.("open");
+            cb.onStatus?.("open", undefined, { attempt: 0, lastEventId: last, resumed: dropped });
           },
           onMessage: handle,
         });
@@ -2828,17 +3492,24 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
           cb.onStatus?.("closed", err instanceof Error ? err.message : String(err));
           return;
         }
-        cb.onStatus?.("reconnecting", err instanceof Error ? err.message : String(err));
+        const next = attempt + 1;
+        cb.onStatus?.("reconnecting", err instanceof Error ? err.message : String(err),
+          { attempt: next, retryInMs: Math.min(15000, 500 * 2 ** Math.min(next, 5)), lastEventId: last });
       }
+      dropped = true;
       // A stream that opened and then dropped reconnects quickly; repeated failures back off.
       attempt = opened ? 1 : attempt + 1;
       const delay = Math.min(15000, 500 * 2 ** Math.min(attempt, 5));
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, delay);
+        wake = () => { clearTimeout(t); r(); };
+      });
+      wake = null;
     }
     cb.onStatus?.("closed", closedReason);
   };
   void loop();
-  return { close: () => controller.abort() };
+  return { close: () => controller.abort(), reconnectNow: () => wake?.() };
 }
 
 /**
