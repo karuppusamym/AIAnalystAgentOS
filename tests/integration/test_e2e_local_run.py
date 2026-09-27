@@ -36,6 +36,21 @@ def servicenow_url():
     server.should_exit = True
 
 
+def _wait_schedule_run(srun_id: str, timeout: float = 120) -> None:
+    """The run reaches its terminal state first; complete_from_run then finishes the schedule_run (report,
+    diff) in its own transaction, so a reader can see the run COMPLETED before the schedule_run succeeds."""
+    from analystos.db.base import session_scope
+    from analystos.db.models import ScheduleRun
+
+    started = time.time()
+    while time.time() - started < timeout:
+        with session_scope() as s:
+            if s.get(ScheduleRun, srun_id).status in ("succeeded", "failed", "skipped"):
+                return
+        time.sleep(0.5)
+    raise AssertionError(f"schedule run {srun_id} did not finish")
+
+
 def _wait(run_id: str, statuses: set[str], timeout: float = 600) -> str:
     from analystos.db.base import session_scope
     from analystos.db.models import AnalysisRun
@@ -182,6 +197,7 @@ def test_phase3_schedule_monitor_report(control_db, servicenow_url, monkeypatch)
         with session_scope() as s:
             rerun_id = s.get(ScheduleRun, srun_id).result["run_id"]
         assert _wait(rerun_id, {"COMPLETED", "FAILED"}) == "COMPLETED"
+        _wait_schedule_run(srun_id)
         with session_scope() as s:
             srun = s.get(ScheduleRun, srun_id)
             rerun = s.get(AnalysisRun, rerun_id)
