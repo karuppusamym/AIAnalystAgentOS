@@ -138,15 +138,45 @@ def pre_aggregated(name: str) -> bool:
     return bool(set(tokens(name)) & _PRE_AGG_WORDS)
 
 
-def classify(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> list[dict[str, Any]]:
-    """Each column's kind: measure | identifier | time | label."""
+def grouped_columns(sql: str | None, dialect: str = "postgres") -> set[str]:
+    """Output names of the columns a statement groups by (a numeric grouping such as priority 1..5 is a
+    dimension, not a measure). Empty when the SQL cannot be read."""
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql or "", read=dialect)
+    except Exception:  # noqa: BLE001 - unreadable SQL: fall back to the column heuristics
+        return set()
+    select = tree.find(exp.Select) if tree is not None else None
+    group = select.args.get("group") if select is not None else None
+    if group is None:
+        return set()
+    keys = [g for g in group.expressions]
+    out = set()
+    for pos, e in enumerate(select.expressions, start=1):
+        inner = e.this if isinstance(e, exp.Alias) else e
+        for g in keys:
+            if (isinstance(g, exp.Literal) and not g.is_string and str(g.this) == str(pos)) or \
+                    (isinstance(g, exp.Column) and g.name.lower() == e.alias_or_name.lower()) or g == inner:
+                out.add(e.alias_or_name.lower())
+    return out
+
+
+def classify(columns: Sequence[str], rows: Sequence[Sequence[Any]], dimensions: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """Each column's kind: measure | identifier | time | label. `dimensions` (grouped-by output names)
+    are never measures."""
+    grouped = {d.lower() for d in dimensions}
     out = []
     for i, name in enumerate(columns):
         vals = [r[i] for r in rows if i < len(r) and r[i] is not None]
         toks = tokens(name)
         numeric = bool(vals) and all(num(v) is not None for v in vals)
         integral = numeric and all(float(num(v) or 0).is_integer() for v in vals)
-        if _is_identifier(toks):
+        if numeric and str(name).lower() in grouped and not _is_identifier(toks):
+            span = _NUMERIC_TIME_WORDS.get(toks[-1]) if toks else None
+            kind = "time" if integral and span and all(span[0] <= float(num(v) or 0) <= span[1] for v in vals) else "label"
+        elif _is_identifier(toks):
             kind = "identifier"
         elif _is_cyclic(toks):
             kind = "label"
@@ -166,15 +196,23 @@ def _label_indexes(cols: list[dict[str, Any]]) -> list[int]:
     return labels or [c["index"] for c in cols if c["kind"] == "identifier"]
 
 
-def row_label(row: Sequence[Any], idx: Sequence[int]) -> str | None:
-    parts = [str(row[i]) for i in idx if i < len(row) and row[i] is not None]
+def row_label(row: Sequence[Any], idx: Sequence[int], names: Sequence[str] = ()) -> str | None:
+    """A row's label; a numeric value is named by its column ("priority 4"), so it never reads as a quantity."""
+    parts = []
+    for i in idx:
+        if i >= len(row) or row[i] is None:
+            continue
+        v = row[i]
+        plain = str(v)
+        numeric = num(v) is not None or bool(re.fullmatch(r"[-+]?\d+(?:\.\d+)?", plain))
+        parts.append(f"{names[i]} {plain}" if numeric and i < len(names) else plain)
     return " / ".join(parts)[:LABEL_CHARS] if parts else None
 
 
 # ------------------------------------------------------------------------------------ facts
 def step_facts(columns: Sequence[str], rows: Sequence[Sequence[Any]], *, row_count: int | None = None,
-               truncated: bool = False) -> dict[str, Any]:
-    cols = classify(columns, rows)
+               truncated: bool = False, dimensions: Iterable[str] = ()) -> dict[str, Any]:
+    cols = classify(columns, rows, dimensions)
     shown = len(rows)
     total_rows = row_count if row_count is not None else shown
     cut = bool(truncated) or total_rows > shown
@@ -183,7 +221,7 @@ def step_facts(columns: Sequence[str], rows: Sequence[Sequence[Any]], *, row_cou
     for c in cols:
         i = c["index"]
         if c["kind"] == "measure":
-            pairs = [(num(r[i]), row_label(r, labels_at)) for r in rows if i < len(r) and num(r[i]) is not None]
+            pairs = [(num(r[i]), row_label(r, labels_at, columns)) for r in rows if i < len(r) and num(r[i]) is not None]
             if not pairs:
                 continue
             values = [v for v, _ in pairs]
@@ -276,11 +314,11 @@ def _missing(periods: list[Any]) -> tuple[str | None, list[str]]:
     return None, []
 
 
-def series_analysis(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> dict[str, Any] | None:
+def series_analysis(columns: Sequence[str], rows: Sequence[Sequence[Any]], dimensions: Iterable[str] = ()) -> dict[str, Any] | None:
     """Trend, anomalies and gaps of one series (one row per period, >= 5 points); None otherwise."""
     from analystos.skills.stats import linear_trend, robust_anomalies
 
-    cols = classify(columns, rows)
+    cols = classify(columns, rows, dimensions)
     time_col = next((c for c in cols if c["kind"] == "time"), None)
     measure = next((c for c in cols if c["kind"] == "measure"), None)
     if time_col is None or measure is None:
@@ -331,9 +369,9 @@ def _period_order(values: list[Any]) -> list[Any]:
     return sorted(values, key=key)
 
 
-def two_period(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> dict[str, Any] | None:
+def two_period(columns: Sequence[str], rows: Sequence[Sequence[Any]], dimensions: Iterable[str] = ()) -> dict[str, Any] | None:
     """The change between two periods and, per member, what drove it (see the module doc)."""
-    cols = classify(columns, rows)
+    cols = classify(columns, rows, dimensions)
     pair = _period_columns(cols)
     members: dict[str, list[float | None]] = {}
     out: dict[str, Any]
@@ -344,7 +382,7 @@ def two_period(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> dict[st
             return None
         out = {"measure": None, "previous_column": p["name"], "current_column": c["name"]}
         for i, r in enumerate(rows):
-            key = row_label(r, label_idx) or f"row {i + 1}"
+            key = row_label(r, label_idx, columns) or f"row {i + 1}"
             members[key] = [num(r[p["index"]]), num(r[c["index"]])]
     else:
         measure = next((c for c in cols if c["kind"] == "measure"), None)
@@ -364,7 +402,7 @@ def two_period(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> dict[st
         out = {"measure": measure["name"], "period_column": period_col["name"], "previous_period": str(before),
                "current_period": str(after)}
         for r in rows:
-            key = row_label(r, label_idx) or "total"
+            key = row_label(r, label_idx, columns) or "total"
             slot = members.setdefault(key, [None, None])
             v = num(r[measure["index"]])
             k = 0 if str(r[period_col["index"]]) == str(before) else 1
@@ -408,7 +446,8 @@ def _check(code: str, ok: bool, note: str) -> dict[str, str]:
 
 def step_checks(kind: str, *, sql: str | None, dialect: str, columns: Sequence[str], rows: Sequence[Sequence[Any]],
                 row_count: int | None, truncated: bool, series: Mapping[str, Any] | None = None,
-                comparison: Mapping[str, Any] | None = None, history: Sequence[float] = ()) -> list[dict[str, str]]:
+                comparison: Mapping[str, Any] | None = None, history: Sequence[float] = (),
+                dimensions: Iterable[str] = ()) -> list[dict[str, str]]:
     """Deterministic checks of one answered step; a suspect check is shown, it never blocks the answer."""
     obs = selfcheck.Observation(sql=sql, dialect=dialect, columns=list(columns), rows=[list(r) for r in rows],
                                 row_count=row_count, truncated=truncated, history=list(history))
@@ -419,7 +458,7 @@ def step_checks(kind: str, *, sql: str | None, dialect: str, columns: Sequence[s
         out.append(_check("single_row_breakdown", n != 1, "a breakdown returned a single row: the grouping may be "
                           "missing or a filter too narrow" if n == 1 else "more than one group"))
     problems = []
-    for c in classify(columns, rows):
+    for c in classify(columns, rows, dimensions):
         if c["kind"] != "measure" or not set(tokens(c["name"])) & _SHARE_WORDS:
             continue
         vals = [num(r[c["index"]]) for r in rows if num(r[c["index"]]) is not None]
@@ -461,7 +500,9 @@ def citations(text: str) -> list[int]:
 def _mask(text: str, labels: Iterable[str]) -> str:
     masked = _CITATION.sub(lambda m: " " * len(m.group(0)), text)
     for label in sorted({str(x) for x in labels if x and any(ch.isdigit() for ch in str(x))}, key=len, reverse=True):
-        masked = re.sub(re.escape(label), lambda m: "§" * len(m.group(0)), masked, flags=re.I)
+        pre = r"(?<![\w.,])" if label[:1].isalnum() else ""
+        post = r"(?![\w%]|[.,]\d)" if label[-1:].isalnum() else ""
+        masked = re.sub(pre + re.escape(label) + post, lambda m: "§" * len(m.group(0)), masked, flags=re.I)
     return masked
 
 
@@ -534,6 +575,6 @@ def fact_labels(*parts: Any) -> list[str]:
     return out
 
 
-__all__ = ["as_time", "citations", "classify", "clean", "fact_labels", "fact_values", "fmt_num", "fmt_pct",
+__all__ = ["as_time", "citations", "classify", "clean", "fact_labels", "fact_values", "fmt_num", "fmt_pct", "grouped_columns",
            "headline_value", "numbers_bound", "pre_aggregated", "series_analysis", "step_checks", "step_facts",
            "two_period"]

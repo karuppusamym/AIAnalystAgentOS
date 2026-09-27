@@ -393,18 +393,20 @@ def analyse(kind: str, *, sql: str | None, dialect: str, result: dict[str, Any],
     columns, rows = list(result.get("columns") or []), list(result.get("rows") or [])
     row_count = result.get("row_count")
     truncated = bool(result.get("truncated"))
-    out: dict[str, Any] = {"facts": rf.step_facts(columns, rows, row_count=row_count, truncated=truncated)}
-    series = rf.series_analysis(columns, rows) if out["facts"]["time_column"] else None
+    dims = rf.grouped_columns(sql, dialect)
+    out: dict[str, Any] = {"facts": rf.step_facts(columns, rows, row_count=row_count, truncated=truncated, dimensions=dims)}
+    series = rf.series_analysis(columns, rows, dims) if out["facts"]["time_column"] else None
     if series is not None:
         out["series"] = series
-    comparison = rf.two_period(columns, rows) if kind != "trend" else None
+    comparison = rf.two_period(columns, rows, dims) if kind != "trend" else None
     if comparison is not None:
         out["comparison"] = {k: v for k, v in comparison.items()
                              if k not in ("drivers", "offsets", "appeared", "disappeared", "members")}
         if "drivers" in comparison:
             out["drivers"] = {k: comparison[k] for k in ("members", "drivers", "offsets", "appeared", "disappeared")}
     out["checks"] = rf.step_checks(kind, sql=sql, dialect=dialect, columns=columns, rows=rows, row_count=row_count,
-                                   truncated=truncated, series=series, comparison=comparison, history=history)
+                                   truncated=truncated, series=series, comparison=comparison, history=history,
+                                   dimensions=dims)
     return out
 
 
@@ -500,7 +502,7 @@ def key_facts(e: dict[str, Any]) -> list[str]:
     if not facts.get("rows_shown"):
         return ["no rows were returned"]
     if facts.get("values"):
-        return ["; ".join(f"{col} is {rf.fmt_num(v)}" for col, v in list(facts["values"].items())[:3])]
+        return ["; ".join(f"the {col} is {rf.fmt_num(v)}" for col, v in list(facts["values"].items())[:3])]
     measures = facts.get("measures") or []
     if measures:
         m = next((x for x in measures if not x["pre_aggregated"]), measures[0])
