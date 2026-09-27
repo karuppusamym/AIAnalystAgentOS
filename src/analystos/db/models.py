@@ -1385,6 +1385,8 @@ class AskTurn(Base):
     decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # summaries; full rows in `decision`
     provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     promotions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    # Analyst mode: plan, per-step results/facts/checks, cited synthesis, follow-ups; NULL for a quick turn.
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts()
 

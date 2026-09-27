@@ -31,6 +31,8 @@ class AskThreadPatch(BaseModel):
 class AskTurnIn(BaseModel):
     question: str
     parameters: dict | None = None  # values for a verified query's parameters (answers a "needs_input" refusal)
+    # quick = one governed query (unchanged); analyst = a plan of <= 4 governed steps, facts, checks and a cited synthesis
+    mode: Literal["quick", "analyst"] = "quick"
 
 
 class AskRerunIn(BaseModel):
@@ -113,8 +115,10 @@ async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: Stre
 
     workspace_id = await run_blocking(check)  # an unknown thread is a 404 before any stream opens
     streamed = "text/event-stream" in request.headers.get("accept", "")
-    key = Key.of(idempotency_key, principal=user.id, workspace_id=workspace_id, operation="ask.turn",
-                 request={"thread_id": thread_id, "question": body.question, "parameters": body.parameters})
+    request_body = {"thread_id": thread_id, "question": body.question, "parameters": body.parameters}
+    if body.mode != "quick":
+        request_body["mode"] = body.mode  # a quick request hashes as before
+    key = Key.of(idempotency_key, principal=user.id, workspace_id=workspace_id, operation="ask.turn", request=request_body)
     if key is not None and (replay := await run_blocking(lambda: idem.claim(key))) is not None:
         turn = await run_blocking(lambda: _turn_json(user, replay.resource_id))
         headers = {"Idempotent-Replayed": "true"}
@@ -123,13 +127,15 @@ async def ask_turn(thread_id: str, body: AskTurnIn, request: Request, auth: Stre
             return StreamingResponse(iter(frames), media_type="text/event-stream", headers={"Cache-Control": "no-cache", **headers})
         return JSONResponse(content=turn, headers=headers)
     if streamed:
-        stream = ask_svc.stream_turn(user, thread_id, body.question, body.parameters, guard=stream_guard(auth, load))
+        stream = ask_svc.stream_turn(user, thread_id, body.question, body.parameters, guard=stream_guard(auth, load),
+                                     mode=body.mode)
         return StreamingResponse(_settle_stream(stream, key) if key is not None else stream,
                                  media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     import anyio
 
     try:
-        out = await anyio.to_thread.run_sync(lambda: ask_svc.ask_in_thread(user, thread_id, body.question, body.parameters))
+        out = await anyio.to_thread.run_sync(lambda: ask_svc.ask_in_thread(user, thread_id, body.question, body.parameters,
+                                                                           mode=body.mode))
     except BaseException:
         if key is not None:
             await run_blocking(lambda: idem.release(key))
@@ -173,18 +179,34 @@ def inspect_turn(turn_id: str, user: User = Depends(current_user), session: Sess
 
 @router.get("/ask/turns/{turn_id}/why")
 def why_turn_number(turn_id: str, number: str | None = None, column: str | None = None, row: int | None = None,
-                    user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+                    step: int | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """"Why this number?" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,
     `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
-    every link with its current state; broken and voided links are returned, never dropped."""
+    every link with its current state; broken and voided links are returned, never dropped. For an analyst
+    turn `step` explains that step's numbers (default: the headline step, which the turn mirrors)."""
     from analystos.evidence.why import explain_ask_turn
 
+    if step is not None:
+        return ask_svc.why_step(session, user, turn_id, step, number=number, column=column, row=row)
     return explain_ask_turn(session, ask_svc._turn_for(session, user, turn_id), number=number, column=column, row=row)
 
 
 @router.post("/ask/turns/{turn_id}/rerun")
 def rerun(turn_id: str, body: AskRerunIn, user: User = Depends(current_user)):
     return ask_svc.rerun_turn(user, turn_id, body.sql)
+
+
+@router.post("/ask/turns/{turn_id}/steps/{n}/rerun")
+def rerun_step(turn_id: str, n: int, body: AskRerunIn, user: User = Depends(current_user)):
+    """Analyst turn: run step `n` again with its saved SQL (or `sql`, edited) through the gateway; the step's
+    facts and checks are recomputed and the synthesis is marked stale. Returns the updated turn."""
+    return ask_svc.rerun_step(user, turn_id, n, body.sql)
+
+
+@router.post("/ask/turns/{turn_id}/synthesize")
+def synthesize_turn(turn_id: str, user: User = Depends(current_user)):
+    """Analyst turn: write the synthesis again from the steps' current facts (clears `stale`)."""
+    return ask_svc.resynthesize(user, turn_id)
 
 
 @router.post("/ask/turns/{turn_id}/schedule")
