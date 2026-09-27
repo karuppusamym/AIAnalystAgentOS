@@ -303,6 +303,41 @@ def _workspace_ids(session: Session, keys: list[str]) -> dict[str, str]:
     return out
 
 
+def _highest_roles(roles: dict[str, str], resolved: dict[str, str]) -> dict[str, str]:
+    """Workspace id -> role. A workspace mapped both by name and by id is one workspace: the highest role wins,
+    as it does for several groups naming it the same way."""
+    out: dict[str, str] = {}
+    for key, ws_id in resolved.items():
+        if ROLE_RANK[roles[key]] > ROLE_RANK.get(out.get(ws_id, ""), -1):
+            out[ws_id] = roles[key]
+    return out
+
+
+def mapping_problems(session: Session, mapping: Mapping) -> list[str]:
+    """Grants that would silently grant nothing: a workspace the mapping names that does not exist (or was deleted)."""
+    keys = sorted({g.workspace for g in mapping.workspace_roles})
+    resolved = _workspace_ids(session, keys)
+    return [f"group {g.group}: workspace {g.workspace!r} does not exist; the grant ({g.role}) has no effect"
+            for g in mapping.workspace_roles if g.workspace not in resolved]
+
+
+def preview(session: Session, groups: list[str], mapping: Mapping | None = None) -> dict[str, Any]:
+    """What a sign-in with these IdP groups would grant, without signing anyone in: platform admin (for an
+    SSO-created account), the role per existing workspace, and grants that resolve to no workspace."""
+    mapping = mapping or load_mapping()
+    try:
+        ident = map_claims({"sub": "preview", "email": "preview@sso.invalid", "groups": list(groups)}, mapping)
+    except Unauthenticated as exc:
+        return {"signs_in": False, "is_admin": False, "roles": [], "unresolved": [], "reason": exc.message}
+    resolved = _workspace_ids(session, list(ident.roles))
+    names = dict(session.execute(select(Workspace.id, Workspace.name).where(Workspace.id.in_(list(resolved.values())))).all())
+    return {"signs_in": True, "is_admin": ident.is_admin,
+            "roles": [{"workspace_id": ws_id, "workspace_name": names.get(ws_id), "role": role,
+                       "mapped_as": sorted(k for k, w in resolved.items() if w == ws_id)}
+                      for ws_id, role in sorted(_highest_roles(ident.roles, resolved).items())],
+            "unresolved": sorted(k for k in ident.roles if k not in resolved), "reason": None}
+
+
 def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping: Mapping | None = None) -> User:
     """Find or create the local user for this identity and bring its IdP-managed state up to date:
     attributes from claims, platform admin from groups (SSO-created users only), and the workspace
@@ -347,8 +382,7 @@ def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping:
               reasons=["platform_admin_from_groups_applies_to_sso_created_accounts_only"],
               details={"groups": ident.groups}, session=session)
     managed = dict(link.managed_memberships or {})
-    resolved = _workspace_ids(session, list(ident.roles))
-    desired = {ws_id: ident.roles[key] for key, ws_id in resolved.items()}
+    desired = _highest_roles(ident.roles, _workspace_ids(session, list(ident.roles)))
     members = {m.workspace_id: m for m in session.scalars(select(WorkspaceMember).where(WorkspaceMember.user_id == user.id))}
     changes: list[dict[str, Any]] = []
     for ws_id, role in desired.items():
@@ -377,5 +411,5 @@ def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping:
 
 
 __all__ = ["ALLOWED_ALGS", "PLATFORM_CONTROLLED_ATTRIBUTES", "TX_COOKIE", "Mapping", "OidcProvider", "RoleGrant", "enabled",
-           "load_mapping", "map_claims", "open_transaction", "pkce_pair", "platform_controlled", "provider", "provision",
-           "safe_return_path", "seal_transaction", "set_http_transport"]
+           "load_mapping", "map_claims", "mapping_problems", "open_transaction", "pkce_pair", "platform_controlled", "preview",
+           "provider", "provision", "safe_return_path", "seal_transaction", "set_http_transport"]

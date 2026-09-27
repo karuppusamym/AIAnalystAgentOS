@@ -205,6 +205,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/pilot-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pilot Overview */
+        get: operations["get_pilot_overview_api_admin_pilot_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/prompts": {
         parameters: {
             query?: never;
@@ -285,6 +302,47 @@ export interface paths {
         put?: never;
         /** Settings Rollback */
         post: operations["settings_rollback_api_admin_settings_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/sso": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sso
+         * @description The single sign-on configuration as the platform will apply it: the group -> role mapping and the grants
+         *     that name a workspace that does not exist (they grant nothing). No secret is returned.
+         */
+        get: operations["get_sso_api_admin_sso_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/sso/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Sso
+         * @description What a sign-in with these identity-provider groups would grant; nobody is signed in or changed.
+         */
+        post: operations["preview_sso_api_admin_sso_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3379,6 +3437,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Workspace Owners */
+        put: operations["put_workspace_owners_api_workspaces__workspace_id__owners_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/pilot-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pilot Readiness */
+        get: operations["get_pilot_readiness_api_workspaces__workspace_id__pilot_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/pins/{pin_id}": {
         parameters: {
             query?: never;
@@ -4553,6 +4645,23 @@ export interface paths {
          * @description Map and load an uploaded file (CSV, JSON, Excel, Parquet) into a file source: replace, append or merge (P6-06).
          */
         post: operations["ingest_api_workspaces__workspace_id__sources__source_id__ingest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/sources/{source_id}/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Source Owners */
+        put: operations["put_source_owners_api_workspaces__workspace_id__sources__source_id__owners_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5796,6 +5905,11 @@ export interface components {
             /** Tools */
             tools?: string[];
         };
+        /** GroupsIn */
+        GroupsIn: {
+            /** Groups */
+            groups?: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -6165,6 +6279,15 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** NamedOwner */
+        NamedOwner: {
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+            /** User Id */
+            user_id?: string | null;
+        };
         /** NewUser */
         NewUser: {
             /**
@@ -6191,6 +6314,14 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * OwnersIn
+         * @description A full replacement of the named owners: an omitted or null role clears it.
+         */
+        OwnersIn: {
+            business?: components["schemas"]["NamedOwner"] | null;
+            technical?: components["schemas"]["NamedOwner"] | null;
+        };
         /** OwnershipDeclineIn */
         OwnershipDeclineIn: {
             /** Reason */
@@ -6206,6 +6337,47 @@ export interface components {
             subject: string;
             /** To Owner */
             to_owner: string;
+        };
+        /** PilotCheck */
+        PilotCheck: {
+            /** Check */
+            check: string;
+            /** Evidence */
+            evidence?: string | null;
+            /** Reason */
+            reason: string;
+            /** Remediation */
+            remediation?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "missing" | "fail";
+            /** Subject */
+            subject: string;
+        };
+        /** PilotReadiness */
+        PilotReadiness: {
+            /** Checks */
+            checks: components["schemas"]["PilotCheck"][];
+            /** Failing */
+            failing: number;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Missing */
+            missing: number;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "ready" | "not_ready";
+            /** Workspace Id */
+            workspace_id: string;
+            /** Workspace Name */
+            workspace_name: string;
         };
         /**
          * PinIn
@@ -7517,6 +7689,40 @@ export interface operations {
             };
         };
     };
+    get_pilot_overview_api_admin_pilot_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     prompts_api_admin_prompts_get: {
         parameters: {
             query?: never;
@@ -7708,6 +7914,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sso_api_admin_sso_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_sso_api_admin_sso_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -14482,6 +14760,80 @@ export interface operations {
             };
         };
     };
+    put_workspace_owners_api_workspaces__workspace_id__owners_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnersIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pilot_readiness_api_workspaces__workspace_id__pilot_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PilotReadiness"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_pin_api_workspaces__workspace_id__pins__pin_id__get: {
         parameters: {
             query?: never;
@@ -17012,6 +17364,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_source_owners_api_workspaces__workspace_id__sources__source_id__owners_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnersIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

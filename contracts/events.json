@@ -128,6 +128,7 @@
   "semantic.relationship.validated",
   "settings.updated",
   "source.connected",
+  "source.owners_changed",
   "step.created",
   "step.edited",
   "step.executed",
@@ -148,6 +149,7 @@
   "work_order.created",
   "work_order.updated",
   "workspace.created",
+  "workspace.owners_changed",
   "workspace.updated",
   "writer_destination.provisioned"
 ]

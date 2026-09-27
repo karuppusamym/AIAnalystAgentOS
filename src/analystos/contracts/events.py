@@ -57,6 +57,8 @@ EVENT_TYPES = {
     "ml.experiment.started", "ml.experiment.completed", "ml.experiment.refused", "ml.experiment.failed",
     "ml.model.registered", "ml.model.promoted", "ml.model.rolled_back", "ml.scoring.planned", "ml.scoring.completed",
     "ml.scoring.refused", "ml.scoring.duplicate",
+    # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
+    "workspace.owners_changed", "source.owners_changed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

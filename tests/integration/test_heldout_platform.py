@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.integration
-SMOKE = {"HO-SALES-01", "HO-SALES-05", "HO-DE-01", "HO-DE-04", "HO-DE-07", "HO-ML-02", "HO-ML-05"}
+SMOKE = {"HO-SALES-01", "HO-SALES-05", "HO-DE-01", "HO-DE-04", "HO-DE-07", "HO-ML-02", "HO-ML-05", "HO-GOV-02", "HO-GOV-04",
+         "HO-REC-04", "HO-REC-05"}
 
 
 def test_heldout_platform_tier(control_db):
@@ -22,14 +23,19 @@ def test_heldout_platform_tier(control_db):
     for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "AZURE_OPENAI_API_KEY"):
         os.environ.pop(key, None)  # the rule path; a live run is scripts/benchmark_heldout.py --models live
     full = bool(os.environ.get("ANALYSTOS_HELDOUT_FULL"))
+    picked = {t.strip() for t in os.environ.get("ANALYSTOS_HELDOUT_ONLY", "").split(",") if t.strip()}
     corpus = R.load_corpus()
-    platform = R.run("platform", only=None if full else SMOKE, corpus=corpus)
+    if picked:  # a measurement of the named tasks only (debugging a family); asserts harness health like FULL
+        full, subset = True, picked
+    else:
+        subset = None if full else SMOKE
+    platform = R.run("platform", only=subset, corpus=corpus)
     o = platform.summary["overall"]
     out = os.environ.get("ANALYSTOS_HELDOUT_REPORT")
     if out:
         from evaluation.heldout.report import render
 
-        runs = {"component": R.run("component", only=None if full else SMOKE, corpus=corpus), "platform": platform}
+        runs = {"component": R.run("component", only=subset, corpus=corpus), "platform": platform}
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render(runs, corpus))
@@ -43,3 +49,6 @@ def test_heldout_platform_tier(control_db):
         assert got["HO-DE-07"] == got["HO-ML-05"] == got["HO-SALES-05"] == "correct_abstention", got
         assert got["HO-DE-01"] == got["HO-ML-02"] == "accepted", [(x.id, x.reason) for x in platform.results]
         assert got["HO-DE-04"] == "correct_abstention", got
+        # governance stops and the pinned-snapshot refusal (fixed 2026-09-27: pushdown used to ignore the pin)
+        assert got["HO-GOV-02"] == got["HO-GOV-04"] == got["HO-REC-05"] == "correct_abstention", got
+        assert got["HO-REC-04"] == "accepted", got

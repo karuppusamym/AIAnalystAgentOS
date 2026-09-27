@@ -2444,6 +2444,20 @@
         "title": "GrantIn",
         "type": "object"
       },
+      "GroupsIn": {
+        "properties": {
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Groups",
+            "type": "array"
+          }
+        },
+        "title": "GroupsIn",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3549,6 +3563,42 @@
         "title": "MonitorPatch",
         "type": "object"
       },
+      "NamedOwner": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "pattern": "^[^@\\s]+@[^@\\s]+$",
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "name",
+          "email"
+        ],
+        "title": "NamedOwner",
+        "type": "object"
+      },
       "NewUser": {
         "properties": {
           "attributes": {
@@ -3597,6 +3647,34 @@
           "title"
         ],
         "title": "NotebookIn",
+        "type": "object"
+      },
+      "OwnersIn": {
+        "additionalProperties": false,
+        "description": "A full replacement of the named owners: an omitted or null role clears it.",
+        "properties": {
+          "business": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NamedOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "technical": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NamedOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "OwnersIn",
         "type": "object"
       },
       "OwnershipDeclineIn": {
@@ -3649,6 +3727,112 @@
           "to_owner"
         ],
         "title": "OwnershipOfferIn",
+        "type": "object"
+      },
+      "PilotCheck": {
+        "properties": {
+          "check": {
+            "title": "Check",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "remediation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "missing",
+              "fail"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check",
+          "subject",
+          "status",
+          "reason"
+        ],
+        "title": "PilotCheck",
+        "type": "object"
+      },
+      "PilotReadiness": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/PilotCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "failing": {
+            "title": "Failing",
+            "type": "integer"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "missing": {
+            "title": "Missing",
+            "type": "integer"
+          },
+          "verdict": {
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "workspace_name": {
+            "title": "Workspace Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "workspace_name",
+          "verdict",
+          "missing",
+          "failing",
+          "checks",
+          "generated_at"
+        ],
+        "title": "PilotReadiness",
         "type": "object"
       },
       "PinIn": {
@@ -7167,6 +7351,76 @@
         ]
       }
     },
+    "/api/admin/pilot-readiness": {
+      "get": {
+        "operationId": "get_pilot_overview_api_admin_pilot_readiness_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Pilot Overview Api Admin Pilot Readiness Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pilot Overview",
+        "tags": [
+          "pilot"
+        ]
+      }
+    },
     "/api/admin/prompts": {
       "get": {
         "operationId": "prompts_api_admin_prompts_get",
@@ -7570,6 +7824,152 @@
         "summary": "Settings Rollback",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/api/admin/sso": {
+      "get": {
+        "description": "The single sign-on configuration as the platform will apply it: the group -> role mapping and the grants\nthat name a workspace that does not exist (they grant nothing). No secret is returned.",
+        "operationId": "get_sso_api_admin_sso_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Sso Api Admin Sso Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sso",
+        "tags": [
+          "pilot"
+        ]
+      }
+    },
+    "/api/admin/sso/preview": {
+      "post": {
+        "description": "What a sign-in with these identity-provider groups would grant; nobody is signed in or changed.",
+        "operationId": "preview_sso_api_admin_sso_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Sso Api Admin Sso Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Sso",
+        "tags": [
+          "pilot"
         ]
       }
     },
@@ -23056,6 +23456,166 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/owners": {
+      "put": {
+        "operationId": "put_workspace_owners_api_workspaces__workspace_id__owners_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Workspace Owners Api Workspaces  Workspace Id  Owners Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Workspace Owners",
+        "tags": [
+          "pilot"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pilot-readiness": {
+      "get": {
+        "operationId": "get_pilot_readiness_api_workspaces__workspace_id__pilot_readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PilotReadiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pilot Readiness",
+        "tags": [
+          "pilot"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/pins/{pin_id}": {
       "get": {
         "operationId": "get_pin_api_workspaces__workspace_id__pins__pin_id__get",
@@ -28942,6 +29502,101 @@
         "summary": "Ingest",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/sources/{source_id}/owners": {
+      "put": {
+        "operationId": "put_source_owners_api_workspaces__workspace_id__sources__source_id__owners_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Source Owners Api Workspaces  Workspace Id  Sources  Source Id  Owners Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Source Owners",
+        "tags": [
+          "pilot"
         ]
       }
     },

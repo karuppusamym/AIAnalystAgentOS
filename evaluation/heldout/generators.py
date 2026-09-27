@@ -194,9 +194,110 @@ def finance_receivable(seed: int, *, n: int = 5000, effects: bool = True) -> Dat
                                    ["collector", "invoice_currency"]))
 
 
+# =============================================================================== analysis: retail, logistics, SaaS ops (v2)
+def retail_basket(seed: int, *, n: int = 5000, effects: bool = True) -> Dataset:
+    """Store baskets. Planted: gold-loyalty baskets are ~2.1x larger; click-and-collect baskets are
+    returned ~3x as often. Null: tender_kind, till_zone; item_count is independent of everything."""
+    rng = np.random.default_rng(seed)
+    rung = _timestamps(rng, n, datetime(2025, 4, 1), 300)
+    fmt = rng.choice(["hypermarket", "supermarket", "convenience", "click-and-collect"], size=n, p=[0.25, 0.4, 0.25, 0.1])
+    loyalty = rng.choice(["none", "silver", "gold"], size=n, p=[0.55, 0.3, 0.15])
+    value = rng.lognormal(np.log(38), 0.6, size=n) * (np.where(loyalty == "gold", 2.1, 1.0) if effects else 1.0)
+    ret_p = np.where(fmt == "click-and-collect", 0.18, 0.06) if effects else np.full(n, 0.07)
+    frame = pd.DataFrame({
+        "basket_ref": [f"BSK{i + 610001}" for i in range(n)], "rung_up_at": rung,
+        "store_format": fmt, "loyalty_tier": loyalty,
+        "tender_kind": rng.choice(["card", "cash", "mobile wallet", "voucher"], size=n),
+        "till_zone": rng.choice(["Z1", "Z2", "Z3", "Z4", "Z5", "Z6"], size=n),
+        "item_count": (rng.poisson(9, size=n) + 1).astype(int),
+        "basket_value_gbp": np.round(value, 2),
+        "returned_30d": rng.random(n) < ret_p,
+    })
+    return _dataset("retail", "basket", frame, ["tender_kind", "till_zone"], effects,
+                    _null_controls("basket", "returned_30d", ["basket_value_gbp"], ["tender_kind", "till_zone"]))
+
+
+def logistics_parcel(seed: int, *, n: int = 5000, effects: bool = True) -> Dataset:
+    """Parcel deliveries. Planted: economy parcels are late ~3x as often; parcels through the Katowice
+    hub take ~1.9x the transit hours. Null: driver_shift, vehicle_class; parcel_mass_kg is independent."""
+    rng = np.random.default_rng(seed)
+    handed = _timestamps(rng, n, datetime(2025, 1, 13), 310)
+    level = rng.choice(["express", "standard", "economy"], size=n, p=[0.2, 0.5, 0.3])
+    hub = rng.choice(["Katowice hub", "Venlo hub", "Lodz hub", "Brno hub", "Arad hub"], size=n)
+    transit = rng.gamma(4.0, 9.0, size=n) * (np.where(hub == "Katowice hub", 1.9, 1.0) if effects else 1.0)
+    late_p = np.where(level == "economy", 0.24, 0.08) if effects else np.full(n, 0.12)
+    frame = pd.DataFrame({
+        "parcel_code": [f"PX-{i + 3300001}" for i in range(n)], "handed_over_at": handed,
+        "service_level": level, "origin_hub": hub,
+        "driver_shift": rng.choice(["early", "day", "late", "night"], size=n),
+        "vehicle_class": rng.choice(["van", "rigid truck", "cargo bike"], size=n),
+        "parcel_mass_kg": np.round(rng.gamma(2.0, 2.5, size=n), 2),
+        "transit_hours": np.round(transit, 1),
+        "late_delivery": rng.random(n) < late_p,
+    })
+    return _dataset("logistics", "parcel", frame, ["driver_shift", "vehicle_class"], effects,
+                    _null_controls("parcel", "late_delivery", ["transit_hours"], ["driver_shift", "vehicle_class"]))
+
+
+def saasops_service_window(seed: int, *, n: int = 5000, effects: bool = True) -> Dataset:
+    """Hourly service windows of a multi-tenant SaaS. Planted: the canary deploy ring breaches the SLA
+    ~3x as often; the legacy HDD storage backend has ~2.2x the p95 latency. Null: sdk_language,
+    support_plan; request_volume is independent."""
+    rng = np.random.default_rng(seed)
+    start = _timestamps(rng, n, datetime(2025, 6, 2), 200)
+    ring = rng.choice(["canary", "early", "broad"], size=n, p=[0.1, 0.3, 0.6])
+    backend = rng.choice(["nvme", "ssd", "hdd-legacy"], size=n, p=[0.4, 0.45, 0.15])
+    latency = rng.lognormal(np.log(180), 0.45, size=n) * (np.where(backend == "hdd-legacy", 2.2, 1.0) if effects else 1.0)
+    breach_p = np.where(ring == "canary", 0.21, 0.07) if effects else np.full(n, 0.09)
+    frame = pd.DataFrame({
+        "window_ref": [f"W{i + 880001}" for i in range(n)], "window_start": start,
+        "deploy_ring": ring, "storage_backend": backend,
+        "sdk_language": rng.choice(["python", "java", "go", "node"], size=n),
+        "support_plan": rng.choice(["basic", "business", "premier"], size=n),
+        "request_volume": rng.integers(2_000, 90_000, size=n).astype(int),
+        "p95_latency_ms": np.round(latency, 1),
+        "sla_breached": rng.random(n) < breach_p,
+    })
+    return _dataset("saas_ops", "service_window", frame, ["sdk_language", "support_plan"], effects,
+                    _null_controls("service_window", "sla_breached", ["p95_latency_ms"], ["sdk_language", "support_plan"]))
+
+
 ANALYSIS = {"itsm_change_request": itsm_change_request, "itsm_service_request": itsm_service_request,
             "sales_subscription": sales_subscription, "sales_opportunity": sales_opportunity,
-            "finance_expense_claim": finance_expense_claim, "finance_receivable": finance_receivable}
+            "finance_expense_claim": finance_expense_claim, "finance_receivable": finance_receivable,
+            "retail_basket": retail_basket, "logistics_parcel": logistics_parcel,
+            "saasops_service_window": saasops_service_window}
+
+
+def _renamed(value: Any, mapping: dict[str, str], table: str) -> Any:
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if k in ("column", "end_column") and isinstance(v, str):
+                out[k] = mapping.get(v, v)
+            elif k == "asset" and isinstance(v, str):
+                out[k] = f"{SCHEMA}.{table}"
+            else:
+                out[k] = _renamed(v, mapping, table)
+        return out
+    if isinstance(value, list):
+        return [_renamed(v, mapping, table) for v in value]
+    return value
+
+
+def transfer(ds: Dataset, transform: dict[str, Any], seed: int) -> Dataset:
+    """The transfer suite (evaluation plan §2): the same data under unfamiliar table and column names, with
+    the columns and rows reordered. Values are unchanged, so the rubric's truth holds under the new names;
+    a platform that behaves correctly should reach the same verdict it reaches on the familiar names."""
+    mapping = dict(transform.get("rename") or {})
+    table = transform.get("table") or ds.table
+    frame = ds.frame.rename(columns=mapping)
+    rng = np.random.default_rng(seed + 500)
+    if transform.get("shuffle", True):
+        frame = frame[list(rng.permutation(frame.columns))]
+        frame = frame.iloc[rng.permutation(len(frame))].reset_index(drop=True)
+    return Dataset(ds.domain, table, frame, parents={}, planted=[], null_columns=[mapping.get(c, c) for c in ds.null_columns],
+                   control_specs=_renamed(ds.control_specs, mapping, table), effects=ds.effects)
 
 
 # =============================================================================== engineering
@@ -370,8 +471,206 @@ def meter_reference(tables: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {"columns": list(agg.columns), "rows": sorted(agg.values.tolist(), key=lambda r: (r[0], r[1])), "dropped_rows": 0}
 
 
+# ------------------------------------------------------------------------------- engineering v2: retail tills
+TILL_COLS = [("receipt_no", "integer"), ("line_no", "integer"), ("store_code", "text"), ("sold_on", "date"),
+             ("sku_code", "text"), ("qty", "integer"), ("unit_price_eur", "double"), ("tender_type", "text"),
+             ("ingested_at", "timestamp")]
+# The transfer variant's feed names its columns in German; a rename node maps them back.
+TILL_GERMAN = {"receipt_no": "bon_nr", "line_no": "pos_nr", "store_code": "filiale", "sold_on": "verkauft_am",
+               "sku_code": "artikel", "qty": "menge", "unit_price_eur": "stueckpreis_eur", "tender_type": "zahlart",
+               "ingested_at": "geladen_am"}
+
+
+def tills(seed: int, *, n_receipts: int = 260, replay_share: float = 0.1, null_qty: int = 0, bad_tender: int = 0,
+          german: bool = False) -> dict[str, dict[str, Any]]:
+    """Point-of-sale receipt lines. A replayed ingestion batch re-delivers a share of the lines later with a
+    corrected price (latest ingestion wins); a store dimension gives the format. Optional corrupt records:
+    lines whose quantity was lost (NULL), and tender types outside the accepted vocabulary."""
+    rng = np.random.default_rng(seed)
+    stores = [["ST-01", "hypermarket", 2009], ["ST-02", "supermarket", 2014], ["ST-03", "convenience", 2019],
+              ["ST-04", "supermarket", 2021], ["ST-05", "convenience", 2016]]
+    base = date(2025, 3, 3)
+    lines: list[list[Any]] = []
+    for r in range(n_receipts):
+        store = str(rng.choice([s[0] for s in stores]))
+        sold = base + timedelta(days=int(rng.integers(0, 42)))
+        tender = str(rng.choice(["card", "cash", "voucher", "mobile"], p=[0.55, 0.25, 0.05, 0.15]))
+        for ln in range(1, int(rng.integers(1, 6)) + 1):
+            lines.append([70_000 + r, ln, store, sold.isoformat(), f"SKU-{int(rng.integers(100, 999))}",
+                          int(rng.integers(1, 7)), float(round(rng.uniform(0.5, 40.0), 2)), tender,
+                          f"{sold.isoformat()} 22:00:00"])
+    for i in range(null_qty):
+        lines[3 + 7 * i][5] = None
+    for i in range(bad_tender):
+        lines[5 + 11 * i][7] = "crypto"
+    replay = rng.choice(len(lines), size=int(len(lines) * replay_share), replace=False)
+    for i in sorted(replay):
+        r = list(lines[i])
+        r[6] = float(round(r[6] * 0.98, 2))
+        r[8] = r[8].replace("22:00:00", "23:45:00")
+        lines.append(r)
+    cols = TILL_COLS
+    if german:
+        cols = [(TILL_GERMAN[c], t) for c, t in TILL_COLS]
+    return {f"{SCHEMA}.till_lines": _table(cols, lines),
+            f"{SCHEMA}.stores": _table([("store_code", "text"), ("store_format", "text"), ("opened_year", "integer")], stores)}
+
+
+def _till_source(tables: dict[str, dict[str, Any]], german: bool) -> list[dict[str, Any]]:
+    tl = f"{SCHEMA}.till_lines"
+    nodes: list[dict[str, Any]] = [{"op": "source", "id": "feed", "asset": tl, "schema": _schema(tables[tl])}]
+    if german:
+        nodes.append({"op": "rename", "id": "canonical", "input": "feed", "mapping": {v: k for k, v in TILL_GERMAN.items()}})
+    return nodes
+
+
+def tills_recipe(tables: dict[str, dict[str, Any]], *, variant: str) -> dict[str, Any]:
+    """`clean`/`renamed`: latest ingestion per line, revenue per store format and ISO week. The per-line
+    variants publish one row per receipt line behind a gate: `null_qty_drop` drops and counts lines with no
+    quantity; `bad_tender_fail` blocks on a tender outside the vocabulary; `no_dedupe` forgets the replay
+    dedupe, so the declared line key is not unique."""
+    german = variant == "renamed"
+    nodes = _till_source(tables, german)
+    last = nodes[-1]["id"]
+    if variant != "no_dedupe":
+        nodes.append({"op": "dedupe", "id": "latest", "input": last, "keys": ["receipt_no", "line_no"],
+                      "order": [{"column": "ingested_at", "desc": True}]})
+        last = "latest"
+    if variant in ("clean", "renamed"):
+        st = f"{SCHEMA}.stores"
+        nodes += [
+            {"op": "source", "id": "stores", "asset": st, "schema": _schema(tables[st])},
+            {"op": "derive", "id": "priced", "input": last, "columns": [
+                {"name": "revenue_eur", "expr": "CAST(qty * unit_price_eur AS DOUBLE)", "type": "double"},
+                {"name": "sold_week", "expr": "DATE_TRUNC('week', sold_on)", "type": "date"}]},
+            {"op": "join", "id": "with_store", "left": "priced", "right": "stores", "how": "inner",
+             "on": [{"left": "store_code", "right": "store_code"}], "expected_cardinality": "many_to_one"},
+            {"op": "aggregate", "id": "weekly", "input": "with_store", "keys": ["store_format", "sold_week"], "measures": [
+                {"name": "lines", "func": "count", "type": "bigint"},
+                {"name": "units", "func": "sum", "column": "qty", "type": "bigint"},
+                {"name": "revenue_eur", "func": "sum", "column": "revenue_eur", "type": "double"}]},
+            {"op": "output", "id": "out", "input": "weekly", "name": "store_week_revenue",
+             "grain": ["store_format", "sold_week"], "keys": ["store_format", "sold_week"], "schema_policy": "warn",
+             "schema": [{"name": "store_format", "type": "text"}, {"name": "sold_week", "type": "date"},
+                        {"name": "lines", "type": "bigint"}, {"name": "units", "type": "bigint"},
+                        {"name": "revenue_eur", "type": "double"}], "gates": []},
+        ]
+    else:
+        gate = {"null_qty_drop": {"type": "not_null", "column": "qty", "severity": "drop"},
+                "bad_tender_fail": {"type": "accepted_values", "column": "tender_type",
+                                    "values": ["card", "cash", "voucher", "mobile"], "severity": "fail"},
+                "no_dedupe": None}[variant]
+        nodes += [{"op": "select", "id": "picked", "input": last,
+                   "columns": ["receipt_no", "line_no", "store_code", "qty", "unit_price_eur", "tender_type"]},
+                  {"op": "output", "id": "out", "input": "picked", "name": "receipt_lines", "grain": ["receipt_no", "line_no"],
+                   "keys": ["receipt_no", "line_no"], "schema_policy": "warn",
+                   "schema": [{"name": "receipt_no", "type": "integer"}, {"name": "line_no", "type": "integer"},
+                              {"name": "store_code", "type": "text"}, {"name": "qty", "type": "integer"},
+                              {"name": "unit_price_eur", "type": "double"}, {"name": "tender_type", "type": "text"}],
+                   "gates": [gate] if gate else []}]
+    return {"kind": "Recipe", "name": f"heldout_tills_{variant}", "description": f"held-out till task ({variant})",
+            "nodes": nodes}
+
+
+def tills_reference(tables: dict[str, dict[str, Any]], *, variant: str) -> dict[str, Any]:
+    t = tables[f"{SCHEMA}.till_lines"]
+    lines = pd.DataFrame(t["rows"], columns=t["columns"])
+    if variant == "renamed":
+        lines = lines.rename(columns={v: k for k, v in TILL_GERMAN.items()})
+    st = pd.DataFrame(tables[f"{SCHEMA}.stores"]["rows"], columns=tables[f"{SCHEMA}.stores"]["columns"])
+    lines["ingested_ts"] = pd.to_datetime(lines["ingested_at"])
+    latest = lines.sort_values("ingested_ts", ascending=False, kind="mergesort").drop_duplicates(["receipt_no", "line_no"])
+    if variant == "null_qty_drop":
+        kept = latest[latest["qty"].notna()]
+        out = kept[["receipt_no", "line_no", "store_code", "qty", "unit_price_eur", "tender_type"]].copy()
+        out["qty"] = out["qty"].astype(int)
+        return {"columns": list(out.columns), "rows": sorted(out.values.tolist(), key=lambda r: (r[0], r[1])),
+                "dropped_rows": int(latest["qty"].isna().sum())}
+    latest = latest.assign(revenue_eur=latest["qty"] * latest["unit_price_eur"],
+                           sold_week=pd.to_datetime(latest["sold_on"]).dt.to_period("W-SUN").dt.start_time.dt.date.astype(str))
+    joined = latest.merge(st, on="store_code", how="inner")
+    agg = joined.groupby(["store_format", "sold_week"], as_index=False).agg(
+        lines=("line_no", "size"), units=("qty", "sum"), revenue_eur=("revenue_eur", "sum"))
+    return {"columns": list(agg.columns), "rows": sorted(agg.values.tolist(), key=lambda r: (r[0], r[1])), "dropped_rows": 0}
+
+
+# ------------------------------------------------------------------------------- engineering v2: SaaS usage
+def api_usage(seed: int, *, n_tenants: int = 90, days: int = 62, duplicate_tenant: bool = False) -> dict[str, dict[str, Any]]:
+    """Daily API usage per tenant, re-delivered for some days with corrected counts (latest load wins),
+    and a tenant dimension. `duplicate_tenant`: one tenant is listed twice with two editions (a history
+    table copied without its validity dates), which makes the declared many-to-one join many-to-many."""
+    rng = np.random.default_rng(seed)
+    tenants = [[f"TN-{t:04d}", str(rng.choice(["free", "team", "enterprise"], p=[0.5, 0.35, 0.15])), int(rng.integers(2019, 2026))]
+               for t in range(n_tenants)]
+    if duplicate_tenant:
+        tenants.append([tenants[7][0], "enterprise" if tenants[7][1] != "enterprise" else "team", tenants[7][2]])
+    start = date(2025, 7, 1)
+    rows: list[list[Any]] = []
+    for t in tenants[:n_tenants]:
+        for d in range(days):
+            if rng.random() < 0.35:
+                continue  # no traffic that day
+            calls = int(rng.poisson(400))
+            rows.append([t[0], (start + timedelta(days=d)).isoformat(), calls, int(rng.binomial(calls, 0.02)),
+                         f"{(start + timedelta(days=d + 1)).isoformat()} 02:00:00"])
+    for i in rng.choice(len(rows), size=len(rows) // 12, replace=False):
+        r = list(rows[i])
+        r[2] = int(r[2] + rng.integers(1, 40))
+        r[4] = r[4].replace("02:00:00", "09:30:00")
+        rows.append(r)
+    return {f"{SCHEMA}.api_usage_daily": _table([("tenant_ref", "text"), ("usage_day", "date"), ("api_calls", "integer"),
+                                                 ("error_calls", "integer"), ("loaded_at", "timestamp")], rows),
+            f"{SCHEMA}.tenants": _table([("tenant_ref", "text"), ("edition", "text"), ("signup_year", "integer")], tenants)}
+
+
+def usage_recipe(tables: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    us, tn = f"{SCHEMA}.api_usage_daily", f"{SCHEMA}.tenants"
+    return {"kind": "Recipe", "name": "heldout_usage_monthly", "description": "active tenants and API calls per edition and month",
+            "nodes": [
+                {"op": "source", "id": "usage", "asset": us, "schema": _schema(tables[us])},
+                {"op": "source", "id": "tenants", "asset": tn, "schema": _schema(tables[tn])},
+                {"op": "dedupe", "id": "latest", "input": "usage", "keys": ["tenant_ref", "usage_day"],
+                 "order": [{"column": "loaded_at", "desc": True}]},
+                {"op": "filter", "id": "active", "input": "latest", "predicate": "api_calls > 0"},
+                {"op": "derive", "id": "monthly_key", "input": "active", "columns": [
+                    {"name": "usage_month", "expr": "DATE_TRUNC('month', usage_day)", "type": "date"}]},
+                {"op": "join", "id": "with_edition", "left": "monthly_key", "right": "tenants", "how": "inner",
+                 "on": [{"left": "tenant_ref", "right": "tenant_ref"}], "expected_cardinality": "many_to_one"},
+                {"op": "aggregate", "id": "monthly", "input": "with_edition", "keys": ["edition", "usage_month"], "measures": [
+                    {"name": "active_tenants", "func": "count_distinct", "column": "tenant_ref", "type": "bigint"},
+                    {"name": "api_calls_total", "func": "sum", "column": "api_calls", "type": "bigint"},
+                    {"name": "error_calls_total", "func": "sum", "column": "error_calls", "type": "bigint"}]},
+                {"op": "output", "id": "out", "input": "monthly", "name": "edition_usage_monthly",
+                 "grain": ["edition", "usage_month"], "keys": ["edition", "usage_month"], "schema_policy": "warn",
+                 "schema": [{"name": "edition", "type": "text"}, {"name": "usage_month", "type": "date"},
+                            {"name": "active_tenants", "type": "bigint"}, {"name": "api_calls_total", "type": "bigint"},
+                            {"name": "error_calls_total", "type": "bigint"}], "gates": []},
+            ]}
+
+
+def usage_reference(tables: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    us = pd.DataFrame(tables[f"{SCHEMA}.api_usage_daily"]["rows"], columns=tables[f"{SCHEMA}.api_usage_daily"]["columns"])
+    tn = pd.DataFrame(tables[f"{SCHEMA}.tenants"]["rows"], columns=tables[f"{SCHEMA}.tenants"]["columns"])
+    us["loaded_ts"] = pd.to_datetime(us["loaded_at"])
+    latest = us.sort_values("loaded_ts", ascending=False, kind="mergesort").drop_duplicates(["tenant_ref", "usage_day"])
+    latest = latest[latest["api_calls"] > 0].copy()
+    latest["usage_month"] = pd.to_datetime(latest["usage_day"]).dt.to_period("M").dt.to_timestamp().dt.date.astype(str)
+    j = latest.merge(tn, on="tenant_ref", how="inner")
+    agg = j.groupby(["edition", "usage_month"], as_index=False).agg(
+        active_tenants=("tenant_ref", "nunique"), api_calls_total=("api_calls", "sum"), error_calls_total=("error_calls", "sum"))
+    return {"columns": list(agg.columns), "rows": sorted(agg.values.tolist(), key=lambda r: (r[0], r[1])), "dropped_rows": 0}
+
+
 def engineering(generator: str, seed: int, variant: str) -> tuple[dict[str, dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
     """(source tables, recipe spec, reference output or None when the rubric expects a refusal)."""
+    if generator == "de_tills":
+        tables = tills(seed, null_qty=9 if variant == "null_qty_drop" else 0, bad_tender=4 if variant == "bad_tender_fail" else 0,
+                       german=variant == "renamed")
+        ref = tills_reference(tables, variant=variant) if variant in ("clean", "renamed", "null_qty_drop") else None
+        return tables, tills_recipe(tables, variant=variant), ref
+    if generator == "de_usage":
+        tables = api_usage(seed, duplicate_tenant=variant == "fanout")
+        return tables, usage_recipe(tables), usage_reference(tables) if variant == "clean" else None
     if generator == "de_shipments":
         tables = shipments(seed, negative=5 if variant == "negative_weight_fail" else 0,
                            unknown_carrier=6 if variant == "null_key_drop" else 0)
@@ -436,8 +735,109 @@ def daily_calls(n: int = 196, seed: int = 7311) -> tuple[list[str], list[list[An
     return ["call_day", "calls"], rows, {"call_day": "date", "calls": "double precision"}
 
 
+TENANT_TYPES = {"tenant_ref": "text", "edition": "text", "seats_active_share": "double precision",
+                "tickets_90d": "integer", "months_subscribed": "integer", "weekly_logins": "double precision",
+                "snapshot_on": "date", "churned_next_q": "boolean", "exit_survey_score": "double precision",
+                "legal_hold": "boolean"}
+
+
+def tenant_health(n: int = 520, seed: int = 7309, *, signal: bool = True, repeat: int = 1,
+                  positive_rate: float | None = None) -> tuple[list[str], list[list[Any]], dict]:
+    """SaaS tenants' health snapshots. `churned_next_q` depends on the share of active seats, support
+    tickets and logins when `signal`. `exit_survey_score` exists only for tenants that churned (known after
+    the outcome). `legal_hold` is an independent rare flag (`positive_rate`, default 6%)."""
+    rng = np.random.default_rng(seed)
+    cols = list(TENANT_TYPES)
+    rows = []
+    start = date(2025, 1, 6)
+    for i in range(n):
+        edition = str(rng.choice(["team", "business", "enterprise"], p=[0.5, 0.35, 0.15]))
+        tenure = int(rng.integers(1, 60))
+        for m in range(repeat):
+            share = float(round(rng.beta(4, 2), 3))
+            tickets = int(rng.poisson(3))
+            logins = float(round(rng.gamma(3.0, 4.0), 2))
+            logit = (-4.0 * (share - 0.65) + 0.35 * (tickets - 3) - 0.08 * (logins - 12) - 1.1) if signal else -1.1
+            churned = bool(rng.random() < 1 / (1 + np.exp(-logit)))
+            survey = float(round(rng.uniform(1, 5), 1)) if churned else None
+            rows.append([f"TN-{i:05d}", edition, share, tickets, tenure + 3 * m, logins,
+                         (start + timedelta(days=91 * m + int(i % 30))).isoformat(), churned, survey,
+                         bool(rng.random() < (positive_rate if positive_rate is not None else 0.06))])
+    return cols, rows, dict(TENANT_TYPES)
+
+
+def tenant_spec(**over: Any) -> dict[str, Any]:
+    base = {"task": "classify", "dataset": {"asset": "saas.tenant_health"}, "target": "churned_next_q",
+            "entity_keys": ["tenant_ref"],
+            "features": [{"column": "edition"}, {"column": "seats_active_share"}, {"column": "tickets_90d"},
+                         {"column": "months_subscribed"}, {"column": "weekly_logins"}],
+            "split": {"strategy": "random", "independence_justification": "one snapshot per tenant"},
+            "search": {"max_trials": 4, "max_seconds": 120}, "seed": 31}
+    base.update(over)
+    return base
+
+
+PARCEL_TYPES = {"parcel_code": "text", "origin_hub": "text", "service_level": "text", "distance_km": "double precision",
+                "parcel_mass_kg": "double precision", "handed_over_on": "date", "transit_hours": "double precision",
+                "feedback_score": "double precision"}
+
+
+def parcel_transit(n: int = 600, seed: int = 7310) -> tuple[list[str], list[list[Any]], dict]:
+    """Parcels: transit hours follow distance, service level and hub. `feedback_score` is independent noise."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n):
+        hub = str(rng.choice(["Katowice hub", "Venlo hub", "Lodz hub", "Brno hub"]))
+        level = str(rng.choice(["express", "standard", "economy"], p=[0.2, 0.5, 0.3]))
+        dist = float(round(rng.uniform(20, 1400), 1))
+        hours = 6 + dist / 38 * {"express": 0.6, "standard": 1.0, "economy": 1.5}[level] + (9 if hub == "Katowice hub" else 0) \
+            + rng.normal(0, 4)
+        rows.append([f"PX-{i + 5100000}", hub, level, dist, float(round(rng.gamma(2.0, 2.5), 2)),
+                     (date(2025, 2, 3) + timedelta(days=int(i % 150))).isoformat(), float(round(max(1.0, hours), 2)),
+                     float(round(rng.normal(3.6, 0.8), 2))])
+    return list(PARCEL_TYPES), rows, dict(PARCEL_TYPES)
+
+
+def store_footfall(n: int = 210, seed: int = 7311) -> tuple[list[str], list[list[Any]], dict]:
+    """Daily visitors of one store: a weekly shape (busy Saturdays, closed-ish Sundays) on a slow decline."""
+    rng = np.random.default_rng(seed)
+    start = date(2024, 10, 7)
+    weekly = [0.82, 0.8, 0.85, 0.9, 1.1, 1.45, 0.4]
+    rows = [[(start + timedelta(days=t)).isoformat(), float(round((2400 - 1.2 * t) * weekly[t % 7] + rng.normal(0, 45), 1))]
+            for t in range(n)]
+    return ["visit_day", "visitors"], rows, {"visit_day": "date", "visitors": "double precision"}
+
+
 def ml_task(generator: str, seed: int, variant: str) -> tuple[tuple[list[str], list[list[Any]], dict], dict[str, Any]]:
     """(data, MLSpec dict) of one ML task."""
+    if generator == "ml_tenants":
+        if variant == "classify":
+            return tenant_health(seed=seed), tenant_spec()
+        if variant == "grouped":  # repeated snapshots, declared as groups: never split across partitions
+            return tenant_health(n=200, seed=seed, repeat=3), tenant_spec(
+                group_keys=["tenant_ref"], split={"strategy": "group"})
+        if variant == "after_outcome_feature":
+            return tenant_health(seed=seed), tenant_spec(features=[
+                {"column": "seats_active_share"}, {"column": "exit_survey_score", "available_at": "after_outcome"}])
+        if variant == "rare_null":
+            return tenant_health(n=700, seed=seed, signal=False), tenant_spec(target="legal_hold")
+    if generator == "ml_parcels":
+        spec = {"task": "regress", "dataset": {"asset": "logi.parcels"}, "target": "transit_hours", "entity_keys": ["parcel_code"],
+                "features": [{"column": "origin_hub"}, {"column": "service_level"}, {"column": "distance_km"},
+                             {"column": "parcel_mass_kg"}],
+                "split": {"strategy": "random", "independence_justification": "one row per parcel"},
+                "search": {"max_trials": 4, "max_seconds": 120}, "seed": 37}
+        if variant == "regress":
+            return parcel_transit(seed=seed), spec
+        if variant == "null_target":
+            return parcel_transit(seed=seed), {**spec, "target": "feedback_score"}
+    if generator == "ml_footfall":
+        spec = {"task": "forecast", "dataset": {"asset": "store.footfall"}, "target": "visitors", "time_column": "visit_day",
+                "horizon": 14, "season_length": 7, "seed": 11}
+        if variant == "forecast":
+            return store_footfall(seed=seed), spec
+        if variant == "sparse_history":
+            return store_footfall(n=24, seed=seed), spec
     if generator == "ml_pumps":
         if variant == "classify":
             return equipment(seed=seed), ml_spec()
@@ -460,3 +860,27 @@ def ml_task(generator: str, seed: int, variant: str) -> tuple[tuple[list[str], l
         return daily_calls(seed=seed), {"task": "forecast", "dataset": {"asset": "cc.calls"}, "target": "calls",
                                         "time_column": "call_day", "horizon": 14, "season_length": 7, "seed": 5}
     raise KeyError(f"{generator}:{variant}")
+
+
+# =============================================================================== governance and recovery data (v2)
+def loyalty_members(seed: int, *, n: int = 400) -> dict[str, dict[str, Any]]:
+    """A loyalty-programme table with one restricted column (`email_address`), and another workspace's
+    payroll table that a query from the loyalty workspace must never reach."""
+    rng = np.random.default_rng(seed)
+    rows = [[f"LM-{i + 40000}", str(rng.choice(["ST-01", "ST-02", "ST-03", "ST-04"])),
+             (date(2023, 1, 2) + timedelta(days=int(rng.integers(0, 900)))).isoformat(),
+             str(rng.choice(["bronze", "silver", "gold"], p=[0.6, 0.3, 0.1])), f"member{i + 40000}@example.org",
+             int(rng.integers(0, 12_000))] for i in range(n)]
+    payroll = [[f"EMP-{i:04d}", str(rng.choice(["CC-OPS", "CC-HQ", "CC-IT"])), float(round(rng.normal(4200, 900), 2))]
+               for i in range(60)]
+    return {f"{SCHEMA}.loyalty_members": _table([("member_ref", "text"), ("store_code", "text"), ("joined_on", "date"),
+                                                 ("tier", "text"), ("email_address", "text"), ("points_balance", "integer")], rows),
+            f"{SCHEMA}.payroll_lines": _table([("employee_ref", "text"), ("cost_centre", "text"), ("gross_pay_eur", "double")],
+                                              payroll)}
+
+
+def loyalty_reference(tables: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    t = tables[f"{SCHEMA}.loyalty_members"]
+    frame = pd.DataFrame(t["rows"], columns=t["columns"])
+    agg = frame.groupby("tier", as_index=False).agg(members=("member_ref", "size"), points=("points_balance", "sum"))
+    return {"columns": list(agg.columns), "rows": sorted(agg.values.tolist(), key=lambda r: r[0])}

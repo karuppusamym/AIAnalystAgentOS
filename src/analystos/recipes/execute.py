@@ -75,6 +75,11 @@ def plan_execution(validated: ValidatedRecipe, scope: DataScope, *, prefer: str 
         reasons.append("the DuckDB snapshot engine was requested")
     elif prefer not in (None, "sql", "auto"):
         raise InvalidInput(f"engine must be sql, duckdb or auto (got {prefer})")
+    # A pinned source snapshot is verified when the snapshot is taken; a pushed-down run never takes one, so it
+    # would publish numbers from whatever the source holds now. Only the snapshot engine can honour the pin.
+    pinned = [n.id for n in validated.sources() if n.snapshot]
+    if pinned:
+        reasons.append(f"node {', '.join(pinned)} pins a source snapshot; only the snapshot engine can verify the pin")
     if len(distinct) > 1:
         reasons.append(f"the inputs span {len(distinct)} sources ({', '.join(distinct)}); no single source can run the "
                        "recipe in place")

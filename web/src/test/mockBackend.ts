@@ -778,6 +778,9 @@ export function mockBackend(method: string, path: string, requestBody?: string |
     ["GET", "/admin/token-savings", SAVINGS],
     ["GET", "/admin/settings", { version: 3, settings: SETTINGS, defaults: SETTINGS, presets: { balanced: { planning: "always" } }, schema: {} }],
     ["GET", "/admin/settings/history", [{ version: 3, note: "initial", created_by: USER.id, created_at: T }]],
+    ["GET", `${W}/pilot-readiness`, { workspace_id: WS, workspace_name: WORKSPACE.name, verdict: "not_ready", missing: 1, failing: 0,
+      generated_at: T, checks: [{ check: "owner.business", subject: "workspace", status: "missing", reason: "no named business owner",
+        remediation: null, evidence: null }] }],
   ];
   for (const [rm, rp, body] of routes) if (rm === m && rp === p) return json(body);
   const notFound = json({ error: { code: "not_found", message: `mock: no route for ${m} ${p}`, details: {} } }, 404);

@@ -38,6 +38,17 @@ def _metric_rows(m: dict) -> list[str]:
     ]
 
 
+def coverage(corpus: Any) -> str:
+    """The corpus's size per family and its analysis domains, against the evaluation plan's first-release target."""
+    fam = {f: sum(t.family == f for t in corpus.tasks) for f in dict.fromkeys(t.family for t in corpus.tasks)}
+    abstain = sum(t.expect == "abstain" for t in corpus.tasks)
+    domains = sorted({t.domain for t in corpus.tasks if t.family == "analysis"})
+    return (f"* Coverage: {len(corpus.tasks)} tasks (" + ", ".join(f"{n} {f}" for f, n in fam.items()) + f"; {abstain} expect an "
+            "abstention) against the evaluation plan's first-release target of at least 60 (20 analyst, 15 engineering, 15 ML, "
+            f"10 unsupported). Analysis domains: {', '.join(domains)}. The plan's 10 tasks per domain are not reached for any "
+            "single domain, so per-domain rates are small-sample; the suite cannot claim capability beyond these tasks.")
+
+
 def render(runs: dict, corpus: Any) -> str:
     now = datetime.now(UTC)
     rev = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -73,12 +84,7 @@ def render(runs: dict, corpus: Any) -> str:
                                      or "none") + ".", ""]
         counts = r.summary["overall"]["statuses"]
         lines += ["Status counts: " + ", ".join(f"{s} {counts[s]}" for s in STATUSES) + ".", ""]
-    lines += ["## Scope and limits", "",
-              f"* Coverage: {len(corpus.tasks)} tasks against the evaluation plan's first-release target of at least 60 "
-              "(20 analyst, 15 engineering, 15 ML, 10 unsupported). This version covers ITSM, sales and finance analysis, one "
-              "engineering family (recipes: dedupe, late batch, joins, gates) and one ML family (classification, regression, "
-              "forecast, leakage and small-data refusals). It does not cover transfer renaming, governance, UX/recovery or "
-              "retail/logistics/SaaS-ops domains, and it cannot claim the full suite's capability.",
+    lines += ["## Scope and limits", "", coverage(corpus),
               "* Synthetic data with planted effects gives known truth; it is not a claim about production data. Planted effects "
               "are sized above the materiality thresholds.",
               "* The component tier has no model in its path; the platform tier ran with "

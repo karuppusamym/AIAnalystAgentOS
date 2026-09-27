@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, type WorkspaceDetail } from "../api";
 import { useAuth } from "../auth";
 import { AutonomyPicker } from "../components/AutonomyPicker";
+import { PilotReadiness } from "../components/PilotReadiness";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, StateView } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
 import { fieldText, fieldValue, parsePolicy, POLICY_FIELDS, setField } from "../lib/policy";
@@ -43,6 +44,7 @@ export function GovernancePage() {
           <Autonomy ws={ws.data} onSaved={ws.reload} />
         </div>
       </div>
+      <PilotReadiness wsId={wsId} owners={ws.data.owners} canEdit />
       <Audit wsId={wsId} isAdmin={!!user?.is_admin} />
     </div>
   );
