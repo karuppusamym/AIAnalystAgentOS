@@ -135,6 +135,7 @@
   "task.started",
   "task.updated",
   "verification.recorded",
+  "verification.reverify_requested",
   "verification.sweep_completed",
   "verification.voided",
   "verified_query.promoted",
