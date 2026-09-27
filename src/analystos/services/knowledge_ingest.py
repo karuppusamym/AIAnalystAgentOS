@@ -145,8 +145,9 @@ def _apply_dbt_to_catalog(session: Session, workspace_id: str, nodes: list[Any])
             if col is None:
                 continue
             text = cat.screen_text(dc.description, max_chars=500) if dc.description else ""
-            if text and col.tags_origin != "user" and (not col.description or cat.is_placeholder_description(col.description)):
-                col.description = text
+            if text and col.tags_origin != "user" and col.description_origin != "user" \
+                    and (not col.description or cat.is_placeholder_description(col.description)):
+                col.description, col.description_origin = text, "source"
                 columns += 1
             if dc.pii and "pii" not in (col.tags or []):
                 col.tags = sorted({*(col.tags or []), "pii"})  # tags only tighten

@@ -252,3 +252,21 @@ def tag_column(session: Session, user: User, asset_id: str, column: str, tags: l
     audit(f"user:{user.id}", "column.tagged", workspace_id=asset.workspace_id, target=f"{asset.schema_name}.{asset.name}.{column}",
           details={"tags": col.tags}, session=session)
     return col
+
+
+def curate_column(session: Session, user: User, asset_id: str, column: str, patch: dict[str, str | None]) -> SourceColumn:
+    """A person's business name / description for a column: origin `user`, so no crawl or knowledge ingest
+    overwrites it. Same role as column tagging; an empty string clears the value (and it stays cleared)."""
+    asset = load_in_workspace(session, SourceAsset, asset_id, user=user, minimum="owner", label="asset")
+    col = session.scalar(select(SourceColumn).where(SourceColumn.asset_id == asset_id, SourceColumn.name == column))
+    if col is None:
+        raise NotFound("column not found")
+    if not patch:
+        raise InvalidInput("nothing to change")
+    if "business_name" in patch:
+        col.business_name, col.business_name_origin = (patch["business_name"] or "").strip() or None, "user"
+    if "description" in patch:
+        col.description, col.description_origin = (patch["description"] or "").strip() or None, "user"
+    audit(f"user:{user.id}", "column.curated", workspace_id=asset.workspace_id,
+          target=f"{asset.schema_name}.{asset.name}.{column}", details=patch, session=session)
+    return col
