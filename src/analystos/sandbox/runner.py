@@ -36,7 +36,6 @@ import json
 import logging
 import math
 import os
-import resource
 import secrets
 import shutil
 import signal
@@ -48,6 +47,11 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+try:
+    import resource
+except ImportError:  # Windows: the module imports, but the `none` backend refuses to run without rlimits
+    resource = None  # type: ignore[assignment]
 
 DEFAULT_ALLOWED_IMPORTS = ("math", "statistics", "json", "numpy", "pandas", "polars", "scipy", "statsmodels", "sklearn")
 HARNESS = Path(__file__).with_name("_harness.py")
@@ -207,6 +211,10 @@ def _json_default(o: Any) -> Any:
 
 def _host_limits(memory_mb: int, cpu_s: int, nofile: int, fsize_mb: int):
     """preexec_fn of the `off` backend: rlimits only (development)."""
+    if resource is None:
+        from analystos.core.errors import UnsupportedCapability
+        raise UnsupportedCapability("the Python sandbox needs POSIX resource limits; run the API on Linux or in its container")
+
     def apply() -> None:
         mem = int(memory_mb) * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
