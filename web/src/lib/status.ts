@@ -20,6 +20,10 @@ const TONES: Record<string, Tone> = {
   // inert
   cancelled: "neutral", superseded: "neutral", skipped: "neutral", draft: "neutral", expired: "neutral",
   rolled_back: "neutral", unknown: "neutral", disabled: "neutral",
+  // steps, readiness, models and pipelines (wave 2)
+  pass: "success", promoted: "success", champion: "success", fail: "danger", blocked: "danger", flagged: "warning", warn: "warning",
+  needs_input: "warning", challenger: "info", candidate: "neutral", retired: "neutral", recorded: "neutral", unsupported: "neutral",
+  not_applicable: "neutral", merged: "info", staged: "running",
 };
 
 export function toneFor(status: string | null | undefined): Tone {

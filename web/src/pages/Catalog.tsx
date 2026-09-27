@@ -12,6 +12,8 @@ const KnowledgeDocs = lazy(() => import("../components/KnowledgeDocs").then((m) 
 const ReviewQueue = lazy(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
 const DefinitionsPanel = lazy(() => import("../components/DefinitionsPanel").then((m) => ({ default: m.DefinitionsPanel })));
 const KnowledgeTransfer = lazy(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
+const BriefPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.BriefPanel })));
+const ReadinessPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.ReadinessPanel })));
 
 /** Who wrote a description: the source system, a rule, a model, or a person (a person always wins). */
 export const ORIGIN_LABELS: Record<string, { label: string; tone: string; title: string }> = {
@@ -31,12 +33,14 @@ const EDITOR_ROLES = new Set(["editor", "owner"]);
 
 type StudioTab = DataTab;
 const TABS: { id: StudioTab; label: string }[] = [
-  { id: "catalog", label: "Catalog" }, { id: "documents", label: "Documents" }, { id: "review", label: "Review queue" },
-  { id: "metrics", label: "Metrics" }, { id: "definitions", label: "Definitions" }, { id: "transfer", label: "Import & export" },
+  { id: "catalog", label: "Catalog" }, { id: "brief", label: "Brief & readiness" }, { id: "documents", label: "Documents" },
+  { id: "review", label: "Review queue" }, { id: "metrics", label: "Metrics" }, { id: "definitions", label: "Definitions" },
+  { id: "transfer", label: "Import & export" },
 ];
 
 /**
- * Data → Catalog & definitions (spec v4 §15): one screen, six tabs. The crawled catalog; the
+ * Data → Catalog & definitions (spec v4 §15): one screen, seven tabs. The crawled catalog; the
+ * workspace brief (facts, open questions, glossary aliases) and readiness checks (P4-04); the
  * workspace's knowledge documents; the review queue of drafted descriptions; metrics (their one
  * home); definitions (joins to confirm, data model changes, versioned definitions and the graph);
  * and bundle import/export.
@@ -68,6 +72,12 @@ export function CatalogPage() {
       <div className="tab-panel">
         <Suspense fallback={<Loading />}>
           {tab === "catalog" && <CatalogTab wsId={wsId} canEdit={canEdit} />}
+          {tab === "brief" && (
+            <div className="stack">
+              <BriefPanel wsId={wsId} role={ws.data?.role} />
+              <ReadinessPanel wsId={wsId} />
+            </div>
+          )}
           {tab === "documents" && <KnowledgeDocs wsId={wsId} params={params} set={set} />}
           {tab === "review" && <ReviewQueue wsId={wsId} canDecide={canEdit}
             onOpenDocument={(path) => setParams({ tab: "documents", path })} />}

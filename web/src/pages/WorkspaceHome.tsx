@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type CatalogAsset, type Insight, type Run, type Source, type WorkspaceDetail } from "../api";
+import { BriefSummary } from "../components/Brief";
 import { StartWorkButton } from "../components/StartWork";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, Stat, Value } from "../components/ui";
 import { fmtDate } from "../lib/format";
@@ -83,7 +84,7 @@ function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: As
   const action: Record<ChecklistStep["id"], ReactNode> = {
     connect: <Link className="btn btn-primary btn-sm" to={to.sources(ws.id)}>Connect data</Link>,
     select: <Link className="btn btn-primary btn-sm" to={to.sources(ws.id)}>Choose tables</Link>,
-    brief: <Link className="btn btn-primary btn-sm" to={to.catalog(ws.id)}>Review the catalog</Link>,
+    brief: <BriefStep wsId={ws.id} />,
     goal: <GoalForm ws={ws} onSaved={onChanged} />,
     start: <StartWorkButton wsId={ws.id} className="btn btn-primary btn-sm" />,
   };
@@ -106,6 +107,21 @@ function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: As
         })}
       </ol>
     </Card>
+  );
+}
+
+/**
+ * Onboarding step 3: the data brief as drafted from the catalog (facts and open questions), read-only
+ * here; it is reviewed at its one home, Data → Brief & readiness. The catalog stays one click away.
+ */
+function BriefStep({ wsId }: { wsId: string }) {
+  const brief = useAsync(() => api.brief(wsId), [wsId]);
+  return (
+    <div className="stack">
+      {brief.error && <p className="small warn-text">The brief could not be loaded: {brief.error}</p>}
+      {brief.data && <BriefSummary wsId={wsId} brief={brief.data} />}
+      {!brief.data && <Link className="btn btn-primary btn-sm" to={to.catalog(wsId)}>Review the catalog</Link>}
+    </div>
   );
 }
 

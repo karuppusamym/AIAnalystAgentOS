@@ -136,7 +136,8 @@ export function OutputsPage() {
 }
 
 const TYPE_WORD: Record<OutputType, string> = {
-  finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data", other: "",
+  finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data",
+  model: "model", scoring: "scoring run", table: "managed table", other: "",
 };
 
 function OutputRow({ item: i }: { item: Item }) {

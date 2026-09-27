@@ -162,17 +162,19 @@ test.describe("job-kind journeys without new top-level screens", () => {
     expect(api.unmatched).toEqual([]);
   });
 
-  test("ML: Predict is shown with the missing requirement and never starts a pretend run", async ({ page, api }) => {
+  test("a kind the server cannot run (Forecast) shows its reasons and remediation and never starts a pretend run", async ({ page, api }) => {
     const posts: string[] = [];
     page.on("request", (r) => { if (r.method() === "POST") posts.push(new URL(r.url()).pathname); });
     await signIn(page, `/w/${WS}`);
     const before = await navEntries(page);
     await page.getByRole("button", { name: "Start work" }).click();
     const kinds = page.getByRole("list", { name: "Job kinds" });
-    const predict = kinds.getByRole("listitem").filter({ hasText: "Predict" });
-    await expect(predict.getByText("Needs the model training playbook, which is not installed.")).toBeVisible();
-    await expect(predict.getByRole("button")).toHaveCount(0);
-    await predict.click();
+    const forecast = kinds.locator("li.job-kind").filter({ hasText: "Forecast" });
+    const why = forecast.getByRole("list", { name: "Why Forecast cannot start" });
+    await expect(why.getByText("method.ml.forecast is turned off in this workspace")).toBeVisible();
+    await expect(why.getByText(/A workspace owner enables it/)).toBeVisible();
+    await expect(forecast.getByRole("button")).toHaveCount(0);
+    await forecast.click();
     await expect(page.getByRole("dialog", { name: "Start work" })).toBeVisible();
     await expect(page.getByRole("form")).toHaveCount(0);
     expect(posts.filter((p) => p.endsWith("/analysis"))).toEqual([]);
@@ -499,6 +501,7 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
+  ["Data · brief & readiness", `/w/${WS}/data/catalog?tab=brief`, /Open questions \(2\)/],
   ["Data · documents", `/w/${WS}/data/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
   ["Data · review queue", `/w/${WS}/data/catalog?tab=review`, /crawl-enrich-v2/],
   ["Data · metrics", `/w/${WS}/data/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],

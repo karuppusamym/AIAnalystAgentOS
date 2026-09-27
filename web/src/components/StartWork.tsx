@@ -1,20 +1,24 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Source, type WorkspaceDetail } from "../api";
-import { jobKindsFromCapabilities, type JobKind, type JobKindId } from "../lib/jobKinds";
+import { api, type ReadinessAssessment, type Source, type WorkspaceDetail } from "../api";
+import { jobKindsFromAvailability, type JobKind, type JobKindId } from "../lib/jobKinds";
 import { useAction, useAsync } from "../lib/hooks";
 import { autonomyInWords } from "../lib/status";
 import { to } from "../routes";
+import { ReadinessResult } from "./Brief";
 import { Drawer } from "./Drawer";
 import { ErrorBox, Field, KeyValue, Loading, Notice, TechnicalDetails, Value } from "./ui";
 
-/** The job kinds for a workspace: the registry, the caller's role and whether any source is ready. */
-export function useJobKinds(wsId: string, ws: WorkspaceDetail | undefined, sources: Source[] | undefined) {
-  const caps = useAsync(() => api.listCapabilities({ workspace_id: wsId }), [wsId]);
-  const kinds = caps.data && ws && sources
-    ? jobKindsFromCapabilities(caps.data.capabilities, { readySources: sources.filter((s) => s.status === "ready").length, role: ws.role })
-    : undefined;
-  return { kinds, error: caps.error, reload: caps.reload };
+/** The job kinds for a workspace, decided by the server for this caller (P4-04): executor, capabilities, role, data. */
+export function useJobKinds(wsId: string) {
+  const res = useAsync(() => api.jobKinds(wsId), [wsId]);
+  const kinds = res.data ? jobKindsFromAvailability(res.data.job_kinds) : undefined;
+  return { kinds, digest: res.data?.digest, error: res.error, reload: res.reload };
+}
+
+/** The readiness of a job kind over the caller's scope, assessed once when the kind is chosen (P4-04). */
+function useReadiness(wsId: string, kind: string) {
+  return useAsync<ReadinessAssessment>(() => api.assessReadiness(wsId, { job_kind: kind, assets: [], measures: [] }), [wsId, kind]);
 }
 
 interface Draft { kind?: JobKindId; objective?: string; sourceId?: string }
@@ -50,16 +54,18 @@ export function StartWorkButton({ wsId, className = "btn btn-primary" }: { wsId:
 }
 
 /**
- * Start work (spec v4 §15): the job kinds from the capability registry. A kind that cannot run is
- * shown with its reason and has no start button, so nothing sends a predictably failing request.
+ * Start work (spec v4 §15): the job kinds the server says can start here (P4-04). A kind that
+ * cannot run is shown with every reason and its remediation and has no start button, so nothing
+ * sends a predictably failing request. Predict and Forecast open the ML spec form in Work,
+ * Prepare data its panel, Monitor a new monitor; the others an investigation with a preflight.
  */
 export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; onClose: () => void; initialKind?: JobKindId }) {
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
   const sources = useAsync(() => api.listSources(wsId), [wsId]);
-  const { kinds, error } = useJobKinds(wsId, ws.data, sources.data);
+  const { kinds, digest, error } = useJobKinds(wsId);
   const [draft, setDraft] = useState<Draft>(() => ({ ...loadDraft(wsId), ...(initialKind ? { kind: initialKind } : {}) }));
   const nav = useNavigate();
-  const chosen = kinds?.find((k) => k.id === draft.kind && k.enabled);
+  const chosen = kinds?.find((k) => k.id === draft.kind && k.enabled && k.action === "investigate");
 
   const update = (patch: Draft) => setDraft((d) => {
     const next = { ...d, ...patch };
@@ -77,6 +83,11 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
     if (k.action === "monitor") {
       onClose();
       nav(`${to.monitoring(wsId, { tab: "monitors" })}&new=1`);
+      return;
+    }
+    if (k.action === "ml") {
+      onClose();
+      nav(to.work(wsId, "experiments", { new: k.id }));
       return;
     }
     update({ kind: k.id, objective: draft.objective || k.objectivePrefix || ws.data?.objective || "" });
@@ -101,27 +112,34 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
                   <div className="job-kind-button" aria-disabled="true">
                     <strong>{k.label}</strong> <span className="tag tag-neutral">not available</span>
                     <span className="small muted block">{k.description}</span>
-                    <span className="small block job-kind-reason">{k.reason}</span>
+                    <ul className="small job-kind-reasons" aria-label={`Why ${k.label} cannot start`}>
+                      {k.reasons.map((r, i) => (
+                        <li key={`${r.code}-${i}`} className="job-kind-reason">{r.message}{r.remediation && <span className="muted block">{r.remediation}</span>}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </li>
             ))}
           </ul>
-          <TechnicalDetails value={kinds.map((k) => ({ kind: k.id, enabled: k.enabled, uses: k.uses }))} label="Technical details" />
+          <TechnicalDetails value={{ digest, kinds: kinds.map((k) => ({ kind: k.id, enabled: k.enabled, uses: k.uses,
+            reasons: k.reasons.map((r) => r.code), readiness_checks: k.readinessChecks })) }} label="Technical details" />
         </>
       )}
       {chosen && ws.data && sources.data && (
         <InvestigationForm kind={chosen} ws={ws.data} sources={sources.data} draft={draft} update={update}
           onBack={() => update({ kind: undefined })}
+          onChooseKind={(id) => { const k = kinds?.find((x) => x.id === id); if (k?.enabled) pick(k); }}
           onStarted={(runId) => { saveDraft(wsId, null); onClose(); nav(to.run(wsId, runId)); }} />
       )}
     </Drawer>
   );
 }
 
-/** The brief and a preflight: what will be read, the limits it runs under, and what needs a person. */
-function InvestigationForm({ kind, ws, sources, draft, update, onBack, onStarted }: {
-  kind: JobKind; ws: WorkspaceDetail; sources: Source[]; draft: Draft; update: (d: Draft) => void; onBack: () => void; onStarted: (runId: string) => void;
+/** The brief and a preflight: what will be read, the limits it runs under, what needs a person, and readiness. */
+function InvestigationForm({ kind, ws, sources, draft, update, onBack, onChooseKind, onStarted }: {
+  kind: JobKind; ws: WorkspaceDetail; sources: Source[]; draft: Draft; update: (d: Draft) => void; onBack: () => void;
+  onChooseKind: (id: string) => void; onStarted: (runId: string) => void;
 }) {
   const id = useId();
   const act = useAction();
@@ -129,12 +147,14 @@ function InvestigationForm({ kind, ws, sources, draft, update, onBack, onStarted
   const objective = draft.objective ?? "";
   const tooShort = objective.trim().length < 10;
   const needsSource = ready.length > 1 && !draft.sourceId;
+  const readiness = useReadiness(ws.id, kind.id);
+  const refused = readiness.data?.status === "blocked" || readiness.data?.status === "unsupported";
   useEffect(() => {
     if (ready.length === 1 && draft.sourceId !== ready[0].id) update({ sourceId: ready[0].id });
   }, [ready.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (tooShort || needsSource) return;
+    if (tooShort || needsSource || refused) return;
     const run = await act.run(() => api.startRun(ws.id, { objective: objective.trim(), source_ids: draft.sourceId ? [draft.sourceId] : undefined }));
     if (run) onStarted(run.id);
   };
@@ -163,13 +183,19 @@ function InvestigationForm({ kind, ws, sources, draft, update, onBack, onStarted
           ["Needs a person for", p.publish_requires_approval === false ? "nothing outside the platform by default" : "anything published or sent outside the platform"],
           ["How much it does alone", autonomyInWords(ws.autonomy_level)],
         ]} />
+        <h4 className="small">Is the data ready?</h4>
+        {readiness.loading && !readiness.data && <Loading label="Checking readiness…" />}
+        {readiness.error && <p className="small warn-text">Readiness could not be checked: {readiness.error}. The server checks again when work starts.</p>}
+        {readiness.data && <ReadinessResult assessment={readiness.data} onChooseAlternative={onChooseKind} />}
       </section>
       {tooShort && objective.length > 0 && <p className="warn-text small" role="status">Say a little more: at least 10 characters.</p>}
       {needsSource && <Notice tone="info">Choose which source to read.</Notice>}
+      {refused && <Notice tone="warning">Readiness {readiness.data?.status === "blocked" ? "blocks" : "does not support"} this here: fix the failing
+        checks above, or choose a supported kind explicitly.</Notice>}
       <ErrorBox error={act.error} />
       <div className="form-actions">
         <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
-        <button type="submit" className="btn btn-primary" disabled={act.busy || tooShort || needsSource}>
+        <button type="submit" className="btn btn-primary" disabled={act.busy || tooShort || needsSource || refused}>
           {act.busy ? "Starting…" : "Start investigation"}</button>
       </div>
     </form>

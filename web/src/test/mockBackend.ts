@@ -10,6 +10,7 @@ import type {
 } from "../api";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
+import { resetWave2, wave2Route } from "./mockWave2";
 
 export const WS = "ws_demo";
 export const RUN = "run_demo";
@@ -315,6 +316,7 @@ export function resetMockState(): void {
   state.decided = {};
   resetKnowledgeState();
   resetWave1();
+  resetWave2();
 }
 
 const BUILD_TARGET: BuildTarget = { id: "btg_1", workspace_id: WS, engine: "postgres:analytics", schema_name: "aos_mart",
@@ -652,12 +654,24 @@ export interface MockResponse {
 
 const json = (body: unknown, status = 200): MockResponse => ({ status, body: JSON.stringify(body), contentType: "application/json" });
 
-/** Route one request. `path` is the URL path after the host, with its query string. */
-export function mockBackend(method: string, path: string, requestBody?: string | null): MockResponse {
+/** A fetch init's headers as a lower-cased record (for `If-Match` on revisioned edits). */
+export function headersOf(init: RequestInit | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  new Headers(init?.headers ?? {}).forEach((v, k) => { out[k.toLowerCase()] = v; });
+  return out;
+}
+
+/**
+ * Route one request. `path` is the URL path after the host, with its query string; `headers` are
+ * lower-cased (the revisioned wave-2 edits read `if-match`).
+ */
+export function mockBackend(method: string, path: string, requestBody?: string | null, headers: Record<string, string> = {}): MockResponse {
   const url = new URL(path, "http://mock.local");
   const p = url.pathname.replace(/^\/api/, "");
   const m = method.toUpperCase();
   const W = `/workspaces/${WS}`;
+  const wave2 = wave2Route(m, p, url, WS, requestBody, headers);
+  if (wave2) return wave2.status === 204 ? { status: 204, body: "", contentType: "application/json" } : json(wave2.body, wave2.status);
 
   if (m === "POST" && p === "/auth/login") {
     const body = requestBody ? JSON.parse(requestBody) as { password?: string } : {};
