@@ -75,10 +75,29 @@ def _reason(code: str, message: str, remediation: str) -> dict[str, str]:
     return {"code": code, "message": message, "remediation": remediation}
 
 
-def executor_reason(job: JobKind) -> dict[str, str] | None:
-    """None when something can execute this job kind here."""
+def published_ml_specs(session: Session, workspace_id: str) -> int:
+    """How many published (or deprecated, still runnable) ml_spec definitions the workspace has."""
+    from sqlalchemy import func, select
+
+    from analystos.contracts.definition import RUNNABLE_STATUSES
+    from analystos.db.models import Definition
+
+    return session.scalar(select(func.count(Definition.id)).where(Definition.workspace_id == workspace_id,
+                                                                  Definition.kind == "ml_spec",
+                                                                  Definition.status.in_(RUNNABLE_STATUSES))) or 0
+
+
+def executor_reason(job: JobKind, session: Session | None = None, workspace_id: str | None = None) -> dict[str, str] | None:
+    """None when something can execute this job kind here. An ML job's executor is the published `ml_spec` path
+    (`playbook.train`): it exists in a workspace once an ml_spec definition is published there."""
     from analystos.contracts.work import EXECUTABLE_TYPES
 
+    if job.entry["type"] == "work_order" and job.entry["payload_type"] == "ml" and session is not None and workspace_id:
+        if published_ml_specs(session, workspace_id):
+            return None
+        return _reason("no_executor", f"{job.label} trains a published ml_spec definition, and this workspace has none yet",
+                       "Publish an ml_spec definition (a reviewed MLSpec) and start the work order with that exact spec; "
+                       "or choose Explain or Compare explicitly. Nothing is started in its place.")
     if job.entry["type"] == "work_order" and job.entry["payload_type"] not in EXECUTABLE_TYPES:
         what = {"ml": "an MLSpec (governed ML, P5-01..06)", "pipeline": "a PipelineSpec"}.get(job.entry["payload_type"],
                                                                                             job.entry["payload_type"])
@@ -148,7 +167,7 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
     out = []
     for job in JOB_KINDS:
         reasons: list[dict[str, str]] = []
-        if (r := executor_reason(job)) is not None:
+        if (r := executor_reason(job, session, workspace_id)) is not None:
             reasons.append(r)
         caps, cap_reasons = capability_state(job, snap, explicit)
         reasons += cap_reasons

@@ -4,8 +4,9 @@
 expected outputs and validation policy around exactly one typed execution payload. `AnalysisSpec`
 is carried unchanged inside `AnalysisWork`; `PipelineSpec` (P6-01) is the typed envelope around published
 recipes and runs through the pipeline API; `MLSpec` (P5-01) is the full governed-ML contract, and what trains
-is a *published* `ml_spec` definition (services/ml.py, playbook.train). Only `analysis` starts as an analysis
-run: starting any other payload as a run is refused with `unsupported_capability`, never approximated.
+is a *published* `ml_spec` definition (services/ml.py, playbook.train). `analysis` starts an analysis run; a
+complete `MLSpec` starts a `playbook.train` run of the published ml_spec definition with exactly its content (an
+unpublished spec is refused). Starting any other payload is refused with `unsupported_capability`, never approximated.
 
 Nothing a client sends here is proof of anything: a `scope_hash` is informational (scope is resolved
 server-side at execution), and budgets are clamped to policy by the server.
@@ -394,4 +395,8 @@ class WorkOrderSpec(BaseModel):
 
     @property
     def executable(self) -> bool:
+        """An analysis always; an MLSpec once it is complete (it then trains as the published ml_spec definition
+        with exactly this content, which `services/work_orders.start` requires); nothing else yet."""
+        if self.spec.type == "ml":
+            return not self.spec.executable_problems()
         return self.spec.type in EXECUTABLE_TYPES

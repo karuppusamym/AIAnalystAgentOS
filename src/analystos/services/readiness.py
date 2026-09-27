@@ -120,7 +120,7 @@ def capability(c: _Ctx) -> ReadinessCheck:
     from analystos.capabilities import enablement, registry
 
     reasons = []
-    if (r := job_kinds.executor_reason(c.job)) is not None:
+    if (r := job_kinds.executor_reason(c.job, c.session, c.workspace_id)) is not None:
         reasons.append(r)
     _, cap = job_kinds.capability_state(c.job, registry.current(), enablement.overrides(c.session, c.workspace_id))
     reasons += cap
