@@ -304,6 +304,53 @@ test.describe("governed ML (P5-03)", () => {
   });
 });
 
+test.describe("pipelines (P6-03)", () => {
+  test("engineer: dry run → approve → materialize → rollback, with quarantined rows visible", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/work`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Prepare data/ }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=prepare`);
+    await page.getByRole("list", { name: "Pipelines" }).getByRole("button", { name: /p1_clean v2/ }).click();
+    const detail = page.getByRole("region", { name: "Pipeline p1_clean v2" });
+    await expect(detail.getByRole("list", { name: "Source to output" })).toContainText("aos_out.p1_clean");
+
+    await detail.getByRole("button", { name: "Dry run" }).click();
+    const run = detail.getByRole("region", { name: "Dry run prn_1" });
+    const ledger = run.getByRole("group", { name: "Rows" });
+    await expect(ledger.locator(".stat", { hasText: "Quarantined rows" })).toContainText("20");
+    await expect(ledger.locator(".stat", { hasText: "Late rows" })).toContainText("not reported");
+    await expect(run.getByRole("table", { name: "Join diagnostics" })).toBeVisible();
+    await expect(run.getByRole("table", { name: "Reconciliation" })).toContainText("hours_total");
+
+    await detail.getByRole("button", { name: "Materialize this candidate" }).click();
+    await approveInInbox(page, /Materialize a pipeline's output/);
+    await detail.getByRole("button", { name: "Continue with the approved request" }).click();
+    await expect(detail.getByText(/aos_out\.p1_clean version 3 \(4,190 rows\)/)).toBeVisible();
+
+    await detail.getByRole("link", { name: "Outputs → Managed tables" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/outputs?type=table&table=p1_clean`);
+    page.once("dialog", (d) => void d.accept());
+    await page.getByRole("button", { name: "Roll back v3" }).click();
+    await expect(page.getByText(/serves version 2 again; version 3 is kept as rolled back/)).toBeVisible();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("narrow layout: the dry-run result and the thread do not scroll sideways", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIn(page, `/w/${WS}/work?tab=prepare&pipeline=pip_2`);
+    await expect(page.getByRole("region", { name: "Dry run prn_0" })).toBeVisible();
+    for (const path of [`/w/${WS}/work?tab=prepare&pipeline=pip_2`, `/w/${WS}/work?tab=thread&container=run:run_demo`,
+      `/w/${WS}/work?tab=experiments&experiment=mlx_0`, `/w/${WS}/data/catalog?tab=brief`, `/w/${WS}/outputs?type=model`]) {
+      await page.goto(path);
+      await expect(page.locator("main h1")).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, path).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 test.describe("wave-1 panels", () => {
   test("Why this number? and a void finding's cause", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/outputs?type=finding`);
@@ -605,6 +652,8 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · experiment", `/w/${WS}/work?tab=experiments&experiment=mlx_0`, /Holdout consumed/],
   ["Work · ML spec form", `/w/${WS}/work?tab=experiments&new=predict`, /Propose a spec/],
   ["Outputs · models", `/w/${WS}/outputs?type=model`, /each version's own holdout/],
+  ["Outputs · managed tables", `/w/${WS}/outputs?type=table`, /p1_clean__v2/],
+  ["Work · pipeline", `/w/${WS}/work?tab=prepare&pipeline=pip_2`, /Blocked: a check failed/],
   ["Operate · models & pipelines", `/w/${WS}/operate/monitoring?tab=health`, /drift alone does not show/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],

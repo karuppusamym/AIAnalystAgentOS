@@ -9,6 +9,7 @@ import type {
 } from "../api";
 import { decide, resetApprovals } from "./mockApprovals";
 import { mlRoute, resetMl } from "./mockMl";
+import { pipelineRoute, resetPipelines } from "./mockPipelines";
 import { resetThread, threadRoute } from "./mockThread";
 
 const T = "2026-09-26T09:00:00Z";
@@ -107,6 +108,7 @@ export function resetWave2(): void {
   state = fresh("ws_demo");
   resetThread();
   resetMl();
+  resetPipelines();
   resetApprovals();
 }
 
@@ -184,7 +186,7 @@ export function wave2Route(m: string, p: string, url: URL, ws: string, body: str
     const a = decide(decided[1], decided[2] as "approve" | "reject", (json().reason as string | undefined) ?? null);
     if (a) return ok(a);
   }
-  return mlRoute(m, p, url, W, json()) ?? threadRoute(m, p, url, W, json(), headers);
+  return mlRoute(m, p, url, W, json()) ?? pipelineRoute(m, p, url, W, json()) ?? threadRoute(m, p, url, W, json(), headers);
 }
 
 /** The gateway's answer to a preview filter: the base rows re-read with the WHERE clause applied. */

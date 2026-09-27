@@ -55,8 +55,8 @@ export function WorkPage() {
         {tab === "experiments" && <ExperimentsPanel wsId={wsId} role={role} selected={params.get("experiment")} newKind={params.get("new")}
           onSelect={(id) => set({ experiment: id, new: null })} onNew={(k) => set({ new: k, experiment: null })} />}
         {tab === "notebooks" && <NotebooksPanel wsId={wsId} role={role} selected={params.get("notebook")} onSelect={(id) => set({ notebook: id })} />}
-        {tab === "prepare" && <PreparePanel wsId={wsId} role={ws.data?.role} recipe={params.get("recipe")}
-          onSelectRecipe={(id) => set({ recipe: id })} />}
+        {tab === "prepare" && <PreparePanel wsId={wsId} role={role} recipe={params.get("recipe")}
+          onSelectRecipe={(id) => set({ recipe: id })} pipeline={params.get("pipeline")} onSelectPipeline={(id) => set({ pipeline: id })} />}
         {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
           canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
       </div>

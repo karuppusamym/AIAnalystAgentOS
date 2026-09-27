@@ -837,6 +837,7 @@ button.job-kind-button:focus-visible { outline: 2px solid var(--accent); outline
 .dag-node[data-kind="output"] { border-color: var(--success); }
 .dag-arrow { align-self: center; color: var(--text-2); }
 .rows-ledger { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; }
+.rows-ledger .stat { display: grid; gap: 0.15rem; align-content: start; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .rows-ledger > [data-attention="true"] { outline: 2px solid var(--warning); outline-offset: -2px; border-radius: var(--radius-sm); }
 .cell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.4rem 0.6rem; }

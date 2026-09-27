@@ -8,6 +8,7 @@ import { DashboardPreview } from "../components/DashboardPreview";
 import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
+import { MaterializationsOutput } from "../components/Pipelines";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
 import type { Preview } from "../lib/charts";
@@ -29,11 +30,11 @@ export function outputTypeOf(artifactType: string): OutputType | null {
 export const OUTPUT_FILTERS: { id: OutputType; label: string }[] = [
   { id: "finding", label: "Findings" }, { id: "dashboard", label: "Dashboards" }, { id: "report", label: "Reports" },
   { id: "dataset", label: "Datasets" }, { id: "chart", label: "Charts" }, { id: "prepared", label: "Prepared data" },
-  { id: "model", label: "Models & scoring" }, { id: "other", label: "Other" },
+  { id: "model", label: "Models & scoring" }, { id: "table", label: "Managed tables" }, { id: "other", label: "Other" },
 ];
 
 /** Output types shown as their own panel rather than as rows of the one list (models and their scoring runs). */
-const PANEL_TYPES = new Set<OutputType>(["model"]);
+const PANEL_TYPES = new Set<OutputType>(["model", "table"]);
 
 type Item =
   | { kind: "finding"; id: string; at: string; finding: Insight }
@@ -57,6 +58,7 @@ export function OutputsPage() {
   const findings = useAsync(() => api.listInsights(wsId), [wsId]);
   const prepared = useAsync(() => api.listRecipeRuns(wsId), [wsId]);
   const models = useAsync(() => api.modelVersions(wsId), [wsId]);
+  const tables = useAsync(() => api.materializations(wsId), [wsId]);
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
   const { user } = useAuth();
   const role = user?.is_admin ? "owner" : ws.data?.role;
@@ -87,6 +89,8 @@ export function OutputsPage() {
   for (const i of items) counts.set(typeOf(i), (counts.get(typeOf(i)) ?? 0) + 1);
   const modelNames = new Set((Array.isArray(models.data) ? models.data : []).map((m) => m.name)).size;
   if (modelNames) counts.set("model", modelNames);
+  const tableNames = new Set((Array.isArray(tables.data) ? tables.data : []).map((m) => `${m.schema_name}.${m.table_name}`)).size;
+  if (tableNames) counts.set("table", tableNames);
   const panel = type !== "" && PANEL_TYPES.has(type);
   const shown = items.filter((i) => !type || typeOf(i) === type);
   const open = selected ? items.find((i) => i.id === selected) : undefined;
@@ -96,7 +100,7 @@ export function OutputsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Outputs" subtitle="Everything work produced, in one list: findings, dashboards, reports, datasets, prepared data and models." />
+      <PageHeader title="Outputs" subtitle="Everything work produced, in one list: findings, dashboards, reports, datasets, prepared data, models and managed tables." />
       <nav className="chip-row type-filter" aria-label="Filter outputs by type">
         <Link className={`chip ${type ? "" : "active"}`} aria-current={type ? undefined : "page"} to={to.outputs(wsId)}>All ({items.length})</Link>
         {filters.map((f) => (
@@ -113,6 +117,7 @@ export function OutputsPage() {
         </details>
       )}
       {type === "model" && <ModelsOutput wsId={wsId} role={role} />}
+      {type === "table" && <MaterializationsOutput wsId={wsId} role={role} table={params.get("table")} />}
       {!panel && <ErrorBox error={error} onRetry={() => { void artifacts.reload(); void findings.reload(); }} />}
       {!panel && loading && <Loading />}
       {!panel && !loading && shown.length === 0 && (

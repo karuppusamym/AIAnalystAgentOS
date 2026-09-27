@@ -5,6 +5,7 @@ import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { describeMlMonitor, ML_MONITOR_KINDS, monitorMessage } from "../lib/monitors";
 import { roleAtLeast, to } from "../routes";
+import { PipelineHealth } from "./Pipelines";
 import { EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag } from "./ui";
 
 /** Validation of the model-monitor form; each kind needs its own fields (services/monitors.py). */
@@ -123,6 +124,7 @@ export function OperateHealth({ wsId, role }: { wsId: string; role: string | und
           )}
         </div>
       </section>
+      <PipelineHealth wsId={wsId} />
     </div>
   );
 }
