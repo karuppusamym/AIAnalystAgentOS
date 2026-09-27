@@ -832,6 +832,15 @@
       },
       "AskTurnIn": {
         "properties": {
+          "mode": {
+            "default": "quick",
+            "enum": [
+              "quick",
+              "analyst"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
           "parameters": {
             "anyOf": [
               {
@@ -9641,9 +9650,174 @@
         ]
       }
     },
+    "/api/ask/turns/{turn_id}/steps/{n}/rerun": {
+      "post": {
+        "description": "Analyst turn: run step `n` again with its saved SQL (or `sql`, edited) through the gateway; the step's\nfacts and checks are recomputed and the synthesis is marked stale. Returns the updated turn.",
+        "operationId": "rerun_step_api_ask_turns__turn_id__steps__n__rerun_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "n",
+            "required": true,
+            "schema": {
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRerunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Step",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
+    "/api/ask/turns/{turn_id}/synthesize": {
+      "post": {
+        "description": "Analyst turn: write the synthesis again from the steps' current facts (clears `stale`).",
+        "operationId": "synthesize_turn_api_ask_turns__turn_id__synthesize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Synthesize Turn",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
     "/api/ask/turns/{turn_id}/why": {
       "get": {
-        "description": "\"Why this number?\" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,\n`column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,\nevery link with its current state; broken and voided links are returned, never dropped.",
+        "description": "\"Why this number?\" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,\n`column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,\nevery link with its current state; broken and voided links are returned, never dropped. For an analyst\nturn `step` explains that step's numbers (default: the headline step, which the turn mirrors).",
         "operationId": "why_turn_number_api_ask_turns__turn_id__why_get",
         "parameters": [
           {
@@ -9701,6 +9875,22 @@
                 }
               ],
               "title": "Row"
+            }
+          },
+          {
+            "in": "query",
+            "name": "step",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Step"
             }
           },
           {

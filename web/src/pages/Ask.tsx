@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  ApiError, api, errorMessage, streamAskTurn, type AskInspector, type AskPromotion, type AskStage, type AskThreadDetail, type AskTurn,
+  ApiError, api, errorMessage, streamAskTurn, type AskInspector, type AskMode, type AskPromotion, type AskStage, type AskThreadDetail, type AskTurn,
   type ChartHint, type Dict, type QueryResult, type SqlExplanation,
 } from "../api";
+import { AnalystAnswer } from "../components/AnalystAnswer";
 import { ChartView } from "../components/Chart";
 import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
@@ -294,10 +295,11 @@ function ScheduleAnswer({ turn }: { turn: AskTurn }) {
   </div>;
 }
 
-function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun }: {
+function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun, onRerunStep,
+  onResynthesize }: {
   turn: AskTurn; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
   onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void; onAsk: (q: string) => void;
-  onRerun: (sql?: string) => void;
+  onRerun: (sql?: string) => void; onRerunStep: (n: number, sql?: string) => void; onResynthesize: () => void;
 }) {
   const { wsId = "" } = useParams();
   const [editing, setEditing] = useState(false);
@@ -305,10 +307,12 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
   return (
     <article className={`ask-turn ${selected ? "ask-turn-selected" : ""}`} aria-label={`Question ${turn.seq}`}>
       <header className="ask-question">
-        <p><strong>{turn.question}</strong></p>
+        <p><strong>{turn.question}</strong>{turn.analysis && <span className="tag tag-info analyst-tag">step by step</span>}</p>
         <button type="button" className="btn btn-xs btn-ghost" aria-pressed={selected} onClick={onSelect}>Inspect</button>
       </header>
-      {turn.status === "answered" && turn.result ? (
+      {turn.status === "answered" && turn.analysis ? (
+        <AnalystAnswer turn={turn} busy={busy} onRerunStep={onRerunStep} onResynthesize={onResynthesize} onAsk={onAsk} />
+      ) : turn.status === "answered" && turn.result ? (
         <div className="stack">
           <Pills label="Provenance" pills={[...provenancePills(turn), stalenessPill(turn.staleness)]} />
           {turn.explanation && <p>{turn.explanation}</p>}
@@ -343,6 +347,12 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
       ) : (
         <>
           <RefusalState turn={turn} ws={wsId} busy={busy} onParameters={onParameters} onRephrase={onRephrase} onExplain={onExplain} onRetry={onRetry} />
+          {typeof turn.refusal?.details?.assumption === "string" && (
+            <button type="button" className="btn btn-sm" disabled={busy}
+              onClick={() => onAsk(`${turn.question}\n\nProceed with this assumption: ${turn.refusal!.details!.assumption as string}`)}>
+              Go ahead assuming {turn.refusal.details.assumption as string}
+            </button>
+          )}
           <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
         </>
       )}
@@ -499,6 +509,26 @@ export function AskPage() {
   const selectedTurn = useMemo(() => thread?.turns.find((t) => t.id === selected) ?? null, [thread, selected]);
   const groups = useMemo(() => groupThreads(threads.data ?? []), [threads.data]);
 
+  const [mode, setMode] = useState<AskMode>(() => {
+    try {
+      return window.localStorage.getItem("analystos.ask.mode") === "analyst" ? "analyst" : "quick";
+    } catch {
+      return "quick";
+    }
+  });
+  const chooseMode = (m: AskMode) => {
+    setMode(m);
+    try { window.localStorage.setItem("analystos.ask.mode", m); } catch { /* remembered for this tab only */ }
+  };
+
+  const replaceTurn = (turn: AskTurn) =>
+    setThread((t) => (t ? { ...t, turns: t.turns.map((x) => (x.id === turn.id ? turn : x)) } : t));
+  const stepAction = async (fn: () => Promise<AskTurn>) => {
+    setAsking(true);
+    setAskErr(null);
+    try { replaceTurn(await fn()); } catch (err) { setAskErr(err); } finally { setAsking(false); }
+  };
+
   const ask = async (text: string, parameters?: Dict) => {
     const q = text.trim();
     if (!q) return;
@@ -513,7 +543,7 @@ export function AskPage() {
         setThread(current);
         setParams((prev) => { const n = new URLSearchParams(prev); n.set("thread", current!.id); return n; }, { replace: true });
       }
-      const turn = await streamAskTurn(current.id, q, parameters, { onStage: (s) => setLive((xs) => [...xs, s]) });
+      const turn = await streamAskTurn(current.id, q, parameters, { onStage: (s) => setLive((xs) => [...xs, s]) }, undefined, mode);
       setThread((t) => (t ? { ...t, title: t.turns.length ? t.title : q, turns: [...t.turns, turn] } : t));
       setSelected(turn.id);
       setQuestion("");
@@ -618,7 +648,9 @@ export function AskPage() {
                 <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
                   onParameters={(p) => void ask(t.question, p)} onRephrase={() => { setQuestion(t.question); questionRef.current?.focus(); }}
                   onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)}
-                  onRerun={(statement) => void rerun(t.id, statement)} />
+                  onRerun={(statement) => void rerun(t.id, statement)}
+                  onRerunStep={(n, statement) => void stepAction(() => api.rerunAskStep(t.id, n, statement))}
+                  onResynthesize={() => void stepAction(() => api.resynthesizeAsk(t.id))} />
               ))}
               {pending && (
                 <article className="ask-turn" aria-label="Question in progress" aria-busy="true">
@@ -642,7 +674,14 @@ export function AskPage() {
                     placeholder="How many P1 incidents were opened per month this year?"
                     onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit(); }} />
                 </Field>
-                <div className="form-actions">
+                <div className="form-actions ask-actions">
+                  <div className="seg" role="radiogroup" aria-label="How to answer">
+                    {(["quick", "analyst"] as const).map((m) => (
+                      <button key={m} type="button" role="radio" aria-checked={mode === m} className={`seg-btn ${mode === m ? "active" : ""}`}
+                        title={m === "quick" ? "One query, the fastest answer" : "Up to four steps: totals, breakdowns, trends and drivers, then a cited answer"}
+                        onClick={() => chooseMode(m)}>{m === "quick" ? "Quick answer" : "Step by step"}</button>
+                    ))}
+                  </div>
                   <button type="submit" className="btn btn-primary" disabled={asking || !question.trim()}>{asking ? "Thinking…" : "Ask"}</button>
                 </div>
               </form>

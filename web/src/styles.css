@@ -975,3 +975,26 @@ button.job-kind-button:focus-visible { outline: 2px solid var(--accent); outline
 .btn-link:hover { color: var(--accent-hover); }
 .starter-questions { display: grid; gap: 0.3rem; }
 .starter-questions .chip-row .btn { white-space: normal; text-align: left; }
+
+/* ---- Ask: step-by-step (analyst mode) answers */
+.ask-actions { justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.ask-actions .seg-btn { text-transform: none; }
+.analyst-tag { margin-left: 0.4rem; font-size: 0.7rem; vertical-align: middle; }
+.analyst-synthesis { border-left: 3px solid var(--accent); padding: 0.1rem 0 0.1rem 0.75rem; }
+.analyst-lead { font-size: 1.02rem; font-weight: 560; margin-bottom: 0.4rem; }
+.analyst-evidence { margin: 0 0 0.4rem; padding-left: 1.1rem; display: grid; gap: 0.2rem; }
+.analyst-caveats ul { margin: 0.15rem 0 0.3rem; padding-left: 1.1rem; }
+.step-cite { font-size: 0.85em; }
+.analyst-plan summary { cursor: pointer; color: var(--text-2); }
+.analyst-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.analyst-step { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.analyst-step > summary { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; padding: 0.45rem 0.65rem; cursor: pointer; }
+.analyst-step[open] > summary { border-bottom: 1px solid var(--border); }
+.analyst-step-n { display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--accent-soft);
+  color: var(--accent); font-weight: 650; font-size: 0.78rem; flex: none; }
+.analyst-step-goal { font-weight: 560; flex: 1 1 12rem; min-width: 0; }
+.analyst-step-body { padding: 0.55rem 0.65rem 0.65rem; }
+.analyst-facts { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.15rem; }
+.analyst-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.1rem; font-size: 0.84rem; }
+.analyst-checks .check-pass { color: var(--text-2); }
+.analyst-checks .check-suspect { color: var(--warning); font-weight: 560; }

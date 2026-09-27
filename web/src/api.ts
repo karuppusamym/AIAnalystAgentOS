@@ -757,6 +757,59 @@ export interface AskTurn {
   latency_ms: number;
   created_at: string;
   staleness: AskStaleness;
+  /** Analyst mode only (null for a quick answer): the plan, the steps and the synthesis. */
+  analysis?: AskAnalysis | null;
+}
+
+export type AskMode = "quick" | "analyst";
+
+export interface AnalystMeasureFact {
+  column: string; count: number; total?: number | null; avg?: number | null; min?: number | null; min_label?: string | null;
+  max?: number | null; max_label?: string | null; pre_aggregated?: boolean;
+}
+
+export interface AnalystStep {
+  n: number;
+  kind?: string;
+  goal: string;
+  question: string;
+  status: "answered" | "clarify" | "needs_input" | "refused" | "skipped" | string;
+  answered_by?: string | null;
+  governance?: string | null;
+  sql?: string | null;
+  explanation?: string | null;
+  chart?: ChartHint;
+  result?: QueryResult | null;
+  facts?: { row_count?: number; truncated?: boolean; measures?: AnalystMeasureFact[]; statements?: string[]; [k: string]: unknown } | null;
+  series?: {
+    time_column: string; column: string; points: number; first_period?: string; last_period?: string; direction?: string;
+    slope_per_period?: number | null; slope_share_of_mean?: number | null; anomalies?: { period: string; value: number; z: number; direction: string }[];
+    missing_periods?: string[]; warnings?: string[];
+  } | null;
+  comparison?: { previous?: number | null; current?: number | null; change?: number | null; pct_change?: number | null;
+    previous_period?: string; current_period?: string; [k: string]: unknown } | null;
+  drivers?: {
+    members: number;
+    drivers: { member: string; previous: number; current: number; change: number; pct_change: number | null; share_of_change: number | null }[];
+    offsets: { member: string; previous: number; current: number; change: number; pct_change: number | null; share_of_change: number | null }[];
+    appeared?: string[]; disappeared?: string[];
+  } | null;
+  checks?: { code: string; status: "pass" | "suspect" | string; note: string }[];
+  refusal?: AskRefusal | null;
+  note?: string;
+  rerun?: { at: string; edited: boolean } | null;
+}
+
+export interface AskAnalysis {
+  mode: "analyst";
+  plan: { approach: string; origin: "rules" | "model" | string; assumptions?: string[]; steps: { n: number; goal: string; question: string }[] };
+  steps: AnalystStep[];
+  synthesis: {
+    text: string; answer?: string; evidence?: { step: number; text: string }[]; caveats?: string[]; citations?: number[];
+    origin: "template" | "model" | string; rejected?: string | null; stale?: boolean; stale_steps?: number[];
+  };
+  follow_ups: string[];
+  headline_step: number;
 }
 
 export interface AskThread {
@@ -3403,9 +3456,14 @@ export const api = {
   askThread: (id: string) => get("/api/ask/threads/{thread_id}", { path: { thread_id: id } }) as Promise<AskThreadDetail>,
   patchAskThread: (id: string, body: Schemas["AskThreadPatch"]) =>
     patch("/api/ask/threads/{thread_id}", { path: { thread_id: id }, body }) as Promise<AskThread>,
-  askTurn: (threadId: string, question: string, parameters?: Dict) =>
-    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null } }) as
+  askTurn: (threadId: string, question: string, parameters?: Dict, mode: AskMode = "quick") =>
+    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null, mode } }) as
       Promise<AskTurn>,
+  /** Analyst mode: re-run one step (edited SQL, or its saved SQL) through the gateway; the synthesis becomes stale. */
+  rerunAskStep: (turnId: string, step: number, sql?: string) =>
+    post("/api/ask/turns/{turn_id}/steps/{n}/rerun", { path: { turn_id: turnId, n: step }, body: sql ? { sql } : {} }) as Promise<AskTurn>,
+  /** Analyst mode: rewrite the answer from the steps' current facts. */
+  resynthesizeAsk: (turnId: string) => post("/api/ask/turns/{turn_id}/synthesize", { path: { turn_id: turnId } }) as Promise<AskTurn>,
   askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
   rerunAsk: (turnId: string, sql?: string) => request<AskTurn>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/rerun`, { sql }),
   scheduleAsk: (turnId: string, body: { name: string; cron: string; timezone: string; approval_id?: string }) =>
@@ -3650,13 +3708,13 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
  * event, a non-2xx status or a stream that ends without the answer.
  */
 export async function streamAskTurn(threadId: string, question: string, parameters: Dict | undefined, cb: AskStreamCallbacks,
-  signal?: AbortSignal): Promise<AskTurn> {
+  signal?: AbortSignal, mode: AskMode = "quick"): Promise<AskTurn> {
   let turn: AskTurn | null = null;
   let failure: ApiError | null = null;
   try {
     await readSSE({
       url: API_BASE + apiPath("post", "/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId } }),
-      method: "POST", body: { question, parameters: parameters ?? null }, headers: authHeaders(),
+      method: "POST", body: { question, parameters: parameters ?? null, mode }, headers: authHeaders(),
       signal: signal ?? new AbortController().signal,
       onMessage: (m) => {
         let data: unknown = null;

@@ -712,6 +712,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask/turns/{turn_id}/steps/{n}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rerun Step
+         * @description Analyst turn: run step `n` again with its saved SQL (or `sql`, edited) through the gateway; the step's
+         *     facts and checks are recomputed and the synthesis is marked stale. Returns the updated turn.
+         */
+        post: operations["rerun_step_api_ask_turns__turn_id__steps__n__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ask/turns/{turn_id}/synthesize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Synthesize Turn
+         * @description Analyst turn: write the synthesis again from the steps' current facts (clears `stale`).
+         */
+        post: operations["synthesize_turn_api_ask_turns__turn_id__synthesize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ask/turns/{turn_id}/why": {
         parameters: {
             query?: never;
@@ -723,7 +764,8 @@ export interface paths {
          * Why Turn Number
          * @description "Why this number?" (P7-08) for an Ask answer: each numeric cell (or the one given by `number` text,
          *     `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version -> verdict,
-         *     every link with its current state; broken and voided links are returned, never dropped.
+         *     every link with its current state; broken and voided links are returned, never dropped. For an analyst
+         *     turn `step` explains that step's numbers (default: the headline step, which the turn mirrors).
          */
         get: operations["why_turn_number_api_ask_turns__turn_id__why_get"];
         put?: never;
@@ -5323,6 +5365,12 @@ export interface components {
         };
         /** AskTurnIn */
         AskTurnIn: {
+            /**
+             * Mode
+             * @default quick
+             * @enum {string}
+             */
+            mode?: "quick" | "analyst";
             /** Parameters */
             parameters?: {
                 [key: string]: unknown;
@@ -8754,12 +8802,86 @@ export interface operations {
             };
         };
     };
+    rerun_step_api_ask_turns__turn_id__steps__n__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+                n: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRerunIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    synthesize_turn_api_ask_turns__turn_id__synthesize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     why_turn_number_api_ask_turns__turn_id__why_get: {
         parameters: {
             query?: {
                 number?: string | null;
                 column?: string | null;
                 row?: number | null;
+                step?: number | null;
             };
             header?: {
                 authorization?: string | null;

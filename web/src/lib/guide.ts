@@ -60,7 +60,7 @@ export const CAPABILITIES: GuideCapability[] = [
 
   // Answer questions
   { id: "ask", discipline: "analysis", title: "Ask a question",
-    what: "Type a question; get a checked answer with its SQL, a chart and a label saying whether it used a governed metric.",
+    what: "Type a question; get a checked answer with its SQL and a chart. Step by step splits a “why” or “by X and Y” question into checked steps and cites them.",
     who: "Everyone", href: (ws) => to.ask(ws), needsWorkspace: true, tour: "ask" },
   { id: "investigate", discipline: "analysis", title: "Run an investigation",
     what: "Agents form hypotheses, test them with real statistics, and keep only findings that pass verification.",
@@ -198,7 +198,7 @@ export const TOURS: Tour[] = [
       { path: (ws) => to.ask(ws), target: '[data-tour="ask-box"]', title: "Type a question",
         body: "For example “How many P1 incidents per month?”. AnalystOS matches it to approved metrics first and only writes new SQL when none fits." },
       { target: '[data-tour="page-title"]', title: "What you get back",
-        body: "The answer with its SQL, a chart and a label: governed (from an approved metric) or ad hoc. Every number has “Why this number?”." },
+        body: "The answer with its SQL, a chart and a label: governed (from an approved metric) or ad hoc. Choose Step by step for a “why did it change” or “by X and Y” question: up to four checked steps, facts computed in code, and an answer that cites each step." },
       { target: '[data-tour="ask-threads"]', title: "Threads",
         body: "Questions are kept as threads. Follow-ups reuse the context already built, so they are faster and cheaper." },
     ],
