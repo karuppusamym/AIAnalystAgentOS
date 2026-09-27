@@ -103,6 +103,19 @@ def get_step(workspace_id: str, step_id: str, response: Response, version: int |
     return steps_svc.with_result(session, step, version)
 
 
+@router.get("/workspaces/{workspace_id}/steps/{step_id}/why")
+def why_step_number(workspace_id: str, step_id: str, version: int | None = None, number: str | None = None,
+                    column: str | None = None, row: int | None = None, user: User = Depends(current_user),
+                    session: Session = Depends(db, scope="function")):
+    """"Why this number?" (P7-08) for a step version (default: current): each numeric cell (or the one given by
+    `number`, `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version ->
+    verdict, every link with its current state; missing and voided links are returned, never dropped."""
+    from analystos.evidence.why import explain_step
+
+    step = steps_svc.load_step(session, session.merge(user), step_id, workspace_id)
+    return explain_step(session, step, version=version, number=number, column=column, row=row)
+
+
 @router.get("/workspaces/{workspace_id}/steps/{step_id}/versions")
 def step_versions(workspace_id: str, step_id: str, user: User = Depends(current_user),
                   session: Session = Depends(db, scope="function")):

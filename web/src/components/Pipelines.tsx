@@ -89,8 +89,8 @@ export function DryRunResult({ run }: { run: PipelineRun }) {
           <div className="stat" data-attention={r.rejected_rows ? "true" : undefined}><span className="stat-label">Rejected rows</span>
             <span className="stat-value">{fmtNumber(r.rejected_rows, 0)}</span></div>
           <div className="stat" data-attention={late ? "true" : undefined}><span className="stat-label">Late rows</span>
-            <span className="stat-value">{late === undefined || late === null ? "not reported" : fmtNumber(late, 0)}</span>
-            <span className="small muted">arrived after the watermark window</span></div>
+            <span className="stat-value">{late === undefined ? "not reported" : late === null ? "not measured" : fmtNumber(late, 0)}</span>
+            <span className="small muted">{late === null && r.late_rows_reason ? r.late_rows_reason : "arrived after the watermark window"}</span></div>
         </div>
       )}
       {failing.length > 0 && <Notice tone="danger">{failing.length} check{failing.length > 1 ? "s" : ""} failed: {failing.map((c) => CHECK_WORDS[c.check] ?? c.check).join(", ")}.</Notice>}

@@ -80,6 +80,7 @@ export function RunViewPage() {
   };
   const pending = r.approvals.filter((a) => a.status === "pending");
   const pub = r.summary?.publication;
+  const pinnedContext = r.capabilities?.analysis_context as { definition?: { version?: number; key?: string }; spec?: { purpose?: string; business_description?: string; metric_names?: string[] } } | undefined;
 
   return (
     <div className="page">
@@ -101,6 +102,12 @@ export function RunViewPage() {
       <ErrorBox error={control.error} />
       {r.error && <Notice tone="danger"><strong>Investigation error:</strong> {r.error}</Notice>}
       {pending.length > 0 && <Notice tone="warning">{pending.length} approval{pending.length > 1 ? "s" : ""} waiting — see the Approvals panel.</Notice>}
+      {pinnedContext && <Card title={`Analysis context · ${pinnedContext.definition?.key ?? "saved"} v${pinnedContext.definition?.version ?? "?"}`}>
+        <p><strong>Purpose:</strong> {pinnedContext.spec?.purpose}</p>
+        {pinnedContext.spec?.business_description && <p className="muted small">{pinnedContext.spec.business_description}</p>}
+        {!!pinnedContext.spec?.metric_names?.length && <p className="small">Relevant metrics: {pinnedContext.spec.metric_names.join(", ")}</p>}
+        <p className="small"><Link to={to.data(wsId, "contexts")}>View analysis contexts</Link></p>
+      </Card>}
 
       <div className="stats-row card card-body">
         <KeyValue items={[

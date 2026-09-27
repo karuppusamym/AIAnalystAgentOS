@@ -314,6 +314,15 @@ def test_incremental_pipeline_run_equals_its_full_rebuild_and_a_retry(world):
     backfill = run_pipeline(world["admin"], pid, world["ws"], mode="backfill",
                             window=("2025-01-01T00:00:00", "2031-12-31T00:00:00"))
     assert backfill["status"] == "succeeded" and _output_fp(world, "cr_clean") == _output_fp(world, "cr_clean_ref")
+    # late_rows: a windowed run cannot see behind its window (None, with why); the dry run measures it
+    assert second["reconciliation"]["late_rows"] is None and "dry run" in second["reconciliation"]["late_rows_reason"]
+    from analystos.services.pipelines import dry_run
+
+    dry = dry_run(world["admin"], pid, world["ws"])
+    assert dry["status"] == "succeeded", dry["error"]
+    rec = dry["reconciliation"]
+    assert rec["late_rows"] == 0 and rec["late_rows_reason"] is None, rec  # the output equals its full rebuild
+    assert rec["late"]["cutoff"] and rec["late"]["candidate_rows_behind_window"] > 0 and rec["late"]["committed_rows_read"] > 0
 
 
 def _cross_recipe(world, name: str) -> dict:
@@ -359,6 +368,7 @@ def test_cross_source_dry_run_manifest_checks_and_reconciliation(world):
     rec = view["reconciliation"]
     assert rec["inputs"]["changes"] == len(_records()) and rec["output_rows"] == view["candidate"]["row_count"]
     assert all(a["ok"] for a in rec["aggregates"]) and rec["rejected_rows"] == 0
+    assert rec["late_rows"] is None and "no incremental watermark" in rec["late_rows_reason"]  # not measured, not 0
     assert "JOIN" in view["sql"]["output"].upper() and "with_group" in view["sql"]["preflight"]
     assert view["candidate"]["snapshot"] and view["approval_id"] is None  # no destination: nothing to approve
 

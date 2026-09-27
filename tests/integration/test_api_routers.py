@@ -133,6 +133,37 @@ def test_artifacts_negative(api, world):
     assert api.post(f"/api/artifacts/{world['metric']}/publish", headers=world["viewer"]).status_code == 403
 
 
+def test_one_approval_is_visible_to_its_requester_and_the_inbox_not_to_an_outsider(api, world):
+    from analystos.db.base import session_scope
+    from analystos.db.models import User
+    from analystos.governance.approvals import request_approval
+
+    with session_scope() as s:
+        owner = s.scalar(select(User).where(User.email == "analyst@analystos.local"))
+        apr = request_approval(s, workspace_id=world["ws"], run_id=world["run"], action="publish_dashboard",
+                               payload={"dashboards": ["sla"], "test": "get_approval"}, plan_hash="p" * 64, policy_version=1,
+                               requested_by=owner.id, risk_tier="medium", destination="superset",
+                               affected_assets=["sales.orders"])
+        apr_id, owner_id, payload_hash = apr.id, owner.id, apr.payload_hash
+    mine = api.get(f"/api/approvals/{apr_id}", headers=world["analyst"])
+    assert mine.status_code == 200, mine.text
+    body = mine.json()
+    assert (body["kind"], body["status"], body["requested_by"], body["decided_by"]) == ("publish_dashboard", "pending", owner_id, None)
+    assert body["payload_hash"] == payload_hash and body["subject"] == {"run_id": world["run"], "destination": "superset",
+                                                                        "affected_assets": ["sales.orders"]}
+    assert body["created_at"] and body["expires_at"] and body["decided_at"] is None and "payload" not in body
+    assert api.get(f"/api/approvals/{apr_id}", headers=world["viewer"]).status_code == 200  # the inbox's own rule
+    hidden = api.get(f"/api/approvals/{apr_id}", headers=world["outsider"])
+    unknown = api.get("/api/approvals/apr_does_not_exist", headers=world["outsider"])
+    hidden_body, unknown_body = hidden.json(), unknown.json()
+    # each response carries its own request id; apart from it the two 404s are identical
+    assert hidden_body["error"].pop("request_id") and unknown_body["error"].pop("request_id")
+    assert hidden.status_code == unknown.status_code == 404 and hidden_body == unknown_body
+    assert api.get(f"/api/approvals/{apr_id}").status_code == 401
+    for method in ("POST", "PATCH", "PUT", "DELETE"):  # read only: decisions are the approve/reject POSTs
+        assert api.request(method, f"/api/approvals/{apr_id}", headers=world["analyst"]).status_code == 405
+
+
 # ----------------------------------------------------------------------------------------- catalog
 def test_catalog_positive(api, world):
     kinds = api.get("/api/source-kinds", headers=world["analyst"])

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -73,6 +73,13 @@ class Selection(BaseModel):
 
 class TagsIn(BaseModel):
     tags: list[str]
+
+
+class ColumnMetadataIn(BaseModel):
+    """Only the fields sent change; an empty string clears one (and the crawler leaves it cleared)."""
+
+    business_name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
 
 
 _COUNTED_ARTIFACTS = ("query", "dataset", "metric", "chart", "dashboard")
@@ -250,6 +257,13 @@ def assets(workspace_id: str, user: User = Depends(current_user), session: Sessi
 @router.put("/assets/{asset_id}/columns/{column}/tags")
 def tag(asset_id: str, column: str, body: TagsIn, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return row(source_svc.tag_column(session, user, asset_id, column, body.tags))
+
+
+@router.patch("/assets/{asset_id}/columns/{column}/metadata")
+def curate_column(asset_id: str, column: str, body: ColumnMetadataIn, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function")):
+    """A person's business name and description for a column; the crawler never overwrites them."""
+    return row(source_svc.curate_column(session, user, asset_id, column, body.model_dump(exclude_unset=True)))
 
 
 @router.get("/workspaces/{workspace_id}/relationships")

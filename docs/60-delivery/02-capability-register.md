@@ -5,6 +5,27 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-27 — P7-21 analysis context and output ownership
+
+`analysis_context` is a versioned definition of business purpose, starting question, source IDs and
+approved metric names. The same source may appear in several contexts. Start work selects a
+published version, allows the question to change per investigation and pins the exact context
+specification to the run. The pinned business context enters model prompts and the context artifact;
+it never widens source scope. Outputs groups findings and artifacts by run question, with a
+three-panel desktop layout and responsive two/one-panel fallbacks. Data provides a two-panel
+context editor, while its definitions panel explains semantic-model validation. Run bindings and
+metric approval now read approved semantic structure, not the newest proposal. Context text is
+screened for prompt injection before save or publication.
+
+Evidence: `tests/unit/test_analysis_context.py`, `tests/unit/test_definitions_pins.py`,
+the context compiler and semantic compiler suites (48 focused Python tests),
+`web/src/test/analysis-context.test.tsx` (289 web tests passing), production build, and 12
+mock-browser journeys including context draft → publish and Outputs accessibility in both themes.
+No AgentSwarms source or
+assets were copied. Remaining: real API browser journey across multiple source engines and a
+large-history visual pass; the workspace semantic graph is shared, so separate context-specific
+metric expressions require separately named and approved metrics.
+
 ## 2026-09-26 — P7-19 workflow step list, third slice
 
 Work has a workflow builder for registered, enabled agents with a default entry and no external
@@ -535,3 +556,5 @@ Playwright 95 passed with no retries; OpenAPI and the generated client current.
 | P7-14 parity checklists | `docs/60-delivery/donor-parity-{atlas,datapilot}.md` | each capability names an existing code path and test, or a disposition | Atlas 67 (31 / 21 / 15), DataPilot 58 (38 / 15 / 5); unsigned; freeze procedure written; donors untouched |
 | Merge with PR #12 (P7-19) | `web/src/components/StartWork.tsx`, `lib/jobKinds.ts`, `pages/Runs.tsx`, `api.ts` | `lightIa.test.tsx`, `ml.test.tsx`, Playwright ML journey | Job kinds from the server's P4-04 list, with its `work_mode` reason for an unselected mode; Forecast/Predict open PR #12's published-plan picker, with "Write a new spec" leading to the wave-3 form; one home for experiments (Work → Experiments; `?tab=ml` links open it); one ML client and one job-kind type. vitest 286 passed, Playwright 95 passed |
 | Windows imports | `workers/isolation.py`, `sandbox/runner.py` | `tests/unit/test_no_posix_resource.py` (3) | Both modules import without POSIX `resource` (the P7-19 note that a test could not run on Windows); an isolated job or the `none` sandbox refuses to start there instead of running without limits |
+| Backend asks from the wave-3 UI | `services/notebooks.py::cell_view`, `GET /api/approvals/{id}` (`ApprovalView`), `PATCH /api/assets/{id}/columns/{column}/metadata` (migration 0042), `evidence/why.py::explain_step`, `pipelines/late.py` | unit: `test_notebooks.py`, `test_approval_view.py` (3), `test_column_curation.py` (2), `test_step_why.py` (3), `test_pipeline_late_rows.py` (8); integration cases added to `test_api_routers.py`, `test_brief_steps_api.py`, `test_pipelines.py` (run by CI, not locally: the local Postgres had stopped); `pipelines.test.tsx` | Cell POST returns the cell as the notebook GET shows it; one approval readable by its requester or inbox members, 404 otherwise, no decision route; a user business name/description is never overwritten by a crawl or knowledge ingest; step "Why this number?" with the six links, a voided version shown as void; `late_rows` measured on a dry run through the gateway, `null` with a reason when there is no watermark or nothing committed (never 0 unmeasured). A pipeline run reports `late_rows: null` (a windowed run cannot see behind its window). Unit 3199 passed |
+| Governance review of the follow-ups (2026-09-27) | `api/routers/artifacts.py`, `services/pipelines.py`, `pipelines/late.py`, `evidence/why.py`, `services/{file_ingest,crawler}.py`, `knowledge/remote.py` | `test_approval_view.py` (+2), `test_pipeline_late_rows.py` (+3), `test_step_why.py` (+2), `test_remote_url.py` (7) | Fixed: an approval is readable only by current inbox members (no requester bypass after leaving) and reads `expired` once lapsed; the scope check precedes the stored-watermark read; a truncated candidate, an unreadable committed output or any error is "not measured" and never fails the dry run; the bound carries a UTC offset, identifiers are quoted, rows without a watermark are counted apart; a downstream step shows an upstream void; a pushdown table beside a staged one is listed unknown; a computation receipt without network isolation is not a clean link; file ingest and the crawler respect and record business-name origins; a bare token as the https user is refused. Deferred to P7-20: curated columns deleted on a crawl gap; owner text screened before prompts. Unit 3214 passed |

@@ -265,7 +265,6 @@ def reconcile(session: Session, workspace_id: str) -> dict[str, Any]:
     """Fan-out, denominator, stale and unvalidated-join findings over the live definitions."""
     from analystos.semantic.compiler import FANOUT, _additive, join_path
     from analystos.semantic.service import conflicts, current_model, definition, metric_rows
-    model = current_model(session, workspace_id)  # the structure approvals check against (P4-05)
     model = approved_model(session, workspace_id) or current_model(session, workspace_id)
     datasets, relationships = (model.datasets, model.relationships) if model else ([], [])
     fanout, stale, invalid = [], [], []

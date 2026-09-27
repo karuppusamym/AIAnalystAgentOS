@@ -30,14 +30,16 @@ TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}
 
 def create_run(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
                autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None,
-               definition: dict | str | None = None, pins: dict | None = None) -> AnalysisRun:
+               definition: dict | str | None = None, pins: dict | None = None,
+               analysis_context: dict | str | None = None) -> AnalysisRun:
     """`playbook` names a Playbook capability (default playbook.investigate) or a workspace playbook
     definition key; `definition` names an exact version ({key, version} or a definition id). Either
     must be runnable now (published; a draft only in a dev workspace; never retired), and enablement
     and certification are checked when the plan binds it. `pins` (a schedule fire) freezes the
     manifests, semantic versions and AnalysisSpecs the run binds (ADR-0021)."""
     return start_run_request(user, workspace_id, objective=objective, source_ids=source_ids, autonomy_level=autonomy_level,
-                             origin=origin, playbook=playbook, definition=definition, pins=pins)[0]
+                             origin=origin, playbook=playbook, definition=definition, pins=pins,
+                             analysis_context=analysis_context)[0]
 
 
 def _capabilities(s, workspace_id: str, *, playbook: str | None, definition: dict | str | None, pins: dict | None,
@@ -67,6 +69,7 @@ def _capabilities(s, workspace_id: str, *, playbook: str | None, definition: dic
 def start_run_request(user: User, workspace_id: str, *, objective: str | None, source_ids: list[str] | None = None,
                       autonomy_level: int | None = None, origin: dict | None = None, playbook: str | None = None,
                       definition: dict | str | None = None, pins: dict | None = None,
+                      analysis_context: dict | str | None = None,
                       idempotency: Any = None) -> tuple[AnalysisRun, bool]:
     """Create a run and its dispatch-outbox row in one transaction (P4-06), then dispatch best-effort;
     the outbox relay retries whatever did not go out. With an idempotency key the claim is part of the
@@ -83,6 +86,22 @@ def start_run_request(user: User, workspace_id: str, *, objective: str | None, s
             s.expunge(run)
             return run, True
         ws = get_workspace(s, workspace_id)
+        context_snapshot = None
+        if analysis_context is not None:
+            from analystos.services import definitions
+
+            context_ref, context_spec = definitions.resolve_runnable(s, workspace_id, analysis_context, trigger="analysis")
+            if context_ref.kind != "analysis_context" or context_ref.status != "published":
+                raise InvalidInput("select a published analysis context version")
+            from analystos.semantic.service import approved_metrics
+
+            if not set(context_spec["metric_names"]).issubset(approved_metrics(s, workspace_id)):
+                raise InvalidInput("the analysis context references a metric that is no longer approved")
+            context_sources = context_spec["source_ids"]
+            if source_ids is not None and set(source_ids) != set(context_sources):
+                raise InvalidInput("selected sources must match the analysis context version")
+            source_ids = context_sources
+            context_snapshot = {"definition": context_ref.model_dump(mode="json"), "spec": context_spec}
         objective = (objective or ws.objective or "").strip()
         if len(objective) < 10:
             raise InvalidInput("describe the business objective (at least 10 characters)")
@@ -100,6 +119,8 @@ def start_run_request(user: User, workspace_id: str, *, objective: str | None, s
         origin = origin or {"type": "user"}
         caps = _capabilities(s, workspace_id, playbook=playbook, definition=definition, pins=pins,
                              trigger=str(origin.get("type") or "api"))
+        if context_snapshot is not None:
+            caps["analysis_context"] = context_snapshot
         run = AnalysisRun(id=new_id("run"), workspace_id=workspace_id, objective=objective, status="NEW", autonomy_level=level,
                           policy_version=ws.policy_version, requested_by=user.id,
                           scope={**scope.model_dump(), "hash": scope.scope_hash()}, instructions=[], constraints={},

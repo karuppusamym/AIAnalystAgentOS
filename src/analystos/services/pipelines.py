@@ -274,6 +274,54 @@ def _current(s: Session, dest_id: str, table: str) -> Materialization | None:
                                                   Materialization.status == "promoted"))
 
 
+def _late_rows(user: User, ws: str, p: PipelineSpec, v: Any, outcome: Any, scope: Any, run_id: str,
+               query_ids: list[str], *, candidate_complete: bool) -> dict[str, Any]:
+    """`late_rows` of the reconciliation (`pipelines/late.py`): the candidate against the committed incremental
+    output, whose keys behind the cutoff are read through the gateway under the requester's scope."""
+    from datetime import UTC, datetime
+
+    from analystos.pipelines import late
+    from analystos.runtime.context import default_gateway
+    from analystos.services.recipes import OUTPUT_SOURCE_KIND, output_table
+    from analystos.staging.incremental import as_text
+    from analystos.staging.loader import StagingLoader
+
+    inc = p.incremental or v.recipe.incremental
+    if inc is None:
+        return late.not_measured(late.NO_WATERMARK)
+    with session_scope() as s:
+        src = s.scalar(select(Source).where(Source.workspace_id == ws, Source.kind == OUTPUT_SOURCE_KIND))
+        schema, source_id = (src.staging_schema, src.id) if src is not None else (None, None)
+    out = next(o for o in v.outputs() if o.name == p.output.output)
+    table = output_table(p.output_recipe(), out.name)
+    asset = f"{schema}.{table}"
+    if not (source_id and schema):
+        return late.not_measured("no incremental run has committed an output yet: the first run reads every row")
+    # the scope check comes first: the stored watermark describes the committed output's data
+    if scope.asset_sources.get(asset) != source_id:
+        return late.not_measured(f"the committed output {asset} is not in your data scope")
+    state = StagingLoader(get_settings()).read_state(source_id, table)
+
+    def ident(name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'
+
+    def committed(cutoff: Any) -> tuple[list[Any], bool]:
+        cols = ", ".join(ident(c) for c in (*inc.key, inc.watermark))
+        # an explicit UTC offset: a timestamptz column is compared in UTC whatever the session time zone
+        bound = f"'{as_text(cutoff.replace(tzinfo=UTC))}'" if isinstance(cutoff, datetime) else str(cutoff)
+        try:
+            res = default_gateway().execute(scope, f"SELECT {cols} FROM {ident(schema)}.{ident(table)} "
+                                                   f"WHERE {ident(inc.watermark)} < {bound}",
+                                            actor=f"user:{user.id}", purpose=f"pipeline.late_rows:{run_id}", use_cache=False)
+        except AnalystOSError as exc:
+            raise late.NotMeasured(f"the committed output could not be read: {exc.code}: {exc.message}") from exc
+        query_ids.append(res.query_id)
+        return list(res.rows), not res.truncated
+
+    return late.measure(inc, outcome.columns, outcome.kept, stored_watermark=(state or {}).get("watermark"),
+                        committed=committed, candidate_complete=candidate_complete)
+
+
 @scoped_loader
 def dry_run(user: User, pipeline_id: str, workspace_id: str | None = None, *, engine: str | None = None) -> dict[str, Any]:
     """Dry-run the pipeline's output (nothing is written to any table). With a destination and every check
@@ -318,6 +366,15 @@ def dry_run(user: User, pipeline_id: str, workspace_id: str | None = None, *, en
                  "gates": outcome.summary()}
     with session_scope() as s:
         manifest = _manifest(s, scope, plan, v, inputs, executor.snapshots)
+    query_ids = list(executor.query_ids)
+    complete = all(c["ok"] for c in result["checks"] if c["check"] == "complete_output")
+    try:  # a diagnostic: it never fails the dry run or strands its run row
+        late_part = _late_rows(user, ws, p, v, outcome, scope, run_id, query_ids, candidate_complete=complete)
+    except AnalystOSError as exc:
+        from analystos.pipelines.late import not_measured
+
+        late_part = not_measured(f"{exc.code}: {exc.message}")
+    reconciliation = {**result["reconciliation"], **late_part}
     plan_hash = stable_hash({"spec_hash": spec_hash, "pipeline_run": run_id,
                              "recipes": sorted((n, r.spec_hash) for n, r in resolved["recipes"].items()),
                              "inputs": {a: i.get("content_fingerprint") for a, i in sorted(inputs.items())},
@@ -325,7 +382,7 @@ def dry_run(user: User, pipeline_id: str, workspace_id: str | None = None, *, en
                              "candidate": digest})
     status = "blocked" if not result["ok"] else ("awaiting_approval" if p.destination is not None else "succeeded")
     fields = {"plan": plan.to_dict(), "manifest": manifest, "sql": result["sql"], "checks": result["checks"],
-              "reconciliation": result["reconciliation"], "candidate": candidate, "query_ids": list(executor.query_ids),
+              "reconciliation": reconciliation, "candidate": candidate, "query_ids": query_ids,
               "plan_hash": plan_hash,
               "error": None if result["ok"] else "; ".join(f"{c['check']} {c.get('join') or c.get('gate') or c.get('name') or c.get('asset') or ''}".strip()
                                                            for c in result["checks"] if not c["ok"])[:2000]}
@@ -401,8 +458,31 @@ def run_pipeline(user: User, pipeline_id: str, workspace_id: str | None = None, 
         raise
     return _finish(run_id, "blocked" if blocked else "succeeded", recipe_run_ids=recipe_runs,
                    plan={"recipe_runs": recipe_runs, "mode": mode},
+                   reconciliation=_run_late_rows(p, recipes[p.output_recipe()], recipe_runs[-1] if not blocked and recipe_runs
+                                                 else None),
                    error="a fail gate or the strict schema policy blocked an output; the last good output was kept"
                    if blocked else None)
+
+
+def _run_late_rows(p: PipelineSpec, output_recipe: RecipeVersion, output_run_id: str | None) -> dict[str, Any]:
+    """A run reads only its watermark window, so it cannot see rows behind it: `late_rows` stays unmeasured
+    (None, with why) and the dry run, which computes the whole output, is where they are counted."""
+    from analystos.contracts.recipe import Incremental
+    from analystos.db.models import RecipeRun
+    from analystos.pipelines import late
+
+    inc = p.incremental or (Incremental.model_validate(output_recipe.spec["incremental"])
+                            if (output_recipe.spec or {}).get("incremental") else None)
+    if inc is None:
+        return late.not_measured(late.NO_WATERMARK)
+    window = None
+    if output_run_id:
+        with session_scope() as s:
+            r = s.get(RecipeRun, output_run_id)
+            window = (r.plan or {}).get("incremental") if r is not None else None
+    return late.not_measured("a run reads only its watermark window [since, until], so rows behind the late window "
+                             "are not visible to it; a dry run of this pipeline counts them",
+                             watermark_column=inc.watermark, late_window_seconds=inc.late_window, window=window)
 
 
 # ------------------------------------------------------------------------------------ destinations

@@ -29,7 +29,8 @@ _SCP = re.compile(r"^[A-Za-z0-9._\-]+@[A-Za-z0-9.\-]+:[A-Za-z0-9._/\-]+$")
 def validate_remote(url: str) -> str:
     url = url.strip()
     if re.match(r"^(https|ssh)://", url):
-        if re.match(r"^[a-z]+://[^/@]*:[^/@]*@", url):
+        # any userinfo in an https URL is a credential (a bare token works as the user name); ssh keeps `git@`
+        if re.match(r"^[a-z]+://[^/@]*:[^/@]*@", url) or re.match(r"^https://[^/]*@", url):
             raise InvalidInput("put no credentials in the remote URL; use the host's credential helper or SSH keys")
         return url
     if _SCP.match(url) or url.startswith("file://") or url.startswith("/"):

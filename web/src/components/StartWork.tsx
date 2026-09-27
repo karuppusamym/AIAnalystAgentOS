@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type DefinitionVersion, type ReadinessAssessment, type Source, type WorkspaceDetail } from "../api";
+import { analysisContexts, contextSpec } from "../lib/analysisContexts";
 import { jobKindsFromAvailability, type JobKind, type JobKindId } from "../lib/jobKinds";
 import { useAction, useAsync } from "../lib/hooks";
 import { autonomyInWords } from "../lib/status";
@@ -21,7 +22,7 @@ function useReadiness(wsId: string, kind: string) {
   return useAsync<ReadinessAssessment>(() => api.assessReadiness(wsId, { job_kind: kind, assets: [], measures: [] }), [wsId, kind]);
 }
 
-interface Draft { kind?: JobKindId; objective?: string; sourceId?: string }
+interface Draft { kind?: JobKindId; objective?: string; sourceId?: string; contextId?: string }
 const draftKey = (ws: string) => `analystos.startWork.${ws}`;
 
 /** The unsent brief survives a reload or a failed start (workbench-ux §2); storage may be unavailable. */
@@ -209,9 +210,14 @@ function InvestigationForm({ kind, ws, sources, draft, update, onBack, onChooseK
   const id = useId();
   const act = useAction();
   const ready = sources.filter((s) => s.status === "ready");
+  const contexts = useAsync(() => analysisContexts(ws.id), [ws.id]);
+  const publishedContexts = (contexts.data ?? []).filter((c, i, all) => c.status === "published" &&
+    !all.slice(0, i).some((earlier) => earlier.key === c.key && earlier.status === "published"));
+  const context = publishedContexts.find((c) => c.id === draft.contextId);
+  const contextSources = context ? contextSpec(context).source_ids : [];
   const objective = draft.objective ?? "";
   const tooShort = objective.trim().length < 10;
-  const needsSource = ready.length > 1 && !draft.sourceId;
+  const needsSource = !context && ready.length > 1 && !draft.sourceId;
   const readiness = useReadiness(ws.id, kind.id);
   const refused = readiness.data?.status === "blocked" || readiness.data?.status === "unsupported";
   useEffect(() => {
@@ -220,18 +226,31 @@ function InvestigationForm({ kind, ws, sources, draft, update, onBack, onChooseK
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (tooShort || needsSource || refused) return;
-    const run = await act.run(() => api.startRun(ws.id, { objective: objective.trim(), source_ids: draft.sourceId ? [draft.sourceId] : undefined }));
+    const run = await act.run(() => api.startRun(ws.id, { objective: objective.trim(),
+      source_ids: context ? contextSources : draft.sourceId ? [draft.sourceId] : undefined,
+      analysis_context: context?.id }));
     if (run) onStarted(run.id);
   };
   const p = ws.policy ?? {};
-  const reading = draft.sourceId ? ready.filter((s) => s.id === draft.sourceId) : ready;
+  const reading = context ? sources.filter((s) => contextSources.includes(s.id)) : draft.sourceId ? ready.filter((s) => s.id === draft.sourceId) : ready;
   return (
     <form className="form" onSubmit={submit} aria-label={`Start ${kind.label.toLowerCase()}`}>
       <p className="small muted">{kind.description}</p>
       <Field label="What should the investigation find out?" htmlFor={`${id}-obj`} hint="A question or goal, at least 10 characters.">
         <textarea id={`${id}-obj`} rows={3} value={objective} onChange={(e) => update({ objective: e.target.value })} aria-invalid={tooShort} />
       </Field>
-      {ready.length > 1 && (
+      <Field label="Business context" htmlFor={`${id}-context`} hint="Optional. A published context pins a business purpose and sources; the question remains editable for this run.">
+        <select id={`${id}-context`} value={context?.id ?? ""} onChange={(e) => {
+          const picked = publishedContexts.find((c) => c.id === e.target.value);
+          update({ contextId: picked?.id, sourceId: undefined, ...(picked ? { objective: contextSpec(picked).question_template } : {}) });
+        }}>
+          <option value="">One-off investigation</option>
+          {publishedContexts.map((c) => <option key={c.id} value={c.id}>{c.title ?? c.key} · v{c.version}</option>)}
+        </select>
+      </Field>
+      {context && <p className="small muted">Purpose: {contextSpec(context).purpose}</p>}
+      {contexts.error && <p className="small warn-text">Analysis contexts could not be loaded: {contexts.error}</p>}
+      {!context && ready.length > 1 && (
         <Field label="Data" htmlFor={`${id}-src`} hint="One source per investigation in this release.">
           <select id={`${id}-src`} value={draft.sourceId ?? ""} onChange={(e) => update({ sourceId: e.target.value })}>
             <option value="">Choose a source…</option>

@@ -108,6 +108,7 @@ function ModelChanges({ wsId, role }: { wsId: string; role: string | undefined }
   };
   return (
     <Card title="Changes to the data model">
+      <p className="muted small">This workspace model maps catalog datasets and measured joins. AI can propose a version, but the compiler uses approved structure; metric expressions are checked against that structure before approval. Review the diff and evidence below before deciding.</p>
       {noModel ? <EmptyState title="No data model yet">It is built from the catalog and confirmed joins.</EmptyState> : <ErrorBox error={diff.error} onRetry={diff.reload} />}
       {!d && !diff.error && <Loading />}
       {d && (

@@ -174,3 +174,32 @@ class ExecutionIdentity(BaseModel):
     source_id: str | None = None
     run_id: str | None = None
     task_id: str | None = None
+
+
+class ApprovalSubject(BaseModel):
+    """What an approval is about: the run it belongs to (if any), where the action lands, what it touches."""
+
+    run_id: str | None = None
+    destination: str | None = None
+    affected_assets: list[str] = Field(default_factory=list)
+
+
+class ApprovalView(BaseModel):
+    """GET /api/approvals/{id}: one approval's state, read only (decisions are the approve/reject POSTs).
+    `payload_hash` is the hash the approval binds to; the proposal itself stays on the inbox list."""
+
+    id: str
+    workspace_id: str
+    kind: str
+    status: str
+    risk_tier: str
+    subject: ApprovalSubject
+    payload_hash: str
+    plan_hash: str | None = None
+    policy_version: int
+    requested_by: str
+    decided_by: str | None = None
+    reason: str | None = None
+    created_at: str | None = None
+    decided_at: str | None = None
+    expires_at: str | None = None

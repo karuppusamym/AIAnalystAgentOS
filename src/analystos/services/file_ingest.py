@@ -237,7 +237,7 @@ def ingest_file(user: User, source_id: str, spec: IngestSpec, workspace_id: str 
                 s.add(col)
             col.ordinal, col.data_type, col.nullable = i, c["type"], True
             col.is_key = c["name"] in spec.keys
-            if by_target.get(c["name"]) not in (None, c["name"]) and not col.business_name:
+            if by_target.get(c["name"]) not in (None, c["name"]) and not col.business_name and col.business_name_origin != "user":
                 col.business_name = by_target[c["name"]]
         row.status, row.last_discovered_at = "ready", utcnow()
         row.staging_schema = row.staging_schema or staging_schema or schema_name

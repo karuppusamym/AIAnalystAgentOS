@@ -97,3 +97,15 @@ def test_a_resource_bomb_is_killed_and_recorded_as_a_failed_version(nb):
                                                                   depends_on=[]), runtime=rt)
     assert spin["status"] == "failed" and "timeout" in spin["error"]
     assert spin["receipts"][0]["timed_out"] is True
+
+
+def test_the_add_cell_response_is_the_cell_as_the_notebook_shows_it(nb):
+    rt = SandboxRuntime([("FROM sales.orders", ["state", "n"], [["Closed", 60], ["Open", 40]])])
+    src = "SELECT state, COUNT(*) AS n FROM sales.orders GROUP BY state"
+    sql = notebooks.add_cell(nb["analyst"], WS, nb["id"], CellIn(cell="sql", source=src), runtime=rt)
+    md = notebooks.add_cell(nb["analyst"], WS, nb["id"], CellIn(cell="markdown", source="Notes"), runtime=rt)
+    assert (sql["cell"], sql["source"], sql["version"]) == ("sql", src, 1)
+    assert (md["cell"], md["source"]) == ("markdown", "Notes")
+    with session_scope() as s:
+        cells = notebooks.notebook_view(s, s.get(Notebook, nb["id"]))["cells"]
+    assert [sql, md] == cells
