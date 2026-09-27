@@ -57,6 +57,8 @@ JOB_KINDS: tuple[JobKind, ...] = (
             (), "editor", COMMON, ("freshness",)),
 )
 BY_KEY = {k.key: k for k in JOB_KINDS}
+MODE_FOR_JOB = {"explain": "analysis", "compare": "analysis", "monitor": "analysis",
+                "prepare": "engineering", "forecast": "ml", "predict": "ml"}
 # Work-order kinds (contracts.work.JobKind) that have no Start-work choice of their own map onto one.
 WORK_ORDER_KIND = {"diagnose": "explain", "describe": "explain", "compare": "compare", "forecast": "forecast",
                    "predict": "predict", "prepare": "prepare", "monitor": "monitor", "experiment": "predict"}
@@ -154,10 +156,12 @@ def capability_state(job: JobKind, snapshot: Any, explicit: dict[str, bool]) -> 
 def availability(session: Session, user: Any, workspace_id: str, *, snapshot: Any = None) -> list[dict[str, Any]]:
     """Every Start-work job kind for this caller in this workspace, with its reasons."""
     from analystos.capabilities import enablement, registry
-    from analystos.governance.policy import member_role, require_role, resolve_scope
+    from analystos.governance.policy import get_workspace, member_role, require_role, resolve_scope
+    from analystos.services.workspace_modes import current as current_modes
 
     require_role(session, user, workspace_id, "viewer")
     snap = snapshot or registry.current()
+    selected_modes = current_modes(get_workspace(session, workspace_id))
     explicit = enablement.overrides(session, workspace_id)
     role = "owner" if getattr(user, "is_admin", False) else (member_role(session, user, workspace_id) or "viewer")
     try:
@@ -167,6 +171,10 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
     out = []
     for job in JOB_KINDS:
         reasons: list[dict[str, str]] = []
+        mode = MODE_FOR_JOB[job.key]
+        if mode not in selected_modes:
+            reasons.append(_reason("work_mode", f"{mode} work is not selected for this workspace",
+                                   "A workspace owner can enable it in Workspace work modes."))
         if (r := executor_reason(job, session, workspace_id)) is not None:
             reasons.append(r)
         caps, cap_reasons = capability_state(job, snap, explicit)
@@ -174,12 +182,12 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
         if not role_at_least(role, job.min_role):
             reasons.append(_reason("role", f"{job.label} needs the {job.min_role} role here; you are {role}",
                                    "Ask a workspace owner for the role."))
-        if not assets:
+        if not assets and job.key != "prepare":
             reasons.append(_reason("no_data", "no selected, ready table is in your scope",
                                    "Add a source, discover it and select its tables (Data > Sources)."))
         entry = {**job.entry, **({"route": job.entry["route"].format(workspace_id=workspace_id)} if "route" in job.entry
                                  else {"route": f"/api/workspaces/{workspace_id}/work-orders"})}
-        out.append(JobKindAvailability(key=job.key, label=job.label, work_order_kind=job.work_order_kind,  # type: ignore[arg-type]
+        out.append(JobKindAvailability(key=job.key, label=job.label, mode=mode, work_order_kind=job.work_order_kind,  # type: ignore[arg-type]
                                        available=not reasons, reasons=reasons, capabilities=caps, entry=entry,
                                        readiness_checks=list(job.checks), min_role=job.min_role).model_dump(mode="json"))
     return out

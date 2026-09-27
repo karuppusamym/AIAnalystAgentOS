@@ -87,6 +87,25 @@ export interface WorkspaceDetail extends Workspace {
   members: Member[];
 }
 
+export type WorkMode = "analysis" | "engineering" | "ml";
+export interface WorkModesPlan {
+  workspace_id: string;
+  current: WorkMode[];
+  selected: WorkMode[];
+  capabilities: { capability_id: string; mode: WorkMode; enabled: boolean; available: boolean; changed: boolean }[];
+  note: string;
+}
+
+export interface JobAvailability {
+  key: "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
+  label: string;
+  mode: WorkMode;
+  available: boolean;
+  reasons: { code: string; message: string; remediation: string }[];
+  capabilities: { id: string; usable: boolean; reason?: string | null }[];
+  entry: { type: string; payload_type?: string; route?: string };
+}
+
 export interface WorkspacePolicy {
   max_rows?: number;
   query_timeout_seconds?: number;
@@ -2366,6 +2385,14 @@ export const api = {
   createWorkspace: (body: Schemas["WorkspaceIn"]) => post("/api/workspaces", { body }) as Promise<Workspace>,
   getWorkspace: (ws: string) =>
     get("/api/workspaces/{workspace_id}", { path: W(ws) }) as Promise<WorkspaceDetail>,
+  getWorkModes: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/work-modes", { path: W(ws) }) as Promise<WorkModesPlan>,
+  previewWorkModes: (ws: string, modes: WorkMode[]) =>
+    post("/api/workspaces/{workspace_id}/work-modes/preview", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
+  setWorkModes: (ws: string, modes: WorkMode[]) =>
+    put("/api/workspaces/{workspace_id}/work-modes", { path: W(ws), body: { modes } }) as Promise<WorkModesPlan>,
+  jobAvailability: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/capabilities", { path: W(ws) }) as Promise<{ workspace_id: string; digest: string; job_kinds: JobAvailability[] }>,
   workspaceInventory: (ws: string) =>
     get("/api/workspaces/{workspace_id}/inventory", { path: W(ws) }) as Promise<WorkspaceInventory>,
   updateWorkspace: (ws: string, body: Schemas["WorkspacePatch"]) =>

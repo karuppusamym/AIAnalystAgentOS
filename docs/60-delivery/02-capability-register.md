@@ -5,6 +5,23 @@ evidence. Each row gives the code path, the automated coverage, the live evidenc
 remaining limitation (spec v1 §70). Entries are appended, not rewritten; a later entry supersedes
 an earlier one for the same capability.
 
+## 2026-09-26 — P7-19 configurable work modes, first slice
+
+`services/workspace_modes.py` validates a nonempty combination of Analysis, Engineering and ML,
+previews changes to existing playbook enablement, and applies them with owner checks and audit.
+`api/routers/workspaces.py` exposes creation and later editing; generic workspace settings updates
+cannot bypass the dedicated route. `capabilities/job_kinds.py` reports the selected mode and any
+blockers. The web workspace form and owner settings card show the selection and preview; Start work
+uses the server's availability and does not send ML jobs to the analysis route. The source, role,
+certification and approval checks remain separately enforced.
+
+Evidence: `tests/unit/test_workspace_modes.py`, `test_workspace_lifecycle_map.py`,
+`test_brief_readiness.py` and `test_capability_platform.py` (33 passed together); web suite
+241 passed / 1 skipped; TypeScript and production build passed. The route binding audit test
+could not run on Windows because `workers/isolation.py` imports Unix-only `resource`; it was
+not counted as passed. No AgentSwarms source was copied. Remaining: typed guided
+ML start, agent editor, workflow authoring, real API browser journeys and live category validation.
+
 ## 2026-09-26 — P7-15 gateway hardening, partial
 
 `gateway/dialects.py` and `gateway/validator.py` enable strict PostgreSQL and T-SQL function

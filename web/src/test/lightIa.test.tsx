@@ -16,7 +16,7 @@ import { fieldText, fieldValue, setField } from "../lib/policy";
 import { autonomyInWords } from "../lib/status";
 import { firstRunSteps, nextStep } from "../pages/WorkspaceHome";
 import { canSee, CONCEPTS, SCREENS } from "../routes";
-import { CAPABILITIES, INSIGHT, mockBackend, RUN, USER, WORKSPACE, WS } from "./mockBackend";
+import { INSIGHT, mockBackend, resetMockState, RUN, USER, WORKSPACE, WS } from "./mockBackend";
 import { INSIGHT_VOID_ID } from "./mockWave1";
 
 type Handler = (method: string, path: string, body: string | null) => { status: number; body: unknown } | null;
@@ -157,6 +157,21 @@ const cap = (id: string, kind: string, extra: Partial<CapabilitySummary> = {}): 
   certification: { status: "certified" }, autonomous_ok: true, needs_approval: false, tags: [], enabled: true, ...extra,
 });
 
+it("lets an owner review and save combined workspace work modes", async () => {
+  resetMockState();
+  const f = mockFetch();
+  renderAt("/");
+  fireEvent.click(await screen.findByRole("button", { name: "Work modes" }));
+  const choice = await screen.findByRole("checkbox", { name: /ML and experiments/ });
+  fireEvent.click(choice);
+  fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save work modes" }));
+  await waitFor(() => expect(calls(f, "PUT", /\/work-modes$/)).toHaveLength(1));
+  const [, init] = calls(f, "PUT", /\/work-modes$/)[0];
+  expect(JSON.parse(String(init?.body))).toEqual({ modes: ["analysis", "engineering"] });
+  resetMockState();
+});
+
 describe("Start work job kinds (from the capability registry)", () => {
   const registry = [
     cap("playbook.investigate", "Playbook"), cap("method.rate_by_segment", "Method", { tags: ["statistical", "segment"] }),
@@ -198,7 +213,7 @@ describe("Start work job kinds (from the capability registry)", () => {
       expect(within(item).getByText(/Needs /)).toBeTruthy();
     }
     expect(calls(f, "POST", /\/analysis$/)).toEqual([]);
-    expect(calls(f, "GET", /\/api\/capabilities\?workspace_id=ws_demo$/)).toHaveLength(1);
+    expect(calls(f, "GET", /\/api\/workspaces\/ws_demo\/capabilities$/)).toHaveLength(1);
     fireEvent.click(within(kinds).getByRole("button", { name: /Explain/ }));
     const form = await within(dialog).findByRole("form", { name: "Start explain" });
     expect(within(form).getByRole("heading", { name: "Before it starts" })).toBeTruthy();
@@ -212,8 +227,10 @@ describe("Start work job kinds (from the capability registry)", () => {
   });
 
   it("Prepare data opens its panel in Work when an engine is installed (no new screen)", async () => {
-    mockFetch((method, path) => (method === "GET" && path === "/api/capabilities"
-      ? { status: 200, body: { digest: "d", capabilities: [...CAPABILITIES, cap("engine.duckdb", "Engine")].map((c) => ({ ...c, enabled: true })) } }
+    mockFetch((method, path) => (method === "GET" && path === `/api/workspaces/${WS}/capabilities`
+      ? { status: 200, body: { workspace_id: WS, digest: "d", job_kinds: [
+        { key: "prepare", label: "Prepare data", mode: "engineering", available: true, reasons: [], capabilities: [], entry: { type: "recipe" } },
+      ] } }
       : null));
     renderAt(`/w/${WS}/work`);
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));

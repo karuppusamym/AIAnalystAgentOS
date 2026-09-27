@@ -6,7 +6,7 @@
  * the only place that knows the mapping, and the one function to replace when the endpoint lands.
  * A kind that cannot run is returned disabled with its reason, so the UI never starts a pretend run.
  */
-import type { CapabilitySummary } from "../api";
+import type { CapabilitySummary, JobAvailability, WorkMode } from "../api";
 import { roleAtLeast } from "../routes";
 
 export type JobKindId = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
@@ -105,5 +105,30 @@ export function jobKindsFromCapabilities(capabilities: CapabilitySummary[], ctx:
     }
     return { id: spec.id, label: spec.label, description: spec.description, action: spec.action, enabled: reason === null, reason, uses,
       objectivePrefix: spec.objectivePrefix };
+  });
+}
+
+/** The server decides availability. A selected mode affects this menu, not data access. */
+export function jobKindsFromServer(rows: JobAvailability[], modes: WorkMode[]): JobKind[] {
+  return rows.map((row) => {
+    const id = row.key;
+    const mode = row.mode;
+    let reason = !modes.includes(mode) ? `Enable ${mode === "ml" ? "ML" : mode} in Workspace work modes first.`
+      : !row.available ? row.reasons.map((r) => r.message).join(" ") || "This work is not ready here."
+        : null;
+    // The current investigation form accepts analysis objectives only. ML needs a published spec and
+    // a typed work order; sending it to the investigation endpoint would run the wrong job.
+    if (!reason && (id === "forecast" || id === "predict")) {
+      reason = "Set up a published ML definition and typed work order first; the guided ML start form is not available yet.";
+    }
+    return { id, label: row.label, description: {
+      explain: "Investigate a question and keep verified findings.",
+      compare: "Compare groups or periods with tested findings.",
+      forecast: "Forecast from a published ML definition.",
+      predict: "Train and evaluate a model from a published ML definition.",
+      prepare: "Load data or build a checked recipe.",
+      monitor: "Watch a metric and raise an alert.",
+    }[id], action: id === "prepare" ? "prepare" : id === "monitor" ? "monitor" : "investigate",
+    enabled: reason === null, reason, uses: row.capabilities.filter((c) => c.usable).map((c) => c.id) };
   });
 }

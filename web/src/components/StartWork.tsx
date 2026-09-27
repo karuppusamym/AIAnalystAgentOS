@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Source, type WorkspaceDetail } from "../api";
-import { jobKindsFromCapabilities, type JobKind, type JobKindId } from "../lib/jobKinds";
+import { jobKindsFromServer, type JobKind, type JobKindId } from "../lib/jobKinds";
 import { useAction, useAsync } from "../lib/hooks";
 import { autonomyInWords } from "../lib/status";
 import { to } from "../routes";
@@ -10,11 +10,12 @@ import { ErrorBox, Field, KeyValue, Loading, Notice, TechnicalDetails, Value } f
 
 /** The job kinds for a workspace: the registry, the caller's role and whether any source is ready. */
 export function useJobKinds(wsId: string, ws: WorkspaceDetail | undefined, sources: Source[] | undefined) {
-  const caps = useAsync(() => api.listCapabilities({ workspace_id: wsId }), [wsId]);
-  const kinds = caps.data && ws && sources
-    ? jobKindsFromCapabilities(caps.data.capabilities, { readySources: sources.filter((s) => s.status === "ready").length, role: ws.role })
+  const available = useAsync(() => api.jobAvailability(wsId), [wsId]);
+  const modes = useAsync(() => api.getWorkModes(wsId), [wsId]);
+  const kinds = available.data && modes.data && ws && sources
+    ? jobKindsFromServer(available.data.job_kinds, modes.data.current)
     : undefined;
-  return { kinds, error: caps.error, reload: caps.reload };
+  return { kinds, error: available.error ?? modes.error, reload: async () => { await available.reload(); await modes.reload(); } };
 }
 
 interface Draft { kind?: JobKindId; objective?: string; sourceId?: string }
