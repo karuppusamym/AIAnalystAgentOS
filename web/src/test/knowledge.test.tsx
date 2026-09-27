@@ -237,6 +237,8 @@ describe("Knowledge studio: graph, metrics, import and export", () => {
   it("lists governed and inferred edges where no canvas is available", async () => {
     mockFetch();
     const { container } = renderAt(`/w/${WS}/knowledge/catalog?tab=graph`);
+    // Definitions open on "Data model"; the graph is its own section
+    fireEvent.click(await screen.findByRole("button", { name: /Semantic graph/ }));
     const table = await screen.findByRole("table", { name: "Semantic graph edges" });
     const rows = within(table).getAllByRole("row").slice(1);
     const governed = rows.filter((r) => r.getAttribute("data-governed") === "true").length;
