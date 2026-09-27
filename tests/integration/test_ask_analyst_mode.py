@@ -238,6 +238,13 @@ def test_analyst_mode_over_http_plans_runs_checks_synthesizes_reruns_and_explain
     assert numbers_bound(a["synthesis"]["text"], values, labels=labels, steps=[1, 2, 3])["ok"]
     assert {c["code"] for c in by_priority["checks"]} >= {"empty_result", "truncation", "grouping", "single_row_breakdown"}
     assert a["synthesis"]["origin"] == "template" and a["synthesis"]["citations"] == [1, 2, 3]
+
+    # the answer was recorded as three Data Thread steps; their stored results stay out of the Outputs list
+    steps = api.get(f"/api/workspaces/{ws}/threads/ask_thread/{thread['id']}", headers=admin).json()["steps"]
+    assert len(steps) == 3 and all(s["kind"] == "query" for s in steps)
+    listed = api.get(f"/api/workspaces/{ws}/artifacts", headers=admin).json()
+    assert not any(x["type"] == "step_result" for x in listed)
+    assert len(api.get(f"/api/workspaces/{ws}/artifacts", headers=admin, params={"type": "step_result"}).json()) >= 3
     assert a["plan"]["origin"] == "rules" and len(a["follow_ups"]) <= 3
     assert turn["result"]["query_id"] == a["steps"][0]["result"]["query_id"]
 
