@@ -228,7 +228,7 @@ function OutputRow({ item: i, run }: { item: Item; run?: Run }) {
     const cause = voidCause(f.verification_state);
     return (
       <>
-        <span className="list-button-head"><span className="clamp-1"><strong>{f.code}</strong> {f.title}</span><span className="muted small">finding</span></span>
+        <span className="list-button-head"><span className="clamp-2"><strong>{f.code}</strong> {f.title}</span><span className="muted small">finding</span></span>
         <span className="chip-row">
           {f.verification_state ? <VerificationBadge state={f.verification_state} showCause={false} />
             : <StatusBadge status={f.verified ? "verified" : f.status} label={f.verified ? "verified" : f.status} />}
