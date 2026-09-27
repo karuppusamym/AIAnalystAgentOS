@@ -131,6 +131,41 @@
         "title": "AnalysisWork",
         "type": "object"
       },
+      "ApprovalIn": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          }
+        },
+        "title": "ApprovalIn",
+        "type": "object"
+      },
+      "ArtifactDecision": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ArtifactDecision",
+        "type": "object"
+      },
       "AskIn": {
         "properties": {
           "parameters": {
@@ -604,6 +639,38 @@
         "title": "BackendStateIn",
         "type": "object"
       },
+      "BackfillRange": {
+        "additionalProperties": false,
+        "description": "The watermark range a backfill or replay covers; `start` alone bounds the initial load.",
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          }
+        },
+        "title": "BackfillRange",
+        "type": "object"
+      },
       "Body_crawl_dbt_manifest_api_workspaces__workspace_id__knowledge_crawl_dbt_manifest_post": {
         "properties": {
           "file": {
@@ -963,6 +1030,25 @@
         "title": "ClientIn",
         "type": "object"
       },
+      "Column": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "Column",
+        "type": "object"
+      },
       "ColumnMapping": {
         "properties": {
           "source": {
@@ -1137,6 +1223,45 @@
         "title": "CrawlIn",
         "type": "object"
       },
+      "DatasetRef": {
+        "additionalProperties": false,
+        "description": "The table an ML spec learns from, read through the gateway into an immutable snapshot. `version`\npins that snapshot (its content hash): data that changed since refuses the experiment.",
+        "properties": {
+          "asset": {
+            "pattern": "^[A-Za-z0-9_$-]+\\.[A-Za-z0-9_$-]+$",
+            "title": "Asset",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "asset"
+        ],
+        "title": "DatasetRef",
+        "type": "object"
+      },
       "DefinitionDraftIn": {
         "additionalProperties": false,
         "properties": {
@@ -1301,6 +1426,31 @@
         "title": "Derivation",
         "type": "object"
       },
+      "DestinationIn": {
+        "properties": {
+          "engine": {
+            "default": "postgres:analytics",
+            "title": "Engine",
+            "type": "string"
+          },
+          "schema": {
+            "title": "Schema",
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tables",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema"
+        ],
+        "title": "DestinationIn",
+        "type": "object"
+      },
       "DiscoverIn": {
         "properties": {
           "assets": {
@@ -1383,6 +1533,28 @@
         "title": "DocumentSaveIn",
         "type": "object"
       },
+      "DryRunIn": {
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "sql",
+                  "duckdb"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          }
+        },
+        "title": "DryRunIn",
+        "type": "object"
+      },
       "EnableIn": {
         "properties": {
           "enabled": {
@@ -1423,6 +1595,25 @@
           }
         },
         "title": "EnabledPatch",
+        "type": "object"
+      },
+      "ErrorCosts": {
+        "additionalProperties": false,
+        "properties": {
+          "false_negative": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "False Negative",
+            "type": "number"
+          },
+          "false_positive": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "False Positive",
+            "type": "number"
+          }
+        },
+        "title": "ErrorCosts",
         "type": "object"
       },
       "EvidenceRef": {
@@ -1468,13 +1659,73 @@
         "title": "EvidenceRef",
         "type": "object"
       },
-      "ExperimentSpec": {
-        "additionalProperties": true,
-        "description": "Placeholder for P5 experiment design. Not executable yet.",
+      "ExperimentIn": {
+        "additionalProperties": false,
         "properties": {
+          "definition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Definition"
+          },
+          "max_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seconds"
+          },
+          "max_trials": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Trials"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "title": "ExperimentIn",
+        "type": "object"
+      },
+      "ExperimentSpec": {
+        "additionalProperties": false,
+        "description": "One bounded experiment over a *published* `ml_spec` definition (P5-01/P5-02): which version, an\noptional hypothesis, and budget overrides that can only tighten the definition's own.",
+        "properties": {
+          "definition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Definition"
+          },
           "hypothesis": {
             "anyOf": [
               {
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -1482,6 +1733,32 @@
               }
             ],
             "title": "Hypothesis"
+          },
+          "max_seconds": {
+            "anyOf": [
+              {
+                "maximum": 3600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seconds"
+          },
+          "max_trials": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Trials"
           },
           "type": {
             "const": "experiment",
@@ -1491,6 +1768,61 @@
           }
         },
         "title": "ExperimentSpec",
+        "type": "object"
+      },
+      "FeatureSpec": {
+        "additionalProperties": false,
+        "description": "One candidate feature and when its value is known relative to the prediction cutoff.",
+        "properties": {
+          "available_at": {
+            "default": "cutoff",
+            "enum": [
+              "cutoff",
+              "known_in_advance",
+              "after_outcome"
+            ],
+            "title": "Available At",
+            "type": "string"
+          },
+          "column": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Column",
+            "type": "string"
+          },
+          "timestamp_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp Column"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "numeric",
+                  "categorical",
+                  "boolean",
+                  "datetime"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "column"
+        ],
+        "title": "FeatureSpec",
         "type": "object"
       },
       "FeedbackIn": {
@@ -1731,6 +2063,80 @@
         "title": "HypothesisPatch",
         "type": "object"
       },
+      "Incremental": {
+        "additionalProperties": false,
+        "description": "Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a\nstaged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.\n\nA window is `[last watermark - late_window, high watermark]`, the high watermark measured once before\nreading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key\nwins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`\nremoves keys the source no longer has on a scheduled full reconcile, `soft` stamps them in\n`aos_deleted_at`, `ignore` keeps them.",
+        "properties": {
+          "backfill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BackfillRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletes": {
+            "default": "reconcile",
+            "enum": [
+              "reconcile",
+              "soft",
+              "ignore"
+            ],
+            "title": "Deletes",
+            "type": "string"
+          },
+          "key": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Key",
+            "type": "array"
+          },
+          "late_window": {
+            "default": 0,
+            "title": "Late Window",
+            "type": "integer"
+          },
+          "max_delete_pct": {
+            "default": 50.0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Delete Pct",
+            "type": "number"
+          },
+          "reconcile_every_hours": {
+            "default": 168,
+            "maximum": 8784.0,
+            "minimum": 1.0,
+            "title": "Reconcile Every Hours",
+            "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "watermark": {
+            "title": "Watermark",
+            "type": "string"
+          }
+        },
+        "required": [
+          "watermark",
+          "key"
+        ],
+        "title": "Incremental",
+        "type": "object"
+      },
       "IngestSpec": {
         "properties": {
           "delimiter": {
@@ -1906,6 +2312,57 @@
         "title": "InvokeIn",
         "type": "object"
       },
+      "JoinExpectation": {
+        "additionalProperties": false,
+        "description": "What a join may do to the data: the declared cardinality (equal to the recipe's), the share of left\nrows allowed to find no match, and the row multiplication allowed (1.0 = none).",
+        "properties": {
+          "expected_cardinality": {
+            "enum": [
+              "one_to_one",
+              "many_to_one",
+              "one_to_many",
+              "many_to_many"
+            ],
+            "title": "Expected Cardinality",
+            "type": "string"
+          },
+          "max_row_multiplication": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Row Multiplication"
+          },
+          "max_unmatched_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Unmatched Pct"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "expected_cardinality"
+        ],
+        "title": "JoinExpectation",
+        "type": "object"
+      },
       "Login": {
         "properties": {
           "email": {
@@ -1925,12 +2382,83 @@
         "type": "object"
       },
       "MLSpec": {
-        "additionalProperties": true,
-        "description": "Placeholder for P5-01 (ADR-0024). Envelope-level fields only; not executable yet.",
+        "additionalProperties": false,
+        "description": "P5-01 (ADR-0024, workspace spec §6): what a governed model learns from and how it is judged. It pins\nthe dataset version, entity/group keys, target, feature availability, prediction cutoff, label\nhorizon, split strategy, preprocessing, allowed estimators, search budget, objective metric, slice\nguardrails, seed and (optionally) the runtime environment digest.\n\nEnvelope use stays light (a work order may name only `task`); `executable_problems` lists what a spec\nstill lacks before an experiment may start. A model may *propose* a spec; this contract and the\nreadiness checks decide.",
         "properties": {
+          "contamination": {
+            "default": 0.02,
+            "exclusiveMaximum": 0.5,
+            "exclusiveMinimum": 0.0,
+            "title": "Contamination",
+            "type": "number"
+          },
+          "cutoff_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff Column"
+          },
+          "dataset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DatasetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entity_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Entity Keys",
+            "type": "array"
+          },
+          "error_costs": {
+            "$ref": "#/components/schemas/ErrorCosts"
+          },
+          "estimators": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Estimators",
+            "type": "array"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureSpec"
+            },
+            "maxItems": 500,
+            "title": "Features",
+            "type": "array"
+          },
+          "group_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Group Keys",
+            "type": "array"
+          },
+          "guardrails": {
+            "items": {
+              "$ref": "#/components/schemas/SliceGuardrail"
+            },
+            "maxItems": 10,
+            "title": "Guardrails",
+            "type": "array"
+          },
           "horizon": {
             "anyOf": [
               {
+                "maximum": 366.0,
                 "minimum": 1.0,
                 "type": "integer"
               },
@@ -1939,6 +2467,123 @@
               }
             ],
             "title": "Horizon"
+          },
+          "k_range": {
+            "default": [
+              2,
+              8
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "K Range",
+            "type": "array"
+          },
+          "label_horizon": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Horizon"
+          },
+          "min_improvement": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Min Improvement",
+            "type": "number"
+          },
+          "objective_metric": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective Metric"
+          },
+          "outcome_time_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Time Column"
+          },
+          "positive_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Positive Class"
+          },
+          "prediction_cutoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prediction Cutoff"
+          },
+          "preprocessing": {
+            "$ref": "#/components/schemas/Preprocessing"
+          },
+          "runtime_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Digest"
+          },
+          "search": {
+            "$ref": "#/components/schemas/SearchBudget"
+          },
+          "season_length": {
+            "anyOf": [
+              {
+                "maximum": 366.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season Length"
           },
           "seed": {
             "anyOf": [
@@ -1951,6 +2596,27 @@
             ],
             "title": "Seed"
           },
+          "split": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SplitSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
           "target_metric": {
             "anyOf": [
               {
@@ -1961,6 +2627,18 @@
               }
             ],
             "title": "Target Metric"
+          },
+          "target_unit": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Unit"
           },
           "task": {
             "enum": [
@@ -1995,6 +2673,23 @@
           "task"
         ],
         "title": "MLSpec",
+        "type": "object"
+      },
+      "MaterializeIn": {
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          }
+        },
+        "title": "MaterializeIn",
         "type": "object"
       },
       "MemberIn": {
@@ -2186,6 +2881,81 @@
           "expression"
         ],
         "title": "MetricProposalIn",
+        "type": "object"
+      },
+      "ModelCallbackRequest": {
+        "additionalProperties": false,
+        "description": "A worker's narrow model call, routed by the control plane under the token's purposes and budget.",
+        "properties": {
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 8192.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "messages": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "purpose",
+          "messages"
+        ],
+        "title": "ModelCallbackRequest",
+        "type": "object"
+      },
+      "ModelCallbackResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "calls_left": {
+            "title": "Calls Left",
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "purpose",
+          "calls_left"
+        ],
+        "title": "ModelCallbackResponse",
         "type": "object"
       },
       "ModelDecision": {
@@ -2434,21 +3204,344 @@
         "title": "PinIn",
         "type": "object"
       },
-      "PipelineSpec": {
-        "additionalProperties": true,
-        "description": "Placeholder for P6-04 (recipe IR). Envelope-level fields only; not executable yet.",
+      "PipelineBudgets": {
+        "additionalProperties": false,
         "properties": {
-          "output_grain": {
+          "max_queries": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Queries"
+          },
+          "max_rows": {
+            "anyOf": [
+              {
+                "maximum": 5000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rows"
+          },
+          "max_wall_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Wall Seconds"
+          }
+        },
+        "title": "PipelineBudgets",
+        "type": "object"
+      },
+      "PipelineDestination": {
+        "additionalProperties": false,
+        "description": "Where the managed writer materializes the output: an allowlisted schema.table (P6-03).",
+        "properties": {
+          "engine": {
+            "const": "postgres:analytics",
+            "default": "postgres:analytics",
+            "title": "Engine",
+            "type": "string"
+          },
+          "schema": {
+            "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+            "title": "Schema",
+            "type": "string"
+          },
+          "table": {
+            "pattern": "^[a-z_][a-z0-9_]{0,50}$",
+            "title": "Table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "table"
+        ],
+        "title": "PipelineDestination",
+        "type": "object"
+      },
+      "PipelineFreshness": {
+        "additionalProperties": false,
+        "properties": {
+          "max_age_hours": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 8784.0,
+            "title": "Max Age Hours",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_age_hours"
+        ],
+        "title": "PipelineFreshness",
+        "type": "object"
+      },
+      "PipelineIn": {
+        "properties": {
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "PipelineIn",
+        "type": "object"
+      },
+      "PipelineInput": {
+        "additionalProperties": false,
+        "description": "An input version: the asset, optionally its pinned content fingerprint (a changed input refuses the\nrun) and how old its last staging may be.",
+        "properties": {
+          "asset": {
+            "pattern": "^[a-z_][a-z0-9_]*\\.[a-z_][a-z0-9_]*$",
+            "title": "Asset",
+            "type": "string"
+          },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fingerprint"
+          },
+          "max_age_hours": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Age Hours"
+          }
+        },
+        "required": [
+          "asset"
+        ],
+        "title": "PipelineInput",
+        "type": "object"
+      },
+      "PipelineOutput": {
+        "additionalProperties": false,
+        "description": "The output contract: grain, keys and schema must equal the recipe output's, so a recipe change that\nalters them fails the pipeline instead of silently changing what downstream reads.",
+        "properties": {
+          "grain": {
             "items": {
               "type": "string"
             },
-            "title": "Output Grain",
+            "title": "Grain",
             "type": "array"
           },
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
           "recipe": {
-            "additionalProperties": true,
-            "title": "Recipe",
-            "type": "object"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe"
+          },
+          "schema": {
+            "items": {
+              "$ref": "#/components/schemas/Column"
+            },
+            "minItems": 1,
+            "title": "Schema",
+            "type": "array"
+          }
+        },
+        "required": [
+          "output",
+          "schema"
+        ],
+        "title": "PipelineOutput",
+        "type": "object"
+      },
+      "PipelineRunIn": {
+        "properties": {
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "sql",
+                  "duckdb"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "mode": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "full",
+              "reconcile",
+              "replay",
+              "backfill"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          }
+        },
+        "title": "PipelineRunIn",
+        "type": "object"
+      },
+      "PipelineSpec": {
+        "additionalProperties": false,
+        "description": "The envelope around one or more published recipes (P6-01, workspace spec §5): input versions, the\noutput grain, schema and keys, expected join cardinality, freshness, reconciliation checks, budgets,\nthe incremental block and an optional managed destination. Validated against the recipes it names\n(`pipelines/spec.py`); the recipe IR validator and compiler decide what runs.",
+        "properties": {
+          "budgets": {
+            "$ref": "#/components/schemas/PipelineBudgets"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationCheck"
+            },
+            "maxItems": 20,
+            "title": "Checks",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineDestination"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineFreshness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "incremental": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Incremental"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineInput"
+            },
+            "maxItems": 50,
+            "title": "Inputs",
+            "type": "array"
+          },
+          "joins": {
+            "items": {
+              "$ref": "#/components/schemas/JoinExpectation"
+            },
+            "maxItems": 20,
+            "title": "Joins",
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,55}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "output": {
+            "$ref": "#/components/schemas/PipelineOutput"
+          },
+          "recipes": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeRef"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Recipes",
+            "type": "array"
           },
           "type": {
             "const": "pipeline",
@@ -2457,7 +3550,51 @@
             "type": "string"
           }
         },
+        "required": [
+          "name",
+          "recipes",
+          "output"
+        ],
         "title": "PipelineSpec",
+        "type": "object"
+      },
+      "Preprocessing": {
+        "additionalProperties": false,
+        "description": "Fitted on training folds only and carried unchanged into validation, holdout and scoring.",
+        "properties": {
+          "categorical_impute": {
+            "default": "constant",
+            "enum": [
+              "most_frequent",
+              "constant"
+            ],
+            "title": "Categorical Impute",
+            "type": "string"
+          },
+          "max_categories": {
+            "default": 30,
+            "maximum": 500.0,
+            "minimum": 2.0,
+            "title": "Max Categories",
+            "type": "integer"
+          },
+          "numeric_impute": {
+            "default": "median",
+            "enum": [
+              "median",
+              "mean",
+              "zero"
+            ],
+            "title": "Numeric Impute",
+            "type": "string"
+          },
+          "scale": {
+            "default": true,
+            "title": "Scale",
+            "type": "boolean"
+          }
+        },
+        "title": "Preprocessing",
         "type": "object"
       },
       "PresetIn": {
@@ -2540,6 +3677,112 @@
           }
         },
         "title": "PromoteIn",
+        "type": "object"
+      },
+      "ProposalIn": {
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "estimators": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimators"
+          },
+          "features": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features"
+          },
+          "horizon": {
+            "anyOf": [
+              {
+                "maximum": 366.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Horizon"
+          },
+          "objective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "enum": [
+                  "classify",
+                  "regress",
+                  "forecast",
+                  "cluster",
+                  "anomaly"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          },
+          "time_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Column"
+          }
+        },
+        "required": [
+          "asset"
+        ],
+        "title": "ProposalIn",
         "type": "object"
       },
       "PushIn": {
@@ -2686,6 +3929,34 @@
         "title": "RecipeIn",
         "type": "object"
       },
+      "RecipeRef": {
+        "additionalProperties": false,
+        "description": "A recipe step of a pipeline: its name, and a version to pin (None = the published version at run time).",
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,55}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "RecipeRef",
+        "type": "object"
+      },
       "RecipeRunIn": {
         "properties": {
           "engine": {
@@ -2717,9 +3988,164 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "refresh": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "full",
+              "reconcile",
+              "replay",
+              "backfill"
+            ],
+            "title": "Refresh",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
           }
         },
         "title": "RecipeRunIn",
+        "type": "object"
+      },
+      "ReconciliationCheck": {
+        "additionalProperties": false,
+        "description": "Aggregate reconciliation: `func(input_column)` over a recipe node against `func(output_column)` over\nthe output, within `tolerance_pct` (a business measure must not multiply after a join).",
+        "properties": {
+          "func": {
+            "default": "sum",
+            "enum": [
+              "sum",
+              "count"
+            ],
+            "title": "Func",
+            "type": "string"
+          },
+          "input_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Column"
+          },
+          "input_node": {
+            "title": "Input Node",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,55}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "output_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Column"
+          },
+          "tolerance_pct": {
+            "default": 0.0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Tolerance Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "input_node"
+        ],
+        "title": "ReconciliationCheck",
+        "type": "object"
+      },
+      "RefreshIn": {
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "full",
+              "reconcile",
+              "replay",
+              "backfill"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          }
+        },
+        "required": [
+          "asset",
+          "mode"
+        ],
+        "title": "RefreshIn",
         "type": "object"
       },
       "RegisteredHypothesisPatch": {
@@ -3044,6 +4470,57 @@
         "title": "SchedulePatch",
         "type": "object"
       },
+      "ScoringIn": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Definition"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "title": "ScoringIn",
+        "type": "object"
+      },
+      "SearchBudget": {
+        "additionalProperties": false,
+        "description": "Requested caps; the platform clamps each to its hard ceiling (settings ml_max_*).",
+        "properties": {
+          "max_rows": {
+            "default": 100000,
+            "maximum": 5000000.0,
+            "minimum": 50.0,
+            "title": "Max Rows",
+            "type": "integer"
+          },
+          "max_seconds": {
+            "default": 300,
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Max Seconds",
+            "type": "integer"
+          },
+          "max_trials": {
+            "default": 12,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Max Trials",
+            "type": "integer"
+          }
+        },
+        "title": "SearchBudget",
+        "type": "object"
+      },
       "SearchIn": {
         "properties": {
           "limit": {
@@ -3081,6 +4558,34 @@
           "assets"
         ],
         "title": "Selection",
+        "type": "object"
+      },
+      "SemanticDecision": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "SemanticDecision",
         "type": "object"
       },
       "ServerIn": {
@@ -3141,6 +4646,33 @@
         "title": "SettingsPatch",
         "type": "object"
       },
+      "SliceGuardrail": {
+        "additionalProperties": false,
+        "description": "Within every slice of `column` with at least `min_rows` holdout rows, the candidate may be worse than\nthe baseline by at most `max_degradation` (objective metric units); otherwise it is not promotable.",
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "max_degradation": {
+            "default": 0.05,
+            "minimum": 0.0,
+            "title": "Max Degradation",
+            "type": "number"
+          },
+          "min_rows": {
+            "default": 30,
+            "minimum": 5.0,
+            "title": "Min Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "column"
+        ],
+        "title": "SliceGuardrail",
+        "type": "object"
+      },
       "SourceIn": {
         "properties": {
           "config": {
@@ -3174,6 +4706,59 @@
           "name"
         ],
         "title": "SourceIn",
+        "type": "object"
+      },
+      "SplitSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "embargo_periods": {
+            "default": 0,
+            "maximum": 365.0,
+            "minimum": 0.0,
+            "title": "Embargo Periods",
+            "type": "integer"
+          },
+          "holdout_fraction": {
+            "default": 0.2,
+            "maximum": 0.5,
+            "minimum": 0.05,
+            "title": "Holdout Fraction",
+            "type": "number"
+          },
+          "independence_justification": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Independence Justification"
+          },
+          "strategy": {
+            "enum": [
+              "chronological",
+              "group",
+              "group_chronological",
+              "random"
+            ],
+            "title": "Strategy",
+            "type": "string"
+          },
+          "validation_folds": {
+            "default": 3,
+            "maximum": 10.0,
+            "minimum": 2.0,
+            "title": "Validation Folds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "strategy"
+        ],
+        "title": "SplitSpec",
         "type": "object"
       },
       "SqlIn": {
@@ -3824,51 +5409,6 @@
           }
         },
         "title": "WorkspacePatch",
-        "type": "object"
-      },
-      "analystos__api__routers__artifacts__Decision": {
-        "properties": {
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "title": "Decision",
-        "type": "object"
-      },
-      "analystos__api__routers__semantic__Decision": {
-        "properties": {
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Version"
-          }
-        },
-        "title": "Decision",
         "type": "object"
       }
     }
@@ -5843,7 +7383,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__artifacts__Decision"
+                    "$ref": "#/components/schemas/ArtifactDecision"
                   },
                   {
                     "type": "null"
@@ -5932,7 +7472,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__artifacts__Decision"
+                    "$ref": "#/components/schemas/ArtifactDecision"
                   },
                   {
                     "type": "null"
@@ -6093,7 +7633,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__artifacts__Decision"
+                    "$ref": "#/components/schemas/ArtifactDecision"
                   },
                   {
                     "type": "null"
@@ -9973,6 +11513,209 @@
         "summary": "Patch Verified Query",
         "tags": [
           "registries"
+        ]
+      }
+    },
+    "/api/worker/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "read_artifact_api_worker_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Artifact",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/model": {
+      "post": {
+        "description": "The narrow model callback: only a purpose the token names, at most `max_model_calls` per token, through\nthe control plane's router (its ladders, policy, spend caps and usage records). Workers hold no provider key.",
+        "operationId": "model_callback_api_worker_model_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCallbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCallbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Model Callback",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/tasks/{task_id}/outputs/{name}": {
+      "put": {
+        "operationId": "write_output_api_worker_tasks__task_id__outputs__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-artifact-kind",
+            "required": true,
+            "schema": {
+              "title": "X-Artifact-Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-content-sha256",
+            "required": true,
+            "schema": {
+              "title": "X-Content-Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Write Output Api Worker Tasks  Task Id  Outputs  Name  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Output",
+        "tags": [
+          "worker"
         ]
       }
     },
@@ -16916,6 +18659,176 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/materializations": {
+      "get": {
+        "operationId": "list_materializations_api_workspaces__workspace_id__materializations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "table",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Table"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Materializations",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/materializations/{materialization_id}/rollback": {
+      "post": {
+        "description": "Owner only: re-point the destination at the version this one replaced.",
+        "operationId": "rollback_api_workspaces__workspace_id__materializations__materialization_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/mcp/capabilities": {
       "get": {
         "operationId": "workspace_capabilities_api_workspaces__workspace_id__mcp_capabilities_get",
@@ -17757,6 +19670,1108 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/ml/experiments": {
+      "get": {
+        "operationId": "list_experiments_api_workspaces__workspace_id__ml_experiments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "definition",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Definition"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Experiments",
+        "tags": [
+          "ml"
+        ]
+      },
+      "post": {
+        "description": "Readiness and leakage checks, split manifest, baseline + bounded search, one holdout read, sealed\nevaluation, package, model card and verification record. A refusal is a 422 naming the experiment.",
+        "operationId": "start_experiment_api_workspaces__workspace_id__ml_experiments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExperimentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Experiment",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}": {
+      "get": {
+        "operationId": "get_experiment_api_workspaces__workspace_id__ml_experiments__experiment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Experiment",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}/mlflow": {
+      "get": {
+        "description": "The experiment as an MLflow file store (`mlruns/`), zipped.",
+        "operationId": "export_mlflow_api_workspaces__workspace_id__ml_experiments__experiment_id__mlflow_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Mlflow",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/experiments/{experiment_id}/records/{record}": {
+      "get": {
+        "description": "`record`: ml_spec | ml_split_manifest | ml_trials | ml_model | ml_evaluation | ml_model_card.",
+        "operationId": "experiment_record_api_workspaces__workspace_id__ml_experiments__experiment_id__records__record__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record",
+            "required": true,
+            "schema": {
+              "title": "Record",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Experiment Record",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/model-names/{name}/rollback": {
+      "post": {
+        "operationId": "rollback_api_workspaces__workspace_id__ml_model_names__name__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/models": {
+      "get": {
+        "operationId": "list_models_api_workspaces__workspace_id__ml_models_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/models/{version_id}/promote": {
+      "post": {
+        "description": "Without approval_id: request the hash-bound `ml.promote` approval. With it (approved by an approver):\nmake the version the champion; the replaced champion is kept as the rollback version.",
+        "operationId": "promote_api_workspaces__workspace_id__ml_models__version_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/proposals": {
+      "post": {
+        "description": "A rules-first MLSpec proposal from the catalog (no model call, nothing stored or trained).",
+        "operationId": "propose_api_workspaces__workspace_id__ml_proposals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Propose",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/scoring": {
+      "get": {
+        "operationId": "list_scoring_api_workspaces__workspace_id__ml_scoring_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Scoring",
+        "tags": [
+          "ml"
+        ]
+      },
+      "post": {
+        "description": "Plan an approved batch scoring of a published, pinned `ml_scoring` definition: champion and feature\nparity checks, input snapshot, `ml.score` approval (or `duplicate` when this input was already scored).",
+        "operationId": "plan_scoring_api_workspaces__workspace_id__ml_scoring_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoringIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Scoring",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/scoring/{scoring_id}": {
+      "get": {
+        "operationId": "get_scoring_api_workspaces__workspace_id__ml_scoring__scoring_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scoring_id",
+            "required": true,
+            "schema": {
+              "title": "Scoring Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Scoring",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/ml/scoring/{scoring_id}/execute": {
+      "post": {
+        "operationId": "execute_scoring_api_workspaces__workspace_id__ml_scoring__scoring_id__execute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scoring_id",
+            "required": true,
+            "schema": {
+              "title": "Scoring Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute Scoring",
+        "tags": [
+          "ml"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/monitors": {
       "get": {
         "operationId": "list_monitors_api_workspaces__workspace_id__monitors_get",
@@ -18592,6 +21607,848 @@
         "summary": "Refresh Pin",
         "tags": [
           "steps"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipeline-runs": {
+      "get": {
+        "operationId": "list_runs_api_workspaces__workspace_id__pipeline_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pipeline",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pipeline"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipeline-runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_workspaces__workspace_id__pipeline_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipeline-runs/{run_id}/materialize": {
+      "post": {
+        "description": "Write the dry run's approved candidate through the managed writer (verified immediately before the\nwrite). Re-posting after a failure resumes from the checkpoint under the same approval.",
+        "operationId": "materialize_api_workspaces__workspace_id__pipeline_runs__run_id__materialize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterializeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Materialize",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines": {
+      "get": {
+        "operationId": "list_pipelines_api_workspaces__workspace_id__pipelines_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pipelines",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "post": {
+        "operationId": "save_api_workspaces__workspace_id__pipelines_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines/validate": {
+      "post": {
+        "description": "The PipelineSpec checked against its recipes (output contract, joins, reconciliations, incremental\nrules, destination); nothing is stored.",
+        "operationId": "validate_api_workspaces__workspace_id__pipelines_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines/{pipeline_id}": {
+      "get": {
+        "operationId": "get_pipeline_api_workspaces__workspace_id__pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pipeline",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines/{pipeline_id}/dry-run": {
+      "post": {
+        "description": "SQL, manifest, checks and the reconciled virtual output; requests the materialize approval when the\npipeline names a destination and every check passed (status `awaiting_approval`).",
+        "operationId": "dry_run_api_workspaces__workspace_id__pipelines__pipeline_id__dry_run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dry Run",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines/{pipeline_id}/publish": {
+      "post": {
+        "operationId": "publish_api_workspaces__workspace_id__pipelines__pipeline_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish",
+        "tags": [
+          "pipelines"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/pipelines/{pipeline_id}/runs": {
+      "post": {
+        "description": "Run the recipes into the managed recipe-output source (incremental by watermark when declared).",
+        "operationId": "run_api_workspaces__workspace_id__pipelines__pipeline_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pipeline_id",
+            "required": true,
+            "schema": {
+              "title": "Pipeline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run",
+        "tags": [
+          "pipelines"
         ]
       }
     },
@@ -21430,7 +25287,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__semantic__Decision"
+                    "$ref": "#/components/schemas/SemanticDecision"
                   },
                   {
                     "type": "null"
@@ -21528,7 +25385,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__semantic__Decision"
+                    "$ref": "#/components/schemas/SemanticDecision"
                   },
                   {
                     "type": "null"
@@ -21724,7 +25581,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__semantic__Decision"
+                    "$ref": "#/components/schemas/SemanticDecision"
                   },
                   {
                     "type": "null"
@@ -22410,7 +26267,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__semantic__Decision"
+                    "$ref": "#/components/schemas/SemanticDecision"
                   },
                   {
                     "type": "null"
@@ -22590,7 +26447,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/analystos__api__routers__semantic__Decision"
+                    "$ref": "#/components/schemas/SemanticDecision"
                   },
                   {
                     "type": "null"
@@ -23130,6 +26987,98 @@
         "summary": "Ingest",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/sources/{source_id}/refresh": {
+      "post": {
+        "description": "P6-02: full reload, delete reconcile, or replay/backfill of a watermark range for one incremental table.",
+        "operationId": "refresh_api_workspaces__workspace_id__sources__source_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "pipelines"
         ]
       }
     },
@@ -24695,6 +28644,159 @@
         "summary": "Start Work Order",
         "tags": [
           "work-orders"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/writer-destinations": {
+      "get": {
+        "operationId": "list_destinations_api_workspaces__workspace_id__writer_destinations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Destinations",
+        "tags": [
+          "pipelines"
+        ]
+      },
+      "post": {
+        "description": "Owner only: allowlist a destination schema (and optionally its tables) for the managed writer.",
+        "operationId": "designate_api_workspaces__workspace_id__writer_destinations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Designate",
+        "tags": [
+          "pipelines"
         ]
       }
     }

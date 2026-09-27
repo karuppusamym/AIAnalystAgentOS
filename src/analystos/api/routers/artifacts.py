@@ -27,7 +27,7 @@ from analystos.workflows.orchestrator import signal_run
 router = APIRouter(prefix="/api", tags=["artifacts"])
 
 
-class Decision(BaseModel):
+class ArtifactDecision(BaseModel):
     reason: str | None = None
 
 
@@ -119,12 +119,12 @@ def _decide(approval_id: str, user: User, session: Session, approve: bool, reaso
 
 
 @router.post("/approvals/{approval_id}/approve")
-def approve(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def approve(approval_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, True, body.reason if body else None)
 
 
 @router.post("/approvals/{approval_id}/reject")
-def reject(approval_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def reject(approval_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return _decide(approval_id, user, session, False, body.reason if body else None)
 
 
@@ -144,7 +144,7 @@ def publish_artifact(artifact_id: str, user: User = Depends(current_user), sessi
 
 
 @router.post("/artifacts/{artifact_id}/approve")
-def approve_artifact(artifact_id: str, body: Decision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def approve_artifact(artifact_id: str, body: ArtifactDecision | None = None, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     art = load_in_workspace(session, Artifact, artifact_id, user=user, label="artifact")
     return _decide(_pending_for_artifact(session, art).id, user, session, True, body.reason if body else None)
 

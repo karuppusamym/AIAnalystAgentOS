@@ -27,7 +27,7 @@ class DryRunIn(BaseModel):
     engine: Literal["auto", "sql", "duckdb"] | None = None
 
 
-class RunIn(BaseModel):
+class PipelineRunIn(BaseModel):
     mode: Literal["auto", "full", "reconcile", "replay", "backfill"] = "auto"
     since: datetime | float | None = None  # replay / backfill: the watermark range
     until: datetime | float | None = None
@@ -97,7 +97,7 @@ def dry_run(workspace_id: str, pipeline_id: str, body: DryRunIn, user: User = De
 
 
 @router.post("/workspaces/{workspace_id}/pipelines/{pipeline_id}/runs")
-def run(workspace_id: str, pipeline_id: str, body: RunIn, user: User = Depends(current_user)):
+def run(workspace_id: str, pipeline_id: str, body: PipelineRunIn, user: User = Depends(current_user)):
     """Run the recipes into the managed recipe-output source (incremental by watermark when declared)."""
     window = (body.since, body.until) if body.mode in ("replay", "backfill") else None
     return svc.run_pipeline(user, pipeline_id, workspace_id, mode=body.mode, window=window, engine=_engine(body.engine))
