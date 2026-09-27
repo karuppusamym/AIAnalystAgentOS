@@ -57,6 +57,20 @@ def _wait(run_id: str, timeout: float = 600) -> str:
     raise AssertionError(f"run {run_id} did not finish")
 
 
+def _wait_schedule_run(srun_id: str, timeout: float = 120) -> None:
+    """The run is COMPLETED (and recorded as steps) before complete_from_run finishes the schedule_run."""
+    from analystos.db.base import session_scope
+    from analystos.db.models import ScheduleRun
+
+    started = time.time()
+    while time.time() - started < timeout:
+        with session_scope() as s:
+            if s.get(ScheduleRun, srun_id).status in ("succeeded", "failed", "skipped"):
+                return
+        time.sleep(0.5)
+    raise AssertionError(f"schedule run {srun_id} did not finish")
+
+
 class CountingTransport:
     """Every chat and decision call is recorded; `chat` answers with the test's callback."""
 
@@ -169,6 +183,7 @@ def test_scheduled_reanalysis_replays_the_registry_with_zero_model_calls(world, 
     with session_scope() as s:
         rerun_id = s.get(ScheduleRun, srun_id).result["run_id"]
     assert _wait(rerun_id) == "COMPLETED"
+    _wait_schedule_run(srun_id)
 
     # Acceptance: 0 chat calls (and 0 decision calls) although every purpose was routable on `always`.
     assert transport.chat_calls == [], [c.get("model") for c in transport.chat_calls]
