@@ -503,6 +503,26 @@
       "title": "Filter",
       "type": "object"
     },
+    "ImprovementConfirmation": {
+      "additionalProperties": false,
+      "description": "P5-07: `improved` needs more than one lucky holdout. On top of the declared minimum gain, the candidate\nmust beat the baseline (a) on the search's out-of-fold cross-validation, paired per fold: positive in a\nmajority of folds and on average, evidence from rows the holdout never saw; and (b) with the holdout gain's\ninterval at `holdout_level` excluding zero. Defaults measured to hold coin-flip targets at or below 0.5%\n`improved` (evidence/2026-09-27-ml-null-rate.md); `cross_validation: false, holdout_level: 0.95` is the\nunconfirmed pre-P5-07 rule.",
+      "properties": {
+        "cross_validation": {
+          "default": true,
+          "title": "Cross Validation",
+          "type": "boolean"
+        },
+        "holdout_level": {
+          "default": 0.99,
+          "maximum": 0.999,
+          "minimum": 0.95,
+          "title": "Holdout Level",
+          "type": "number"
+        }
+      },
+      "title": "ImprovementConfirmation",
+      "type": "object"
+    },
     "Incremental": {
       "additionalProperties": false,
       "description": "Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a\nstaged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.\n\nA window is `[last watermark - late_window, high watermark]`, the high watermark measured once before\nreading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key\nwins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`\nremoves keys the source no longer has on a scheduled full reconcile, `soft` stamps them in\n`aos_deleted_at`, `ignore` keeps them.",
@@ -932,6 +952,9 @@
           "minimum": 0,
           "title": "Min Improvement",
           "type": "number"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/ImprovementConfirmation"
         },
         "error_costs": {
           "$ref": "#/$defs/ErrorCosts"

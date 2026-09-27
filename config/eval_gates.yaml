@@ -8,12 +8,13 @@
 # * `blocking: false` makes a tier a report: it runs and lists what it misses, but never fails the result.
 #
 # Run: python scripts/eval_gates.py [--tiers grounding,analytical_component,cost] [--out gate-result.json]
-version: 3
+version: 4
 owner: product owner (Context2AI)
 changelog:
   - {version: 1, date: 2026-09-26, change: "initial gates: today's measured values as the regression floor (P7-07)"}
   - {version: 2, date: 2026-09-26, change: "add the ml tier (P5-01..P5-04): leakage refused, baseline parity, null abstains"}
   - {version: 3, date: 2026-09-27, change: "add the heldout tier (P4-08) as a non-blocking report with proposed thresholds; blocking tiers unchanged"}
+  - {version: 4, date: 2026-09-27, change: "ml tier gains null_rate (P5-07): coin-flip targets ending improved, max 0.5% over 60 fixed held-out seeds"}
 
 tiers:
   # --------------------------------------------------------------- deterministic: CI on every change
@@ -62,6 +63,8 @@ tiers:
       signal_detected_share: {min: 1.0}
       deterministic_share: {min: 1.0}         # re-run from data + manifest + seed: same manifest, selection and seal
       tamper_refused_share: {min: 1.0}
+      null_rate: {max: 0.005}                 # P5-07: coin-flip targets (heldout ml_pumps null_target) ending "improved"
+      null_seeds: {min: 60}                   # evaluation/ml_null.GATE_SEEDS; the >= 200-seed measurement is evidence
   heldout:
     kind: deterministic
     runs: ci

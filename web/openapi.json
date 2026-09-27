@@ -1682,6 +1682,24 @@
         "title": "DestinationIn",
         "type": "object"
       },
+      "DialectExpression": {
+        "properties": {
+          "dialect": {
+            "default": "ANSI_SQL",
+            "title": "Dialect",
+            "type": "string"
+          },
+          "expression": {
+            "title": "Expression",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "title": "DialectExpression",
+        "type": "object"
+      },
       "DiscoverIn": {
         "properties": {
           "assets": {
@@ -2294,6 +2312,26 @@
         "title": "HypothesisPatch",
         "type": "object"
       },
+      "ImprovementConfirmation": {
+        "additionalProperties": false,
+        "description": "P5-07: `improved` needs more than one lucky holdout. On top of the declared minimum gain, the candidate\nmust beat the baseline (a) on the search's out-of-fold cross-validation, paired per fold: positive in a\nmajority of folds and on average, evidence from rows the holdout never saw; and (b) with the holdout gain's\ninterval at `holdout_level` excluding zero. Defaults measured to hold coin-flip targets at or below 0.5%\n`improved` (evidence/2026-09-27-ml-null-rate.md); `cross_validation: false, holdout_level: 0.95` is the\nunconfirmed pre-P5-07 rule.",
+        "properties": {
+          "cross_validation": {
+            "default": true,
+            "title": "Cross Validation",
+            "type": "boolean"
+          },
+          "holdout_level": {
+            "default": 0.99,
+            "maximum": 0.999,
+            "minimum": 0.95,
+            "title": "Holdout Level",
+            "type": "number"
+          }
+        },
+        "title": "ImprovementConfirmation",
+        "type": "object"
+      },
       "Incremental": {
         "additionalProperties": false,
         "description": "Watermark incremental processing (ADR-0016, ADR-0023 decision 7, TRN-003). The same block on a\nstaged source table (source config `incremental: {table: {...}}`), on a recipe and in a PipelineSpec.\n\nA window is `[last watermark - late_window, high watermark]`, the high watermark measured once before\nreading (the fixed cursor). Rows are merged on `key` (deduplicated: the newest watermark per key\nwins) and the new watermark is committed in the same transaction as the merge. `deletes`: `reconcile`\nremoves keys the source no longer has on a scheduled full reconcile, `soft` stamps them in\n`aos_deleted_at`, `ignore` keeps them.",
@@ -2616,6 +2654,9 @@
         "additionalProperties": false,
         "description": "P5-01 (ADR-0024, workspace spec §6): what a governed model learns from and how it is judged. It pins\nthe dataset version, entity/group keys, target, feature availability, prediction cutoff, label\nhorizon, split strategy, preprocessing, allowed estimators, search budget, objective metric, slice\nguardrails, seed and (optionally) the runtime environment digest.\n\nEnvelope use stays light (a work order may name only `task`); `executable_problems` lists what a spec\nstill lacks before an experiment may start. A model may *propose* a spec; this contract and the\nreadiness checks decide.",
         "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/ImprovementConfirmation"
+          },
           "contamination": {
             "default": 0.02,
             "exclusiveMaximum": 0.5,
@@ -3211,6 +3252,37 @@
           "version"
         ],
         "title": "ModelDecision",
+        "type": "object"
+      },
+      "ModelProposalIn": {
+        "additionalProperties": false,
+        "properties": {
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticDataset"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Datasets",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "required": [
+          "datasets"
+        ],
+        "title": "ModelProposalIn",
         "type": "object"
       },
       "MonitorIn": {
@@ -4858,6 +4930,96 @@
         "title": "Selection",
         "type": "object"
       },
+      "SemanticDataset": {
+        "properties": {
+          "ai_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Context"
+          },
+          "custom_extensions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Custom Extensions",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary_key": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Key"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "unique_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique Keys"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "SemanticDataset",
+        "type": "object"
+      },
       "SemanticDecision": {
         "properties": {
           "reason": {
@@ -4884,6 +5046,85 @@
           }
         },
         "title": "SemanticDecision",
+        "type": "object"
+      },
+      "SemanticField": {
+        "description": "A row-level attribute; `dimension` is kept as Ossie spells it ({is_time}) so None stays None.",
+        "properties": {
+          "ai_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Context"
+          },
+          "custom_extensions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Custom Extensions",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "dimension": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimension"
+          },
+          "expressions": {
+            "items": {
+              "$ref": "#/components/schemas/DialectExpression"
+            },
+            "title": "Expressions",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expressions"
+        ],
+        "title": "SemanticField",
         "type": "object"
       },
       "ServerIn": {
@@ -26707,6 +26948,89 @@
           }
         },
         "summary": "Model Diff",
+        "tags": [
+          "semantic"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/semantic/model/proposals": {
+      "post": {
+        "description": "Propose entities and grain (datasets and their primary keys) as a `proposed` structure version (P4-05):\nanother person approves it through `/model/approve`; joins go through the relationship queue.",
+        "operationId": "propose_model_api_workspaces__workspace_id__semantic_model_proposals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProposalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Propose Model",
         "tags": [
           "semantic"
         ]

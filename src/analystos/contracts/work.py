@@ -255,6 +255,19 @@ class ErrorCosts(BaseModel):
     false_negative: float = Field(default=1.0, gt=0)
 
 
+class ImprovementConfirmation(BaseModel):
+    """P5-07: `improved` needs more than one lucky holdout. On top of the declared minimum gain, the candidate
+    must beat the baseline (a) on the search's out-of-fold cross-validation, paired per fold: positive in a
+    majority of folds and on average, evidence from rows the holdout never saw; and (b) with the holdout gain's
+    interval at `holdout_level` excluding zero. Defaults measured to hold coin-flip targets at or below 0.5%
+    `improved` (evidence/2026-09-27-ml-null-rate.md); `cross_validation: false, holdout_level: 0.95` is the
+    unconfirmed pre-P5-07 rule."""
+
+    model_config = ConfigDict(extra="forbid")
+    cross_validation: bool = True
+    holdout_level: float = Field(default=0.99, ge=0.95, le=0.999)
+
+
 class MLSpec(BaseModel):
     """P5-01 (ADR-0024, workspace spec §6): what a governed model learns from and how it is judged. It pins
     the dataset version, entity/group keys, target, feature availability, prediction cutoff, label
@@ -289,6 +302,7 @@ class MLSpec(BaseModel):
     search: SearchBudget = Field(default_factory=SearchBudget)
     objective_metric: str | None = None
     min_improvement: float = Field(default=0.0, ge=0)  # over the baseline, in objective units
+    confirmation: ImprovementConfirmation = Field(default_factory=ImprovementConfirmation)  # P5-07 null control
     error_costs: ErrorCosts = Field(default_factory=ErrorCosts)  # classification threshold choice
     guardrails: list[SliceGuardrail] = Field(default_factory=list, max_length=10)
     k_range: tuple[int, int] = (2, 8)  # cluster
