@@ -544,6 +544,7 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · investigation", `/w/${WS}/work/investigations/${RUN}`, /Why are P1 resolution times rising/],
   ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
   ["Work · Data Thread", `/w/${WS}/work?tab=thread&container=run:run_demo`, /Mean P1 resolution hours by group/],
+  ["Work · notebook", `/w/${WS}/work?tab=notebooks&notebook=nb_1`, /No cells yet/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
   ["Data · brief & readiness", `/w/${WS}/data/catalog?tab=brief`, /Open questions \(2\)/],

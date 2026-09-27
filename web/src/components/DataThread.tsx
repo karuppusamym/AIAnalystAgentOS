@@ -97,7 +97,7 @@ export function StepWhyDrawer({ step, result, onClose }: { step: Step; result: S
   );
 }
 
-function StepVersions({ wsId, stepId }: { wsId: string; stepId: string }) {
+export function StepVersions({ wsId, stepId }: { wsId: string; stepId: string }) {
   const versions = useAsync(() => api.stepVersions(wsId, stepId), [wsId, stepId]);
   const [open, setOpen] = useState<number | null>(null);
   const old = useAsync(() => (open ? api.step(wsId, stepId, open) : Promise.resolve(undefined)), [wsId, stepId, open]);
