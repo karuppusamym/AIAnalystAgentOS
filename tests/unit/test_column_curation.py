@@ -31,7 +31,8 @@ def crawlable(world, sqlite_db, monkeypatch):  # noqa: F811
     from analystos.db import models
 
     engine = sqlite_db.kw["bind"]
-    models.Base.metadata.create_all(engine, tables=[models.Base.metadata.tables["crawl_run"]])
+    models.Base.metadata.create_all(engine, tables=[models.Base.metadata.tables[t] for t in (
+        "crawl_run", "knowledge_pack", "knowledge_document")])  # reviewed domain rules are read from the pack
     monkeypatch.setattr("analystos.connectors.registry.build_connector", lambda *a, **k: _Documented())
     return world
 

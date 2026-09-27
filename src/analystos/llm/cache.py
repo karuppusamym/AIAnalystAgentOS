@@ -1,12 +1,16 @@
-"""Response cache for model calls whose output depends only on the (redacted) request.
+"""Response cache for model calls whose output depends only on the (redacted) request, and the
+store the context cache shares (`context/cache.py`).
 
-Keyed by purpose + candidate models + request payload hash; stored in Redis with a TTL and an
-in-process LRU fallback. Only purposes listed in settings.llm.cacheable_purposes are cached."""
+Keyed by purpose + the model that answered + request payload hash; stored in Redis with a TTL and an
+in-process LRU fallback that honours the same TTL. Only purposes listed in
+settings.llm.cacheable_purposes are cached."""
 from __future__ import annotations
 
 import contextlib
 import json
+import time
 from collections import OrderedDict
+from collections.abc import Callable
 from threading import Lock
 from typing import Any
 
@@ -17,12 +21,15 @@ log = get_logger(__name__)
 
 
 class ResponseCache:
-    def __init__(self, redis_url: str | None = None, *, max_local: int = 2000) -> None:
-        self._local: OrderedDict[str, str] = OrderedDict()
+    def __init__(self, redis_url: str | None = None, *, max_local: int = 2000,
+                 clock: Callable[[], float] = time.monotonic, client: Any = None) -> None:
+        self._local: OrderedDict[str, tuple[float, str]] = OrderedDict()  # key -> (expires at, raw)
+        self._counters: dict[str, dict[str, float]] = {}
         self._lock = Lock()
         self._max = max_local
-        self._redis = None
-        if redis_url:
+        self._clock = clock
+        self._redis = client
+        if redis_url and client is None:
             try:
                 import redis
 
@@ -32,12 +39,19 @@ class ResponseCache:
                 log.warning("llm cache: redis unavailable, using in-process cache (%s)", exc)
                 self._redis = None
 
+    @property
+    def shared(self) -> bool:
+        """True when entries are visible to every worker (Redis), not only this process."""
+        return self._redis is not None
+
     @staticmethod
-    def key(purpose: str, models: list[str], payload: Any, workspace_id: str | None = None,
+    def key(purpose: str, model: str | list[str], payload: Any, workspace_id: str | None = None,
             knowledge_version: str | None = None) -> str:
-        """Scoped per workspace so its entries can be found and purged (retention, deletion). The
-        workspace knowledge version (P4-T06) is part of the hash, so a knowledge edit misses."""
-        material = {'models': models, 'payload': payload}
+        """Scoped per workspace so its entries can be found and purged (retention, deletion). Keyed on
+        the model that answers (a budget downgrade to another tier then finds that tier's answers,
+        not a key made of a different candidate list). The workspace knowledge version (P4-T06) is
+        part of the hash, so a knowledge edit misses."""
+        material = {'models': model if isinstance(model, list) else [model], 'payload': payload}
         if knowledge_version:
             material['knowledge'] = knowledge_version
         return f"aos:llm:{workspace_id or '-'}:{purpose}:{stable_hash(material)}"
@@ -51,21 +65,56 @@ class ResponseCache:
                 raw = None
         if raw is None:
             with self._lock:
-                raw = self._local.get(key)
-                if raw is not None:
+                item = self._local.get(key)
+                if item is not None and item[0] <= self._clock():
+                    self._local.pop(key, None)  # expired: the local fallback honours the TTL like Redis
+                    item = None
+                if item is not None:
                     self._local.move_to_end(key)
+                    raw = item[1]
         return json.loads(raw) if raw else None
 
-    def set(self, key: str, value: dict, ttl_seconds: int) -> None:
+    def set(self, key: str, value: Any, ttl_seconds: int | float) -> None:
+        if ttl_seconds <= 0:
+            return
         raw = json.dumps(value, default=str)
         if self._redis is not None:
             with contextlib.suppress(Exception):
-                self._redis.setex(key, ttl_seconds, raw)
+                self._redis.setex(key, int(max(1, ttl_seconds)), raw)
         with self._lock:
-            self._local[key] = raw
+            self._local[key] = (self._clock() + ttl_seconds, raw)
             self._local.move_to_end(key)
             while len(self._local) > self._max:
                 self._local.popitem(last=False)
+
+    def clear_local(self) -> None:
+        with self._lock:
+            self._local.clear()
+            self._counters.clear()
+
+    # ------------------------------------------------------------------ counters (visibility only)
+    def incr(self, key: str, field: str, amount: float = 1, ttl_seconds: int = 30 * 86400) -> None:
+        """Add to a counter hash (Redis HINCRBYFLOAT when shared, else this process)."""
+        if self._redis is not None:
+            try:
+                self._redis.hincrbyfloat(key, field, amount)
+                self._redis.expire(key, ttl_seconds)
+                return
+            except Exception:
+                pass
+        with self._lock:
+            row = self._counters.setdefault(key, {})
+            row[field] = row.get(field, 0) + amount
+
+    def counters(self, key: str) -> dict[str, float]:
+        if self._redis is not None:
+            try:
+                raw = self._redis.hgetall(key) or {}
+                return {(k.decode() if isinstance(k, bytes) else str(k)): float(v) for k, v in raw.items()}
+            except Exception:
+                pass
+        with self._lock:
+            return dict(self._counters.get(key, {}))
 
 
 def estimate_tokens(text: str) -> int:

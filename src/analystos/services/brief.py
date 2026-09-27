@@ -183,6 +183,25 @@ def _fq(asset: SourceAsset) -> str:
     return f"{asset.schema_name}.{asset.name}"
 
 
+TIME_ROLES = ("date", "timestamp")  # catalog column roles (skills/catalog ColumnSemantics.semantic_role)
+
+
+def unique_keys(asset: SourceAsset) -> list[dict[str, Any]]:
+    """Keys known to be unique on this asset's data, strongest evidence first: a measured key check
+    (`stats.key_check`, the model suggestion's validation), then profile candidates marked `unique`. A
+    name-hinted column with duplicates is never a key suggestion."""
+    stats = asset.stats or {}
+    out: list[dict[str, Any]] = []
+    check = stats.get("key_check")
+    if isinstance(check, dict) and check.get("unique") is True and check.get("columns"):
+        out.append({**check, "evidence": "measured_unique"})
+    for k in stats.get("candidate_keys") or []:
+        if isinstance(k, dict) and k.get("unique") is True and k.get("columns") \
+                and all(sorted(k["columns"]) != sorted(o["columns"]) for o in out):
+            out.append(k)
+    return out
+
+
 def _suggestion(group: str, field: str, subject: str | None, value: Any, origin: str, evidence: list[EvidenceRef],
                 confidence: float | None = None, review_state: str | None = None) -> Assertion:
     state = review_state or ("suggested" if field in SUGGESTION_FIELDS or origin in ("rule", "model") else "reviewed")
@@ -210,11 +229,11 @@ def derive(session: Session, workspace_id: str) -> list[Assertion]:
             out.append(_suggestion("data_semantics", "entity_key", fq, keys, "source",
                                    [EvidenceRef(kind="column", ref=f"{fq}.{k}", detail={"declared": "primary key"}) for k in keys]))
         else:
-            cand = [k for k in ((a.stats or {}).get("candidate_keys") or []) if isinstance(k, dict) and k.get("columns")]
+            cand = unique_keys(a)
             if cand:
                 out.append(_suggestion("data_semantics", "entity_key", fq, list(cand[0]["columns"]), "rule",
                                        [EvidenceRef(kind="profile", ref=fq, detail={"candidate_key": cand[0]})]))
-        times = [c for c in cols if (c.semantic_type == "datetime" or (c.semantics or {}).get("role") == "date")
+        times = [c for c in cols if (c.semantic_type == "datetime" or (c.semantics or {}).get("semantic_role") in TIME_ROLES)
                  and "pii" not in (c.tags or [])]
         if times:
             out.append(_suggestion("time_measures", "event_time", fq, times[0].name, "rule",
@@ -249,9 +268,20 @@ def key_uniqueness(session: Session, workspace_id: str, asset_fq: str, columns: 
     if asset is None:
         return {"state": "unknown", "detail": f"{asset_fq} is not a known asset"}
     rows = asset.row_count if asset.row_count is not None else (asset.stats or {}).get("row_count")
+    check = (asset.stats or {}).get("key_check")
+    if isinstance(check, dict) and sorted(check.get("columns") or []) == sorted(columns) and check.get("unique") is not None:
+        state = "unique" if check["unique"] else "duplicates"
+        return {"state": state, "detail": f"measured: {check.get('distinct_keys')} distinct keys in {check.get('rows')} rows",
+                "rows": check.get("rows"), "measured_at": check.get("measured_at")}
     for cand in (asset.stats or {}).get("candidate_keys") or []:
-        if isinstance(cand, dict) and sorted(cand.get("columns") or []) == sorted(columns):
+        if not isinstance(cand, dict) or sorted(cand.get("columns") or []) != sorted(columns):
+            continue
+        if cand.get("unique") is True:
             return {"state": "unique", "detail": f"profiled candidate key over {rows} rows", "rows": rows}
+        if cand.get("unique") is False:
+            return {"state": "duplicates", "detail": f"profiled: {cand.get('distinct')} distinct values and "
+                    f"{cand.get('null_count')} nulls in {rows} rows", "rows": rows, "distinct": cand.get("distinct"),
+                    "nulls": cand.get("null_count")}
     if len(columns) != 1 or rows is None:
         return {"state": "unknown", "detail": "no profile covers this key", "rows": rows}
     col = session.scalar(select(SourceColumn).where(SourceColumn.asset_id == asset.id, SourceColumn.name == columns[0]))

@@ -2306,7 +2306,9 @@ export interface paths {
         };
         /**
          * Catalog
-         * @description Searchable catalog built by the crawler (names, business names, descriptions, role/domain).
+         * @description Searchable catalog built by the crawler (names, business names, descriptions, role/domain). Three queries
+         *     whatever the size: assets, all their columns, their relationships (plus the brief). A column's unit and alias
+         *     show the brief's reviewed value when a person set one (`unit_origin: brief`), else the crawler's rule.
          */
         get: operations["catalog_api_workspaces__workspace_id__catalog_get"];
         put?: never;
@@ -4421,6 +4423,67 @@ export interface paths {
         put?: never;
         /** Reject Model */
         post: operations["reject_model_api_workspaces__workspace_id__semantic_model_reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Model Suggestion
+         * @description A deterministic data-model suggestion over the selected tables (semantic/suggest.py): entities, keys, time
+         *     columns, relationships, candidate metrics, star schemas and issues. No query, no model.
+         */
+        get: operations["model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion/propose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose Model Suggestion
+         * @description The suggestion as a `proposed` structure version plus measured relationship candidates; another person decides.
+         */
+        post: operations["propose_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_propose_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/semantic/model/suggestion/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Model Suggestion
+         * @description Measure the suggestion's keys and joins through the gateway as the caller (bounded); results persist as evidence.
+         */
+        post: operations["validate_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16885,6 +16948,108 @@ export interface operations {
                 "application/json": components["schemas"]["ModelDecision"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_propose_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_model_suggestion_api_workspaces__workspace_id__semantic_model_suggestion_validate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

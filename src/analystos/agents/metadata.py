@@ -39,22 +39,45 @@ def collect_metadata(ctx: RunContext) -> dict:
     return {"tables": tables}
 
 
+def auto_validates(candidate: dict) -> bool:
+    """A discovered join is validated without a person only when the source declares it or the measured assessment
+    corroborates it (skills/relationships.assess_relationship), and it does not fan out. A name-only match stays
+    unvalidated and goes to the review queue, however high its confidence."""
+    declared = (candidate.get("evidence") or {}).get("source") == "declared"
+    corroborated = bool((candidate.get("assessment") or {}).get("approvable"))
+    return (declared or corroborated) and candidate.get("cardinality") in ("many_to_one", "one_to_one") \
+        and float((candidate.get("evidence") or {}).get("containment") or 0.0) >= 0.99
+
+
 def discover_relationships(ctx: RunContext) -> dict:
+    """Relationship discovery over every source in the run's scope (one gateway runner per source; joins never cross
+    sources). Validation follows `auto_validates`; everything else is recorded unvalidated and queued as a review
+    candidate. A relationship a person validated or declared is never demoted by a run."""
+    from analystos.semantic.review import observed_joins, record_candidate
+    from analystos.skills.relationships import RelationshipCandidate
     from analystos.skills.relationships import discover_relationships as discover
 
-    run_sql = ctx.run_sql(next(iter(ctx.scope.asset_sources.values())))
-    assets = []
-    ids = {}
+    by_source: dict[str, list[dict]] = {}
+    ids: dict[str, str] = {}
     for asset, cols in asset_rows(ctx):
         fq = f"{asset.schema_name}.{asset.name}"
         ids[fq] = asset.id
-        assets.append({"asset": fq, "row_count": asset.row_count, "columns": [
-            {"name": c.name, "data_type": c.data_type, "is_key": c.is_key, "references": (c.profile or {}).get("references")}
+        by_source.setdefault(ctx.scope.asset_sources[fq], []).append({"asset": fq, "row_count": asset.row_count, "columns": [
+            {"name": c.name, "data_type": c.data_type, "is_key": c.is_key, "nullable": c.nullable,
+             "references": (c.profile or {}).get("references")}
             for c in cols if f"{fq}.{c.name}" not in ctx.scope.denied_columns]})
-    candidates = ctx.tools().invoke("relationships.discover", {"assets": list(ids)}, lambda: discover(run_sql, assets))
+    candidates: list = []
+    for source_id, group in sorted(by_source.items()):
+        run_sql = ctx.run_sql(source_id)
+        with session_scope() as s:
+            observed = observed_joins(s, ctx.workspace.id, source_id)
+        found = ctx.tools().invoke("relationships.discover", {"assets": [a["asset"] for a in group]},
+                                   lambda run_sql=run_sql, group=group, observed=observed: discover(run_sql, group, observed=observed))
+        candidates += [(source_id, c) for c in found]
     out = []
+    queued = 0
     with session_scope() as s:
-        for c in candidates:
+        for source_id, c in candidates:
             c = c if isinstance(c, dict) else c.model_dump() if hasattr(c, "model_dump") else vars(c)
             if c["from_asset"] not in ids or c["to_asset"] not in ids:
                 continue
@@ -63,12 +86,23 @@ def discover_relationships(ctx: RunContext) -> dict:
                 Relationship.from_column == c["from_column"], Relationship.to_asset_id == ids[c["to_asset"]],
                 Relationship.to_column == c["to_column"]))
             row = existing or Relationship(id=new_id("rel"), workspace_id=ctx.workspace.id, from_asset_id=ids[c["from_asset"]],
-                                           from_column=c["from_column"], to_asset_id=ids[c["to_asset"]], to_column=c["to_column"])
-            row.cardinality = c.get("cardinality", "many_to_one")
-            row.confidence = float(c.get("confidence", 0))
-            row.validated = float(c.get("confidence", 0)) >= 0.8
-            row.evidence = c.get("evidence") or {}
+                                           from_column=c["from_column"], to_asset_id=ids[c["to_asset"]], to_column=c["to_column"],
+                                           origin="discovered", validated=False)
+            decided = existing is not None and (existing.origin in ("user", "review") or existing.validated)
+            if not decided:
+                row.cardinality = c.get("cardinality", "many_to_one")
+                row.confidence = float(c.get("confidence", 0))
+                row.validated = auto_validates(c)
+            row.evidence = {**(row.evidence or {}), **{k: v for k, v in (c.get("evidence") or {}).items() if k != "sql"},
+                            "assessment": (c.get("assessment") or {}).get("outcome"), "run_id": ctx.run.id}
             s.add(row)
+            s.flush()
+            c = {**c, "validated": row.validated}
+            if not row.validated:
+                cand = record_candidate(s, ctx.workspace.id, RelationshipCandidate.model_validate(c), source_id=source_id,
+                                        origin=f"agent:{ctx.agent.id}"[:80], proposed_by=ctx.run.requested_by or ctx.agent.id)
+                queued += int(cand.status == "pending")
+                c["candidate_id"] = cand.id
             out.append(c)
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="relationship_map",
                             name="Relationship map", content={"relationships": out}, creator_agent=ctx.agent.id)
@@ -76,8 +110,9 @@ def discover_relationships(ctx: RunContext) -> dict:
             link(s, ctx.workspace.id, ("table", c["from_asset"]), "joins_to", ("table", c["to_asset"]), run_id=ctx.run.id)
     for c in out:
         ctx.event("relationship.discovered", {"from": f"{c['from_asset']}.{c['from_column']}",
-                                              "to": f"{c['to_asset']}.{c['to_column']}", "confidence": c.get("confidence")})
-    ctx.say(f"Discovered {len(out)} relationships" + (": " + "; ".join(
+                                              "to": f"{c['to_asset']}.{c['to_column']}", "confidence": c.get("confidence"),
+                                              "validated": c["validated"]})
+    ctx.say(f"Discovered {len(out)} relationships ({queued} queued for review)" + (": " + "; ".join(
         f"{c['from_asset']}.{c['from_column']} → {c['to_asset']}.{c['to_column']} ({c.get('cardinality')}, "
-        f"conf {float(c.get('confidence', 0)):.2f})" for c in out[:6]) if out else "."))
+        f"conf {float(c.get('confidence', 0)):.2f}{', validated' if c['validated'] else ''})" for c in out[:6]) if out else "."))
     return {"relationships": out, "artifact_id": art.id}

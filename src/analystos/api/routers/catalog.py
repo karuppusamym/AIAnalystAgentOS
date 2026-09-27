@@ -18,19 +18,16 @@ from analystos.services import crawler
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
-_SAFE_SENSITIVE_PROFILE = frozenset({"name", "data_type", "type_family", "semantic_type", "is_key",
-                                     "non_null", "null_count", "null_rate", "distinct", "distinct_ratio"})
 
+def public_profile(profile: dict | None, tags: list[str] | None, semantics: dict | None = None) -> dict | None:
+    """Only aggregate completeness and cardinality leave the server for a sensitive column (tagged, or classified
+    as personal data): the profiling sanitizer, which also strips value distributions stored by older crawlers."""
+    from analystos.skills.profiling import column_is_sensitive, sanitize_column_profile
 
-def public_profile(profile: dict | None, tags: list[str] | None) -> dict | None:
-    """Only aggregate completeness and cardinality leave the server for a sensitive column.
-
-    This also strips value distributions stored by older crawler versions.
-    """
     if not profile:
         return None
-    if set(tags or []) & {"pii", "restricted", "sensitive"}:
-        return {k: v for k, v in profile.items() if k in _SAFE_SENSITIVE_PROFILE}
+    if column_is_sensitive(tags, semantics):
+        return sanitize_column_profile(profile, sensitive=True)
     return profile
 
 
@@ -151,39 +148,76 @@ def get_crawl(crawl_id: str, user: User = Depends(current_user), session: Sessio
 @router.get("/workspaces/{workspace_id}/catalog")
 def catalog(workspace_id: str, q: str = "", domain: str | None = None, role: str | None = None, include_deprecated: bool = False,
             user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
-    """Searchable catalog built by the crawler (names, business names, descriptions, role/domain)."""
+    """Searchable catalog built by the crawler (names, business names, descriptions, role/domain). Three queries
+    whatever the size: assets, all their columns, their relationships (plus the brief). A column's unit and alias
+    show the brief's reviewed value when a person set one (`unit_origin: brief`), else the crawler's rule."""
+    from collections import defaultdict
+
+    from analystos.db.models import Relationship
+    from analystos.semantic.suggest import _time_column
+    from analystos.services import brief as brief_svc
+
     require_role(session, user, workspace_id, "viewer")
     stmt = select(SourceAsset).where(SourceAsset.workspace_id == workspace_id)
     if not include_deprecated:
         stmt = stmt.where(SourceAsset.lifecycle == "active")
     needle = q.strip().lower()
+    assets = [a for a in session.scalars(stmt.order_by(SourceAsset.schema_name, SourceAsset.name))
+              if not (domain and (a.semantics or {}).get("domain") != domain or role and (a.semantics or {}).get("role") != role)]
+    ids = [a.id for a in assets]
+    cols_by: dict[str, list[SourceColumn]] = defaultdict(list)
+    rels: dict[str, dict[str, int]] = defaultdict(lambda: {"outgoing": 0, "incoming": 0, "validated": 0})
+    if ids:
+        for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id.in_(ids))
+                                 .order_by(SourceColumn.asset_id, SourceColumn.ordinal)):
+            cols_by[c.asset_id].append(c)
+        for r in session.scalars(select(Relationship).where(Relationship.workspace_id == workspace_id)):
+            rels[r.from_asset_id]["outgoing"] += 1
+            rels[r.to_asset_id]["incoming"] += 1
+            for side in (r.from_asset_id, r.to_asset_id):
+                rels[side]["validated"] += int(bool(r.validated))
+    brief = brief_svc.assertions_of(brief_svc.head(session, workspace_id))
+    curated = {(a.field, a.subject): a.value for a in brief if a.effective and a.subject
+               and (a.group, a.field) in (("time_measures", "unit"), ("time_measures", "currency"), ("domain", "alias"))}
+    event_time = {a.subject: a.value for a in brief if a.effective and a.group == "time_measures" and a.field == "event_time"}
     out = []
-    for a in session.scalars(stmt.order_by(SourceAsset.schema_name, SourceAsset.name)):
+    for a in assets:
         sem = a.semantics or {}
-        if domain and sem.get("domain") != domain or role and sem.get("role") != role:
-            continue
-        cols = list(session.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal)))
+        fq = f"{a.schema_name}.{a.name}"
+        cols = cols_by[a.id]
         hay = " ".join([a.name, a.business_name or "", a.description or "", *(c.name for c in cols),
                         *(c.business_name or "" for c in cols)]).lower()
         if needle and needle not in hay:
             continue
-        out.append({"id": a.id, "fq": f"{a.schema_name}.{a.name}", "source_id": a.source_id, "name": a.name,
+        out.append({"id": a.id, "fq": fq, "source_id": a.source_id, "name": a.name,
                     "business_name": a.business_name, "business_name_origin": a.business_name_origin,
                     "description": a.description, "description_origin": a.description_origin,
                     "reviewed": a.reviewed, "selected": a.selected, "lifecycle": a.lifecycle, "row_count": a.row_count,
                     "role": sem.get("role"), "domain": sem.get("domain"), "grain": sem.get("grain"),
                     "confidence": sem.get("confidence"), "last_crawled_at": a.last_crawled_at,
                     "entity": sem.get("entity"), "profile_meta": (a.stats or {}).get("profile_meta"),
+                    "time_column": event_time.get(fq) or _time_column(cols),
+                    "relationships": dict(rels[a.id]) if a.id in rels else {"outgoing": 0, "incoming": 0, "validated": 0},
+                    "model_description_draft": sem.get("model_description_draft"),
+                    "renamed_to": sem.get("renamed_to"), "renamed_from": sem.get("renamed_from"),
                     "snapshot": a.snapshot or None,  # staged population: rows staged vs origin, truncated, sampling
-                    "columns": [{"name": c.name, "data_type": c.data_type, "business_name": c.business_name,
-                                 "business_name_origin": c.business_name_origin, "description": c.description,
-                                 "description_origin": c.description_origin, "tags": c.tags, "tags_origin": c.tags_origin,
-                                 "semantic_type": c.semantic_type, "is_key": c.is_key,
-                                 "profile": public_profile(c.profile, c.tags) if a.stats else None,
-                                 "role": (c.semantics or {}).get("semantic_role"), "unit": (c.semantics or {}).get("unit"),
-                                 "pii": (c.semantics or {}).get("pii"), "glossary": (c.semantics or {}).get("glossary")}
-                                for c in cols]})
+                    "columns": [_column_view(c, fq, curated, profiled=bool(a.stats)) for c in cols]})
     return out
+
+
+def _column_view(c: SourceColumn, fq: str, curated: dict, *, profiled: bool) -> dict:
+    sem = c.semantics or {}
+    ref = f"{fq}.{c.name}"
+    unit = curated.get(("unit", ref)) or curated.get(("currency", ref))
+    return {"name": c.name, "data_type": c.data_type, "business_name": c.business_name,
+            "business_name_origin": c.business_name_origin, "description": c.description,
+            "description_origin": c.description_origin, "tags": c.tags, "tags_origin": c.tags_origin,
+            "semantic_type": c.semantic_type, "is_key": c.is_key,
+            "profile": public_profile(c.profile, c.tags, sem) if profiled else None,
+            "references": (c.profile or {}).get("references"),
+            "role": sem.get("semantic_role"), "unit": unit or sem.get("unit"),
+            "unit_origin": "brief" if unit else ("rule" if sem.get("unit") else None),
+            "alias": curated.get(("alias", ref)), "pii": sem.get("pii"), "glossary": sem.get("glossary")}
 
 
 class AssetMetadataIn(BaseModel):

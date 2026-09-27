@@ -8,16 +8,28 @@ Round trips per table are bounded:
 2. tsql only, if there are numeric columns: one `SELECT TOP 1 PERCENTILE_CONT(..) OVER ()` query;
 3. if there are numeric columns: one UNION ALL query with a 20-bin histogram per numeric column plus
    the counts outside the IQR fences (outlier candidates);
-4. one top-10 query per low-cardinality categorical/boolean column (at most 12 columns);
+4. one top-10 query per low-cardinality categorical/boolean column (at most 12 columns); a column with at
+   most 12 distinct values is read in full, so its profile carries the complete enumeration (`values`,
+   `values_complete`) unless it is sensitive;
 5. one monthly-count query per datetime column.
 
 Total <= 3 + #datetime columns + min(#categorical columns, 12).
+
+Candidate keys (`AssetProfile.candidate_keys`) share one contract with the brief and the model suggestion:
+``{"columns": [...], "unique": bool | None, "evidence": "declared" | "profile_unique" | "name_hint", ...}``;
+`unique` is None for a declared composite key (the wide aggregate cannot count distinct tuples).
+
+`sanitize_column_profile` is the one place that strips value-bearing facts from a sensitive column's profile;
+the crawler and the Dataset Profiler agent both persist through it.
 """
 from __future__ import annotations
 
 import datetime as _dt
 import math
 import re
+import string
+from collections import Counter
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import Any
 
@@ -27,6 +39,7 @@ from sqlglot import exp
 from analystos.skills.base import RunSQL
 from analystos.skills.sqlbuild import (
     _check_dialect,
+    case,
     cast,
     col,
     count_star,
@@ -48,6 +61,15 @@ CATEGORICAL_MAX_DISTINCT = 200
 CATEGORICAL_MAX_RATIO = 0.05
 PERCENTILES = (0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)
 ID_NAME = re.compile(r"(^id$|_id$|^number$|^uuid$|^guid$|_key$|^key$|_uuid$|_guid$)", re.I)
+ENUM_MAX_VALUES = 12  # a column with at most this many distinct values is enumerated in full
+ENUM_MAX_CHARS = 40  # ... when every value is at most this long
+SENSITIVE_TAGS = frozenset({"pii", "restricted", "sensitive"})
+# All a sensitive column's stored profile keeps: completeness and cardinality. Everything else (values, ranges,
+# histograms, percentiles, monthly buckets, lengths, shape masks) describes its values or their distribution.
+SENSITIVE_PROFILE_FIELDS = frozenset({"name", "data_type", "type_family", "semantic_type", "is_key", "non_null",
+                                      "null_count", "null_rate", "distinct", "distinct_ratio"})
+PATTERN_MAX_CHARS = 40
+PATTERN_TOP = 3
 
 
 class ColumnProfile(BaseModel):
@@ -73,6 +95,10 @@ class ColumnProfile(BaseModel):
     monthly_counts: list[dict[str, Any]] = Field(default_factory=list)
     histogram: list[dict[str, Any]] = Field(default_factory=list)
     outliers: dict[str, Any] = Field(default_factory=dict)
+    blank_count: int | None = None  # text columns: values that are empty or whitespace only
+    has_blanks: bool = False  # nulls or empty strings present
+    values_complete: bool = False  # `values` is the full enumeration (<= 12 values of <= 40 chars)
+    values: list[Any] = Field(default_factory=list)
 
 
 class AssetProfile(BaseModel):
@@ -189,9 +215,13 @@ class _Q:
 
 
 def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *, top_n: int = TOP_N,
-                  hist_bins: int = HIST_BINS) -> AssetProfile:
-    """Profile `asset` with a bounded number of pushdown queries (see module docstring)."""
+                  hist_bins: int = HIST_BINS, sensitive: Iterable[str] = ()) -> AssetProfile:
+    """Profile `asset` with a bounded number of pushdown queries (see module docstring). `columns` carry
+    name, data_type and, when known, is_key / references (declared keys and foreign keys are ids). No
+    enumeration is kept for a `sensitive` column."""
     dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
+    marked = {str(s).lower() for s in sensitive}
+    columns = [{**c, "sensitive": True} if str(c["name"]).lower() in marked else c for c in columns]
     q = _Q(run_sql, asset)
     t = table(asset)
     fams = {c["name"]: type_family(c.get("data_type", "")) for c in columns}
@@ -203,22 +233,24 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         x = col(name)
         sel += [exp.Count(this=x).as_(ident(f"c{i}_nn")),
                 exp.Count(this=exp.Distinct(expressions=[x.copy()])).as_(ident(f"c{i}_nd"))]
-        sensitive = bool(c.get("sensitive"))
-        if fam == "numeric" and not sensitive:
+        withheld = bool(c.get("sensitive"))
+        if fam == "numeric" and not withheld:
             xd = cast(x.copy(), "double", dialect)
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max")),
                     exp.Avg(this=xd).as_(ident(f"c{i}_mean")),
                     exp.Stddev(this=xd.copy()).as_(ident(f"c{i}_std"))]
             if dialect != "tsql":
                 sel += [percentile_cont(xd.copy(), p, dialect).as_(ident(f"c{i}_{_pkey(p)}")) for p in PERCENTILES]
-        elif fam == "datetime" and not sensitive:
+        elif fam == "datetime" and not withheld:
             sel += [exp.Min(this=x.copy()).as_(ident(f"c{i}_min")), exp.Max(this=x.copy()).as_(ident(f"c{i}_max"))]
-        elif fam == "boolean" and not sensitive:
+        elif fam == "boolean" and not withheld:
             sel += [exp.Sum(this=is_true_expr(x.copy(), dialect)).as_(ident(f"c{i}_true"))]
-        elif not sensitive:
+        elif not withheld:
             ln = exp.Length(this=cast(x.copy(), "text", dialect))
+            blank = exp.EQ(this=exp.Trim(this=cast(x.copy(), "text", dialect)), expression=exp.Literal.string(""))
             sel += [exp.Avg(this=cast(ln, "double", dialect)).as_(ident(f"c{i}_avglen")),
-                    exp.Max(this=ln.copy()).as_(ident(f"c{i}_maxlen"))]
+                    exp.Max(this=ln.copy()).as_(ident(f"c{i}_maxlen")),
+                    exp.Sum(this=case([(blank, num(1))], num(0))).as_(ident(f"c{i}_blank"))]
     wide = q(exp.select(*sel).from_(t), dialect, "wide", max_rows=1)[0]
     n = int(wide["row_count"] or 0)
 
@@ -243,6 +275,8 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
             cp.avg_length = _num(wide.get(f"c{i}_avglen"))
             ml = wide.get(f"c{i}_maxlen")
             cp.max_length = int(ml) if ml is not None else None
+            cp.blank_count = int(wide.get(f"c{i}_blank") or 0)
+        cp.has_blanks = cp.null_count > 0 or bool(cp.blank_count)
         cp.semantic_type = infer_semantic_type(name, fam, row_count=n, non_null=nn, distinct=nd, avg_length=cp.avg_length,
                                                min_value=cp.min, max_value=cp.max, is_key=cp.is_key,
                                                references=bool(c.get("references")), max_length=cp.max_length)
@@ -322,12 +356,16 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
     cats.sort(key=lambda p: p.distinct)
     for p in cats[:MAX_CATEGORICAL_TOPN]:
         x = col(p.name)
+        limit = max(top_n, ENUM_MAX_VALUES) if p.distinct <= ENUM_MAX_VALUES else top_n  # small: read it whole
         rows = q(exp.select(x.as_(ident("value")), count_star().as_(ident("n"))).from_(table(asset))
                  .where(not_null(x.copy())).group_by(x.copy())
-                 .order_by(exp.Ordered(this=exp.column("n", quoted=True), desc=True), x.copy()).limit(top_n),
-                 dialect, f"top_values.{p.name}", max_rows=top_n)
-        p.top_values = [{"value": _jsonable(r["value"]), "count": int(r["n"]),
-                         "share": round(int(r["n"]) / p.non_null, 6) if p.non_null else None} for r in rows]
+                 .order_by(exp.Ordered(this=exp.column("n", quoted=True), desc=True), x.copy()).limit(limit),
+                 dialect, f"top_values.{p.name}", max_rows=limit)
+        ranked = [{"value": _jsonable(r["value"]), "count": int(r["n"]),
+                   "share": round(int(r["n"]) / p.non_null, 6) if p.non_null else None} for r in rows]
+        p.top_values = ranked[:top_n]
+        if p.type_family == "text":
+            p.values, p.values_complete = enumeration(ranked, p.distinct)
     if len(cats) > MAX_CATEGORICAL_TOPN:
         skipped = [p.name for p in cats[MAX_CATEGORICAL_TOPN:]]
         warnings = [f"top values skipped for {len(skipped)} categorical column(s) beyond the cap of "
@@ -347,14 +385,77 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
                  dialect, f"monthly.{p.name}", max_rows=1200)
         p.monthly_counts = [{"month": _jsonable(r["month"]), "count": int(r["n"])} for r in rows]
 
-    # ---- candidate keys ----------------------------------------------------------------------
-    keys = []
+    return AssetProfile(asset=asset, dialect=dialect, row_count=n, columns=profs, candidate_keys=candidate_keys(profs),
+                        query_ids=q.ids, sql=q.sql, warnings=warnings)
+
+
+def candidate_keys(profs: list[ColumnProfile]) -> list[dict[str, Any]]:
+    """Key candidates from one profile. A declared composite key is one entry (`unique` None: a column profile
+    cannot count distinct tuples, and each part alone is not unique by design); every other entry is one column,
+    `unique` only when every row has a distinct, non-null value. Name-hinted columns are listed with their
+    duplicates so data quality can report them, but only `unique` entries are ever suggested as a key."""
+    declared = [p for p in profs if p.is_key]
+    composite = len(declared) > 1
+    keys: list[dict[str, Any]] = []
+    if composite:
+        keys.append({"columns": [p.name for p in declared], "unique": None, "evidence": "declared", "declared": True,
+                     "null_count": sum(p.null_count for p in declared)})
     for p in profs:
-        hinted = p.is_key or (p.semantic_type == "id" and bool(ID_NAME.search(p.name)) and not p.name.lower().endswith("_id"))
-        unique = p.non_null > 0 and p.distinct == p.non_null
-        if hinted or (unique and p.null_count == 0 and p.semantic_type in ("id",)):
-            keys.append({"column": p.name, "declared": p.is_key, "unique": unique and p.null_count == 0,
-                         "duplicate_rows": p.non_null - p.distinct, "null_count": p.null_count,
-                         "distinct": p.distinct, "non_null": p.non_null})
-    return AssetProfile(asset=asset, dialect=dialect, row_count=n, columns=profs, candidate_keys=keys, query_ids=q.ids,
-                        sql=q.sql, warnings=warnings)
+        own = p.is_key and not composite  # a part of a composite key is not a key by itself
+        hinted = own or (p.semantic_type == "id" and bool(ID_NAME.search(p.name)) and not p.name.lower().endswith("_id"))
+        unique = p.non_null > 0 and p.distinct == p.non_null and p.null_count == 0
+        if hinted or (unique and p.semantic_type == "id"):
+            evidence = "declared" if own else ("profile_unique" if unique else "name_hint")
+            keys.append({"columns": [p.name], "column": p.name, "unique": unique, "evidence": evidence,
+                         "declared": own, "duplicate_rows": p.non_null - p.distinct, "null_count": p.null_count,
+                         "distinct": p.distinct, "non_null": p.non_null, **({"key_part": True} if p.is_key and composite else {})})
+    return keys
+
+
+def enumeration(ranked: list[dict[str, Any]], distinct: int) -> tuple[list[Any], bool]:
+    """(values, complete): the full value list of a column with at most ENUM_MAX_VALUES short values."""
+    values = [r["value"] for r in ranked]
+    complete = 0 < distinct <= ENUM_MAX_VALUES and len(values) == distinct \
+        and all(v is not None and len(str(v)) <= ENUM_MAX_CHARS for v in values)
+    return (values, True) if complete else ([], False)
+
+
+# ------------------------------------------------------------------------------------ sensitivity
+def column_is_sensitive(tags: Iterable[str] | None, semantics: dict[str, Any] | None = None) -> bool:
+    """A column whose values must not be kept or shown: an owner/crawler tag, or a PII classification (free-text
+    risk alone is not enough: it is advisory)."""
+    if set(tags or []) & SENSITIVE_TAGS:
+        return True
+    pii = (semantics or {}).get("pii") or {}
+    return bool(pii.get("category")) and pii.get("category") != "free_text_risk"
+
+
+def sanitize_column_profile(profile: dict[str, Any], *, sensitive: bool) -> dict[str, Any]:
+    """A column profile as it may be stored and shown: a sensitive column keeps its counts (nulls, distinct,
+    lengths) and loses every fact that carries values or their distribution."""
+    if not sensitive:
+        return dict(profile)
+    return {k: v for k, v in profile.items() if k in SENSITIVE_PROFILE_FIELDS}
+
+
+# ------------------------------------------------------------------------------------ format patterns
+_KEEP = frozenset(string.punctuation + " ")
+
+
+def shape_mask(value: Any, *, max_chars: int = PATTERN_MAX_CHARS) -> str | None:
+    """The shape of one value: letters -> A, digits -> 9, ASCII punctuation and spaces kept, anything else -> *.
+    None for a value too long to have a useful shape (free text)."""
+    s = str(value)
+    if not s or len(s) > max_chars:
+        return None
+    return "".join("A" if ch.isalpha() else "9" if ch.isdigit() else ch if ch in _KEEP else "*" for ch in s)
+
+
+def pattern_masks(values: Iterable[Any], *, top: int = PATTERN_TOP) -> list[dict[str, Any]]:
+    """Up to `top` shape masks of sampled values with their share of the sample; masks only, never a value."""
+    sample = [v for v in values if v is not None and str(v) != ""]
+    if not sample:
+        return []
+    counts = Counter(m for v in sample if (m := shape_mask(v)) is not None)
+    return [{"mask": m, "share": round(c / len(sample), 4)}
+            for m, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]]

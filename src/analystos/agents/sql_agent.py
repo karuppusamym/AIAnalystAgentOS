@@ -13,6 +13,7 @@ from analystos.agents.common import (
     catalog_for_prompt,
     compact_json,
     compile_for,
+    defer_compile,
     llm_json,
     task_output,
 )
@@ -599,7 +600,7 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
     catalog = catalog_for_prompt(ctx, objective=asked_text, capped=False)
     dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
     _stage(ctx, "generate", "Writing the SQL")
-    required = {"question": asked_text, "dialect": dialect}
+    required: dict[str, Any] = {"question": asked_text}  # the dialect is named once, in the system text
     if rq.redacted:
         required["redacted_values"] = QUESTION_MODEL_INSTRUCTION
     generation = compile_for(ctx, "sql_generation", required, objective=asked_text, catalog=catalog,
@@ -648,9 +649,9 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
             _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
             sent_sql, sent_error = tokenize_values(sql, rq.values), tokenize_values(exc.message, rq.values)
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
-                              compile_for(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
-                                          objective=asked_text, catalog=catalog,
-                                          reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
+                              defer_compile(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
+                                            objective=asked_text, catalog=catalog,
+                                            reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
             if has_sql(fix):
                 raise
             sql = restore_values(str(fix["sql"]), rq.values)

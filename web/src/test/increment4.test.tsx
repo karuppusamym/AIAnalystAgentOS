@@ -448,4 +448,20 @@ describe("spend by rung and model", () => {
     expect(screen.getByText("4,200")).toBeTruthy();
     expect(screen.getByText("openrouter/auto")).toBeTruthy();
   });
+
+  it("shows prompt-cache tokens and reused context when the server reports them", async () => {
+    session.set("tok", USER);
+    const base = savings({});
+    mockFetch((m, p) => (m === "GET" && p.includes("token-savings") ? { status: 200, body: savings({
+      totals: { ...base.totals, input_tokens: 1000, cached_input_tokens: 800, cached_input_share: 0.8, cached_input_saved_usd: 2.16 },
+      context_cache: { shared: true, by_kind: { compiled: { sql_generation: { hits: 2, misses: 1, chars_reused: 17974 } },
+        retrieval: { follow_up_generation: { hits: 1, misses: 1, chars_reused: 2 } } } },
+    }) } : undefined));
+    render(<TokenSavingsView />);
+    expect(await screen.findByText("Prompt-cache tokens")).toBeTruthy();
+    expect(screen.getByText("800")).toBeTruthy();
+    expect(screen.getByText(/80.0% of input served from the provider's cache, saving \$2.16/)).toBeTruthy();
+    expect(screen.getByText("Context reused")).toBeTruthy();
+    expect(screen.getByText(/shared across workers/)).toBeTruthy();
+  });
 });

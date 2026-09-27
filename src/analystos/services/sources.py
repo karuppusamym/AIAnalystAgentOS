@@ -103,10 +103,38 @@ def discover_source(user: User, source_id: str, workspace_id: str | None = None)
 
 @scoped_loader
 def select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None = None, *,
-                  refresh: str = "auto") -> dict:
+                  refresh: str = "auto", schedule: Any | None = None) -> dict:
     """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load, or a
     watermark window for a table the source config declares `incremental`; `refresh` = auto | full |
-    reconcile)."""
+    reconcile). With `schedule` (the API's BackgroundTasks.add_task) and `crawl.profile_on_select`, the tables
+    that are newly selected or never profiled are then profiled and value-sampled by an incremental crawl in
+    the background: the first discovery crawl ran before the source was ready, so it could not."""
+    out = _select_assets(user, source_id, asset_names, workspace_id, refresh=refresh)
+    out["profile_crawl"] = _profile_selection(user, source_id, out.pop("_unprofiled"), schedule)
+    return out
+
+
+def _profile_selection(user: User, source_id: str, keys: list[str], schedule: Any | None) -> dict:
+    from analystos.services import crawler
+    from analystos.services.platform_settings import get as platform
+
+    if not keys:
+        return {"status": "not_needed", "assets": []}
+    if schedule is None or not platform().crawl.profile_on_select:
+        return {"status": "not_requested", "assets": keys}
+    try:
+        with session_scope() as s:  # committed before scheduling: the background task reads the row in its own session
+            run = crawler.start_crawl(s, s.get(User, user.id), source_id, mode="incremental", include=keys, profile=True,
+                                      trigger="selection", actor=f"user:{user.id}")
+            crawl_id = run.id
+    except InvalidInput as exc:  # e.g. a crawl already running: it will not profile these; say so
+        return {"status": "skipped", "assets": keys, "reason": exc.message}
+    how = crawler.schedule_crawl(crawl_id, user.id, schedule)
+    return {"status": "scheduled", "crawl_id": crawl_id, "assets": keys, "via": how}
+
+
+@scoped_loader
+def _select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None, *, refresh: str) -> dict:
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
     from analystos.evidence.manifest import mark_stale
@@ -122,8 +150,14 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
         unknown = wanted - {a.name for a in assets} - {a.source_name for a in assets}
         if unknown:
             raise InvalidInput(f"unknown assets: {', '.join(sorted(unknown))}")
+        unprofiled = []
         for a in assets:
+            was = a.selected
             a.selected = a.name in wanted or a.source_name in wanted
+            if a.selected and (not was or not (a.stats or {}).get("profile_meta")):
+                unprofiled.append((a.semantics or {}).get("source_key") or a.name)
+                if not was:
+                    a.stats = {}  # measurements of an earlier selection describe an earlier snapshot
         selected = [(a.id, a.source_name, a.name, a.schema_name,
                      [DiscoveredColumn(name=c.name, data_type=c.data_type, nullable=c.nullable, is_key=c.is_key,
                                        references=(c.profile or {}).get("references"))
@@ -168,7 +202,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
               details={"assets": asset_names, "loaded": loaded}, session=s)
         emit(row.workspace_id, "metadata.collected", {"source_id": source_id, "selected": asset_names, "loaded": loaded},
              actor=f"user:{user.id}", session=s)
-    return {"selected": asset_names, "loaded": loaded}
+    return {"selected": asset_names, "loaded": loaded, "_unprofiled": sorted(unprofiled)}
 
 
 def _register_soft_delete_column(session: Session, asset: SourceAsset, info: dict) -> None:
