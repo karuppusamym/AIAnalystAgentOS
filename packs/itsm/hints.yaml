@@ -15,6 +15,17 @@ lifecycle_pairs:
   - [sys_created_on, sys_updated_on]
   - [sys_created_on, closed_at]
   - [created_at, resolved_at]
+# Glossary scan (knowledge/glossary_scan.py): what an abbreviation in a table or column name stands for (a short
+# expansion becomes a synonym; a longer text is the proposed definition), and column-name prefixes whose meaning a
+# person should confirm. Every one is a suggestion in the review queue, never a glossary entry by itself.
+glossary_expansions:
+  sys: "Fields whose name starts with sys_ are maintained by ServiceNow itself (sys_id is the record's unique identifier, sys_updated_on when it last changed), not entered by people."
+  ci: Configuration Item
+  cmdb: Configuration Management Database
+  sla: Service Level Agreement
+  mttr: Mean Time To Resolve
+name_prefixes:
+  u_: "Fields whose name starts with u_ are custom fields added to this ServiceNow instance, not part of the base product: their meaning is local and should be written down by their owner."
 # Crawler table-domain vocabulary (skills/catalog domain classification).
 domain_keywords:
   it_operations: [incident, problem, change, ticket, ci, cmdb, sla, assignment, caller, outage, alert, server, host,

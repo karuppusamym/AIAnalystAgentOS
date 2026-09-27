@@ -46,6 +46,13 @@ class PushIn(BaseModel):
     approval_id: str
 
 
+class GlossaryScanIn(BaseModel):
+    use_model: bool = Field(True, description="let the glossary_suggestion model draft definitions the rules could not "
+                                              "(its mode, availability and the workspace policy still decide)")
+    include_ask: bool = Field(True, description="also suggest terms from recent unanswered Ask questions")
+    include_descriptions: bool = Field(True, description="also ask about undescribed tables, views and columns")
+
+
 class ContextPreviewIn(BaseModel):
     purpose: str = "hypothesis_generation"
     question: str = Field(min_length=1, max_length=4000)
@@ -64,6 +71,35 @@ def review_suggestions(workspace_id: str, body: ReviewIn, user: User = Depends(c
     """Approve, edit-then-approve or reject drafts in one batch: one workspace-pack revision."""
     require_role(session, user, workspace_id, "editor")
     return suggestions.review(session, workspace_id, user, [d.model_dump() for d in body.decisions])
+
+
+@router.get("/workspaces/{workspace_id}/knowledge/suggestions/summary")
+def suggestion_summary(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Pending drafts per kind, and `questions`: glossary terms and descriptions a person should answer."""
+    from analystos.knowledge import glossary_scan
+
+    require_role(session, user, workspace_id, "viewer")
+    return glossary_scan.pending_counts(session, workspace_id)
+
+
+@router.post("/workspaces/{workspace_id}/knowledge/glossary/scan")
+def scan_glossary(workspace_id: str, body: GlossaryScanIn | None = None, user: User = Depends(current_user),
+                  session: Session = Depends(db, scope="function")):
+    """Scan the catalog and recent unanswered Ask questions for glossary terms and missing descriptions; queue
+    them for review. Rules first; nothing is written to the glossary or the catalog until a person approves."""
+    from analystos.core.ids import new_id
+    from analystos.governance.audit import audit
+    from analystos.knowledge import glossary_scan
+    from analystos.runtime.context import default_router
+
+    require_role(session, user, workspace_id, "editor")
+    body = body or GlossaryScanIn()
+    out = glossary_scan.scan(session, workspace_id, proposed_by=f"user:{user.id}", batch=new_id("gscan"),
+                             router=default_router(), use_model=body.use_model, include_ask=body.include_ask,
+                             include_descriptions=body.include_descriptions)
+    audit(f"user:{user.id}", "knowledge.glossary_scanned", workspace_id=workspace_id, target=workspace_id, decision="allow",
+          details={k: v for k, v in out.items() if isinstance(v, int)}, session=session)
+    return out
 
 
 @router.post("/workspaces/{workspace_id}/knowledge/context")

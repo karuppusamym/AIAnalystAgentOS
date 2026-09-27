@@ -14,6 +14,7 @@ Stages, each recorded on the crawl_run so the UI can show progress and a failed 
                 measurements may corroborate a rule classification
 7. relationships declared references -> relationship rows
 8. glossary     columns linked to glossary terms by token overlap
+9b. glossary_scan glossary terms and description questions queued for a person (knowledge/glossary_scan.py)
 9. enrich       optional: the model fills placeholder descriptions and proposes domains for generic
                 tables in screened, compact batches (crawl.llm_enrichment + purpose mode). Domain
                 proposals wait for review and never change a rule classification directly.
@@ -426,6 +427,8 @@ class _Crawl:
         facets.run("glossary", self._glossary, ids)
         # 9. optional model enrichment
         facets.run("enrich", self._enrich, ids, touched)
+        # 9b. glossary and description suggestions for a person (rules; the model only drafts definitions)
+        facets.run("glossary_scan", self._glossary_scan, ids)
         # 10. knowledge pack documents (tables, source), value-free query history, graph projection
         facets.run("knowledge", self._knowledge, ids)
         facets.run("query_history", self._query_history)
@@ -889,6 +892,81 @@ class _Crawl:
                                                                    "score": link.score, "reason": link.reason}}
         self.stats["glossary_links"] = len(links)
         self.log.stage("glossary", f"{len(links)} columns linked to glossary terms")
+
+    # -------------------------------------------------------------- 9b. glossary scan (Stream E)
+    def _glossary_scan(self, ids: dict[str, str]) -> dict[str, Any]:
+        """Queue glossary terms (code sets, abbreviations, shared nouns, unanswered Ask words) and questions about
+        undescribed tables and columns for review. Bounded per scan; already decided candidates are not proposed
+        again. A model drafts definitions only when enrichment is on (knowledge/glossary_scan.py)."""
+        from analystos.knowledge import glossary_scan
+        from analystos.runtime.context import default_router
+
+        self._read_code_values(ids)
+        with session_scope() as s:
+            out = glossary_scan.scan(s, self.source.workspace_id, proposed_by=f"crawler:{self.run.id}", batch=self.run.id,
+                                     asset_ids=list(ids.values()), router=default_router(),
+                                     use_model=bool(self.run.options.get("enrich")))
+        self.stats.update(glossary_suggestions=out["glossary_terms"], description_questions=out["description_questions"])
+        self.log.stage("enrich", f"{out['glossary_terms']} glossary terms and {out['description_questions']} description "
+                       f"questions queued for review ({out['skipped_known']} already in the glossary)",
+                       glossary_scan={k: v for k, v in out.items() if k != "model"})
+        return {"count": out["glossary_terms"] + out["description_questions"]}
+
+    CODE_VALUES_MAX = 12
+
+    def _read_code_values(self, ids: dict[str, str]) -> int:
+        """The profile keeps no value list for numbers, so a small integer code column with gaps (state 1, 2, 3, 6,
+        7, 8) has its distinct codes read through the gateway: selected assets in the crawler's scope only, never a
+        sensitive or denied column, at most 13 rows per column. Kept as `profile.code_values`."""
+        from sqlglot import exp
+
+        from analystos.governance.policy import resolve_scope
+        from analystos.knowledge.glossary_scan import needs_code_query
+        from analystos.runtime.context import default_gateway
+        from analystos.skills.sqlbuild import col, table
+
+        with session_scope() as s:
+            if s.get(Source, self.source.id).status != "ready":
+                return 0
+            scope = resolve_scope(s, s.get(User, self.user.id), self.source.workspace_id, source_ids=[self.source.id],
+                                  minimum_role="analyst")
+            todo: list[tuple[str, str, str]] = []
+            for asset_id in ids.values():
+                a = s.get(SourceAsset, asset_id)
+                fq = f"{a.schema_name}.{a.name}"
+                if not a.selected or fq not in scope.assets:
+                    continue
+                for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset_id)):
+                    if f"{fq}.{c.name}" in scope.denied_columns or f"*.{c.name}" in scope.denied_columns:
+                        continue
+                    if needs_code_query({"name": c.name, "data_type": c.data_type, "semantics": c.semantics or {},
+                                         "tags": c.tags or [], "profile": c.profile or {}}):
+                        todo.append((asset_id, fq, c.name))
+        if not todo:
+            return 0
+        run_sql = default_gateway().run_sql_for(scope, actor=f"crawler:{self.run.id}", source_id=self.source.id)
+        dialect = getattr(run_sql, "dialect", "postgres")
+        read = 0
+        for asset_id, fq, name in todo[:50]:
+            sql = (exp.select(col(name).as_("v")).distinct().from_(table(fq))
+                   .where(exp.Not(this=exp.Is(this=col(name), expression=exp.Null())))
+                   .limit(self.CODE_VALUES_MAX + 1).sql(dialect=dialect))
+            try:
+                res = run_sql(sql, purpose="crawl.code_values", max_rows=self.CODE_VALUES_MAX + 1, retain_rows=False)
+            except AnalystOSError as exc:
+                log.info("code values skipped for %s.%s: %s", fq, name, exc.message)
+                continue
+            raw = [next(iter(r.values())) for r in res.records()]
+            values = sorted({int(v) for v in raw if isinstance(v, int | float) and float(v).is_integer()})
+            if len(values) != len(raw) or not 2 <= len(values) <= self.CODE_VALUES_MAX:
+                continue
+            with session_scope() as s:
+                c = s.scalar(select(SourceColumn).where(SourceColumn.asset_id == asset_id, SourceColumn.name == name))
+                if c is not None and not column_is_sensitive(c.tags, c.semantics):
+                    c.profile = {**(c.profile or {}), "code_values": values}
+                    read += 1
+        self.stats["code_value_columns"] = read
+        return read
 
     # -------------------------------------------------------------- 9. optional enrichment
     def _enrich(self, ids: dict[str, str], touched: set[str]) -> None:

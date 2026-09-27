@@ -35,6 +35,9 @@ cannot leave it). A pack installed as a Python entry point (`analystos.capabilit
   `display_columns` (name columns of referenced tables), `event_start` (words naming a record's start
   time), `lifecycle_pairs` (timestamps that must be ordered), `domain_keywords` (table-domain
   classification), `person_nouns` (a `<noun>_name` column names a person: PII).
+  The glossary scan (`knowledge/glossary_scan.py`) also reads, from the packs a workspace uses,
+  `glossary_expansions` (abbreviation -> expansion, or a longer explanation) and `name_prefixes`
+  (column-name prefix -> what it means); both only become review-queue suggestions.
 * **Templates and knowledge** come from the packs a run enables: the workspace policy's
   `domain_packs` list when set (an empty list disables packs), otherwise every pack whose
   `applies_when` matches the run's selected tables or columns (`{tables: [regex], columns: [regex]}`,

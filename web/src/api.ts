@@ -1097,6 +1097,25 @@ export interface ContextCacheStats {
   totals: ContextCacheCounts;
 }
 
+/** `POST …/knowledge/glossary/scan`: what one glossary scan queued (Stream E). */
+export interface GlossaryScanResult {
+  glossary_terms: number;
+  description_questions: number;
+  candidates: number;
+  by_rule: Record<string, number>;
+  skipped_known: number;
+  skipped_decided: number;
+  assets: number;
+  model: { called: boolean; filled: number; skipped?: string };
+}
+
+/** Pending review drafts per kind; `questions` = glossary terms and descriptions a person should answer. */
+export interface SuggestionSummary {
+  pending: Record<string, number>;
+  questions: number;
+  total: number;
+}
+
 export interface KnowledgeImportReport {
   pack_id: string;
   slug: string;
@@ -3535,6 +3554,10 @@ export const api = {
     get("/api/workspaces/{workspace_id}/knowledge/suggestions", { path: W(ws), query: { status } }) as Promise<KnowledgeSuggestion[]>,
   reviewSuggestions: (ws: string, decisions: ReviewDecisionBody[]) =>
     post("/api/workspaces/{workspace_id}/knowledge/suggestions/review", { path: W(ws), body: { decisions } }) as Promise<ReviewResult>,
+  suggestionSummary: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/suggestions/summary", { path: W(ws) }) as Promise<SuggestionSummary>,
+  glossaryScan: (ws: string, body: { use_model?: boolean; include_ask?: boolean; include_descriptions?: boolean } = {}) =>
+    post("/api/workspaces/{workspace_id}/knowledge/glossary/scan", { path: W(ws), body }) as Promise<GlossaryScanResult>,
   importKnowledge: (ws: string, file: File, slug: string) => {
     const fd = new FormData();
     fd.append("file", file);

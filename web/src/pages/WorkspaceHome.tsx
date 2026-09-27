@@ -171,6 +171,7 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
   const alerts = useAsync(() => api.listAlerts(wsId, "open"), [wsId]);
   const insights = useAsync(() => api.listInsights(wsId), [wsId]);
   const questions = useAsync(() => api.relationshipCandidates(wsId, "pending"), [wsId]);
+  const knowledge = useAsync(() => api.suggestionSummary(wsId), [wsId]);
   const staleBefore = Date.now() - STALE_AFTER_DAYS * 86_400_000;
   const stale = sources?.filter((s) => s.last_error || !s.last_discovered_at || Date.parse(s.last_discovered_at) < staleBefore);
   const needs: Need[] = [
@@ -182,10 +183,12 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
       href: to.investigations(wsId), hint: "Paused or asking a question" },
     { id: "questions", label: "Open data questions", count: count(questions), error: questions.error, href: to.data(wsId, "definitions"),
       hint: "Measured joins to confirm" },
+    { id: "meaning", label: "Questions about your data", count: knowledge.error || !knowledge.data ? undefined : knowledge.data.questions,
+      error: knowledge.error, href: to.data(wsId, "review"), hint: meaningHint(knowledge.data?.questions) },
     { id: "stale", label: "Stale sources", count: stale?.length, href: to.sources(wsId), hint: `Not checked in ${STALE_AFTER_DAYS} days, or failing` },
   ];
   const shown = needs.filter((n) => n.count === undefined || n.count > 0);
-  const loading = [approvals, alerts, insights, questions].some((s) => s.loading && !s.data && !s.error);
+  const loading = [approvals, alerts, insights, questions, knowledge].some((s) => s.loading && !s.data && !s.error);
   return (
     <Card title="What needs you">
       {!loading && shown.length === 0 && <Notice tone="success">Nothing needs you right now.</Notice>}
@@ -198,6 +201,12 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
       </div>
     </Card>
   );
+}
+
+/** Glossary terms and descriptions only a person can give: good answers are what every later answer stands on. */
+export function meaningHint(n: number | undefined): string {
+  if (n === undefined) return "Glossary terms and descriptions to confirm";
+  return `${n} ${n === 1 ? "question" : "questions"} about your data ${n === 1 ? "needs" : "need"} an answer`;
 }
 
 /** Counters and cost: secondary, collapsed. */

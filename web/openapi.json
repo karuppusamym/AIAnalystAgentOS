@@ -2428,6 +2428,30 @@
         "title": "ForkIn",
         "type": "object"
       },
+      "GlossaryScanIn": {
+        "properties": {
+          "include_ask": {
+            "default": true,
+            "description": "also suggest terms from recent unanswered Ask questions",
+            "title": "Include Ask",
+            "type": "boolean"
+          },
+          "include_descriptions": {
+            "default": true,
+            "description": "also ask about undescribed tables, views and columns",
+            "title": "Include Descriptions",
+            "type": "boolean"
+          },
+          "use_model": {
+            "default": true,
+            "description": "let the glossary_suggestion model draft definitions the rules could not (its mode, availability and the workspace policy still decide)",
+            "title": "Use Model",
+            "type": "boolean"
+          }
+        },
+        "title": "GlossaryScanIn",
+        "type": "object"
+      },
       "GrantIn": {
         "properties": {
           "quotas": {
@@ -19813,6 +19837,96 @@
         ]
       }
     },
+    "/api/workspaces/{workspace_id}/knowledge/glossary/scan": {
+      "post": {
+        "description": "Scan the catalog and recent unanswered Ask questions for glossary terms and missing descriptions; queue\nthem for review. Rules first; nothing is written to the glossary or the catalog until a person approves.",
+        "operationId": "scan_glossary_api_workspaces__workspace_id__knowledge_glossary_scan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/GlossaryScanIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scan Glossary",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/workspaces/{workspace_id}/knowledge/graph": {
       "get": {
         "description": "Tables, datasets, metrics, documents and pending suggestions; each edge governed or inferred.",
@@ -21121,6 +21235,79 @@
           }
         },
         "summary": "Review Suggestions",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/knowledge/suggestions/summary": {
+      "get": {
+        "description": "Pending drafts per kind, and `questions`: glossary terms and descriptions a person should answer.",
+        "operationId": "suggestion_summary_api_workspaces__workspace_id__knowledge_suggestions_summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggestion Summary",
         "tags": [
           "knowledge"
         ]

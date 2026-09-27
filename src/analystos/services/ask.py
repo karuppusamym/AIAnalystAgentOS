@@ -500,12 +500,28 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
                                             "mode": mode, "steps": len((analysis or {}).get("steps") or []) or None},
              actor=f"user:{user.id}", session=s)
         s.flush()
+        if status != "answered":
+            _suggest_terms(s, workspace_id, turn)
         out_turn = turn_out(s, turn)
     if status == "answered":
         from analystos.services.steps import record_quietly
 
         record_quietly("ask_thread", workspace_id, thread_id, user.id)
     return out_turn
+
+
+def _suggest_terms(session: Session, workspace_id: str, turn: AskTurn) -> None:
+    """Words of an unanswered question that match nothing known become "Define X?" glossary drafts for a
+    person (knowledge/glossary_scan.py; rules only, a few at most). Never fails the turn."""
+    from analystos.knowledge.glossary_scan import from_ask_turn
+
+    try:
+        with session.begin_nested():
+            from_ask_turn(session, workspace_id, turn)
+    except Exception:  # noqa: BLE001 - a suggestion is best effort; the answer (or refusal) stands
+        import logging
+
+        logging.getLogger(__name__).warning("glossary suggestion after ask turn %s failed", turn.id, exc_info=True)
 
 
 def _sse(event: str, data: Any) -> str:

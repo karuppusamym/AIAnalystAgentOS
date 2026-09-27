@@ -15,6 +15,10 @@ Invariants (CLAUDE.md, crawler): a draft never overwrites a document the queue d
 or imported content): proposing is skipped and approving is refused. A catalog description is
 changed only while it is still a model or rule placeholder: reviewed, user and source-system text
 wins. A draft for a subject supersedes that subject's older pending drafts.
+
+Two kinds come from the glossary scan (knowledge/glossary_scan.py) and are applied outside the pack:
+an approved `glossary_term` becomes a trusted workspace glossary entry, an answered
+`description_question` becomes catalog text (a person's words: origin `user`).
 """
 from __future__ import annotations
 
@@ -43,9 +47,14 @@ KIND_SPEC: dict[str, tuple[str, str, str]] = {
     "table_description": ("Table", "catalog", "table"),
     "column_description": ("Column", "catalog/columns", "column"),
     "domain_candidate": ("Note", "notes", "note"),
+    # Stream E (knowledge/glossary_scan.py): approval writes a glossary entry or catalog text, not a pack file.
+    "glossary_term": ("Glossary Term", "glossary", "term"),
+    "description_question": ("Note", "notes", "note"),
 }
 PRIMARY_FIELD = {"attested_computation": "statement", "table_description": "description",
-                 "column_description": "description"}
+                 "column_description": "description", "description_question": "question"}
+# Kinds whose approval is applied outside the pack (a glossary entry, catalog text): no pack document.
+APPLIED_KINDS = ("glossary_term", "description_question")
 STATUSES = ("pending", "approved", "rejected", "superseded")
 ACTIONS = ("approve", "edit", "reject")
 REVIEW_KEY = "review"  # `analystos.review` marks a document the queue wrote (and may replace)
@@ -234,6 +243,14 @@ def negative_path(row: KnowledgeSuggestion) -> str:
     return f"negative/{slugify(row.kind)}-{slugify(row.subject.split(':', 1)[-1] or row.title, 80)}-{row.content_hash[:8]}.md"
 
 
+def _writes_negative(row: KnowledgeSuggestion) -> bool:
+    """A rejection is negative knowledge when something was proposed: not for a negative draft, a skipped
+    description question, or a glossary skeleton nobody defined (there is no claim to reject)."""
+    if row.kind in ("negative", "description_question"):
+        return False
+    return not (row.kind == "glossary_term" and _value(row.fields or {}, "placeholder"))
+
+
 def render_negative(row: KnowledgeSuggestion, user_id: str, at: str, reason: str | None) -> bytes:
     """A rejection as knowledge: what was proposed, that a human rejected it, and why."""
     text = str(_value(row.fields or {}, primary_field(row.kind)) or "")
@@ -410,7 +427,7 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
             continue
         seen.add(sid)
         if action == "reject":
-            if row.kind != "negative":  # rejecting a negative draft just drops it
+            if _writes_negative(row):  # rejecting a negative draft (or skipping a question) just drops it
                 files[negative_path(row)] = render_negative(row, user.id, at, d.get("reason"))
             decided.append((row, "rejected", _revert_description(session, row) if row.kind == "table_description" else None))
             row.reason = str(d["reason"])[:2000] if d.get("reason") else None
@@ -435,6 +452,20 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
             if problem:
                 errors.append({"id": sid, "error": problem})
                 continue
+        if row.kind in APPLIED_KINDS:
+            from analystos.knowledge import glossary_scan
+
+            glossary = row.kind == "glossary_term"
+            problem = glossary_scan.term_error(fields) if glossary else glossary_scan.answer_error(fields)
+            if problem:
+                errors.append({"id": sid, "error": problem})
+                continue
+            note = (glossary_scan.apply_glossary_term if glossary else glossary_scan.apply_description_answer)(
+                session, row, fields, user)
+            if action == "edit":
+                row.fields = fields
+            decided.append((row, "approved", note))
+            continue
         if row.kind == "attested_computation" and attested.missing(_value(fields, "computation") or {}):
             errors.append({"id": sid, "error": "incomplete_computation", "missing": attested.missing(_value(fields, "computation") or {})})
             continue
@@ -460,7 +491,14 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
     out: dict[str, list[dict[str, Any]]] = {"approved": [], "rejected": []}
     for row, status, note in decided:
         row.status, row.decided_by, row.decided_at, row.revision = status, user.id, now, revision
-        path = row.path if status == "approved" else (negative_path(row) if row.kind != "negative" else None)
+        if status == "approved":
+            path = None if row.kind in APPLIED_KINDS else row.path
+        else:
+            path = negative_path(row) if negative_path(row) in files else None
+        if row.kind in ("table_description", "column_description"):
+            from analystos.knowledge.glossary_scan import close_questions_for
+
+            close_questions_for(session, workspace_id, row.subject, row.id)
         out[status].append({"id": row.id, "path": path,
                             **({"catalog": note} if note else {})})
         audit(f"user:{user.id}", f"knowledge.suggestion.{status}", workspace_id=workspace_id, target=row.id,

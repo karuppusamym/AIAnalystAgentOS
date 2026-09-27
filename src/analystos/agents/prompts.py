@@ -133,6 +133,15 @@ must be one of the numbers in `steps` (facts, measures, series, comparison, driv
 choose (you may round, and write fractions as percentages); never compute a new number. Every sentence that contains a
 number must end with the step it comes from, written exactly as "(step N)". Mention the caveats and suspect checks
 given. Describe associations, never causes. Return JSON: {"text": str}.""",
+
+    "glossary_suggestion.v1": """You draft business glossary definitions for a data catalog. Each entry of `terms` is a
+candidate a rule found: a coded column (its codes are in `values` only when the workspace allows), an abbreviation
+in table or column names, a business noun several tables share, or a word from a question nobody could answer.
+Use only what the metadata shows (names, types, where it was found, the profile shape); never invent numbers,
+thresholds or business facts. When the metadata does not tell you what a term means, leave it out rather than guess.
+A person reviews every draft. Return JSON {"terms": [{"key": str (exactly as given), "definition": str (<= 300 chars,
+one or two plain sentences; for a code set name each code), "synonyms": [str] (<= 5), "confidence": number 0-1}]}.
+""" + UNTRUSTED_NOTE,
 }
 
 
