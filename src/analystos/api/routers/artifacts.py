@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows, with_verification
 from analystos.artifacts.registry import lineage_for
+from analystos.contracts.policy import ApprovalSubject, ApprovalView
 from analystos.core.errors import InvalidInput
 from analystos.db.models import (
     AnalysisRun,
@@ -94,6 +95,26 @@ def list_approvals(workspace_id: str, status: str | None = None, user: User = De
     if status:
         stmt = stmt.where(Approval.status == status)
     return rows(session.scalars(stmt.order_by(Approval.created_at.desc())))
+
+
+@router.get("/approvals/{approval_id}", response_model=ApprovalView)
+def get_approval(approval_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """One approval's status for its requester or anyone who sees the workspace's approvals inbox; anyone
+    else gets the same 404 as an unknown id. Read only: no decision is possible here."""
+    approval = session.get(Approval, approval_id)
+    if approval is None or approval.requested_by != user.id:
+        approval = load_in_workspace(session, Approval, approval_id, user=user, label="approval")
+    def iso(d):  # noqa: ANN001, ANN202
+        return d.isoformat() if d else None
+
+    return ApprovalView(id=approval.id, workspace_id=approval.workspace_id, kind=approval.action, status=approval.status,
+                        risk_tier=approval.risk_tier, subject=ApprovalSubject(run_id=approval.run_id,
+                                                                              destination=approval.destination,
+                                                                              affected_assets=list(approval.affected_assets or [])),
+                        payload_hash=approval.payload_hash, plan_hash=approval.plan_hash,
+                        policy_version=approval.policy_version, requested_by=approval.requested_by,
+                        decided_by=approval.decided_by, reason=approval.reason, created_at=iso(approval.created_at),
+                        decided_at=iso(approval.decided_at), expires_at=iso(approval.expires_at))
 
 
 @scoped_loader

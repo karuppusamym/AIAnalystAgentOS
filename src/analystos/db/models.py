@@ -175,6 +175,9 @@ class SourceColumn(Base):
     is_key: Mapped[bool] = mapped_column(Boolean, default=False)
     business_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A person's business name / description is `user`: no crawl or knowledge ingest overwrites it.
+    business_name_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | user
+    description_origin: Mapped[str | None] = mapped_column(String(20), nullable=True)  # source | rule | user
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)  # pii, sensitive, restricted
     profile: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")  # role, unit, pii, glossary

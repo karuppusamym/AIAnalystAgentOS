@@ -407,6 +407,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/approvals/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Approval
+         * @description One approval's status for its requester or anyone who sees the workspace's approvals inbox; anyone
+         *     else gets the same 404 as an unknown id. Read only: no decision is possible here.
+         */
+        get: operations["get_approval_api_approvals__approval_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/approvals/{approval_id}/approve": {
         parameters: {
             query?: never;
@@ -652,6 +673,26 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{asset_id}/columns/{column}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Curate Column
+         * @description A person's business name and description for a column; the crawler never overwrites them.
+         */
+        patch: operations["curate_column_api_assets__asset_id__columns__column__metadata_patch"];
         trace?: never;
     };
     "/api/assets/{asset_id}/columns/{column}/tags": {
@@ -4569,6 +4610,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/steps/{step_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Step Number
+         * @description "Why this number?" (P7-08) for a step version (default: current): each numeric cell (or the one given by
+         *     `number`, `column` and/or `row`) resolved fact -> step -> query receipt -> data version -> semantic version ->
+         *     verdict, every link with its current state; missing and voided links are returned, never dropped.
+         */
+        get: operations["why_step_number_api_workspaces__workspace_id__steps__step_id__why_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/threads/{container_type}/{container_id}": {
         parameters: {
             query?: never;
@@ -4853,6 +4916,54 @@ export interface components {
         ApprovalIn: {
             /** Approval Id */
             approval_id?: string | null;
+        };
+        /**
+         * ApprovalSubject
+         * @description What an approval is about: the run it belongs to (if any), where the action lands, what it touches.
+         */
+        ApprovalSubject: {
+            /** Affected Assets */
+            affected_assets?: string[];
+            /** Destination */
+            destination?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+        };
+        /**
+         * ApprovalView
+         * @description GET /api/approvals/{id}: one approval's state, read only (decisions are the approve/reject POSTs).
+         *     `payload_hash` is the hash the approval binds to; the proposal itself stays on the inbox list.
+         */
+        ApprovalView: {
+            /** Created At */
+            created_at?: string | null;
+            /** Decided At */
+            decided_at?: string | null;
+            /** Decided By */
+            decided_by?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Payload Hash */
+            payload_hash: string;
+            /** Plan Hash */
+            plan_hash?: string | null;
+            /** Policy Version */
+            policy_version: number;
+            /** Reason */
+            reason?: string | null;
+            /** Requested By */
+            requested_by: string;
+            /** Risk Tier */
+            risk_tier: string;
+            /** Status */
+            status: string;
+            subject: components["schemas"]["ApprovalSubject"];
+            /** Workspace Id */
+            workspace_id: string;
         };
         /** ArtifactDecision */
         ArtifactDecision: {
@@ -5153,6 +5264,16 @@ export interface components {
             target?: string | null;
             /** Type */
             type?: string | null;
+        };
+        /**
+         * ColumnMetadataIn
+         * @description Only the fields sent change; an empty string clears one (and the crawler leaves it cleared).
+         */
+        ColumnMetadataIn: {
+            /** Business Name */
+            business_name?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /** ContextIn */
         ContextIn: {
@@ -7604,6 +7725,40 @@ export interface operations {
             };
         };
     };
+    get_approval_api_approvals__approval_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     approve_api_approvals__approval_id__approve_post: {
         parameters: {
             query?: never;
@@ -8099,6 +8254,45 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    curate_column_api_assets__asset_id__columns__column__metadata_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                asset_id: string;
+                column: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ColumnMetadataIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -16674,6 +16868,46 @@ export interface operations {
     step_versions_api_workspaces__workspace_id__steps__step_id__versions_get: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    why_step_number_api_workspaces__workspace_id__steps__step_id__why_get: {
+        parameters: {
+            query?: {
+                version?: number | null;
+                number?: string | null;
+                column?: string | null;
+                row?: number | null;
+            };
             header?: {
                 authorization?: string | null;
                 "x-correlation-id"?: string | null;

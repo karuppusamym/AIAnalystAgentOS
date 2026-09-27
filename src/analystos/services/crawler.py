@@ -387,12 +387,16 @@ class _Crawl:
             col.semantics = {**(sem.model_dump(exclude={"name", "description"}) if sem else {}),
                              **({"glossary": col.semantics["glossary"]} if (col.semantics or {}).get("glossary") else {}),
                              "pii": pii.model_dump() if pii.category else None}
-            source_bn = cat.screen_text(c.business_name, max_chars=120) if c.business_name else None
-            col.business_name = col.business_name or source_bn or (sem.business_name if sem else None)
-            if c.description and not cat.is_placeholder_description(c.description):
-                col.description = col.description if col.tags_origin == "user" and col.description else cat.screen_text(c.description, max_chars=500)
+            if col.business_name_origin != "user":
+                source_bn = cat.screen_text(c.business_name, max_chars=120) if c.business_name else None
+                col.business_name = col.business_name or source_bn or (sem.business_name if sem else None)
+            if col.description_origin == "user":
+                pass  # a person's description is never overwritten
+            elif c.description and not cat.is_placeholder_description(c.description):
+                if not (col.tags_origin == "user" and col.description):
+                    col.description, col.description_origin = cat.screen_text(c.description, max_chars=500), "source"
             elif not col.description and sem:
-                col.description = sem.description
+                col.description, col.description_origin = sem.description, "rule"
             before = set(col.tags or [])
             col.tags = crawler_tags(col.tags or [], pii)
             tagged += int(set(col.tags) != before)
