@@ -286,9 +286,10 @@ describe("investigation board", () => {
     fireEvent.click(screen.getByRole("button", { name: /Show superseded hypotheses \(1\)/ }));
     expect(screen.getByText("An earlier framing replaced by a replan")).toBeTruthy();
 
-    expect(screen.getByRole("list", { name: "Instructions sent to this run" }).textContent).toMatch(/Exclude auto-closed tickets/);
+    expect(screen.getByRole("list", { name: "Instructions sent to this investigation" }).textContent).toMatch(/Exclude auto-closed tickets/);
     expect(await screen.findByText("9,100")).toBeTruthy(); // tokens avoided
-    expect(screen.getByText("Rung breakdown not reported by this server.")).toBeTruthy();
+    // the model-tier breakdown is technical detail: inside a closed disclosure
+    expect(screen.getByText("Tier breakdown not reported by this server.").closest("details[data-technical]:not([open])")).toBeTruthy();
     expect(screen.getByRole("meter", { name: "Tokens used of run budget" }).getAttribute("aria-valuenow")).toBe("9"); // 18,250 / 200,000
     expect(await axeClean(container)).toEqual([]);
   });
@@ -355,7 +356,8 @@ describe("investigation board", () => {
     expect(await screen.findByText(/Focus on the Network group\./)).toBeTruthy();
     const [, init] = calls(fetchMock, "POST", /\/feedback$/)[0];
     expect(JSON.parse(String(init.body))).toEqual({ text: "Focus on the Network group", kind: null, target_type: null, target_id: null });
-    expect(screen.getByText(/jev:typesafe\/jev-1/)).toBeTruthy();
+    // who classified it (the decision model) is a tooltip, not the default text
+    expect(screen.getByText("redirect", { selector: "strong" }).getAttribute("title")).toMatch(/jev:typesafe\/jev-1/);
   });
 
   it("renders the rung meter when the server reports rungs", async () => {
@@ -415,15 +417,15 @@ describe("alert triage explanation", () => {
     data: { severity: "warning", triage: { p_material: 0.87, model: "typesafe" } }, dedupe_key: "k", status: "open", investigation_run_id: null,
     acknowledged_by: null, created_at: "", resolved_at: null };
 
-  it("states the rule, the JEV probability and that JEV only escalates", () => {
+  it("states the rule, the decision model's probability and that it only escalates", () => {
     const e = explainTriage(base);
     expect(e.escalated).toBe(true);
     expect(e.lines).toEqual([
       "Rule: MTTR 14h vs median 10h (rule severity: warning).",
-      "JEV judged it material (p 87%) and escalated the severity from warning to critical.",
-      "JEV can only raise severity; it never lowers it or closes an alert.",
+      "The decision model judged it material (87% likely) and raised the severity from warning to critical.",
+      "The decision model can only raise severity; it never lowers it or closes an alert.",
     ]);
-    expect(explainTriage({ ...base, severity: "warning", data: {} }).lines[1]).toBe("JEV triage did not run; the severity is the rule's.");
+    expect(explainTriage({ ...base, severity: "warning", data: {} }).lines[1]).toBe("The decision model did not run; the severity is the rule's.");
   });
 });
 

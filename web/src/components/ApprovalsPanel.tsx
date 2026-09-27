@@ -7,7 +7,7 @@ import { EmptyState, ErrorBox, KeyValue, StatusBadge, Tag, TechnicalDetails } fr
 
 const ACTION_LABEL: Record<string, string> = {
   publish_dashboard: "Publish dashboards",
-  execute_plan: "Execute analysis plan",
+  execute_plan: "Run an investigation plan",
   mcp_tool_call: "Call an external MCP tool",
   elt_build: "Build with dbt (write to a target schema)",
   "semantic_metric.approve": "Approve a KPI definition",
@@ -31,10 +31,11 @@ function GovernanceReview({ evidence }: { evidence: Record<string, unknown> }) {
           {policy.reasons?.length ? <span className="muted">{policy.reasons.join(", ")}</span> : null}
         </p>
       )}
-      {jev !== undefined && jev !== null && (
-        <p className="small">JEV consequential-action probability: <strong>{fmtPct(jev)}</strong> <span className="muted">(escalates risk only; never grants)</span></p>
-      )}
-      <TechnicalDetails value={evidence} label="Full evidence" />
+      <TechnicalDetails value={evidence} label="Technical details">
+        {jev !== undefined && jev !== null && (
+          <p className="small">JEV consequential-action probability: <strong>{fmtPct(jev)}</strong> <span className="muted">(escalates risk only; never grants)</span></p>
+        )}
+      </TechnicalDetails>
     </div>
   );
 }
@@ -44,7 +45,7 @@ function GovernanceReview({ evidence }: { evidence: Record<string, unknown> }) {
  * destination, path by path. A first proposal lists its contents instead.
  */
 export function PayloadDiff({ approval, previous }: { approval: Approval; previous?: Approval | null }) {
-  if (!approval.payload) return <p className="muted small">The payload is not included in this view; its hash is above.</p>;
+  if (!approval.payload) return <p className="muted small">The content is not included in this view; see Technical details.</p>;
   if (!previous?.payload) {
     const items = outline(approval.payload);
     return (
@@ -58,7 +59,7 @@ export function PayloadDiff({ approval, previous }: { approval: Approval; previo
   return (
     <div className="payload-diff">
       <p className="small">
-        Compared with the last approved proposal <code title={previous.payload_hash}>{shortHash(previous.payload_hash, 12)}</code> ({fmtDate(previous.created_at)}):{" "}
+        Compared with the last approved proposal ({fmtDate(previous.created_at)}):{" "}
         {changes.length === 0 ? <strong>identical content</strong> : <strong>{changes.length} change{changes.length > 1 ? "s" : ""}</strong>}
       </p>
       {changes.length > 0 && (
@@ -104,8 +105,6 @@ export function ApprovalCard({ approval, onDecided, previous, currentPolicyVersi
       </header>
       <KeyValue items={[
         ["Destination", approval.destination ?? "—"],
-        ["Payload hash", <code key="h" title={approval.payload_hash}>{shortHash(approval.payload_hash, 16)}</code>],
-        ["Plan hash", <code key="p" title={approval.plan_hash ?? ""}>{shortHash(approval.plan_hash, 16)}</code>],
         ["Policy version", <span key="v">v{approval.policy_version}{typeof currentPolicyVersion === "number" && <span className="muted"> (current v{currentPolicyVersion})</span>}</span>],
         ["Affected", approval.affected_assets.join(", ") || "—"],
         ["Expires", <span key="e" className={expired && pending ? "warn-text" : undefined}>{fmtDate(approval.expires_at)}{expired && pending ? " (expired)" : ""}</span>],
@@ -124,7 +123,11 @@ export function ApprovalCard({ approval, onDecided, previous, currentPolicyVersi
           <button type="button" className="btn btn-danger btn-sm" disabled={act.busy} onClick={() => decide(false)}>Reject</button>
         </div>
       )}
-      <p className="muted small">The approval binds to this exact payload hash, plan hash and policy version; any change after approval invalidates it.</p>
+      <p className="muted small">The approval covers exactly this content and policy version; any change after approval invalidates it.</p>
+      <TechnicalDetails>
+        <p className="small">Payload hash <code title={approval.payload_hash}>{shortHash(approval.payload_hash, 16)}</code> · plan hash{" "}
+          <code title={approval.plan_hash ?? ""}>{shortHash(approval.plan_hash, 16)}</code></p>
+      </TechnicalDetails>
       <ErrorBox error={act.error} />
     </article>
   );
@@ -139,7 +142,7 @@ export function previousApproved(a: Approval, all: Approval[]): Approval | null 
 }
 
 export function ApprovalsPanel({ approvals, onDecided }: { approvals: Approval[]; onDecided: (a: Approval) => void }) {
-  if (!approvals.length) return <EmptyState title="No approvals for this run" />;
+  if (!approvals.length) return <EmptyState title="No approvals for this investigation" />;
   const sorted = [...approvals].sort((a, b) => (a.status === "pending" ? -1 : 0) - (b.status === "pending" ? -1 : 0));
   return <div className="approvals">{sorted.map((a) => <ApprovalCard key={a.id} approval={a} onDecided={onDecided} previous={previousApproved(a, approvals)} />)}</div>;
 }

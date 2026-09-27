@@ -49,6 +49,15 @@ export function hypothesisIcon(status: string): string {
 
 export const TERMINAL_RUN = new Set(["COMPLETED", "FAILED", "REJECTED", "CANCELLED"]);
 
+/**
+ * Autonomy in plain words (spec v4 §15): what agents do alone and what always waits for a person.
+ * The L0–L4 codes appear only under Advanced.
+ */
+export function autonomyInWords(level: number | null | undefined): string {
+  const l = AUTONOMY_LEVELS.find((x) => x.level === level);
+  return l ? `${l.name}: ${l.description}` : "Not set";
+}
+
 export const AUTONOMY_LEVELS: { level: number; name: string; description: string }[] = [
   { level: 0, name: "Manual", description: "Agents do nothing on their own; every step is started by a person." },
   { level: 1, name: "Recommends", description: "Agents propose plans, hypotheses and queries; a person executes them." },

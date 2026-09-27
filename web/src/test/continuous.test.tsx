@@ -159,7 +159,7 @@ describe("ScheduleForm", () => {
     ]));
     render(<MemoryRouter><ScheduleForm wsId="ws_1" onSaved={() => undefined} /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "report" } });
-    const run = await screen.findByLabelText("Run");
+    const run = await screen.findByLabelText("Investigation");
     await waitFor(() => expect(within(run).getAllByRole("option")).toHaveLength(2)); // latest + the one completed run
     expect((screen.getByLabelText("Report kind") as HTMLSelectElement).value).toBe("executive");
     expect(screen.queryByLabelText(/Objective/)).toBeNull();
@@ -228,9 +228,9 @@ describe("NotificationBell", () => {
   it("maps notification links to screens", () => {
     const n = (type: string, id: string, kind = "x") => ({ workspace_id: "ws", kind, link: { type, id } });
     expect(notificationHref(n("alert", "a1"))).toBe("/w/ws/operate/monitoring?tab=alerts&alert=a1");
-    expect(notificationHref(n("artifact", "r1", "report"))).toBe("/w/ws/build/reports?artifact=r1");
-    expect(notificationHref(n("artifact", "c1", "other"))).toBe("/w/ws/build/studio?artifact=c1");
-    expect(notificationHref(n("run", "run1"))).toBe("/w/ws/investigate/run1");
+    expect(notificationHref(n("artifact", "r1", "report"))).toBe("/w/ws/outputs?type=report&artifact=r1");
+    expect(notificationHref(n("artifact", "c1", "other"))).toBe("/w/ws/outputs?artifact=c1");
+    expect(notificationHref(n("run", "run1"))).toBe("/w/ws/work/investigations/run1");
     expect(notificationHref(n("schedule", "s1"))).toBe("/w/ws/operate/schedules?schedule=s1");
   });
 });
@@ -257,14 +257,14 @@ describe("ChangesPanel", () => {
     expect(screen.getByText("Changed: 1")).toBeTruthy();
     expect(screen.getByText("Resolved: 0")).toBeTruthy();
     const newGroup = screen.getByRole("region", { name: "New findings" });
-    expect(within(newGroup).getByRole("link").getAttribute("href")).toBe("/w/ws_1/investigate/findings/ins_3");
+    expect(within(newGroup).getByRole("link").getAttribute("href")).toBe("/w/ws_1/outputs/findings/ins_3");
     const changed = screen.getByRole("region", { name: "Changed findings" });
     expect(changed.textContent).toMatch(/effect 0\.2 → 0\.5/);
     expect(within(screen.getByRole("region", { name: "Resolved findings" })).getByText("None.")).toBeTruthy();
     expect(screen.getByLabelText("up 20.0%").textContent).toContain("▲");
     expect(screen.getByLabelText("down -20.0%").textContent).toContain("▼");
-    expect(screen.getByRole("link", { name: "Generated report" }).getAttribute("href")).toBe("/w/ws_1/build/reports?artifact=art_9");
-    expect(screen.getByRole("link", { name: "Previous run" }).getAttribute("href")).toBe("/w/ws_1/investigate/run_prev");
+    expect(screen.getByRole("link", { name: "Generated report" }).getAttribute("href")).toBe("/w/ws_1/outputs?type=report&artifact=art_9");
+    expect(screen.getByRole("link", { name: "Previous investigation" }).getAttribute("href")).toBe("/w/ws_1/work/investigations/run_prev");
   });
 
   it("delta arrows", () => {
@@ -322,7 +322,7 @@ describe("AlertItem", () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Investigate" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/investigate/run_42"));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/w/ws_1/work/investigations/run_42"));
     expect(fetchMock.mock.calls[0][0]).toBe("/api/alerts/alr_1/investigate");
   });
 
@@ -331,7 +331,7 @@ describe("AlertItem", () => {
     expect(screen.queryByRole("button", { name: "Acknowledge" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resolve" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Investigate" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Investigation run" }).getAttribute("href")).toBe("/w/ws_1/investigate/run_7");
+    expect(screen.getByRole("link", { name: "Investigation" }).getAttribute("href")).toBe("/w/ws_1/work/investigations/run_7");
   });
 });
 

@@ -126,13 +126,13 @@ export function explainTriage(a: Alert): TriageExplanation {
   const rule = a.message || String(d.message ?? "") || "the monitor rule fired";
   const lines = [`Rule: ${rule}${ruleSeverity ? ` (rule severity: ${ruleSeverity})` : ""}.`];
   if (p === null) {
-    lines.push("JEV triage did not run; the severity is the rule's.");
+    lines.push("The decision model did not run; the severity is the rule's.");
   } else if (escalated) {
-    lines.push(`JEV judged it material (p ${Math.round(p * 100)}%) and escalated the severity from ${ruleSeverity} to ${a.severity}.`);
+    lines.push(`The decision model judged it material (${Math.round(p * 100)}% likely) and raised the severity from ${ruleSeverity} to ${a.severity}.`);
   } else {
-    lines.push(`JEV materiality p ${Math.round(p * 100)}%: the severity stays as the rule set it.`);
+    lines.push(`The decision model rated it ${Math.round(p * 100)}% likely to matter; the severity stays as the rule set it.`);
   }
-  lines.push("JEV can only raise severity; it never lowers it or closes an alert.");
+  lines.push("The decision model can only raise severity; it never lowers it or closes an alert.");
   return { ruleSeverity, pMaterial: p, model: triage?.model ?? null, escalated, lines };
 }
 

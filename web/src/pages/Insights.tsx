@@ -1,58 +1,17 @@
-import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { to } from "../routes";
 import { api, type InsightDetail, type Verification } from "../api";
 import { LineageGraph } from "../components/LineageGraph";
-import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, JsonView, KeyValue, Loading, PageHeader, PreviewTable, RecordTable, StatusBadge, Tag } from "../components/ui";
+import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, Notice, PreviewTable, RecordTable, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
+import { VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
 import { fmtDate, fmtMs, fmtNumber, fmtP, fmtPct, fmtValue, shortHash } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 
-export function InsightsPage() {
-  const { wsId = "", insightId } = useParams();
-  const list = useAsync(() => api.listInsights(wsId), [wsId]);
-  const [filter, setFilter] = useState<"all" | "verified" | "unverified">("all");
-  const nav = useNavigate();
-  const items = (list.data ?? []).filter((i) => filter === "all" || (filter === "verified" ? i.verified : !i.verified));
-
-  return (
-    <div className="page">
-      <PageHeader title="Findings" subtitle="Every finding links to the queries, experiments and checks behind it." />
-      <div className="split">
-        <div className="split-list">
-          <div className="seg" role="radiogroup" aria-label="Filter insights">
-            {(["all", "verified", "unverified"] as const).map((f) => (
-              <button key={f} type="button" role="radio" aria-checked={filter === f} className={`seg-btn ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>{f}</button>
-            ))}
-          </div>
-          <ErrorBox error={list.error} onRetry={list.reload} />
-          {list.loading && !list.data && <Loading />}
-          {list.data && items.length === 0 && <EmptyState title="No insights">Insights appear when an analysis run tests hypotheses.</EmptyState>}
-          <ul className="list selectable">
-            {items.map((i) => (
-              <li key={i.id}>
-                <button type="button" className={`list-button ${i.id === insightId ? "active" : ""}`} onClick={() => nav(to.findings(wsId, i.id))}>
-                  <span className="list-button-head">
-                    <strong>{i.code}</strong> <span className="clamp-1">{i.title}</span>
-                  </span>
-                  <span className="chip-row">
-                    <StatusBadge status={i.status} />
-                    {i.verified && <span className="verified">✓ verified</span>}
-                  </span>
-                  <ConfidenceBar value={i.confidence} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="split-detail">
-          {insightId ? <InsightDetailView id={insightId} wsId={wsId} /> : <EmptyState title="Select an insight">Choose a finding to inspect its evidence.</EmptyState>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InsightDetailView({ id, wsId }: { id: string; wsId: string }) {
+/**
+ * One finding in Outputs (the finding screen): the answer, how it was checked, its numbers with
+ * "Why this number?", the evidence and lineage. The list lives in Outputs, filtered to findings.
+ */
+export function FindingDetail({ id, wsId }: { id: string; wsId: string }) {
   const d = useAsync(() => api.getInsight(id), [id]);
   if (d.error) return <ErrorBox error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
@@ -61,10 +20,13 @@ function InsightDetailView({ id, wsId }: { id: string; wsId: string }) {
   return (
     <div className="stack">
       <Card title={<><strong>{i.code}</strong> {i.title}</>} actions={<>
-        <StatusBadge status={i.status} />
-        {i.verified ? <span className="verified">✓ verified</span> : <Tag tone="warning">not verified</Tag>}
+        {i.verification_state ? <VerificationBadge state={i.verification_state} showCause={false} />
+          : i.verified ? <span className="verified">✓ verified</span> : <Tag tone="warning">not verified</Tag>}
       </>}>
+        {voidCause(i.verification_state) && (
+          <Notice tone="warning">This finding is void: {voidCause(i.verification_state)}. Re-run the investigation to verify it again.</Notice>)}
         <p className="finding">{i.finding}</p>
+        <FindingNumbers insightId={i.id} />
         <div className="grid-2">
           <div>
             <p className="small muted">Confidence</p>
@@ -72,8 +34,7 @@ function InsightDetailView({ id, wsId }: { id: string; wsId: string }) {
           </div>
           <KeyValue items={[
             ["Population", fmtNumber(i.population_size)],
-            ["Narrative", i.narrative_source],
-            ["Run", <Link key="r" to={to.run(wsId, i.run_id)}><code>{i.run_id}</code></Link>],
+            ["Investigation", <Link key="r" to={to.run(wsId, i.run_id)}>Open the investigation</Link>],
             ["Created", fmtDate(i.created_at)],
           ]} />
         </div>
@@ -100,12 +61,12 @@ function InsightDetailView({ id, wsId }: { id: string; wsId: string }) {
 }
 
 function VerificationRecord({ v }: { v: Verification }) {
-  if (!v || Object.keys(v).length === 0) return <Card title="REV verification"><EmptyState title="Not verified yet" /></Card>;
+  if (!v || Object.keys(v).length === 0) return <Card title="How it was checked"><EmptyState title="Not verified yet" /></Card>;
   const jev = v.verify?.jev;
   const im = v.verify?.independent_model;
   const second = v.verify?.second_method as Record<string, unknown> | null | undefined;
   return (
-    <Card title="REV verification record" actions={<StatusBadge status={v.verified ? "verified" : "failed_verification"} />}>
+    <Card title="How it was checked" actions={<StatusBadge status={v.verified ? "verified" : "failed_verification"} />}>
       {v.reason && (
         <section>
           <h3>Reason</h3>
@@ -141,10 +102,11 @@ function VerificationRecord({ v }: { v: Verification }) {
           ["Reproducible re-run", <StatusBadge key="r" status={v.verify?.reproducible ? "ok" : "failed"} label={v.verify?.reproducible ? "identical result hash" : "not reproduced"} />],
           ["Second method", second ? `${String(second.test ?? "")} · p=${fmtP(second.p_value)} · effect=${fmtNumber(second.effect_size as number, 3)}` : "—"],
           ["Independent model", im ? (im.unavailable ? `unavailable (${im.unavailable})` : `${im.model ?? ""}: ${im.review ? (im.review.supports ? "supports" : "does not support") : "—"}`) : "—"],
-          ["JEV p_supports", jev ? <span key="j"><strong>{fmtPct(jev.p_supports)}</strong> <span className="muted small">({jev.model})</span></span> : "—"],
           ["Contradictions", (v.verify?.contradictions ?? []).join(", ") || "none"],
         ]} />
-        {im?.review && <JsonView value={im.review} collapsed label="Independent model review" />}
+        <TechnicalDetails value={im?.review ? { independent_model_review: im.review } : undefined}>
+          {jev && <p className="small">Decision model (JEV) p_supports <strong>{fmtPct(jev.p_supports)}</strong> ({jev.model}); it may only adjust confidence.</p>}
+        </TechnicalDetails>
       </section>
       {v.note && <p className="muted small">{v.note}</p>}
     </Card>
@@ -153,18 +115,19 @@ function VerificationRecord({ v }: { v: Verification }) {
 
 function EvidenceSection({ d }: { d: InsightDetail }) {
   return (
-    <Card title={`Evidence — ${d.queries.length} queries, ${d.experiments.length} experiments`}>
+    <Card title={`Evidence — ${d.queries.length} queries, ${d.experiments.length} tests`}>
       {d.queries.length === 0 && d.experiments.length === 0 && <EmptyState title="No evidence recorded" />}
       {d.queries.map((q) => (
         <details key={q.id} className="evidence-item" open={d.queries.length <= 2}>
           <summary>
-            <code>{q.id}</code> <StatusBadge status={q.status} /> <span className="muted small">{q.purpose} · {q.row_count} rows · {fmtMs(q.duration_ms)}
-              {q.cache_hit ? " · cache hit" : ""} · result {shortHash(q.result_hash)}</span>
+            Query <StatusBadge status={q.status} /> <span className="muted small">{q.purpose} · {q.row_count} rows · {fmtMs(q.duration_ms)}
+              {q.cache_hit ? " · cache hit" : ""}</span>
           </summary>
           <CodeBlock code={q.executed_sql ?? q.sql} label={q.executed_sql && q.executed_sql !== q.sql ? "Executed SQL (after gateway rewrite)" : "SQL"} />
           {q.rejected_reason && <p className="warn-text small">Rejected: {q.rejected_reason}</p>}
           <p className="muted small">Assets: {q.referenced_assets.join(", ") || "—"}{q.truncated ? " · truncated" : ""}</p>
           <PreviewTable columns={q.columns} preview={q.result_preview ?? []} maxRows={20} />
+          <TechnicalDetails><p className="small">Query <code>{q.id}</code> · result hash <code>{shortHash(q.result_hash)}</code></p></TechnicalDetails>
         </details>
       ))}
       {d.experiments.map((e) => {
@@ -173,15 +136,31 @@ function EvidenceSection({ d }: { d: InsightDetail }) {
         return (
           <details key={e.id} className="evidence-item">
             <summary>
-              Experiment <code>{e.id}</code> <span className="tag">{e.role}</span> <span className="muted small">{e.method} · {String(res.test ?? "")} · p={fmtP(res.p_value)}
+              Test <span className="tag">{e.role}</span> <span className="muted small">{e.method} · {String(res.test ?? "")} · p={fmtP(res.p_value)}
                 · p_adj={fmtP(res.p_adjusted)} · {String(res.effect_label ?? "effect")}={fmtNumber(res.effect_size as number, 3)}</span>
             </summary>
             <KeyValue items={[["n", fmtNumber(res.n)], ["Supported", String(res.supported ?? "—")], ["Queries", e.query_ids.join(", ") || "—"]]} />
             {groups.length > 0 && <RecordTable records={groups} maxRows={30} />}
-            <JsonView value={{ params: e.params, result: res }} collapsed label="Full experiment" />
+            <TechnicalDetails value={{ id: e.id, params: e.params, result: res }} />
           </details>
         );
       })}
     </Card>
+  );
+}
+
+/** Every number in the finding, each with its state and a "Why this number?" drawer (P7-08). */
+function FindingNumbers({ insightId }: { insightId: string }) {
+  const why = useAsync(() => api.whyInsight(insightId), [insightId]);
+  if (why.error) return <p className="muted small">Number trail unavailable: {why.error}</p>;
+  if (!why.data?.numbers.length) return null;
+  return (
+    <ul className="chip-row why-numbers" aria-label="Numbers in this finding">
+      {why.data.numbers.map((n, k) => (
+        <li key={`${n.text}-${k}`} className="why-chip">
+          <strong>{n.text}</strong> <WhyState state={n.state} /> <WhyNumberButton insightId={insightId} number={n.text} />
+        </li>
+      ))}
+    </ul>
   );
 }

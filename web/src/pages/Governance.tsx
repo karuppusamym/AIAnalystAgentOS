@@ -1,76 +1,76 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { api, type WorkspaceDetail } from "../api";
+import { useAuth } from "../auth";
 import { AutonomyPicker } from "../components/AutonomyPicker";
-import { Card, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, Value } from "../components/ui";
+import { Card, ErrorBox, Field, Loading, Notice, PageHeader, StateView } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
+import { fieldText, fieldValue, parsePolicy, POLICY_FIELDS, setField } from "../lib/policy";
+import { autonomyInWords } from "../lib/status";
 import { AuditTable } from "./Admin";
+
+export { parsePolicy };
 
 const ROLES = ["owner", "editor", "analyst", "approver", "viewer"];
 
-/** Parse policy JSON; returns an error string instead of throwing. */
-export function parsePolicy(text: string): { value?: Record<string, unknown>; error?: string } {
-  try {
-    const v = JSON.parse(text) as unknown;
-    if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "policy must be a JSON object" };
-    return { value: v as Record<string, unknown> };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
+/**
+ * Settings → Members & policy (spec v4 §15): a form for the common policy fields, with the raw JSON
+ * and the autonomy level under Advanced (their one home), members, and the one audit view.
+ */
 export function GovernancePage() {
   const { wsId = "" } = useParams();
+  const { user } = useAuth();
   const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
   if (ws.error) return <div className="page"><ErrorBox error={ws.error} onRetry={ws.reload} /></div>;
   if (!ws.data) return <div className="page"><Loading /></div>;
+  if (ws.data.role !== "owner" && !user?.is_admin) {
+    return (
+      <div className="page">
+        <PageHeader title="Members & policy" />
+        <StateView kind="not-entitled" title="Workspace owners manage members and policy">
+          Your role here is {ws.data.role}. The limits that apply to you are shown before any work starts.
+        </StateView>
+      </div>
+    );
+  }
   return (
     <div className="page">
-      <PageHeader title="Policy & members" subtitle={<>Your role: <strong>{ws.data.role}</strong>. Policy values may only tighten the platform ceilings; each save creates a new immutable version.</>} />
-      <PolicySummary ws={ws.data} />
+      <PageHeader title="Members & policy" subtitle={<>Policy values may only tighten the platform limits; each save creates a new version.</>} />
       <div className="grid-2">
         <PolicyEditor ws={ws.data} onSaved={ws.reload} />
         <div className="stack">
-          <WorkspaceSettings ws={ws.data} onSaved={ws.reload} />
           <Members ws={ws.data} onChanged={ws.reload} />
+          <Autonomy ws={ws.data} onSaved={ws.reload} />
         </div>
       </div>
-      {ws.data.role === "owner" && <WorkspaceAudit wsId={wsId} />}
+      <Audit wsId={wsId} isAdmin={!!user?.is_admin} />
     </div>
   );
 }
 
-const list = (v: unknown) => (Array.isArray(v) && v.length ? v.map(String).join(", ") : "none");
-
-/** The policy in words: what agents may read, spend and publish here. Unset values show as unknown. */
-function PolicySummary({ ws }: { ws: WorkspaceDetail }) {
-  const p = ws.policy ?? {};
-  return (
-    <Card title={`Effective policy · v${ws.policy_version}`}>
-      <KeyValue items={[
-        ["Max rows per query", <Value key="r" value={p.max_rows} format="int" />],
-        ["Run token budget", <Value key="t" value={p.run_token_budget} format="int" />],
-        ["Run cost budget", <Value key="c" value={p.run_cost_budget_usd} format="usd" />],
-        ["Monthly cost budget", <Value key="m" value={p.workspace_monthly_cost_budget_usd} format="usd" />],
-        ["PII access", p.pii_access ?? <Value key="p" value={null} />],
-        ["Restricted columns", list(p.restricted_columns)],
-        ["Publish destinations", list(p.publish_destinations)],
-        ["Publishing needs approval", p.publish_requires_approval === undefined ? <Value key="a" value={null} /> : p.publish_requires_approval ? "yes" : "no"],
-        ["Separation of duties", p.separation_of_duties === undefined ? <Value key="s" value={null} /> : p.separation_of_duties ? "yes" : "no"],
-        ["Denied tools", list(p.tool_denylist)],
-        ["Allowed models", list(p.allowed_models)],
-        ["Significance level (α)", <Value key="al" value={p.alpha} format="number" digits={3} />],
-      ]} />
-    </Card>
-  );
-}
-
+/** The common fields as a form; the whole document as JSON under Advanced. Both edit one draft. */
 function PolicyEditor({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => void }) {
+  const id = useId();
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...ws.policy }));
   const [text, setText] = useState(() => JSON.stringify(ws.policy, null, 2));
   const [saved, setSaved] = useState<number | null>(null);
   const act = useAction();
-  useEffect(() => setText(JSON.stringify(ws.policy, null, 2)), [ws.policy]);
+  useEffect(() => {
+    setDraft({ ...ws.policy });
+    setText(JSON.stringify(ws.policy, null, 2));
+  }, [ws.policy]);
   const parsed = parsePolicy(text);
+  const edit = (next: Record<string, unknown>) => {
+    setDraft(next);
+    setText(JSON.stringify(next, null, 2));
+    setSaved(null);
+  };
+  const editJson = (value: string) => {
+    setText(value);
+    setSaved(null);
+    const p = parsePolicy(value);
+    if (p.value) setDraft(p.value);
+  };
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!parsed.value) return;
@@ -80,19 +80,52 @@ function PolicyEditor({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => voi
       onSaved();
     }
   };
+  const reset = () => edit({ ...ws.policy });
   return (
-    <Card title={`Workspace policy (v${ws.policy_version})`}>
-      <form className="form" onSubmit={save}>
-        <Field label="Policy document (JSON)" htmlFor="policy-json"
-          hint="e.g. max_rows, restricted_columns (schema.table.column or *.column), pii_access, allowed_models, publish_destinations, run_cost_budget_usd.">
-          <textarea id="policy-json" className="mono" rows={24} spellCheck={false} value={text} onChange={(e) => { setText(e.target.value); setSaved(null); }}
-            aria-invalid={!!parsed.error} />
-        </Field>
-        {parsed.error && <p className="warn-text small" role="alert">Invalid JSON: {parsed.error}</p>}
+    <Card title={`Effective policy · version ${ws.policy_version}`}>
+      <form className="form" onSubmit={save} aria-label="Workspace policy">
+        {POLICY_FIELDS.map((f) => {
+          const fid = `${id}-${f.key}`;
+          const v = fieldText(f.kind, draft[f.key]);
+          if (f.kind === "bool") {
+            return (
+              <label key={f.key} className="toggle">
+                <input type="checkbox" checked={v === true} onChange={(e) => edit(setField(draft, f.key, fieldValue("bool", e.target.checked)))} />
+                {" "}{f.label}<span className="field-hint block">{f.hint}</span>
+              </label>
+            );
+          }
+          return (
+            <Field key={f.key} label={f.label} htmlFor={fid} hint={f.hint}>
+              {f.kind === "pii" ? (
+                <select id={fid} value={String(v)} onChange={(e) => edit(setField(draft, f.key, fieldValue("pii", e.target.value)))}>
+                  <option value="">Platform default</option>
+                  <option value="none">Never</option>
+                  <option value="restricted">Masked</option>
+                  <option value="allowed">Allowed</option>
+                </select>
+              ) : f.kind === "list" ? (
+                <textarea id={fid} rows={2} value={String(v)} onChange={(e) => edit(setField(draft, f.key, fieldValue("list", e.target.value)))} />
+              ) : (
+                <input id={fid} type="number" min={0} step={f.kind === "usd" ? "0.01" : "1"} value={String(v)} placeholder="Platform default"
+                  onChange={(e) => edit(setField(draft, f.key, fieldValue(f.kind, e.target.value)))} />
+              )}
+            </Field>
+          );
+        })}
+        <details className="advanced">
+          <summary>Advanced: the whole policy as JSON</summary>
+          <Field label="Policy document (JSON)" htmlFor={`${id}-json`}
+            hint="Every field, including ones the form does not show (allowed models, denied tools, significance level, …).">
+            <textarea id={`${id}-json`} className="mono" rows={16} spellCheck={false} value={text} onChange={(e) => editJson(e.target.value)}
+              aria-invalid={!!parsed.error} />
+          </Field>
+          {parsed.error && <p className="warn-text small" role="alert">Invalid JSON: {parsed.error}</p>}
+        </details>
         <ErrorBox error={act.error} />
         {saved !== null && <Notice tone="success">Saved as policy version {saved}.</Notice>}
         <div className="form-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => setText(JSON.stringify(ws.policy, null, 2))}>Reset</button>
+          <button type="button" className="btn btn-ghost" onClick={reset}>Reset</button>
           <button type="submit" className="btn btn-primary" disabled={act.busy || !!parsed.error}>{act.busy ? "Saving…" : "Save policy"}</button>
         </div>
       </form>
@@ -100,28 +133,31 @@ function PolicyEditor({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => voi
   );
 }
 
-function WorkspaceSettings({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => void }) {
-  const [objective, setObjective] = useState(ws.objective);
+/** Autonomy's one home: in plain words, the level code only inside Advanced. */
+function Autonomy({ ws, onSaved }: { ws: WorkspaceDetail; onSaved: () => void }) {
   const [level, setLevel] = useState(ws.autonomy_level);
   const act = useAction();
   const [ok, setOk] = useState(false);
+  useEffect(() => setLevel(ws.autonomy_level), [ws.autonomy_level]);
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    const r = await act.run(() => api.updateWorkspace(ws.id, { objective, ...(level !== ws.autonomy_level ? { autonomy_level: level } : {}) }));
-    if (r) {
+    if (await act.run(() => api.updateWorkspace(ws.id, { autonomy_level: level }))) {
       setOk(true);
       onSaved();
     }
   };
   return (
-    <Card title="Objective & autonomy">
-      <form className="form" onSubmit={save}>
-        <Field label="Objective" htmlFor="gov-obj"><textarea id="gov-obj" rows={3} value={objective} onChange={(e) => { setObjective(e.target.value); setOk(false); }} /></Field>
-        <AutonomyPicker value={level} onChange={(v) => { setLevel(v); setOk(false); }} />
-        <ErrorBox error={act.error} />
-        {ok && <Notice tone="success">Saved.</Notice>}
-        <div className="form-actions"><button type="submit" className="btn btn-primary" disabled={act.busy}>Save</button></div>
-      </form>
+    <Card title="How much agents do alone">
+      <p className="small">{autonomyInWords(ws.autonomy_level)}</p>
+      <details className="advanced">
+        <summary>Advanced: change the autonomy level</summary>
+        <form className="form" onSubmit={save}>
+          <AutonomyPicker value={level} onChange={(v) => { setLevel(v); setOk(false); }} />
+          <ErrorBox error={act.error} />
+          {ok && <Notice tone="success">Saved.</Notice>}
+          <div className="form-actions"><button type="submit" className="btn btn-primary" disabled={act.busy || level === ws.autonomy_level}>Save</button></div>
+        </form>
+      </details>
     </Card>
   );
 }
@@ -167,11 +203,26 @@ function Members({ ws, onChanged }: { ws: WorkspaceDetail; onChanged: () => void
   );
 }
 
-function WorkspaceAudit({ wsId }: { wsId: string }) {
-  const a = useAsync(() => api.workspaceAudit(wsId, 200), [wsId]);
+/** The one audit view: this workspace, or (platform admins) the whole platform. */
+function Audit({ wsId, isAdmin }: { wsId: string; isAdmin: boolean }) {
+  const [scope, setScope] = useState<"workspace" | "platform">("workspace");
+  const a = useAsync(() => (scope === "platform" ? api.audit(300) : api.workspaceAudit(wsId, 200)), [wsId, scope]);
   const [q, setQ] = useState("");
-  if (a.error) return <ErrorBox error={a.error} />;
-  if (!a.data) return <Loading />;
   const needle = q.toLowerCase();
-  return <AuditTable rows={a.data.filter((e) => !needle || `${e.actor} ${e.action} ${e.target ?? ""}`.toLowerCase().includes(needle))} filter={q} onFilter={setQ} />;
+  return (
+    <section className="stack" aria-label="Audit log">
+      {isAdmin && (
+        <div className="seg" role="radiogroup" aria-label="Audit scope">
+          {(["workspace", "platform"] as const).map((s) => (
+            <button key={s} type="button" role="radio" aria-checked={scope === s} className={`seg-btn ${scope === s ? "active" : ""}`}
+              onClick={() => setScope(s)}>{s === "workspace" ? "This workspace" : "Whole platform"}</button>
+          ))}
+        </div>
+      )}
+      <ErrorBox error={a.error} onRetry={a.reload} />
+      {!a.data && !a.error && <Loading />}
+      {a.data && <AuditTable rows={a.data.filter((e) => !needle || `${e.actor} ${e.action} ${e.target ?? ""} ${e.decision ?? ""}`.toLowerCase().includes(needle))}
+        filter={q} onFilter={setQ} />}
+    </section>
+  );
 }

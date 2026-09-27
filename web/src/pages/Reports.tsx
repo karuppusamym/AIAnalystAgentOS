@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { to } from "../routes";
 import { api, saveBlob, type Artifact, type ReportContent } from "../api";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, Tag } from "../components/ui";
+import { ErrorBox, Field, Tag } from "../components/ui";
 import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { REPORT_FORMATS, REPORT_KINDS } from "../lib/schedules";
@@ -13,32 +13,6 @@ export function reportFormats(a: Artifact): string[] {
   const files = (a.content as ReportContent).files ?? {};
   const known: string[] = REPORT_FORMATS.filter((f) => f in files);
   return known.concat(Object.keys(files).filter((f) => !known.includes(f)));
-}
-
-export function ReportsPage() {
-  const { wsId = "" } = useParams();
-  const [params] = useSearchParams();
-  const focus = params.get("artifact");
-  const list = useAsync(() => api.listArtifacts(wsId, { type: "report" }), [wsId]);
-  const [created, setCreated] = useState<Artifact | null>(null);
-  const sorted = useMemo(() => [...(list.data ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at)), [list.data]);
-  return (
-    <div className="page">
-      <PageHeader title="Reports" subtitle="Executive, operational, statistical and exception reports built from completed runs. Downloads are audited." />
-      <Card title="Generate report">
-        <GenerateReportForm wsId={wsId} onCreated={(a) => { setCreated(a); void list.reload(); }} />
-        {created && <Notice tone="success">Report “{String((created.content as ReportContent).title ?? created.name)}” generated.</Notice>}
-      </Card>
-      <ErrorBox error={list.error} onRetry={list.reload} />
-      {list.loading && !list.data && <Loading />}
-      {list.data?.length === 0 && <EmptyState title="No reports yet">Generate one above, or schedule a re-analysis with a report.</EmptyState>}
-      {sorted.length > 0 && (
-        <div className="stack">
-          {sorted.map((a) => <ReportRow key={a.id} wsId={wsId} report={a} highlighted={focus === a.id} />)}
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: string; report: Artifact; highlighted?: boolean }) {
@@ -69,12 +43,11 @@ export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: stri
       </header>
       <div className="card-body">
         <div className="chip-row small">
-          {a.run_id && <Link to={to.run(wsId, a.run_id)}>Source run</Link>}
+          {a.run_id && <Link to={to.run(wsId, a.run_id)}>Source investigation</Link>}
           {typeof c.insights === "number" && <span>{c.insights} findings</span>}
           {typeof c.metrics === "number" && <span>{c.metrics} metrics</span>}
           {typeof c.alerts === "number" && <span>{c.alerts} alerts</span>}
           <span className="muted">v{a.version}</span>
-          <Link to={to.studio(wsId, a.id)} className="muted">Lineage</Link>
         </div>
         <div className="form-actions report-actions">
           {formats.length === 0 && <span className="muted small">No files recorded.</span>}
@@ -97,7 +70,8 @@ export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: stri
   );
 }
 
-function GenerateReportForm({ wsId, onCreated }: { wsId: string; onCreated: (a: Artifact) => void }) {
+/** Reports are an Outputs filter: this form sits above the list when the filter is Reports. */
+export function GenerateReportForm({ wsId, onCreated }: { wsId: string; onCreated: (a: Artifact) => void }) {
   const id = useId();
   const runs = useAsync(() => api.listRuns(wsId), [wsId]);
   const completed = useMemo(() => (runs.data ?? []).filter((r) => r.status === "COMPLETED"), [runs.data]);
@@ -117,9 +91,9 @@ function GenerateReportForm({ wsId, onCreated }: { wsId: string; onCreated: (a: 
   return (
     <form className="form" onSubmit={submit} aria-label="Generate report">
       <div className="form-row">
-        <Field label="Run" htmlFor={`${id}-run`} hint={runs.data && !completed.length ? "No completed runs yet." : undefined}>
+        <Field label="Investigation" htmlFor={`${id}-run`} hint={runs.data && !completed.length ? "No completed investigations yet." : undefined}>
           <select id={`${id}-run`} value={runId} onChange={(e) => setRunId(e.target.value)}>
-            <option value="">Latest completed run</option>
+            <option value="">Latest completed investigation</option>
             {completed.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.finished_at ?? r.created_at)} — {r.objective.slice(0, 70)}</option>)}
           </select>
         </Field>

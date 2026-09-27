@@ -1,61 +1,87 @@
-import { BUILD_NEW, BUILD_PREV, INSIGHT, RUN, THREAD_NEW, WS } from "../src/test/mockBackend";
+import type { Page } from "@playwright/test";
+import { BUILD_NEW, BUILD_PREV, CAPABILITIES, INSIGHT, RUN, THREAD_NEW, USER, WORKSPACE, WS } from "../src/test/mockBackend";
 import { axeViolations, expect, signIn, test } from "./fixtures";
 
-test.describe("five-journey IA", () => {
-  test("login → Home → Ask → Investigate → Knowledge → Operate settings", async ({ page, api }) => {
+const ANALYST_EMAIL = "analyst@analystos.local";
+
+/** Sign in as an analyst member (not a platform admin); every other request stays on the shared mock. */
+async function asAnalyst(page: Page): Promise<void> {
+  const analyst = { ...USER, id: "usr_analyst", email: ANALYST_EMAIL, name: "Ana Analyst", is_admin: false };
+  await page.route("**/api/auth/login", (r) => r.fulfill({ json: { access_token: "mock-token", token_type: "bearer", user: analyst } }));
+  await page.route("**/api/auth/me", (r) => r.fulfill({ json: analyst }));
+  await page.route(`**/api/workspaces/${WS}`, (r) => (r.request().method() === "GET" ? r.fulfill({ json: { ...WORKSPACE, role: "analyst" } }) : r.fallback()));
+}
+
+/** A registry with a query engine installed, so Prepare data is available. */
+async function withEngine(page: Page): Promise<void> {
+  await page.route("**/api/capabilities?**", (r) => r.fulfill({ json: { digest: "d", capabilities: [...CAPABILITIES, {
+    ...CAPABILITIES[0], id: "engine.duckdb", kind: "Engine", ref: "engine.duckdb@1.0.0", summary: "DuckDB engine" }].map((c) => ({ ...c, enabled: true })) } }));
+}
+
+test.describe("light IA (spec v4 §15)", () => {
+  test("login → Overview → Work (Ask, an investigation) → Data → the gear's platform settings", async ({ page, api }) => {
     await signIn(page);
 
-    // Home: workspace picker, then the workspace's "What changed" landing.
+    // Overview: workspace picker, then only what needs the person and one Start work.
     await expect(page.getByRole("heading", { name: "Workspaces", level: 1 })).toBeVisible();
     await page.getByRole("link", { name: /IT Service Management/ }).click();
     await expect(page).toHaveURL(`/w/${WS}`);
-    const changed = page.locator("section", { has: page.getByRole("heading", { name: "What changed" }) });
-    await expect(changed.getByText("Pending approvals")).toBeVisible();
-    await expect(changed.locator(".stat", { hasText: "Open alerts" }).locator(".stat-value")).toHaveText("1");
+    const needs = page.locator("section", { has: page.getByRole("heading", { name: "What needs you" }) });
+    await expect(needs.getByText("Pending approvals")).toBeVisible();
+    await expect(needs.locator(".stat", { hasText: "Open alerts" }).locator(".stat-value")).toHaveText("1");
+    await expect(needs.locator(".stat", { hasText: "Void findings" }).locator(".stat-value")).toHaveText("1");
+    await expect(page.getByRole("button", { name: "Start work" })).toHaveCount(1);
 
-    // Ask: a question through the side nav, answered by the governed SQL path.
+    // Work → Ask: a question through the side nav, answered by the governed SQL path.
     const nav = page.getByRole("navigation", { name: "Main" });
-    await nav.getByRole("group", { name: "Ask" }).getByRole("link", { name: "Ask" }).click();
-    await expect(page).toHaveURL(`/w/${WS}/ask`);
+    await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Ask" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work/ask`);
     await page.getByLabel("Question").fill("How many P1 incidents per assignment group?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByText("P1 incidents by assignment group.")).toBeVisible();
     await expect(page.getByText(/SELECT assignment_group/)).toBeVisible();
 
-    // Investigate: open the run from the list.
-    await nav.getByRole("link", { name: "Investigations" }).click();
-    await expect(page.getByRole("heading", { name: "Investigations", level: 1 })).toBeVisible();
+    // Work: open an investigation from the list.
+    await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Work", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
     await page.getByRole("link", { name: "Why are P1 resolution times rising?" }).first().click();
-    await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
+    await expect(page).toHaveURL(`/w/${WS}/work/investigations/${RUN}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
 
-    // Knowledge: the increment-3 catalog is the first tab of the knowledge studio.
-    await nav.getByRole("group", { name: "Knowledge" }).getByRole("link", { name: "Knowledge studio" }).click();
-    await expect(page).toHaveURL(`/w/${WS}/knowledge/catalog`);
-    await expect(page.getByRole("heading", { name: "Knowledge studio", level: 1 })).toBeVisible();
+    // Data: the catalog is the first tab of Catalog & definitions.
+    await nav.getByRole("group", { name: "Data" }).getByRole("link", { name: "Catalog & definitions" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/data/catalog`);
     await expect(page.getByRole("tab", { name: "Catalog", selected: true })).toBeVisible();
     await expect(page.getByText("Incidents").first()).toBeVisible();
 
-    // Operate: platform settings (admin), reached through the command palette.
+    // The gear: platform settings (admin), reached through the command palette.
     await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog");
     await expect(palette).toBeVisible();
     await palette.getByRole("combobox").fill("platform settings");
     await page.keyboard.press("Enter");
-    await expect(page).toHaveURL("/operate/settings");
+    await expect(page).toHaveURL("/settings/platform");
     await expect(page.getByRole("heading", { name: "Platform settings", level: 1 })).toBeVisible();
     await expect(palette).toBeHidden();
 
     expect(api.unmatched).toEqual([]);
   });
 
-  test("old URLs redirect into the new journeys", async ({ page }) => {
+  test("old URLs redirect into the new areas", async ({ page }) => {
     await signIn(page, `/w/${WS}/monitoring?tab=alerts`);
     await expect(page).toHaveURL(`/w/${WS}/operate/monitoring?tab=alerts`);
     await page.goto("/admin");
-    await expect(page).toHaveURL("/operate/registry");
+    await expect(page).toHaveURL("/settings/registry");
+    await page.goto("/operate/settings");
+    await expect(page).toHaveURL("/settings/platform");
     await page.goto(`/w/${WS}/insights/${INSIGHT}`);
-    await expect(page).toHaveURL(`/w/${WS}/investigate/findings/${INSIGHT}`);
+    await expect(page).toHaveURL(`/w/${WS}/outputs/findings/${INSIGHT}`);
+    await page.goto(`/w/${WS}/investigate/${RUN}`);
+    await expect(page).toHaveURL(`/w/${WS}/work/investigations/${RUN}`);
+    await page.goto(`/w/${WS}/build/studio?tab=kpis`);
+    await expect(page).toHaveURL(`/w/${WS}/data/catalog?tab=metrics`);
+    await page.goto(`/w/${WS}/build/studio?tab=dashboards&dashboard=art_dash`);
+    await expect(page).toHaveURL(`/w/${WS}/outputs?type=dashboard&dashboard=art_dash`);
   });
 
   test("theme toggle persists across reloads", async ({ page }) => {
@@ -68,6 +94,138 @@ test.describe("five-journey IA", () => {
     await expect(html).toHaveAttribute("data-theme", "dark");
     await page.reload();
     await expect(html).toHaveAttribute("data-theme", "dark");
+  });
+});
+
+/** Top-level nav entries: job kinds and panels must never add one. */
+async function navEntries(page: Page): Promise<number> {
+  return page.getByRole("navigation", { name: "Main" }).getByRole("link").count();
+}
+
+test.describe("job-kind journeys without new top-level screens", () => {
+  test("analyst (keyboard only): Start work → Explain → preflight → the investigation; no admin screens", async ({ page, api }) => {
+    await asAnalyst(page);
+    await signIn(page, `/w/${WS}`, ANALYST_EMAIL);
+    await expect(page.getByRole("heading", { name: "What needs you" })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "Main" });
+    for (const t of ["Capability registry", "Platform settings", "Usage & cost", "Members & policy"]) {
+      await expect(nav.getByRole("link", { name: t })).toHaveCount(0);
+    }
+    const before = await navEntries(page);
+
+    const start = page.getByRole("button", { name: "Start work" });
+    await start.focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Start work" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(dialog.getByRole("button", { name: /^Explain/ })).toBeFocused();
+    await page.keyboard.press("Enter");
+    const form = dialog.getByRole("form", { name: "Start explain" });
+    await expect(form.getByRole("heading", { name: "Before it starts" })).toBeVisible();
+    await expect(form.getByText(/Executes; publish needs approval/)).toBeVisible();
+    await form.getByRole("button", { name: "Start investigation" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(`/w/${WS}/work/investigations/${RUN}`);
+    expect(await navEntries(page)).toBe(before);
+
+    await page.goto("/settings/platform");
+    await expect(page.getByText("Platform settings is for platform administrators")).toBeVisible();
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("engineer: Start work → Prepare data → load a file and preview a recipe; the output is listed in Outputs", async ({ page, api }) => {
+    await withEngine(page);
+    await signIn(page, `/w/${WS}/work`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    await page.getByRole("list", { name: "Job kinds" }).getByRole("button", { name: /Prepare data/ }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=prepare`);
+    await expect(page.getByRole("tab", { name: "Prepare data", selected: true })).toBeVisible();
+
+    const load = page.getByRole("form", { name: "Load a file" });
+    await load.getByLabel("File").setInputFiles({ name: "orders.csv", mimeType: "text/csv", buffer: Buffer.from("id,total\n1,10\n") });
+    await load.getByLabel("Table name").fill("orders");
+    await load.getByRole("button", { name: "Load file" }).click();
+    await expect(load.getByText("Loaded into stg_files.orders (replace).")).toBeVisible();
+
+    await page.getByRole("list", { name: "Recipes" }).getByRole("button", { name: /p1_incidents_clean/ }).click();
+    await page.getByRole("button", { name: "Preview" }).click();
+    await expect(page.getByText(/Preview — nothing was written/)).toBeVisible();
+    await expect(page.getByRole("table", { name: "Preview of clean" })).toContainText("INC001");
+
+    await page.getByRole("link", { name: "Outputs → Prepared data" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/outputs?type=prepared`);
+    await expect(page.getByRole("list", { name: "Outputs" }).getByText("p1_incidents_clean")).toBeVisible();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("ML: Predict is shown with the missing requirement and never starts a pretend run", async ({ page, api }) => {
+    const posts: string[] = [];
+    page.on("request", (r) => { if (r.method() === "POST") posts.push(new URL(r.url()).pathname); });
+    await signIn(page, `/w/${WS}`);
+    const before = await navEntries(page);
+    await page.getByRole("button", { name: "Start work" }).click();
+    const kinds = page.getByRole("list", { name: "Job kinds" });
+    const predict = kinds.getByRole("listitem").filter({ hasText: "Predict" });
+    await expect(predict.getByText("Needs the model training playbook, which is not installed.")).toBeVisible();
+    await expect(predict.getByRole("button")).toHaveCount(0);
+    await predict.click();
+    await expect(page.getByRole("dialog", { name: "Start work" })).toBeVisible();
+    await expect(page.getByRole("form")).toHaveCount(0);
+    expect(posts.filter((p) => p.endsWith("/analysis"))).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Start work" })).toBeFocused();
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("narrow layout: the nav collapses behind a toggle and nothing scrolls sideways", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIn(page, `/w/${WS}`);
+    await expect(page.getByRole("heading", { name: "What needs you" })).toBeVisible();
+    const toggle = page.getByRole("button", { name: "Toggle navigation" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Outputs" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/outputs`);
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    for (const path of [`/w/${WS}/outputs`, `/w/${WS}/data/catalog?tab=definitions`, `/w/${WS}/operate/schedules`]) {
+      await page.goto(path);
+      await expect(page.locator("main h1")).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, path).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+test.describe("wave-1 panels", () => {
+  test("Why this number? and a void finding's cause", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/outputs?type=finding`);
+    const list = page.getByRole("list", { name: "Outputs" });
+    await expect(list.getByText(/Why void: data: the snapshot of stg_sn.incident changed/)).toBeVisible();
+    await list.getByText(/Network group drives P1 breaches/).click();
+    const why = page.getByRole("list", { name: "Numbers in this finding" }).getByRole("button", { name: /Why this number/ });
+    await why.click();
+    const drawer = page.getByRole("dialog", { name: "Why 2.1x?" });
+    await expect(drawer.getByText("The query that read the data")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(why).toBeFocused();
+    expect(api.unmatched).toEqual([]);
+  });
+
+  test("schedule upgrade available → review → accept", async ({ page, api }) => {
+    await signIn(page, `/w/${WS}/operate/schedules`);
+    const pins = page.getByLabel("Pinned versions");
+    await expect(pins.getByText("upgrade available")).toBeVisible();
+    await pins.getByRole("button", { name: "What would change" }).click();
+    await expect(pins.getByText("steps.verify.second_method")).toBeVisible();
+    await pins.getByRole("button", { name: "Accept upgrade" }).click();
+    await expect(page.getByText(/Upgraded. The next run uses the new versions/)).toBeVisible();
+    await expect(pins.getByText("up to date")).toBeVisible();
+    expect(api.unmatched).toEqual([]);
   });
 });
 
@@ -93,7 +251,7 @@ test.describe("Ask (P4-U02)", () => {
     await expect(promote.getByText(/Monitor "P1 incidents per assignment group" created/)).toBeVisible();
 
     await promote.getByRole("button", { name: "Investigate why" }).click();
-    await expect(page).toHaveURL(`/w/${WS}/investigate/${RUN}`);
+    await expect(page).toHaveURL(`/w/${WS}/work/investigations/${RUN}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Why are P1 resolution times rising?");
     expect(api.unmatched).toEqual([]);
   });
@@ -161,7 +319,7 @@ test.describe("investigation board (P4-U03)", () => {
 
 test.describe("build (P4-U05)", () => {
   test("plan build → diff and dry run → approval in the inbox → approved → status", async ({ page, api }) => {
-    await signIn(page, `/w/${WS}/build/studio?tab=builds`);
+    await signIn(page, `/w/${WS}/work?tab=builds`);
     await expect(page.getByRole("tab", { name: "dbt builds", selected: true })).toBeVisible();
     const jobs = page.getByRole("list", { name: "Build jobs" });
     await expect(jobs.getByRole("listitem")).toHaveCount(1);
@@ -196,7 +354,7 @@ test.describe("build (P4-U05)", () => {
 
     // Status: back in Build, the resumed run has built the tables.
     const nav = page.getByRole("navigation", { name: "Main" });
-    await nav.getByRole("group", { name: "Build" }).getByRole("link", { name: "Studio" }).click();
+    await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Work", exact: true }).click();
     await page.getByRole("tab", { name: "dbt builds" }).click();
     await jobs.getByRole("listitem").first().getByRole("button").click();
     await expect(page).toHaveURL(new RegExp(`job=${BUILD_NEW}`));
@@ -207,7 +365,7 @@ test.describe("build (P4-U05)", () => {
   });
 
   test("KPI editor: live validation, propose, separation of duties", async ({ page, api }) => {
-    await signIn(page, `/w/${WS}/build/studio?tab=kpis`);
+    await signIn(page, `/w/${WS}/data/catalog?tab=metrics`);
     const form = page.getByRole("form", { name: "Propose a KPI" });
     await form.getByLabel("Name", { exact: true }).fill("p1_count");
     await form.getByLabel("Expression").fill("priority");
@@ -227,7 +385,7 @@ test.describe("build (P4-U05)", () => {
 
 test.describe("knowledge studio (P4-U04)", () => {
   test("review an AI suggestion → approve into the pack → ask → it is a receipt on the Evidence tab", async ({ page, api }) => {
-    await signIn(page, `/w/${WS}/knowledge/catalog?tab=review`);
+    await signIn(page, `/w/${WS}/data/catalog?tab=review`);
     await expect(page.getByRole("tab", { name: "Review queue", selected: true })).toBeVisible();
 
     // Review: the model's draft with each field's confidence and provenance.
@@ -247,7 +405,7 @@ test.describe("knowledge studio (P4-U04)", () => {
 
     // Ask: the approved document is in the context of the answer, as a receipt.
     const nav = page.getByRole("navigation", { name: "Main" });
-    await nav.getByRole("group", { name: "Ask" }).getByRole("link", { name: "Ask" }).click();
+    await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Ask" }).click();
     await page.getByLabel("Question").fill("What is the reopen rate for P1 incidents?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByRole("article", { name: "Question 1" })).toBeVisible();
@@ -265,7 +423,7 @@ test.describe("knowledge studio (P4-U04)", () => {
   });
 
   test("edit a document's trust fields as a new revision; platform packs stay read-only", async ({ page, api }) => {
-    await signIn(page, `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`);
+    await signIn(page, `/w/${WS}/data/catalog?tab=documents&path=glossary/p1.md`);
     const card = page.locator("section.card", { has: page.getByRole("heading", { name: "P1", level: 2 }) });
     await expect(card.getByText("human-reviewed")).toBeVisible();
     await card.getByRole("button", { name: "Edit" }).click();
@@ -286,9 +444,9 @@ test.describe("knowledge studio (P4-U04)", () => {
   });
 });
 
-test.describe("operate (P4-U06, P4-U07)", () => {
+test.describe("operate and the gear (P4-U06, P4-U07)", () => {
   test("registry lists a newly installed plugin and runs it from its generated form", async ({ page, api }) => {
-    await signIn(page, "/operate/registry");
+    await signIn(page, "/settings/registry");
     const methods = page.getByRole("table", { name: "Analysis methods" });
     await expect(methods.getByText("method.acme_funnel")).toBeVisible();
     await expect(methods.getByText("entrypoint:acme-methods")).toBeVisible();
@@ -323,36 +481,39 @@ test.describe("operate (P4-U06, P4-U07)", () => {
     await expect(page.getByText("(current v2)")).toBeVisible();
   });
 
-  test("alerts explain their triage (rule, JEV probability, escalate-only)", async ({ page }) => {
+  test("alerts explain their triage in plain words (rule, decision model, escalate-only)", async ({ page }) => {
     await signIn(page, `/w/${WS}/operate/monitoring?tab=alerts`);
     const triage = page.getByLabel("Triage explanation");
     await expect(triage.getByText(/Rule: MTTR 9\.4h > 8h/)).toBeVisible();
-    await expect(triage.getByText(/JEV can only raise severity/)).toBeVisible();
+    await expect(triage.getByText(/The decision model can only raise severity/)).toBeVisible();
   });
 });
 
-/** Main screen of each journey: [journey, path, text that shows the data has loaded]. */
+/** Main screen of each area and panel: [name, path, text that shows the data has loaded]. */
 const SCREENS: [string, string, RegExp][] = [
-  ["Home", `/w/${WS}`, /What changed/],
-  ["Ask", `/w/${WS}/ask`, /SQL console/],
-  ["Ask · thread", `/w/${WS}/ask?thread=ask_old`, /How many P1 incidents per week/],
-  ["Investigate", `/w/${WS}/investigate/${RUN}`, /Why are P1 resolution times rising/],
-  ["Knowledge", `/w/${WS}/knowledge/catalog`, /One row per incident/],
-  ["Knowledge · documents", `/w/${WS}/knowledge/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
-  ["Knowledge · review queue", `/w/${WS}/knowledge/catalog?tab=review`, /crawl-enrich-v2/],
-  ["Knowledge · semantic graph", `/w/${WS}/knowledge/catalog?tab=graph`, /Governed \(/],
-  ["Knowledge · metrics", `/w/${WS}/knowledge/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
-  ["Knowledge · import & export", `/w/${WS}/knowledge/catalog?tab=transfer`, /Push to a git remote/],
-  ["Build", `/w/${WS}/build/studio`, /P1 resolution/],
-  ["Build · dbt build", `/w/${WS}/build/studio?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
-  ["Build · KPIs", `/w/${WS}/build/studio?tab=kpis&kpi=mttr_hours`, /Approve v2/],
-  ["Build · dashboards", `/w/${WS}/build/studio?tab=dashboards&dashboard=art_dash`, /P1 MTTR by assignment group/],
-  ["Operate", `/w/${WS}/operate/approvals`, /Publish dashboards/],
-  ["Operate · settings", "/operate/settings", /Purpose/],
-  ["Operate · usage", "/operate/usage", /Spend by rung not reported/],
-  ["Operate · registry", `/operate/registry?ws=${WS}&cap=method.acme_funnel`, /acme_methods\/tests\/test_funnel\.py/],
-  ["Operate · alerts", `/w/${WS}/operate/monitoring?tab=alerts`, /JEV can only raise severity/],
-  ["Operate · policy", `/w/${WS}/operate/governance`, /Effective policy/],
+  ["Overview", `/w/${WS}`, /What needs you/],
+  ["Work · Ask", `/w/${WS}/work/ask`, /SQL console/],
+  ["Work · Ask thread", `/w/${WS}/work/ask?thread=ask_old`, /How many P1 incidents per week/],
+  ["Work · investigations", `/w/${WS}/work`, /Why are P1 resolution times rising/],
+  ["Work · investigation", `/w/${WS}/work/investigations/${RUN}`, /Why are P1 resolution times rising/],
+  ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
+  ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
+  ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
+  ["Data · documents", `/w/${WS}/data/catalog?tab=documents&path=glossary/p1.md`, /Revision history/],
+  ["Data · review queue", `/w/${WS}/data/catalog?tab=review`, /crawl-enrich-v2/],
+  ["Data · metrics", `/w/${WS}/data/catalog?tab=metrics&kpi=mttr_hours`, /Approve v2/],
+  ["Data · definitions", `/w/${WS}/data/catalog?tab=definitions`, /Governed \(/],
+  ["Data · import & export", `/w/${WS}/data/catalog?tab=transfer`, /Push to a git remote/],
+  ["Outputs", `/w/${WS}/outputs`, /P1 resolution/],
+  ["Outputs · finding", `/w/${WS}/outputs/findings/${INSIGHT}`, /How it was checked/],
+  ["Outputs · dashboard", `/w/${WS}/outputs?type=dashboard&dashboard=art_dash`, /P1 MTTR by assignment group/],
+  ["Operate · approvals", `/w/${WS}/operate/approvals`, /Publish dashboards/],
+  ["Operate · alerts", `/w/${WS}/operate/monitoring?tab=alerts`, /can only raise severity/],
+  ["Operate · schedules", `/w/${WS}/operate/schedules`, /upgrade available/],
+  ["Settings · policy", `/w/${WS}/settings/policy`, /Effective policy/],
+  ["Settings · platform", "/settings/platform", /Purpose/],
+  ["Settings · usage", "/settings/usage", /Spend by rung not reported/],
+  ["Settings · registry", `/settings/registry?ws=${WS}&cap=method.acme_funnel`, /acme_methods\/tests\/test_funnel\.py/],
 ];
 
 for (const scheme of ["light", "dark"] as const) {
@@ -371,9 +532,19 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(page.getByRole("dialog")).toContainText(/identical result hash/);
       expect(await axeViolations(page)).toEqual([]);
     });
+    test("Start work and Why this number? drawers have no axe violations", async ({ page }) => {
+      await signIn(page, `/w/${WS}`);
+      await page.getByRole("button", { name: "Start work" }).click();
+      await expect(page.getByRole("list", { name: "Job kinds" })).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
+      await page.goto(`/w/${WS}/outputs/findings/${INSIGHT}`);
+      await page.getByRole("list", { name: "Numbers in this finding" }).getByRole("button", { name: /Why this number/ }).click();
+      await expect(page.getByRole("dialog")).toContainText(/The verification/);
+      expect(await axeViolations(page)).toEqual([]);
+    });
     test("command palette has no axe violations", async ({ page }) => {
       await signIn(page, `/w/${WS}`);
-      await expect(page.locator("main")).toContainText(/What changed/);
+      await expect(page.locator("main")).toContainText(/What needs you/);
       await page.keyboard.press("Control+k");
       await expect(page.getByRole("dialog")).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);

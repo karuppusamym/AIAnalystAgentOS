@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { to } from "../routes";
 import { api, type Alert, type Monitor } from "../api";
 import { EChart, canvasSupported } from "../components/Chart";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails } from "../components/ui";
 import { buildMonitorOption, DARK, LIGHT } from "../lib/charts";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync, usePrefersDark } from "../lib/hooks";
@@ -31,14 +31,14 @@ export function MonitoringPage() {
   return (
     <div className="page">
       <PageHeader title="Monitors & alerts"
-        subtitle="Metric thresholds, drift, change points, forecast deviations and data quality — evaluated on a schedule, de-duplicated into alerts, triaged by JEV." />
+        subtitle="Metric thresholds, drift, change points, forecast deviations and data quality, checked on a schedule and grouped into alerts." />
       <Tabs value={tab} onChange={setTab} tabs={[
         { id: "monitors", label: `Monitors${monitors.data ? ` (${monitors.data.length})` : ""}` },
         { id: "alerts", label: `Alerts${openAlerts.data?.length ? ` (${openAlerts.data.length} open)` : ""}` },
       ]} />
       <div className="tab-panel" role="tabpanel">
         {tab === "monitors" ? (
-          <MonitorsSection wsId={wsId} monitors={monitors.data} error={monitors.error} loading={monitors.loading}
+          <MonitorsSection wsId={wsId} monitors={monitors.data} error={monitors.error} loading={monitors.loading} startCreating={params.get("new") === "1"}
             reload={() => { void monitors.reload(); void openAlerts.reload(); }}
             onPatched={(m) => monitors.setData((prev) => prev?.map((x) => (x.id === m.id ? m : x)))} />
         ) : (
@@ -50,10 +50,11 @@ export function MonitoringPage() {
 }
 
 // ---------------------------------------------------------------------------------- monitors
-function MonitorsSection({ wsId, monitors, error, loading, reload, onPatched }: {
+function MonitorsSection({ wsId, monitors, error, loading, reload, onPatched, startCreating = false }: {
   wsId: string; monitors: Monitor[] | undefined; error: string | null; loading: boolean; reload: () => void; onPatched: (m: Monitor) => void;
+  startCreating?: boolean;
 }) {
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(startCreating);
   return (
     <div className="stack">
       <div className="toolbar">
@@ -67,7 +68,7 @@ function MonitorsSection({ wsId, monitors, error, loading, reload, onPatched }: 
       )}
       <ErrorBox error={error} onRetry={reload} />
       {loading && !monitors && <Loading />}
-      {monitors?.length === 0 && !creating && <EmptyState title="No monitors yet">Monitor a validated metric from a completed run.</EmptyState>}
+      {monitors?.length === 0 && !creating && <EmptyState title="No monitors yet">Monitor a validated metric from a completed investigation.</EmptyState>}
       <div className="grid-2">
         {monitors?.map((m) => <MonitorCard key={m.id} monitor={m} onPatched={onPatched} onEvaluated={reload} />)}
       </div>
@@ -195,7 +196,7 @@ export function MonitorForm({ wsId, onSaved, onCancel }: { wsId: string; onSaved
       </div>
       {isMetric && (
         <div className="form-row">
-          <Field label="Metric" htmlFor={`${id}-metric`} hint={metrics.data && !metricOptions.length ? "No validated metrics yet: complete an analysis run first." : undefined}>
+          <Field label="Metric" htmlFor={`${id}-metric`} hint={metrics.data && !metricOptions.length ? "No validated metrics yet: complete an investigation first." : undefined}>
             <select id={`${id}-metric`} value={f.metric} onChange={(e) => set({ metric: e.target.value })}>
               <option value="">Choose a metric…</option>
               {metricOptions.map(([name, display]) => <option key={name} value={name}>{display}{display !== name ? ` (${name})` : ""}</option>)}
@@ -221,7 +222,7 @@ export function MonitorForm({ wsId, onSaved, onCancel }: { wsId: string; onSaved
             <input id={`${id}-value`} type="number" step="any" value={f.value} onChange={(e) => set({ value: e.target.value })} />
             {err("value")}
           </Field>
-          <Field label="Severity" htmlFor={`${id}-sev`} hint="JEV triage may escalate, never lower it.">
+          <Field label="Severity" htmlFor={`${id}-sev`} hint="The decision model may raise it, never lower it.">
             <select id={`${id}-sev`} value={f.severity} onChange={(e) => set({ severity: e.target.value as MonitorFormState["severity"] })}>
               <option value="info">info</option><option value="warning">warning</option><option value="critical">critical</option>
             </select>
@@ -352,15 +353,15 @@ export function AlertItem({ wsId, alert: a, monitorName, highlighted = false, on
         <p className="small">{a.message}</p>
         <div className="chip-row small">
           {monitorName && <span className="muted">monitor: {monitorName}</span>}
-          {typeof triage?.p_material === "number" && (
-            <span title={triage.model ? `JEV triage by ${triage.model}` : "JEV triage"}><Tag tone="jev">p(material) {fmtPct(triage.p_material, 0)}</Tag></span>
-          )}
-          {a.investigation_run_id && <Link to={to.run(wsId, a.investigation_run_id)}>Investigation run</Link>}
+          {a.investigation_run_id && <Link to={to.run(wsId, a.investigation_run_id)}>Investigation</Link>}
           {a.resolved_at && <span className="muted">resolved {fmtDate(a.resolved_at)}</span>}
         </div>
         <div className="triage" aria-label="Triage explanation">
-          <p className="small triage-title"><strong>Why this severity</strong>{explanation.escalated && <Tag tone="jev">escalated by JEV</Tag>}</p>
+          <p className="small triage-title"><strong>Why this severity</strong>{explanation.escalated && <Tag tone="warning">raised</Tag>}</p>
           <ul className="small">{explanation.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+          {typeof triage?.p_material === "number" && (
+            <TechnicalDetails><p className="small">JEV triage{triage.model ? ` by ${triage.model}` : ""}: <Tag tone="jev">p(material) {fmtPct(triage.p_material, 0)}</Tag></p></TechnicalDetails>
+          )}
         </div>
         <div className="form-actions">
           {a.status === "open" && (

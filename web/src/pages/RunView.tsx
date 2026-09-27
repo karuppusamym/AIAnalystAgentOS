@@ -8,6 +8,7 @@ import { ChangesPanel } from "../components/ChangesPanel";
 import { InvestigationBoard } from "../components/InvestigationBoard";
 import { InvestigationTree } from "../components/InvestigationTree";
 import { Markdown } from "../components/Markdown";
+import { VerificationBadge, WhyState } from "../components/WhyNumber";
 import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { durationBetween, fmtDate, fmtPct, fmtTime, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
@@ -15,7 +16,7 @@ import { TERMINAL_RUN } from "../lib/status";
 
 /** Chat kinds; rejecting a finding is done on its card, where the target is unambiguous. */
 const FEEDBACK_KINDS = [
-  { id: "", label: "Auto-classify (JEV)" },
+  { id: "", label: "Let the platform decide" },
   { id: "redirect", label: "Redirect — change focus / filters" },
   { id: "add_context", label: "Add context — business definitions" },
   { id: "deeper_analysis", label: "Deeper analysis" },
@@ -61,11 +62,11 @@ export function RunViewPage() {
   }, [wsId, runId, scheduleRefresh]);
 
   if (run.error && !run.data) return <div className="page"><ErrorBox error={run.error} onRetry={run.reload} /></div>;
-  if (!run.data) return <div className="page"><Loading label="Loading run…" /></div>;
+  if (!run.data) return <div className="page"><Loading label="Loading investigation…" /></div>;
   const r = run.data;
   const terminal = TERMINAL_RUN.has(r.status);
   const doControl = async (action: "pause" | "resume" | "cancel") => {
-    if (action === "cancel" && !window.confirm("Cancel this run? Work in progress stops; nothing unapproved is published.")) return;
+    if (action === "cancel" && !window.confirm("Cancel this investigation? Work in progress stops; nothing unapproved is published.")) return;
     const res = await control.run(() => api.controlRun(wsId, runId, action));
     if (res) void run.reload();
   };
@@ -77,8 +78,7 @@ export function RunViewPage() {
       <PageHeader
         title={<span className="run-title">{r.objective}</span>}
         subtitle={<>
-          <StatusBadge status={r.status} /> <OriginBadge wsId={wsId} origin={r.origin} /> <span className="muted small">run <code>{r.id}</code> · L{r.autonomy_level} · plan v{r.plan_version}
-            {r.plan_hash ? <> (<code title={r.plan_hash}>{shortHash(r.plan_hash, 10)}</code>)</> : null} · iteration {r.iteration}</span>
+          <StatusBadge status={r.status} /> <OriginBadge wsId={wsId} origin={r.origin} />
         </>}
         actions={<>
           <StreamIndicator state={stream.state} error={stream.error} />
@@ -89,7 +89,7 @@ export function RunViewPage() {
         </>}
       />
       <ErrorBox error={control.error} />
-      {r.error && <Notice tone="danger"><strong>Run error:</strong> {r.error}</Notice>}
+      {r.error && <Notice tone="danger"><strong>Investigation error:</strong> {r.error}</Notice>}
       {pending.length > 0 && <Notice tone="warning">{pending.length} approval{pending.length > 1 ? "s" : ""} waiting — see the Approvals panel.</Notice>}
 
       <div className="stats-row card card-body">
@@ -102,11 +102,15 @@ export function RunViewPage() {
           ["Hypotheses", String(r.hypotheses.length)],
           ["Findings", `${r.insights.filter((i) => i.verified).length} verified / ${r.insights.length}`],
         ]} />
+        <TechnicalDetails>
+          <p className="small">Investigation <code>{r.id}</code> · autonomy level L{r.autonomy_level} · plan version {r.plan_version}
+            {r.plan_hash ? <> (<code title={r.plan_hash}>{shortHash(r.plan_hash, 10)}</code>)</> : null} · iteration {r.iteration}</p>
+        </TechnicalDetails>
       </div>
 
       {r.summary?.changes && <ChangesPanel changes={r.summary.changes} wsId={wsId} reportArtifactId={r.summary.report_artifact_id} />}
       {!r.summary?.changes && r.summary?.report_artifact_id && (
-        <Notice tone="info">A report was generated for this run: <Link to={to.reports(wsId, r.summary.report_artifact_id)}>open in Reports</Link>.</Notice>
+        <Notice tone="info">A report was generated for this investigation: <Link to={to.reports(wsId, r.summary.report_artifact_id)}>open it in Outputs</Link>.</Notice>
       )}
 
       {(r.summary?.summary_markdown || pub) && (
@@ -134,6 +138,7 @@ export function RunViewPage() {
           </div>
         </div>
         <aside className="run-side">
+          <NumbersPanel wsId={wsId} runId={runId} findings={r.insights.length} />
           <CostMeter wsId={wsId} run={r} />
           <Card title={`Approvals${pending.length ? ` (${pending.length} pending)` : ""}`}>
             <ApprovalsPanel approvals={r.approvals} onDecided={() => void run.reload()} />
@@ -161,7 +166,7 @@ export function OriginBadge({ wsId, origin }: { wsId: string; origin: RunOrigin 
       <span className="origin">
         <Tag tone="info">scheduled</Tag>{" "}
         {origin.schedule_id && <Link className="small" to={to.schedules(wsId, origin.schedule_id)}>schedule</Link>}
-        {origin.previous_run_id && <> · <Link className="small" to={to.run(wsId, origin.previous_run_id)}>previous run</Link></>}
+        {origin.previous_run_id && <> · <Link className="small" to={to.run(wsId, origin.previous_run_id)}>previous investigation</Link></>}
         {origin.publish && <span className="muted small"> · publish: {origin.publish}</span>}
       </span>
     );
@@ -322,7 +327,7 @@ function RedirectChat({ wsId, run, disabled, onDone }: { wsId: string; run: RunD
   };
   return (
     <Card title="Redirect the investigation">
-      <ol className="chat-log" aria-label="Instructions sent to this run">
+      <ol className="chat-log" aria-label="Instructions sent to this investigation">
         {history.length === 0 && <li className="muted small">No instructions yet. Tell the agents what to focus on, exclude or explain.</li>}
         {history.map((ins, i) => (
           <li key={i} className="chat-msg chat-user">
@@ -334,8 +339,8 @@ function RedirectChat({ wsId, run, disabled, onDone }: { wsId: string; run: RunD
           <li className="chat-msg chat-agent" aria-live="polite">
             <span className="chat-who">Supervisor</span>
             <p className="small">
-              Read as <strong>{resp.kind.replace(/_/g, " ")}</strong> ({resp.classified_by}
-              {resp.consequential_p !== null ? `, p(side effect) ${fmtPct(resp.consequential_p, 0)}` : ""}).
+              Read as <strong title={`classified by ${resp.classified_by}`}>{resp.kind.replace(/_/g, " ")}</strong>
+              {resp.consequential_p !== null ? ` (chance it asks for a side effect: ${fmtPct(resp.consequential_p, 0)})` : ""}.
               {resp.interpretation && <> {resp.interpretation.summary}</>}
               {resp.replan && <> Replanned to plan v{resp.replan.plan_version}.</>}
             </p>
@@ -354,7 +359,7 @@ function RedirectChat({ wsId, run, disabled, onDone }: { wsId: string; run: RunD
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void submit(); }}
             placeholder="Focus on priority 1 incidents in the Network group; exclude auto-closed tickets." />
         </Field>
-        <Field label="Kind" htmlFor="fb-kind" hint="On auto, JEV classifies the message; it can flag side effects, never execute them.">
+        <Field label="Kind" htmlFor="fb-kind" hint="On auto, a decision model reads the message; it can flag side effects, never carry them out.">
           <select id="fb-kind" value={kind} onChange={(e) => setKind(e.target.value)} disabled={disabled}>
             {FEEDBACK_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
           </select>
@@ -386,10 +391,10 @@ function CostMeter({ wsId, run }: { wsId: string; run: RunDetail }) {
       <KeyValue items={[
         ["Tokens avoided", <Value key="s" value={c?.tokens_saved} format="int" />],
         ["Cache hits", <Value key="h" value={c?.cache_hits} format="int" />],
-        ["Deterministic skips", <Value key="d" value={c?.deterministic_skips} format="int" />],
+        ["Answered by rules", <Value key="d" value={c?.deterministic_skips} format="int" />],
         ["Model calls", <Value key="m" value={c?.model_calls} format="int" />],
       ]} />
-      <h3 className="small">By rung</h3>
+      <TechnicalDetails label="Spend by model tier">
       {rungs.length ? (
         <ul className="rung-list small" aria-label="Spend by rung">
           {rungs.map(([rung, v]) => (
@@ -397,7 +402,8 @@ function CostMeter({ wsId, run }: { wsId: string; run: RunDetail }) {
               {v.tokens_saved !== undefined && <> · <Value value={v.tokens_saved} format="int" suffix="avoided" /></>}</li>
           ))}
         </ul>
-      ) : <p className="muted small">Rung breakdown not reported by this server.</p>}
+      ) : <p className="muted small">Tier breakdown not reported by this server.</p>}
+      </TechnicalDetails>
     </Card>
   );
 }
@@ -419,5 +425,35 @@ function Meter({ label, value, max, format }: { label: string; value: number | n
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Every number the investigation reported, traced (P7-08): how many still hold, and which findings
+ * are void and why. Each finding's numbers open "Why this number?" from its card or its Outputs page.
+ */
+function NumbersPanel({ wsId, runId, findings }: { wsId: string; runId: string; findings: number }) {
+  const why = useAsync(() => (findings ? api.whyRun(wsId, runId) : Promise.resolve(null)), [wsId, runId, findings]);
+  if (!findings) return null;
+  const d = why.data;
+  const held = d?.by_state?.ok ?? 0;
+  const voided = (d?.findings ?? []).filter((f) => f.verification_state?.badge === "void");
+  return (
+    <Card title="Numbers">
+      {why.error && <p className="muted small">Could not trace the numbers: {why.error}</p>}
+      {!d && !why.error && <Loading />}
+      {d && (
+        <>
+          <p className="small">{d.numbers === 0 ? "No numbers reported yet." : held === d.numbers ? `All ${d.numbers} reported numbers still hold.`
+            : `${held} of ${d.numbers} reported numbers still hold.`}</p>
+          {Object.entries(d.by_state).filter(([k, n]) => k !== "ok" && n > 0).map(([k, n]) => (
+            <p key={k} className="small"><WhyState state={k} /> {n}</p>
+          ))}
+          {voided.map((f) => (
+            <p key={f.subject.id} className="small"><strong>{f.subject.code}</strong> <VerificationBadge state={f.verification_state} /></p>
+          ))}
+        </>
+      )}
+    </Card>
   );
 }
