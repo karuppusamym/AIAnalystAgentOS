@@ -1,4 +1,4 @@
-"""analystos CLI: migrate | provision-analytics-roles | seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge | check-semantics"""
+"""analystos CLI: migrate | provision-analytics-roles | seed | demo-seed | worker | scheduler | api | export-contracts | replay-run | packs | calibrate | knowledge | check-semantics"""
 from __future__ import annotations
 
 import argparse
@@ -228,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
         return knowledge_main(argv[1:])
     if argv[:1] == ["schedules"]:
         return schedules_main(argv[1:])
+    if argv[:1] == ["demo-seed"]:  # a ready demo workspace through the running API (`analystos demo-seed --help`)
+        from analystos.demo.seed import main as demo_seed
+
+        return demo_seed(argv[1:])
     if argv[:1] == ["check-semantics"]:  # offline semantic model validation (ADR-0019 §6)
         from analystos.semantic.check import main as check_semantics
 
@@ -236,8 +240,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analystos")
     parser.add_argument("command", choices=["migrate", "provision-analytics-roles", "seed", "worker", "scheduler", "api",
                                             "export-contracts", "replay-run", "packs", "calibrate", "knowledge", "schedules",
-                                            "bi-sync", "sandbox-status", "check-semantics"],
+                                            "bi-sync", "sandbox-status", "check-semantics", "demo-seed"],
                         help="knowledge: `analystos knowledge --help` (reindex, reembed, import, export, ...); "
+                             "demo-seed: `analystos demo-seed --help` (a ready demo workspace through the API); "
                              "check-semantics: `analystos check-semantics PATH... [--json]` (offline model validation); "
                              "schedules: `analystos schedules disable-demo [--all] [--workspace W] [--dry-run]`")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")

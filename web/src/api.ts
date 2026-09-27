@@ -1138,6 +1138,30 @@ export interface ProviderHealth {
     detail?: string; remedy?: string };
 }
 
+/** GET /api/health: every dependency labelled up | down | off; the down ones listed with what that means for users. */
+export interface HealthCheck {
+  ok: boolean;
+  state?: "up" | "down" | "off";
+  error?: string;
+  status?: string;
+  [detail: string]: unknown;
+}
+
+export interface HealthProblem {
+  dependency: string;
+  severity: "critical" | "warning" | "info";
+  message: string;
+  detail?: string | null;
+}
+
+export interface Health {
+  ok: boolean;
+  degraded?: boolean;
+  problems?: HealthProblem[];
+  orchestrator?: string;
+  checks?: Record<string, HealthCheck>;
+}
+
 export interface ModelHealth {
   checked_at: string;
   counters_available: boolean;
@@ -3153,6 +3177,8 @@ export const api = {
     patch("/api/tools/{tool_id}", { path: { tool_id: id }, body: { enabled } }) as Promise<ToolSpec>,
   skills: () => get("/api/skills", {}) as Promise<SkillSpec[]>,
   models: () => get("/api/admin/models", {}) as Promise<ModelsView>,
+  /** Dependency health for the status banner; `signal` lets the caller give up on a hung API. */
+  health: (signal?: AbortSignal) => request<Health>("GET", apiPath("get", "/api/health", {}), undefined, { signal }),
   modelHealth: (probe = false) =>
     get("/api/admin/models/health", { query: probe ? { probe: true } : {} }) as Promise<ModelHealth>,
   usage: () => get("/api/admin/usage", {}) as Promise<Usage>,

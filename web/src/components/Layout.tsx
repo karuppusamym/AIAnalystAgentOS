@@ -7,6 +7,7 @@ import { AREAS, canSee, fillPath, SCREENS } from "../routes";
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { NotificationBell } from "./NotificationBell";
+import { StatusBanner } from "./StatusBanner";
 
 const THEME_LABEL = { system: "System theme", light: "Light theme", dark: "Dark theme" } as const;
 const THEME_ICON = { system: "◐", light: "☀", dark: "☾" } as const;
@@ -126,6 +127,7 @@ export function Layout() {
           </div>
         )}
       </header>
+      <StatusBanner />
       <div className="body">
         <nav id="sidenav" className={`sidenav ${navOpen ? "open" : ""}`} aria-label="Main">
           <AreaNav wsId={wsId} wsName={ws?.name} role={ws?.role} />

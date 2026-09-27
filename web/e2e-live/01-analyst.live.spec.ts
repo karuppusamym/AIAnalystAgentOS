@@ -29,10 +29,11 @@ test.describe.serial("analyst and approver (P4-07)", () => {
     await expect(page.getByRole("list", { name: "Getting started" })).toContainText("Connect or upload data");
 
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Members & policy" }).click();
+    const addMember = page.getByRole("form", { name: "Add a member" });
     for (const [email, role] of [[ANALYST, "editor"], [APPROVER, "approver"]]) {
-      await page.getByLabel("Email").fill(email);
-      await page.getByLabel("Role").selectOption(role);
-      await page.getByRole("button", { name: "Add member" }).click();
+      await addMember.getByLabel("Email", { exact: true }).fill(email);
+      await addMember.getByLabel("Role", { exact: true }).selectOption(role);
+      await addMember.getByRole("button", { name: "Add member" }).click();
       await expect(page.getByText(email)).toBeVisible();
     }
     await expect(page.getByRole("heading", { name: "Members (3)" })).toBeVisible();

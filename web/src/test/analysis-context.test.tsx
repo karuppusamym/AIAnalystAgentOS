@@ -24,8 +24,8 @@ it("separates findings from two questions over the same workspace", async () => 
   const list = await screen.findByRole("list", { name: "Outputs" });
   expect(within(list).getByText("P1 resolution rose")).toBeTruthy();
   expect(within(list).getByText("Retention declined")).toBeTruthy();
-  const investigations = await screen.findByRole("complementary", { name: "Investigations" });
-  fireEvent.click(within(investigations).getByRole("button", { name: /Why is customer retention falling/ }));
+  // Outputs scope by investigation through the "Investigation" picker (40efc63 replaced the side list)
+  fireEvent.change(await screen.findByLabelText("Investigation"), { target: { value: second.id } });
   expect(within(list).queryByText("P1 resolution rose")).toBeNull();
   expect(within(list).getByText("Retention declined")).toBeTruthy();
 });

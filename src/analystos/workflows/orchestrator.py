@@ -48,6 +48,59 @@ def _require_temporal() -> None:
     require_extra("temporal", "the Temporal orchestrator (ANALYSTOS_ORCHESTRATOR=temporal)")
 
 
+# Queues a run needs a live worker on: the workflow and its engine activities (analysis), statistics
+# (compute) and publication (publish). crawl/elt only matter to those features.
+RUN_WORKLOADS = ("analysis", "compute", "publish")
+# Temporal lists a poller for minutes after its worker died; a live worker re-polls at least every long-poll
+# timeout (~60-70 s), so a poller not seen for this long is treated as gone.
+POLLER_FRESH_SECONDS = 120.0
+_worker_cache: tuple[float, dict] | None = None
+
+
+def worker_status(*, timeout: float = 3.0, cache_seconds: float = 10.0) -> dict:
+    """Live pollers per run queue, from Temporal's own task-queue view (no heartbeat table needed).
+    `ok` is False when any queue a run needs has no fresh poller: runs would sit queued, not fail."""
+    global _worker_cache
+    now = time.monotonic()
+    if _worker_cache and now - _worker_cache[0] < cache_seconds:
+        return _worker_cache[1]
+    settings = get_settings()
+
+    async def describe() -> dict:
+        from temporalio.api.enums.v1 import TaskQueueType
+        from temporalio.api.taskqueue.v1 import TaskQueue
+        from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
+
+        from analystos.workflows.queues import queue_name
+
+        client = await asyncio.wait_for(_temporal_client(), timeout)
+        queues: dict[str, int] = {}
+        for workload in RUN_WORKLOADS:
+            name = queue_name(settings.temporal_queue_prefix, workload)
+            kinds = [TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY]
+            if workload == "analysis":
+                kinds.append(TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW)
+            fresh = []
+            for kind in kinds:
+                resp = await asyncio.wait_for(client.workflow_service.describe_task_queue(DescribeTaskQueueRequest(
+                    namespace=settings.temporal_namespace, task_queue=TaskQueue(name=name), task_queue_type=kind)), timeout)
+                fresh.append(sum(1 for p in resp.pollers
+                                 if time.time() - p.last_access_time.ToSeconds() <= POLLER_FRESH_SECONDS))
+            queues[name] = min(fresh)
+        return queues
+
+    queues = _run_with_timeout(describe(), timeout * (len(RUN_WORKLOADS) * 2 + 1))
+    missing = [q for q, n in queues.items() if n == 0]
+    out = {"ok": not missing, "queues": queues, "missing": missing}
+    _worker_cache = (now, out)
+    return out
+
+
+def _run_with_timeout(coro, timeout: float) -> object:
+    fut: Future = asyncio.run_coroutine_threadsafe(coro, _event_loop())
+    return fut.result(timeout=timeout)
+
+
 def workflow_id(run_id: str) -> str:
     return f"analysis-{run_id}"
 

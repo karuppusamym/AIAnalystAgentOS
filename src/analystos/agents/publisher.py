@@ -40,8 +40,12 @@ def choose_destination(ctx: RunContext) -> str:
             status = get_publisher("superset", get_settings()).test_connection()
             if (status or {}).get("ok", True):
                 return "superset"
-        except Exception as exc:  # visible degradation, not silent
-            ctx.say(f"Superset unreachable ({str(exc)[:120]}); publication will target the local preview destination.", kind="decision")
+            reason = str((status or {}).get("error") or "connection test failed")
+        except Exception as exc:  # noqa: BLE001 - visible degradation, not silent
+            reason = str(exc)
+        # test_connection reports most outages by returning ok=False rather than raising: say so either way.
+        ctx.say(f"Superset not reachable ({reason[:120]}); publication will target the local preview destination.",
+                kind="decision")
     return "preview"
 
 

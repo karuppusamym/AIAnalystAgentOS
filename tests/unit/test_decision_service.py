@@ -133,6 +133,19 @@ def test_chart_selection_is_decided_by_rules_and_jev_is_not_called():
     assert any(r["status"] == "skipped" and r["purpose"] == "chart_selection" for r in sink.records)  # shown as savings
 
 
+def test_keyless_rule_decision_is_still_in_the_run_ledger_without_claimed_savings():
+    """Live e2e 2026-09-27: without OPENROUTER_API_KEY the rule-decided purposes vanished from the run console."""
+    sink = Sink()
+    r = ModelRouter(transport=FakeTransport(), sink=sink, api_key_lookup=lambda _: None, max_retries=0,
+                    settings_provider=PlatformSettings, cache=ResponseCache(None))
+    d = DecisionService(r, store=MemoryDecisionStore()).decide(
+        "chart_selection", {"chart_title": "x"}, Question.choice("which?", {"bar": "b", "pie": "p"}, hint="bar"))
+    assert d.backend == "rules"
+    rows = [x for x in sink.records if x["purpose"] == "chart_selection"]
+    assert len(rows) == 1 and rows[0]["status"] == "skipped" and rows[0]["answered_by"] == "rules"
+    assert rows[0]["tokens_saved"] == 0  # no model could have answered: nothing was saved
+
+
 def test_choose_presentation_answer_outside_the_valid_options_is_ignored():
     t = jev_answers({"pick": {"choice": "rm -rf", "probabilities": {"rm -rf": 1.0}}})
     d = service(t).decide("chart_selection", {"chart_title": "x"}, Question.choice("which?", {"bar": "b", "pie": "p"}))
