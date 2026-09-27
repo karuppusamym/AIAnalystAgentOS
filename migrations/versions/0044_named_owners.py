@@ -3,15 +3,15 @@
 * `workspace.owners`, `source.owners` (JSON, default `{}`): {"business": {name, email, user_id?},
   "technical": {...}}. Existing rows get `{}`: pilot readiness then lists both owners as missing.
 
-Revision ID: 0043
-Revises: 0042
+Revision ID: 0044
+Revises: 0043
 Create Date: 2026-09-27 19:00:00
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0043"
-down_revision = "0042"
+revision = "0044"
+down_revision = "0043"
 branch_labels = None
 depends_on = None
 
