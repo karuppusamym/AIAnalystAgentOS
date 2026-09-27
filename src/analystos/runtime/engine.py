@@ -418,14 +418,14 @@ def finish_run(run_id: str, outcome: str, error: str | None = None) -> None:
         set_run_status(s, run, outcome, **({"error": error} if error else {}))
         notify_needed = (run.origin or {}).get("type") in ("schedule", "alert")
         workspace_id, requested_by = run.workspace_id, run.requested_by
-    if outcome == "COMPLETED":
-        from analystos.services.steps import record_quietly
-
-        record_quietly("run", workspace_id, run_id, requested_by)
     if notify_needed:
         from analystos.services.schedules import complete_from_run
 
         complete_from_run(run_id)
+    if outcome == "COMPLETED":  # last: the schedule's result must not wait on (or race with) recording the steps
+        from analystos.services.steps import record_quietly
+
+        record_quietly("run", workspace_id, run_id, requested_by)
 
 
 def apply_replan(session, run: AnalysisRun, reason: str, *, full: bool = True) -> dict:
