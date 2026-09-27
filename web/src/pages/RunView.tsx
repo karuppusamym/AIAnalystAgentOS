@@ -85,6 +85,7 @@ export function RunViewPage() {
           <button type="button" className="btn btn-sm" onClick={() => doControl("pause")} disabled={terminal || r.status === "PAUSED" || control.busy}>Pause</button>
           <button type="button" className="btn btn-sm" onClick={() => doControl("resume")} disabled={terminal || r.status !== "PAUSED" || control.busy}>Resume</button>
           <button type="button" className="btn btn-sm btn-danger" onClick={() => doControl("cancel")} disabled={terminal || control.busy}>Cancel</button>
+          <Link to={to.thread(wsId, "run", runId)} className="btn btn-sm btn-ghost">Data Thread</Link>
           <Link to={to.runConsole(wsId, runId)} className="btn btn-sm btn-ghost">Agent console</Link>
         </>}
       />

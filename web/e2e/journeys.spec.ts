@@ -203,6 +203,50 @@ test.describe("job-kind journeys without new top-level screens", () => {
   });
 });
 
+test.describe("Data Thread (P7-04, P7-05)", () => {
+  test("analyst (keyboard): open an investigation's thread → edit a step → dependents re-run, v1 stays readable → fork → compare → merge", async ({ page, api }) => {
+    await asAnalyst(page);
+    await signIn(page, `/w/${WS}/work`, ANALYST_EMAIL);
+    const before = await navEntries(page);
+    await page.getByRole("link", { name: "Data Thread of Why are P1 resolution times rising?" }).click();
+    await expect(page).toHaveURL(`/w/${WS}/work?tab=thread&container=run%3Arun_demo`);
+    const step = (name: string) => page.getByRole("listitem", { name: new RegExp(`^Step \\d+: ${name}`) });
+    const mttr = step("Mean P1 resolution hours by group");
+    await expect(mttr.getByText("verified")).toBeVisible();
+
+    // edit with the keyboard: the new version re-runs and so do the steps that read it
+    await mttr.getByRole("button", { name: /^Edit/ }).focus();
+    await page.keyboard.press("Enter");
+    const sql = mttr.getByLabel("SQL");
+    await sql.fill("SELECT assignment_group, AVG(resolution_hours) AS mttr_hours FROM stg_sn.incident WHERE priority = '1' AND close_code != 'auto' GROUP BY 1");
+    await mttr.getByRole("button", { name: "Save and re-run" }).press("Enter");
+    await expect(page.getByText(/is now version 2\. 2 steps that read it re-ran; 3 earlier verdicts are now void/)).toBeVisible();
+    await expect(step("Network is the slowest group").getByText("re-ran: flagged")).toBeVisible();
+    await mttr.getByRole("button", { name: /^Versions \(2\)/ }).click();
+    const v1 = mttr.getByRole("listitem", { name: "Version 1" });
+    await expect(v1.getByText(/Why void: edit: the step was edited to v2/)).toBeVisible();
+    await v1.getByRole("button", { name: "Show the result of v1" }).click();
+    await expect(v1.getByRole("table", { name: "Result of version 1" })).toContainText("9.4");
+
+    // fork a "what if" from the count step, compare with main side by side, merge into a report
+    await step("P1 incidents by assignment group").getByRole("button", { name: /Fork from here/ }).click();
+    await page.getByLabel("Branch name").fill("what if");
+    await page.getByRole("button", { name: "Fork", exact: true }).click();
+    await expect(page).toHaveURL(/branch=brn_whatif/);
+    await expect(step("Plan: why").getByText("from the parent branch")).toBeVisible();
+    await page.getByLabel("Compare with").selectOption({ label: "main" });
+    await page.getByRole("button", { name: "Compare side by side" }).click();
+    await expect(page.getByRole("group", { name: "Compare main with what if" })).toBeVisible();
+    await page.getByLabel("Report title").fill("P1 thread");
+    await page.getByRole("button", { name: "Merge what if into a report" }).click();
+    await expect(page.getByText(/Merged into the report "P1 thread"/)).toBeVisible();
+    // an analyst cannot pin (editor), so no Pin control is offered
+    await expect(page.getByRole("button", { name: /^Pin/ })).toHaveCount(0);
+    expect(await navEntries(page)).toBe(before);
+    expect(api.unmatched).toEqual([]);
+  });
+});
+
 test.describe("wave-1 panels", () => {
   test("Why this number? and a void finding's cause", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/outputs?type=finding`);
@@ -499,6 +543,7 @@ const SCREENS: [string, string, RegExp][] = [
   ["Work · investigations", `/w/${WS}/work`, /Why are P1 resolution times rising/],
   ["Work · investigation", `/w/${WS}/work/investigations/${RUN}`, /Why are P1 resolution times rising/],
   ["Work · prepare data", `/w/${WS}/work?tab=prepare`, /p1_incidents_clean/],
+  ["Work · Data Thread", `/w/${WS}/work?tab=thread&container=run:run_demo`, /Mean P1 resolution hours by group/],
   ["Work · dbt build", `/w/${WS}/work?tab=builds&job=${BUILD_PREV}`, /No earlier build of this target/],
   ["Data · catalog", `/w/${WS}/data/catalog`, /One row per incident/],
   ["Data · brief & readiness", `/w/${WS}/data/catalog?tab=brief`, /Open questions \(2\)/],

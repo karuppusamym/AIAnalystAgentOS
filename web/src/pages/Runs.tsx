@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { BuildPanel } from "../components/BuildPanel";
+import { DataThreadPanel } from "../components/DataThread";
 import { PreparePanel } from "../components/PreparePanel";
 import { StartWorkButton } from "../components/StartWork";
 import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
@@ -11,13 +12,14 @@ import { useAsync } from "../lib/hooks";
 import { to, type WorkTab } from "../routes";
 
 const TABS: { id: WorkTab; label: string }[] = [
-  { id: "investigations", label: "Investigations" }, { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
+  { id: "investigations", label: "Investigations" }, { id: "thread", label: "Data Thread" },
+  { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
 ];
 
 /**
- * Work (spec v4 §15): everything started with Start work. Investigations, and the data-engineering
- * panels (Prepare data, dbt builds) that arrive as job kinds rather than new screens. Ask has its own
- * entry because it is the quick box.
+ * Work (spec v4 §15): everything started with Start work. Investigations and their Data Thread
+ * (steps, branches, merge), and the data-engineering panels (Prepare data, dbt builds) that arrive
+ * as job kinds rather than new screens. Ask has its own entry because it is the quick box.
  */
 export function WorkPage() {
   const { wsId = "" } = useParams();
@@ -36,6 +38,8 @@ export function WorkPage() {
     });
   }, [setParams]);
   const selectJob = useCallback((id: string | null) => set({ job: id }), [set]);
+  // Platform admins act with owner authority in any workspace (the server decides either way).
+  const role = user?.is_admin ? "owner" : ws.data?.role;
   return (
     <div className="page">
       <PageHeader title="Work" subtitle={<>Investigations and prepared data. For a quick question, use <Link to={to.ask(wsId)}>Ask</Link>.</>}
@@ -43,6 +47,8 @@ export function WorkPage() {
       <Tabs value={tab} onChange={(t) => setParams(t === "investigations" ? {} : { tab: t })} tabs={TABS} />
       <div className="tab-panel" role="tabpanel">
         {tab === "investigations" && <Investigations wsId={wsId} />}
+        {tab === "thread" && <DataThreadPanel wsId={wsId} role={role} container={params.get("container")} branch={params.get("branch")}
+          onChange={(patch) => set(patch as Record<string, string | null>)} />}
         {tab === "prepare" && <PreparePanel wsId={wsId} role={ws.data?.role} recipe={params.get("recipe")}
           onSelectRecipe={(id) => set({ recipe: id })} />}
         {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
@@ -76,7 +82,8 @@ function Investigations({ wsId }: { wsId: string }) {
                   <td className="small">{fmtDate(r.started_at ?? r.created_at)}</td>
                   <td className="small">{durationBetween(r.started_at, r.finished_at)}</td>
                   <td className="num"><Value value={r.cost_usd} format="usd" /></td>
-                  <td><Link to={to.runConsole(wsId, r.id)} className="btn btn-xs btn-ghost">Agent console<span className="sr-only"> for {r.objective}</span></Link></td>
+                  <td><Link to={to.thread(wsId, "run", r.id)} className="btn btn-xs btn-ghost">Data Thread<span className="sr-only"> of {r.objective}</span></Link>
+                    <Link to={to.runConsole(wsId, r.id)} className="btn btn-xs btn-ghost">Agent console<span className="sr-only"> for {r.objective}</span></Link></td>
                 </tr>
               ))}
             </tbody>

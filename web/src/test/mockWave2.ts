@@ -7,6 +7,7 @@
 import type {
   Assertion, JobKindAvailability, ReadinessAssessment, WorkspaceBrief,
 } from "../api";
+import { resetThread, threadRoute } from "./mockThread";
 
 const T = "2026-09-26T09:00:00Z";
 
@@ -102,6 +103,7 @@ function fresh(ws: string): Wave2State {
 
 export function resetWave2(): void {
   state = fresh("ws_demo");
+  resetThread();
 }
 
 /** Simulate a concurrent editor: the brief moves on under the person looking at it. */
@@ -172,5 +174,23 @@ export function wave2Route(m: string, p: string, url: URL, ws: string, body: str
     const b = json() as { job_kind?: string };
     return ok(readinessFor(ws, String(b.job_kind ?? "explain"), state.brief.version), 201);
   }
-  return null;
+  if (m === "POST" && p === `${W}/query`) return ok(filteredQuery(String(json().sql ?? "")));
+  return threadRoute(m, p, url, W, json(), headers);
+}
+
+/** The gateway's answer to a preview filter: the base rows re-read with the WHERE clause applied. */
+export function filteredQuery(sql: string) {
+  const mttr = /mttr_hours/.test(sql);
+  const columns = mttr ? ["assignment_group", "mttr_hours"] : ["assignment_group", "incidents"];
+  let rows: unknown[][] = mttr ? [["Network", 9.4], ["Desktop", 6.1], ["Database", 5.2]] : [["Network", 182], ["Desktop", 140], ["Database", 96]];
+  for (const [, col, op, raw] of sql.matchAll(/"(\w+)"\s*(=|!=|>=|<=|>|<)\s*('(?:[^']|'')*'|[\d.]+)/g)) {
+    const i = columns.indexOf(col);
+    if (i < 0) continue;
+    const v = raw.startsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : Number(raw);
+    rows = rows.filter((r) => {
+      const x = r[i] as string | number;
+      return op === "=" ? x === v : op === "!=" ? x !== v : op === ">" ? x > v : op === ">=" ? x >= v : op === "<" ? x < v : x <= v;
+    });
+  }
+  return { query_id: "qry_filter_1", columns, rows, row_count: rows.length, truncated: false, result_hash: `fh${rows.length}c0ffee0123456789`, sql };
 }
