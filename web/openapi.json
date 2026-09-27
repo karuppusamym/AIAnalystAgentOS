@@ -1,6 +1,190 @@
 {
   "components": {
     "schemas": {
+      "AgentForm": {
+        "additionalProperties": false,
+        "properties": {
+          "autonomy": {
+            "$ref": "#/components/schemas/AgentFormAutonomy"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/AgentFormBudget"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "default_actions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Default Actions",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "knowledge": {
+            "$ref": "#/components/schemas/AgentFormKnowledge"
+          },
+          "output": {
+            "$ref": "#/components/schemas/AgentFormOutput"
+          },
+          "purpose": {
+            "maxLength": 2000,
+            "minLength": 10,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 3,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "purpose",
+          "capabilities",
+          "output"
+        ],
+        "title": "AgentForm",
+        "type": "object"
+      },
+      "AgentFormAutonomy": {
+        "additionalProperties": false,
+        "description": "How far the agent acts on its own: only its default actions, or model proposals among its\ncapabilities (every proposal is still validated in code); and what data it may see.",
+        "properties": {
+          "max_rows": {
+            "default": 1000,
+            "maximum": 500000.0,
+            "minimum": 1.0,
+            "title": "Max Rows",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "deterministic",
+            "enum": [
+              "deterministic",
+              "propose"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "pii_access": {
+            "default": "none",
+            "enum": [
+              "none",
+              "restricted",
+              "allowed"
+            ],
+            "title": "Pii Access",
+            "type": "string"
+          }
+        },
+        "title": "AgentFormAutonomy",
+        "type": "object"
+      },
+      "AgentFormBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "llm_calls": {
+            "default": 2,
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Llm Calls",
+            "type": "integer"
+          },
+          "max_steps": {
+            "default": 3,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "queries": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Queries",
+            "type": "integer"
+          },
+          "usd": {
+            "default": 0.05,
+            "minimum": 0.0,
+            "title": "Usd",
+            "type": "number"
+          }
+        },
+        "title": "AgentFormBudget",
+        "type": "object"
+      },
+      "AgentFormKnowledge": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_chars": {
+            "anyOf": [
+              {
+                "maximum": 200000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Chars"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "glossary",
+                "business_rules",
+                "metrics",
+                "prior_findings",
+                "negative_knowledge",
+                "episodes",
+                "external"
+              ],
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "title": "AgentFormKnowledge",
+        "type": "object"
+      },
+      "AgentFormOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 3,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "agent_output",
+            "default": "agent_output",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AgentFormOutput",
+        "type": "object"
+      },
       "AllowIn": {
         "properties": {
           "allowed": {
@@ -12888,6 +13072,267 @@
         "summary": "Activity",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/agent-form": {
+      "get": {
+        "description": "What a workspace owner may grant a form-authored agent here: executable capabilities with the reason any\none is not grantable, knowledge sections, output types and the workspace ceilings for budget and data access.",
+        "operationId": "agent_form_options_api_workspaces__workspace_id__agent_form_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Form Options",
+        "tags": [
+          "definitions"
+        ]
+      },
+      "post": {
+        "description": "Compile the form into a `kind: Agent` manifest and save it as a draft `agent` definition (a new key, or the\nnext version of a published one). Owners only; a grant beyond the workspace's is refused (403).",
+        "operationId": "create_agent_from_form_api_workspaces__workspace_id__agent_form_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent From Form",
+        "tags": [
+          "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/agent-form/{definition_id}": {
+      "put": {
+        "operationId": "update_agent_from_form_api_workspaces__workspace_id__agent_form__definition_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "definition_id",
+            "required": true,
+            "schema": {
+              "title": "Definition Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent From Form",
+        "tags": [
+          "definitions"
         ]
       }
     },
