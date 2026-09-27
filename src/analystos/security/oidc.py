@@ -303,6 +303,16 @@ def _workspace_ids(session: Session, keys: list[str]) -> dict[str, str]:
     return out
 
 
+def _highest_roles(roles: dict[str, str], resolved: dict[str, str]) -> dict[str, str]:
+    """Workspace id -> role. A workspace mapped both by name and by id is one workspace: the highest role wins,
+    as it does for several groups naming it the same way."""
+    out: dict[str, str] = {}
+    for key, ws_id in resolved.items():
+        if ROLE_RANK[roles[key]] > ROLE_RANK.get(out.get(ws_id, ""), -1):
+            out[ws_id] = roles[key]
+    return out
+
+
 def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping: Mapping | None = None) -> User:
     """Find or create the local user for this identity and bring its IdP-managed state up to date:
     attributes from claims, platform admin from groups (SSO-created users only), and the workspace
@@ -347,8 +357,7 @@ def provision(session: Session, claims: dict[str, Any], *, issuer: str, mapping:
               reasons=["platform_admin_from_groups_applies_to_sso_created_accounts_only"],
               details={"groups": ident.groups}, session=session)
     managed = dict(link.managed_memberships or {})
-    resolved = _workspace_ids(session, list(ident.roles))
-    desired = {ws_id: ident.roles[key] for key, ws_id in resolved.items()}
+    desired = _highest_roles(ident.roles, _workspace_ids(session, list(ident.roles)))
     members = {m.workspace_id: m for m in session.scalars(select(WorkspaceMember).where(WorkspaceMember.user_id == user.id))}
     changes: list[dict[str, Any]] = []
     for ws_id, role in desired.items():
