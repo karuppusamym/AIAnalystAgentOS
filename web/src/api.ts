@@ -1743,9 +1743,49 @@ export interface GlossaryLink {
   reason?: string;
 }
 
+/** A column profile as measured by the crawler (skills/profiling.py); sensitive columns arrive without values. */
+export interface MeasuredProfile {
+  type_family?: string;
+  semantic_type?: string;
+  non_null?: number;
+  null_rate?: number;
+  distinct?: number;
+  distinct_ratio?: number;
+  min?: unknown;
+  max?: unknown;
+  mean?: number | null;
+  stddev?: number | null;
+  percentiles?: Record<string, number | null>;
+  true_count?: number | null;
+  avg_length?: number | null;
+  max_length?: number | null;
+  top_values?: { value: unknown; count: number; share?: number | null }[];
+  histogram?: { bin: number; low: number; high: number; count: number }[];
+  monthly_counts?: { month: string; count: number }[];
+  outliers?: { low_count?: number; high_count?: number; low_fence?: number; high_fence?: number };
+  values?: unknown[];
+  values_complete?: boolean;
+  has_blanks?: boolean;
+  patterns?: { mask: string; share: number }[];
+  [k: string]: unknown;
+}
+
+export interface ProfileMeta {
+  profiled_at?: string | null;
+  rows_profiled?: number | null;
+  source?: "full" | "snapshot" | string;
+  truncated?: boolean;
+  sampled?: boolean;
+  reused?: boolean;
+  [k: string]: unknown;
+}
+
 export interface CatalogColumn {
   name: string;
   data_type: string;
+  semantic_type?: string | null;
+  is_key?: boolean;
+  profile?: MeasuredProfile | null;
   business_name: string | null;
   description: string | null;
   tags: string[];
@@ -1776,6 +1816,10 @@ export interface CatalogAsset {
   grain: string | null;
   confidence: number | null;
   last_crawled_at: string | null;
+  entity?: string | null;
+  time_column?: string | null;
+  profile_meta?: ProfileMeta | null;
+  snapshot?: Dict | null;
   columns: CatalogColumn[];
 }
 

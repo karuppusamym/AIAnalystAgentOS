@@ -48,7 +48,7 @@ export function StartWorkButton({ wsId, className = "btn btn-primary" }: { wsId:
   const ref = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <button type="button" ref={ref} className={className} aria-haspopup="dialog" onClick={() => setOpen(true)}>Start work</button>
+      <button type="button" ref={ref} className={className} aria-haspopup="dialog" data-tour="start-work" onClick={() => setOpen(true)}>Start work</button>
       {open && <StartWorkDialog wsId={wsId} onClose={() => { setOpen(false); ref.current?.focus(); }} />}
     </>
   );

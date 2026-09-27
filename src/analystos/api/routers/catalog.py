@@ -18,6 +18,21 @@ from analystos.services import crawler
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
+_SAFE_SENSITIVE_PROFILE = frozenset({"name", "data_type", "type_family", "semantic_type", "is_key",
+                                     "non_null", "null_count", "null_rate", "distinct", "distinct_ratio"})
+
+
+def public_profile(profile: dict | None, tags: list[str] | None) -> dict | None:
+    """Only aggregate completeness and cardinality leave the server for a sensitive column.
+
+    This also strips value distributions stored by older crawler versions.
+    """
+    if not profile:
+        return None
+    if set(tags or []) & {"pii", "restricted", "sensitive"}:
+        return {k: v for k, v in profile.items() if k in _SAFE_SENSITIVE_PROFILE}
+    return profile
+
 
 @router.get("/source-kinds")
 def source_kinds(user: User = Depends(current_user)):
@@ -158,10 +173,13 @@ def catalog(workspace_id: str, q: str = "", domain: str | None = None, role: str
                     "reviewed": a.reviewed, "selected": a.selected, "lifecycle": a.lifecycle, "row_count": a.row_count,
                     "role": sem.get("role"), "domain": sem.get("domain"), "grain": sem.get("grain"),
                     "confidence": sem.get("confidence"), "last_crawled_at": a.last_crawled_at,
+                    "entity": sem.get("entity"), "profile_meta": (a.stats or {}).get("profile_meta"),
                     "snapshot": a.snapshot or None,  # staged population: rows staged vs origin, truncated, sampling
                     "columns": [{"name": c.name, "data_type": c.data_type, "business_name": c.business_name,
                                  "business_name_origin": c.business_name_origin, "description": c.description,
                                  "description_origin": c.description_origin, "tags": c.tags, "tags_origin": c.tags_origin,
+                                 "semantic_type": c.semantic_type, "is_key": c.is_key,
+                                 "profile": public_profile(c.profile, c.tags) if a.stats else None,
                                  "role": (c.semantics or {}).get("semantic_role"), "unit": (c.semantics or {}).get("unit"),
                                  "pii": (c.semantics or {}).get("pii"), "glossary": (c.semantics or {}).get("glossary")}
                                 for c in cols]})

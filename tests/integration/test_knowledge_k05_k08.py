@@ -225,6 +225,62 @@ def test_drafts_never_overwrite_owner_content(workspace):
 
 
 # ------------------------------------------------------------------------------------ K07 crawler enrichment
+def test_reviewed_domain_keyword_becomes_workspace_rule_and_can_be_revoked(workspace):
+    from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
+    from analystos.db.models import Source, SourceAsset, SourceColumn
+    from analystos.knowledge.suggestions import field, propose, review, reviewed_domain_keywords
+    from analystos.services.crawler import _Crawl
+    from analystos.skills import catalog as cat
+    from analystos.skills.catalog import infer_table_semantics
+
+    table = DiscoveredAsset(source_name="t_01", name="t_01", schema_name="public",
+                            columns=[DiscoveredColumn(name="orders", data_type="text")])
+    assert infer_table_semantics(table).domain == "generic"
+    with session_scope() as s:
+        src = Source(id=new_id("src"), workspace_id=workspace, kind="postgres", name="keyword test", config={})
+        s.add(src)
+        s.flush()
+        asset = SourceAsset(id=new_id("ast"), source_id=src.id, workspace_id=workspace,
+                            schema_name="public", name="t_01", source_name="t_01", semantics={"domain": "generic"})
+        s.add(asset)
+        s.flush()
+        s.add(SourceColumn(asset_id=asset.id, name="orders", ordinal=0, data_type="text", tags=[], profile={}, semantics={}))
+        suggestion = propose(s, workspace, kind="domain_candidate", subject=f"asset:{asset.id}",
+                             title="Review domain for public.t_01",
+                             fields={"domain": field("sales", 0.6, source="model"),
+                                     "body": field("The orders column may mean sales.", 0.6, source="model")},
+                             origin="crawler.domain", proposed_by="model:test")
+        sid, path, asset_id = suggestion.id, suggestion.path, asset.id
+    with session_scope() as s:
+        admin = _admin(s)
+        refused = review(s, workspace, admin, [{"id": sid, "action": "approve"}])
+        assert refused["errors"] == [{"id": sid, "error": "reviewed_keyword_required"}]
+        assert reviewed_domain_keywords(s, workspace) == {}
+        accepted = review(s, workspace, admin, [{"id": sid, "action": "edit", "fields": {"keyword": "Orders"}}])
+        assert accepted["errors"] == [] and accepted["revision"] is not None
+        assert reviewed_domain_keywords(s, workspace) == {"sales": frozenset({"orders"})}
+        assert reviewed_domain_keywords(s, "other-workspace") == {}
+        assert infer_table_semantics(table, reviewed_keywords=reviewed_domain_keywords(s, workspace)).domain == "sales"
+    crawl = _Crawl.__new__(_Crawl)
+    crawl.source = SimpleNamespace(id=src.id, workspace_id=workspace)
+    crawl.staged_schema = None
+    crawl.stats = {}
+    crawl.log = SimpleNamespace(stage=lambda *args, **kwargs: None)
+    key = cat.asset_key(table)
+    diff = cat.diff_crawl({}, [table], full=True)
+    crawl._apply({key: table}, {key: asset_id}, {key}, diff)
+    with session_scope() as s:
+        assert s.get(SourceAsset, asset_id).semantics["domain"] == "sales"
+    with session_scope() as s:
+        pack = store.workspace_pack(s, workspace)
+        store.commit(s, pack, {}, author="human:test", reason="revoke rule", origin="user",
+                     merge=True, deletes=(path,))
+        assert reviewed_domain_keywords(s, workspace) == {}
+    crawl._apply({key: table}, {key: asset_id}, {key}, diff)
+    with session_scope() as s:
+        assert s.get(SourceAsset, asset_id).semantics["domain"] == "generic"
+
+
 def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
     from analystos.db.models import Source, SourceAsset
     from analystos.knowledge.suggestions import review

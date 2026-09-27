@@ -41,6 +41,7 @@ KIND_SPEC: dict[str, tuple[str, str, str]] = {
     "negative": ("Negative Knowledge", "negative", "negative"),
     "attested_computation": (attested.TYPE, "findings", attested.KIND),
     "table_description": ("Table", "catalog", "table"),
+    "domain_candidate": ("Note", "notes", "note"),
 }
 PRIMARY_FIELD = {"attested_computation": "statement", "table_description": "description"}
 STATUSES = ("pending", "approved", "rejected", "superseded")
@@ -214,6 +215,14 @@ def render(row: KnowledgeSuggestion, fields: dict[str, Any], user_id: str, at: s
         heading = "Description"
         if _value(fields, "business_name"):
             ext["business_name"] = str(_value(fields, "business_name"))
+    elif row.kind == "domain_candidate":
+        heading = "Proposed domain"
+        domain = str(_value(fields, "domain") or "")
+        ext["candidate_domain"] = domain
+        keyword = str(_value(fields, "keyword") or "")
+        ext["domain_keyword"] = keyword
+        text = (f"Reviewed domain: {domain}. Keyword: {keyword}.\n\nReason: {text.strip()}\n\n"
+                "The keyword is available to this workspace on its next full crawl.")
     else:
         heading = KIND_HEADINGS.get(doc_kind, "Note" if doc_kind == "note" else "Definition")
     return okf.render_document(fm, f"# {heading}\n\n{text.strip()}").encode()
@@ -226,6 +235,8 @@ def negative_path(row: KnowledgeSuggestion) -> str:
 def render_negative(row: KnowledgeSuggestion, user_id: str, at: str, reason: str | None) -> bytes:
     """A rejection as knowledge: what was proposed, that a human rejected it, and why."""
     text = str(_value(row.fields or {}, primary_field(row.kind)) or "")
+    if row.kind == "domain_candidate":
+        text = f"domain {_value(row.fields or {}, 'domain')}: {text}"
     ext = {"kind": "negative", "origin": f"review:{row.origin}", "trusted": True,
            REVIEW_KEY: _review_block(row, row.fields or {}, user_id, "rejected"), "rejected_kind": row.kind}
     fm = {"type": "Negative Knowledge", "title": f"Rejected: {row.title}"[:300], "status": "stable", "analystos": ext,
@@ -244,6 +255,62 @@ def _asset(session: Session, row: KnowledgeSuggestion) -> SourceAsset | None:
         return None
     a = session.get(SourceAsset, ref[1])
     return a if a is not None and a.workspace_id == row.workspace_id else None
+
+
+def reviewed_domain_keywords(session: Session, workspace_id: str) -> dict[str, frozenset[str]]:
+    """Read current reviewed rules, not stale suggestions or model proposals, from this workspace's pack."""
+    from analystos.skills.catalog import domain_keywords
+
+    words: dict[str, set[str]] = {}
+    known = domain_keywords()
+    pack = store.workspace_pack(session, workspace_id, create=False)
+    if pack is None:
+        return {}
+    docs = session.scalars(select(KnowledgeDocument).where(KnowledgeDocument.pack_id == pack.id,
+                                                          KnowledgeDocument.workspace_id == workspace_id,
+                                                          KnowledgeDocument.kind == "note",
+                                                          KnowledgeDocument.status == "stable",
+                                                          KnowledgeDocument.trust_tier == "human-reviewed"))
+    for doc in docs:
+        ext = (doc.frontmatter or {}).get("analystos") or {}
+        review = ext.get(REVIEW_KEY) if isinstance(ext, dict) else None
+        if not isinstance(review, dict) or review.get("decision") != "approved":
+            continue
+        if not str(review.get("suggestion_id") or "").startswith("ksug_"):
+            continue
+        domain, keyword = ext.get("candidate_domain"), ext.get("domain_keyword")
+        if domain in known and isinstance(keyword, str) and keyword.isascii() and keyword.isalnum() \
+                and keyword.islower() and len(keyword) >= 3:
+            words.setdefault(domain, set()).add(keyword)
+    return {domain: frozenset(items) for domain, items in words.items()}
+
+
+def _domain_keyword_error(session: Session, row: KnowledgeSuggestion, fields: dict[str, Any]) -> str | None:
+    from analystos.db.models import SourceColumn
+    from analystos.services.crawler import safe_for_domain_assist
+    from analystos.skills.catalog import domain_keywords, split_tokens
+
+    domain = str(_value(fields, "domain") or "")
+    if domain not in domain_keywords() or domain == "generic":
+        return "unknown_domain"
+    keyword_field = fields.get("keyword") or {}
+    keyword = str(_value(fields, "keyword") or "").strip().lower()
+    if (not keyword or keyword_field.get("provenance", {}).get("source") != "human"
+            or len(keyword) < 3 or not keyword.isascii() or not keyword.isalnum()):
+        return "reviewed_keyword_required"
+    asset = _asset(session, row)
+    if asset is None:
+        return "asset_not_found"
+    tokens = set(split_tokens(asset.name))
+    tokens.update(t for col in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))
+                  if safe_for_domain_assist(col) for t in split_tokens(col.name))
+    if keyword not in tokens:
+        return "keyword_not_in_safe_metadata"
+    if any(keyword in kws for dom, kws in domain_keywords().items() if dom != domain):
+        return "keyword_conflicts_with_domain"
+    if any(keyword in kws for dom, kws in reviewed_domain_keywords(session, row.workspace_id).items() if dom != domain):
+        return "keyword_conflicts_with_domain"
+    return None
 
 
 def _apply_description(session: Session, row: KnowledgeSuggestion, fields: dict[str, Any]) -> str:
@@ -288,6 +355,7 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
     decided: list[tuple[KnowledgeSuggestion, str, str | None]] = []
     errors: list[dict[str, Any]] = []
     seen: set[str] = set()
+    batch_keywords: dict[str, str] = {}
     for d in decisions:
         sid, action = str(d.get("id") or ""), str(d.get("action") or "")
         row = session.get(KnowledgeSuggestion, sid)
@@ -315,6 +383,18 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
         if not str(_value(fields, primary_field(row.kind)) or "").strip():
             errors.append({"id": sid, "error": "empty", "field": primary_field(row.kind)})
             continue
+        if row.kind == "domain_candidate":
+            problem = _domain_keyword_error(session, row, fields)
+            if not problem:
+                keyword = str(_value(fields, "keyword")).strip().lower()
+                domain = str(_value(fields, "domain"))
+                if batch_keywords.get(keyword, domain) != domain:
+                    problem = "keyword_conflicts_with_domain"
+                else:
+                    fields["keyword"] = {**fields["keyword"], "value": keyword}
+            if problem:
+                errors.append({"id": sid, "error": problem})
+                continue
         if row.kind == "attested_computation" and attested.missing(_value(fields, "computation") or {}):
             errors.append({"id": sid, "error": "incomplete_computation", "missing": attested.missing(_value(fields, "computation") or {})})
             continue
@@ -322,6 +402,8 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
             errors.append({"id": sid, "error": "owner_content_exists", "path": row.path})
             continue
         files[row.path] = render(row, fields, user.id, at)
+        if row.kind == "domain_candidate":
+            batch_keywords[str(_value(fields, "keyword"))] = str(_value(fields, "domain"))
         note = _apply_description(session, row, fields) if row.kind == "table_description" else None
         if action == "edit":
             row.fields = fields

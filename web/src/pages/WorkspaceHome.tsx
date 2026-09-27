@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type CatalogAsset, type Insight, type Run, type Source, type WorkspaceDetail } from "../api";
 import { BriefSummary } from "../components/Brief";
+import { WelcomeCard } from "../components/Guide";
+import { useTour } from "../components/Tour";
 import { StartWorkButton } from "../components/StartWork";
 import { WorkModesSettings } from "../components/WorkModes";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, Stat, Value } from "../components/ui";
@@ -66,6 +68,7 @@ export function WorkspaceHomePage() {
         actions={firstRun ? undefined : <StartWorkButton wsId={wsId} />} />
       <ErrorBox error={runs.error ?? sources.error} onRetry={() => { void runs.reload(); void sources.reload(); }} />
       {runs.data === undefined && !runs.error && <Loading />}
+      {runs.data && runs.data.length > 0 && <WelcomeCard wsId={wsId} />}
       {firstRun && <FirstRun ws={w} sources={sources} onChanged={ws.reload} />}
       {runs.data && runs.data.length > 0 && (
         <>
@@ -80,6 +83,7 @@ export function WorkspaceHomePage() {
 
 function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: AsyncState<Source[]>; onChanged: () => void }) {
   const catalog = useAsync(() => api.catalog(ws.id), [ws.id]);
+  const tour = useTour();
   if (!sources.data || (!catalog.data && !catalog.error)) return <Loading />;
   const steps = firstRunSteps({ sources: sources.data, catalog: catalog.data ?? [], objective: ws.objective ?? "", runs: [] });
   const next = nextStep(steps);
@@ -92,7 +96,9 @@ function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: As
   };
   return (
     <Card title="Get started">
-      <p className="muted small">Pick up where you left off: each step is checked against what is already in the workspace.</p>
+      <p className="muted small">Pick up where you left off: each step is checked against what is already in the workspace.{" "}
+        <button type="button" className="btn-link" onClick={() => tour.start("platform", ws.id)}>New here? Take the 2-minute tour</button>
+      </p>
       <ol className="checklist" aria-label="Getting started">
         {steps.map((s, k) => {
           const isNext = s.id === next?.id;
