@@ -102,8 +102,13 @@ The API's import cold start (`import analystos.api.app`, median of 3, shared CPU
 
 No ML, Temporal, Neo4j or report library is imported at API start in either case.
 
-The largest remaining core libraries are polars (172 MB, used only by the CSV/Parquet connector) and
-pyarrow (152 MB).
+The largest remaining core libraries are polars (172 MB, used only by the CSV/Parquet connector and file
+ingest, imported on first use) and pyarrow (152 MB, still imported at API start).
+
+Re-measured 2026-09-27 with pip and newer resolved versions ([evidence](../60-delivery/evidence/p7-17-core-install-20260927.md)).
+Installed sizes were core 818 MB, core + `reports` 920 MB and core + `standard` 1117 MB. The API import
+cost was the same for all three sets. `tests/unit/test_slim_install.py` checks that no extra is imported
+at start and that compose, the env files, the Dockerfile and `values-small.yaml` agree on the extras.
 
 ## 3. Helm: `values-small.yaml`
 
@@ -126,6 +131,10 @@ The chart runs one image for every component, so build it with `EXTRAS=standard`
 * `ANALYSTOS_BOOTSTRAP_ADMIN_PASSWORD`.
 
 Compose sets its own database URL. On a laptop, development defaults stand in for the other two.
+A core install without the `temporal` extra that sets neither `ANALYSTOS_PROFILE` nor
+`ANALYSTOS_ORCHESTRATOR` runs as `lite`. Checked 2026-09-27 with only these three variables: migrate,
+seed, start and a completed local run
+([evidence](../60-delivery/evidence/p7-17-core-install-20260927.md)).
 
 **Tier 2, optional, by feature.**
 

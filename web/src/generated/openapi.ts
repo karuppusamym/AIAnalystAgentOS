@@ -1577,6 +1577,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/agent-form": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent Form Options
+         * @description What a workspace owner may grant a form-authored agent here: executable capabilities with the reason any
+         *     one is not grantable, knowledge sections, output types and the workspace ceilings for budget and data access.
+         */
+        get: operations["agent_form_options_api_workspaces__workspace_id__agent_form_get"];
+        put?: never;
+        /**
+         * Create Agent From Form
+         * @description Compile the form into a `kind: Agent` manifest and save it as a draft `agent` definition (a new key, or the
+         *     next version of a published one). Owners only; a grant beyond the workspace's is refused (403).
+         */
+        post: operations["create_agent_from_form_api_workspaces__workspace_id__agent_form_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/agent-form/{definition_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Agent From Form */
+        put: operations["update_agent_from_form_api_workspaces__workspace_id__agent_form__definition_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/alerts": {
         parameters: {
             query?: never;
@@ -4852,6 +4895,88 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentForm */
+        AgentForm: {
+            autonomy?: components["schemas"]["AgentFormAutonomy"];
+            budget?: components["schemas"]["AgentFormBudget"];
+            /** Capabilities */
+            capabilities: string[];
+            /** Default Actions */
+            default_actions?: string[];
+            /** Key */
+            key: string;
+            knowledge?: components["schemas"]["AgentFormKnowledge"];
+            output: components["schemas"]["AgentFormOutput"];
+            /** Purpose */
+            purpose: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * AgentFormAutonomy
+         * @description How far the agent acts on its own: only its default actions, or model proposals among its
+         *     capabilities (every proposal is still validated in code); and what data it may see.
+         */
+        AgentFormAutonomy: {
+            /**
+             * Max Rows
+             * @default 1000
+             */
+            max_rows?: number;
+            /**
+             * Mode
+             * @default deterministic
+             * @enum {string}
+             */
+            mode?: "deterministic" | "propose";
+            /**
+             * Pii Access
+             * @default none
+             * @enum {string}
+             */
+            pii_access?: "none" | "restricted" | "allowed";
+        };
+        /** AgentFormBudget */
+        AgentFormBudget: {
+            /**
+             * Llm Calls
+             * @default 2
+             */
+            llm_calls?: number;
+            /**
+             * Max Steps
+             * @default 3
+             */
+            max_steps?: number;
+            /**
+             * Queries
+             * @default 0
+             */
+            queries?: number;
+            /**
+             * Usd
+             * @default 0.05
+             */
+            usd?: number;
+        };
+        /** AgentFormKnowledge */
+        AgentFormKnowledge: {
+            /** Budget Chars */
+            budget_chars?: number | null;
+            /** Sections */
+            sections?: ("glossary" | "business_rules" | "metrics" | "prior_findings" | "negative_knowledge" | "episodes" | "external")[];
+        };
+        /** AgentFormOutput */
+        AgentFormOutput: {
+            /** Name */
+            name: string;
+            /**
+             * Type
+             * @default agent_output
+             * @constant
+             */
+            type?: "agent_output";
+        };
         /** AllowIn */
         AllowIn: {
             /** Allowed */
@@ -10129,6 +10254,118 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_form_options_api_workspaces__workspace_id__agent_form_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_from_form_api_workspaces__workspace_id__agent_form_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentForm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_from_form_api_workspaces__workspace_id__agent_form__definition_id__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentForm"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

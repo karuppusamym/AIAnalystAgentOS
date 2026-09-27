@@ -13,9 +13,8 @@ in any mode keeps its data version and changed content gets a new one (P4-03).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-import polars as pl
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,12 +26,18 @@ from analystos.db.base import session_scope
 from analystos.db.models import Source, SourceAsset, SourceColumn, User
 from analystos.governance.policy import load_in_workspace, scoped_loader
 
+if TYPE_CHECKING:  # polars loads on first use, not at API start (P7-17 cold start)
+    import polars as pl
+
 FORMATS = ("csv", "json", "excel", "parquet")
 FILE_KINDS = ("csv",)  # the staged file source kind (config/source_kinds.yaml `csv`, alias `file`)
 _SUFFIX_FORMAT = {".csv": "csv", ".tsv": "csv", ".txt": "csv", ".json": "json", ".ndjson": "json", ".jsonl": "json",
                   ".xlsx": "excel", ".xlsm": "excel", ".xls": "excel", ".parquet": "parquet", ".pq": "parquet"}
-_TYPES = {"text": pl.String, "integer": pl.Int32, "bigint": pl.Int64, "smallint": pl.Int16, "double": pl.Float64,
-          "boolean": pl.Boolean, "date": pl.Date, "timestamp": pl.Datetime("us")}
+def _types() -> dict[str, Any]:
+    import polars as pl
+
+    return {"text": pl.String, "integer": pl.Int32, "bigint": pl.Int64, "smallint": pl.Int16, "double": pl.Float64,
+            "boolean": pl.Boolean, "date": pl.Date, "timestamp": pl.Datetime("us")}
 
 
 class ColumnMapping(BaseModel):
@@ -62,6 +67,8 @@ def detect_format(path: Path, declared: str | None = None) -> str:
 def read_file(path: Path, fmt: str, *, sheet: str | None = None, delimiter: str | None = None) -> pl.DataFrame:
     """The whole file as a DataFrame. Types are inferred over the whole file (CSV) and a value that does
     not fit the inferred type is an error, never a NULL."""
+    import polars as pl
+
     try:
         if fmt == "parquet":
             return pl.read_parquet(path)
@@ -89,6 +96,8 @@ def read_file(path: Path, fmt: str, *, sheet: str | None = None, delimiter: str 
 
 
 def _cast(series: pl.Series, ctype: str, source: str) -> pl.Series:
+    import polars as pl
+
     from analystos.contracts.recipe import canonical_type
 
     target = canonical_type(ctype)
@@ -100,7 +109,7 @@ def _cast(series: pl.Series, ctype: str, source: str) -> pl.Series:
     elif target == "timestamptz":
         dtype = pl.Datetime("us", "UTC")
     else:
-        dtype = _TYPES[target]
+        dtype = _types()[target]
     def convert(s: pl.Series) -> pl.Series:
         if s.dtype == pl.String and dtype == pl.Date:
             return s.str.strip_chars().str.to_date(strict=True)
@@ -135,6 +144,8 @@ def _cast(series: pl.Series, ctype: str, source: str) -> pl.Series:
 
 def apply_mapping(df: pl.DataFrame, mapping: list[ColumnMapping] | None) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """The mapped frame and the contract as applied: [{source, target, type}]."""
+    import polars as pl
+
     entries = mapping if mapping is not None else [ColumnMapping(source=c) for c in df.columns]
     if not entries:
         raise InvalidInput("the mapping selects no column")
@@ -171,6 +182,8 @@ def _file_source(session: Session, user: User, source_id: str, workspace_id: str
 def ingest_file(user: User, source_id: str, spec: IngestSpec, workspace_id: str | None = None) -> dict[str, Any]:
     """Map and load one uploaded file into the file source's staged schema; the table becomes a
     selected asset of the source (readable through the gateway by the workspace)."""
+    import polars as pl
+
     from analystos.connectors.csv_file import CSVFileConnector, default_upload_dir
     from analystos.core.config import get_settings
     from analystos.events.bus import emit

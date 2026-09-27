@@ -79,6 +79,20 @@ def _definition_manifest(run: Any) -> CapabilityManifest | None:
         update={"status": status, "evidence": f"definition {defn.get('key')}@{defn.get('version')}"})})
 
 
+def _workspace_agent_problems(session: Session, workspace_id: str, manifests: Any) -> dict[str, str]:
+    """A workspace agent whose grants the workspace has since narrowed (a capability disabled, the policy
+    tightened) is unusable, like a disabled capability: the reason, keyed by agent id."""
+    from analystos.capabilities.agent_forms import grant_problems
+
+    out: dict[str, str] = {}
+    for m in manifests:
+        if m.kind == "Agent" and m.source.startswith("definition:"):
+            problems = grant_problems(session, workspace_id, m)
+            if problems:
+                out[m.id] = f"agent {m.ref} exceeds this workspace's grants: {problems[0]}"
+    return out
+
+
 def bind_run(session: Session, run: Any, snapshot: registry.Snapshot | None = None) -> Binding:
     """Resolve and check what the run will use. A required step whose agent is disabled, deprecated or
     (for an autonomous run) not certified fails the plan with the reason; an optional one is skipped."""
@@ -97,6 +111,13 @@ def bind_run(session: Session, run: Any, snapshot: registry.Snapshot | None = No
     defn_manifest = _definition_manifest(run)
     if defn_manifest is not None:
         replace[defn_manifest.id] = defn_manifest
+        from analystos.capabilities.agent_forms import playbook_uses, workspace_agents
+
+        # The workspace's own agents its steps use (P7-19), at their newest published version; a pinned
+        # fire instead carries the versions its baseline bound (in `pinned.manifests` above).
+        for m in workspace_agents(session, run.workspace_id, playbook_uses(defn_manifest) - set(replace)).values():
+            replace[m.id] = m
+    agent_problems = _workspace_agent_problems(session, run.workspace_id, replace.values())
     if replace:
         snap = registry.pinned(snap, replace.values())
     explicit = enablement.overrides(session, run.workspace_id)
@@ -117,7 +138,8 @@ def bind_run(session: Session, run: Any, snapshot: registry.Snapshot | None = No
         if step.when and not evaluate(step.when, ns):
             continue
         uses = [step.use] + [e.use for e in step.expands]
-        reasons = [r for u in uses if (r := enablement.usable(snap.get(u), snap, explicit, autonomous_run=auto))]
+        reasons = [r for u in uses if (r := agent_problems.get(u) or
+                                       enablement.usable(snap.get(u), snap, explicit, autonomous_run=auto))]
         if reasons:
             if step.optional:
                 skipped[step.key] = reasons[0]

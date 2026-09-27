@@ -1292,6 +1292,33 @@ export interface DefinitionVersion {
   created_at: string | null;
   updated_at: string | null;
   spec?: Dict;
+  /** Agent definitions: the form the manifest was built from (null when it uses fields the form cannot show). */
+  form?: AgentFormInput | null;
+}
+
+/** An agent form (P7-19): compiled by the server into the Agent manifest the YAML path loads. */
+export type AgentFormInput = Schemas["AgentForm"];
+
+/** GET .../agent-form: what an owner may grant here, with the reason a capability is not grantable. */
+export interface AgentFormCapability {
+  id: string;
+  ref: string;
+  summary: string;
+  side_effect: string;
+  tool: string | null;
+  certification: string;
+  enabled: boolean;
+  grantable: boolean;
+  reason: string | null;
+  default_input: Dict | null;
+  default_reason: string | null;
+}
+
+export interface AgentFormOptions {
+  capabilities: AgentFormCapability[];
+  knowledge_sections: string[];
+  output_types: string[];
+  limits: { llm_calls: number; usd: number; queries: number; max_rows: number; max_steps: number; pii_access: string[] };
 }
 
 export interface DefinitionRef {
@@ -3154,6 +3181,13 @@ export const api = {
     request<DefinitionVersion>("POST", apiPath("post", "/api/workspaces/{workspace_id}/definitions/{definition_id}/{action}",
       { path: { workspace_id: ws, definition_id: id, action } }), { reason: reason ?? null } satisfies Schemas["ReasonIn"],
     { headers: { "If-Match": `"${revision}"` } }),
+  agentFormOptions: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/agent-form", { path: W(ws) }) as Promise<AgentFormOptions>,
+  createAgentFromForm: (ws: string, body: AgentFormInput) =>
+    post("/api/workspaces/{workspace_id}/agent-form", { path: W(ws), body }) as Promise<DefinitionVersion>,
+  updateAgentFromForm: (ws: string, id: string, revision: number, body: AgentFormInput) =>
+    request<DefinitionVersion>("PUT", apiPath("put", "/api/workspaces/{workspace_id}/agent-form/{definition_id}",
+      { path: { workspace_id: ws, definition_id: id } }), body, { headers: { "If-Match": `"${revision}"` } }),
   definitionDiff: (ws: string, id: string, against?: string) =>
     get("/api/workspaces/{workspace_id}/definitions/{definition_id}/diff",
       { path: { workspace_id: ws, definition_id: id }, query: { against } }) as Promise<DefinitionDiff>,

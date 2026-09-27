@@ -142,6 +142,31 @@ def _capability_items(pins: dict[str, Any], snap: Any) -> list[PinItem]:
     return items
 
 
+def _workspace_agent_items(session: Session, pins: dict[str, Any]) -> list[PinItem]:
+    """A pinned workspace agent (P7-19) compares like a pinned definition: a retired version blocks, a
+    newer published version is an upgrade, a deprecated one warns."""
+    from analystos.services.definitions import diff, latest_published
+
+    items: list[PinItem] = []
+    for cap_id, raw in sorted((pins.get("manifests") or {}).items()):
+        source = str(raw.get("source", ""))
+        if raw.get("kind") != "Agent" or not source.startswith("definition:"):
+            continue
+        pinned = f"{cap_id}@{raw.get('version')}"
+        row = session.get(Definition, source.split(":", 1)[1])
+        if row is None or row.status == "retired":
+            items.append(PinItem(type="definition", id=cap_id, pinned=pinned, state="retired",
+                                 reason=(row.reason if row else None) or "the pinned agent version no longer exists"))
+            continue
+        newer = latest_published(session, row.workspace_id, row.kind, row.key)
+        if newer is not None and newer.version > row.version:
+            items.append(PinItem(type="definition", id=cap_id, pinned=pinned, current=f"{cap_id}@{newer.spec.get('version')}",
+                                 state="newer", diff=diff(row.spec, newer.spec, limit=50)))
+        elif row.status == "deprecated":
+            items.append(PinItem(type="definition", id=cap_id, pinned=pinned, state="deprecated", reason=row.reason))
+    return items
+
+
 def _semantic_items(session: Session, workspace_id: str, semantic: dict[str, Any] | None) -> list[PinItem]:
     from analystos.semantic.service import approved_metrics
     from analystos.services.definitions import diff
@@ -192,6 +217,7 @@ def status(session: Session, sch: Schedule) -> PinStatus:
     if (d := _definition_item(session, pins.get("definition") or {})) is not None:
         items.append(d)
     items += _capability_items(pins, registry.current())
+    items += _workspace_agent_items(session, pins)
     items += _semantic_items(session, sch.workspace_id, pins.get("semantic"))
     blocking = [f"{i.pinned}: {i.reason or i.state}" for i in items if i.state in BLOCKING_ITEM_STATES]
     newer = [i for i in items if i.state == "newer"]
