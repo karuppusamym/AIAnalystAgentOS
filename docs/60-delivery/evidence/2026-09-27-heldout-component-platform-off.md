@@ -172,8 +172,8 @@ default `min_improvement` of 0. The same verdict came back on three consecutive 
 deterministic for a given snapshot). The component tier on the same rows gave `no_improvement`; its snapshot
 differs (all columns vs the referenced columns, different row order), so it drew a different split. This is
 a real false promotion signal on a null, not a harness artifact: with no practical minimum and a one-sided
-95% bound, a null case passes by chance a few percent of the time, and one of the corpus's two ML
-null-type cases did. Suggested follow-up (a tracker row, not done here): a non-zero default
+95% bound, a null case passes by chance a few percent of the time, and the corpus's one ML
+null case did. Suggested follow-up (a tracker row, not done here): a non-zero default
 `min_improvement` per metric and/or confirmation on a second split or repeated holdout before `improved`.
 
 **Split sensitivity also shows on HO-ML-03** (daily calls forecast): `no_improvement` on the component tier,
