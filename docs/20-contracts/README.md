@@ -5,7 +5,9 @@ Source of truth: Pydantic models in `src/analystos/contracts/`. JSON Schemas are
 
 The [workbench API evolution](02-workbench-api.md) specifies future workspace briefs, work orders,
 ML/pipeline resources and common concurrency/recovery semantics. It is a design contract, not
-generated schema or evidence of live endpoints; implementation is tracked in P4–P6.
+generated schema or evidence of live endpoints; implementation is tracked in P4–P6. The implemented
+brief, readiness, Start-work job kinds, steps, branches, pins and notebooks routes are specified in
+[04-brief-steps-api.md](04-brief-steps-api.md).
 
 | Contract | Model | Spec |
 |---|---|---|
@@ -25,3 +27,5 @@ generated schema or evidence of live endpoints; implementation is tracked in P4�
 | Connector | `connectors.base.Connector` protocol | v1 §16 |
 | BI publisher | `publishing.base.BIPublisher` protocol | v1 §32 |
 | Model routing | `config/models.yaml` → `llm.config.ModelsConfig` | v1 §27 |
+| Workspace brief, readiness, job kinds | `brief.WorkspaceBriefDoc`, `ReadinessAssessmentDoc`, `JobKindAvailability` | workspace spec §2, [04](04-brief-steps-api.md) |
+| Step, branch (Data Thread) | `step.Step`, `step.Branch`, `step.ArtifactRef` | v4 §7, [04](04-brief-steps-api.md) |

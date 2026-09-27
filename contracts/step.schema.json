@@ -1,0 +1,308 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": true,
+      "description": "A stored result snapshot. The compute-worker contract (P7-06, `contracts/worker.py`) may widen\nthis; the fields here are the ones a step reads (the artifact row, its version and content hash).",
+      "properties": {
+        "kind": {
+          "const": "artifact",
+          "default": "artifact",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "media_type": {
+          "default": "application/json",
+          "title": "Media Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content_hash"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "StepCheck": {
+      "properties": {
+        "check": {
+          "title": "Check",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "severity": {
+          "default": "error",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "evidence": {
+          "additionalProperties": true,
+          "title": "Evidence",
+          "type": "object"
+        },
+        "corrected": {
+          "default": false,
+          "title": "Corrected",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check",
+        "passed"
+      ],
+      "title": "StepCheck",
+      "type": "object"
+    }
+  },
+  "description": "One version of a step, as the API returns it.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "current_version": {
+      "title": "Current Version",
+      "type": "integer"
+    },
+    "kind": {
+      "enum": [
+        "plan",
+        "query",
+        "method",
+        "recipe",
+        "train",
+        "chart",
+        "claim"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "ok",
+        "flagged",
+        "failed",
+        "unsupported",
+        "recorded"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "spec": {
+      "additionalProperties": true,
+      "title": "Spec",
+      "type": "object"
+    },
+    "spec_hash": {
+      "title": "Spec Hash",
+      "type": "string"
+    },
+    "receipts": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Receipts",
+      "type": "array"
+    },
+    "result_snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "chart_spec": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Chart Spec"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/StepCheck"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "corrections": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Corrections",
+      "type": "array"
+    },
+    "verification_record": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verification Record"
+    },
+    "depends_on": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "inputs": {
+      "additionalProperties": true,
+      "title": "Inputs",
+      "type": "object"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "container": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Container",
+      "type": "object"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "origin": {
+      "additionalProperties": true,
+      "title": "Origin",
+      "type": "object"
+    },
+    "forked_from": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Forked From"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "inherited": {
+      "default": false,
+      "title": "Inherited",
+      "type": "boolean"
+    },
+    "created_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created By"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "current_version",
+    "kind",
+    "title",
+    "status",
+    "spec",
+    "spec_hash",
+    "branch_id",
+    "container",
+    "seq",
+    "reason"
+  ],
+  "title": "Step",
+  "type": "object"
+}

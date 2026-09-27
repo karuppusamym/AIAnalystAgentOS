@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from analystos.contracts.work import WorkOrderSpec
-from analystos.core.errors import PreconditionFailed, UnsupportedCapability
+from analystos.core.errors import PreconditionFailed, ReadinessBlocked, UnsupportedCapability
 from analystos.core.ids import new_id, stable_hash
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, User, WorkOrder
@@ -72,6 +72,7 @@ def update(session: Session, user: User, wo: WorkOrder, spec: WorkOrderSpec, exp
 def start(user: User, workspace_id: str, work_order_id: str, *, expected_revision: int | None,
           idempotency: Any = None) -> tuple[AnalysisRun, bool]:
     from analystos.registries.hypotheses import spec_hash as analysis_hash
+    from analystos.services.readiness import assess_work_order
     from analystos.services.runs import start_run_request
 
     with session_scope() as s:
@@ -79,6 +80,19 @@ def start(user: User, workspace_id: str, work_order_id: str, *, expected_revisio
         _check(wo, expected_revision)
         spec = WorkOrderSpec.model_validate(wo.spec)
         revision = wo.revision
+        # P4-04: the job's required readiness checks decide before anything starts. An unsupported job
+        # (no executor, e.g. a prediction) or a blocked one (e.g. no label) never becomes another job.
+        assessment = assess_work_order(s, s.merge(user), wo)
+    failing = [c for c in assessment["checks"] if c["required"] and c["status"] in ("unsupported", "fail")]
+    if assessment["status"] == "unsupported":
+        raise UnsupportedCapability("this job kind cannot run here: " + "; ".join(c["reason"] for c in failing),
+                                    details={"type": spec.spec.type, "assessment_id": assessment["id"],
+                                             "readiness": assessment["status"], "checks": failing,
+                                             "alternatives": assessment["alternatives"]})
+    if assessment["status"] == "blocked":
+        raise ReadinessBlocked("readiness blocked: " + "; ".join(f"{c['check']}: {c['reason']}" for c in failing),
+                               details={"assessment_id": assessment["id"], "checks": failing,
+                                        "alternatives": assessment["alternatives"]})
     if not spec.executable:
         raise UnsupportedCapability(f"a {spec.spec.type} work order is a typed contract without an executor yet "
                                     "(P5 ML / P6 pipelines); it was saved but cannot start",

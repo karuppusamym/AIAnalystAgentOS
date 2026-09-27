@@ -1,0 +1,72 @@
+{
+  "description": "One **Start work** choice and whether it can start here, with every reason it cannot.",
+  "properties": {
+    "key": {
+      "enum": [
+        "explain",
+        "compare",
+        "forecast",
+        "predict",
+        "prepare",
+        "monitor"
+      ],
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "work_order_kind": {
+      "title": "Work Order Kind",
+      "type": "string"
+    },
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "reasons": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "capabilities": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "entry": {
+      "additionalProperties": true,
+      "title": "Entry",
+      "type": "object"
+    },
+    "readiness_checks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Readiness Checks",
+      "type": "array"
+    },
+    "min_role": {
+      "default": "analyst",
+      "title": "Min Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "work_order_kind",
+    "available"
+  ],
+  "title": "JobKindAvailability",
+  "type": "object"
+}

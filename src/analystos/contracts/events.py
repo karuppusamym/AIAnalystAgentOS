@@ -38,6 +38,11 @@ EVENT_TYPES = {
     # Transformation recipes (P6-04..07) and file ingestion (P6-06)
     "recipe.saved", "recipe.published", "recipe.run.started", "recipe.run.completed", "recipe.run.blocked",
     "recipe.run.refused", "recipe.run.failed", "file.ingested",
+    # Workspace brief and readiness (P4-04)
+    "brief.updated", "readiness.assessed",
+    # Steps, branches and notebooks: the Data Thread (P7-04, P7-05, P7-12)
+    "step.created", "step.edited", "step.executed", "step.flagged", "step.pinned", "step.pin_refreshed",
+    "branch.forked", "branch.merged", "notebook.created", "notebook.updated",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

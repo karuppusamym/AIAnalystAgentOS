@@ -108,6 +108,7 @@ def export_contracts() -> None:
     from analystos.contracts import (
         analysis,
         bi,
+        brief,
         capability,
         definition,
         evidence,
@@ -116,6 +117,7 @@ def export_contracts() -> None:
         recipe,
         registry,
         semantic,
+        step,
         work,
     )
 
@@ -130,7 +132,9 @@ def export_contracts() -> None:
               "semantic_query": semantic.SemanticQuery,
               "evidence_bundle": evidence.EvidenceBundle, "data_manifest": evidence.DataManifest, "fact": evidence.Fact,
               "definition_ref": definition.DefinitionRef, "pin_status": definition.PinStatus, "work_order": work.WorkOrderSpec,
-              "recipe": recipe.Recipe}
+              "recipe": recipe.Recipe, "workspace_brief": brief.WorkspaceBriefDoc,
+              "readiness_assessment": brief.ReadinessAssessmentDoc, "job_kind": brief.JobKindAvailability,
+              "step": step.Step, "branch": step.Branch}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES
