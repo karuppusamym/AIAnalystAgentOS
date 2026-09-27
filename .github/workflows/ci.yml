@@ -42,7 +42,8 @@ jobs:
       - run: .venv/bin/pytest -q -m "not integration"
       - name: Evaluation gates, deterministic tiers (P7-07; thresholds in config/eval_gates.yaml)
         # grounding (numbers bound to facts, fabricated = 0, void on change), the analytical benchmark's
-        # component tier (P4-V01, ~3 min) and the cost gate (replayed runs vs the baseline).
+        # component tier (P4-V01, ~3 min), the cost gate (replayed runs vs the baseline), the ml tier and the
+        # held-out corpus (P4-08, ~1 min; a non-blocking report until the owner confirms its thresholds).
         run: PYTHONPATH=src .venv/bin/python scripts/eval_gates.py --out eval-gates/deterministic.json
       - run: .venv/bin/analystos migrate
       - name: Ask benchmark, fake + off tiers (P4-V02 and the ask_fake/ask_off gates; 162 questions each, ~1 min)

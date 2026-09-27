@@ -5,13 +5,15 @@
 # * A regression past a threshold blocks the merge (deterministic tiers, CI) or the release (live tiers,
 #   nightly / pre-release), even when answers subjectively improve.
 # * `min` / `max` bound a metric; a tier's metrics come from the suite's own scoring (evaluation/*.py).
+# * `blocking: false` makes a tier a report: it runs and lists what it misses, but never fails the result.
 #
 # Run: python scripts/eval_gates.py [--tiers grounding,analytical_component,cost] [--out gate-result.json]
-version: 2
+version: 3
 owner: product owner (Context2AI)
 changelog:
   - {version: 1, date: 2026-09-26, change: "initial gates: today's measured values as the regression floor (P7-07)"}
   - {version: 2, date: 2026-09-26, change: "add the ml tier (P5-01..P5-04): leakage refused, baseline parity, null abstains"}
+  - {version: 3, date: 2026-09-27, change: "add the heldout tier (P4-08) as a non-blocking report with proposed thresholds; blocking tiers unchanged"}
 
 tiers:
   # --------------------------------------------------------------- deterministic: CI on every change
@@ -60,6 +62,18 @@ tiers:
       signal_detected_share: {min: 1.0}
       deterministic_share: {min: 1.0}         # re-run from data + manifest + seed: same manifest, selection and seal
       tamper_refused_share: {min: 1.0}
+  heldout:
+    kind: deterministic
+    runs: ci
+    blocking: false                           # a report until the owner confirms the thresholds (P4-08)
+    suite: "evaluation/heldout/runner.py tier component (corpus.yaml v1: 18 analysis, 8 engineering, 8 ML tasks)"
+    metrics:                                  # PROPOSED (evaluation plan §3); measured 2026-09-27: 0.85 / 0 / 1.0 / 0
+      accepted_output_rate: {min: 0.90}       # accepted outputs / deliver tasks
+      confident_wrong: {max: 0}               # a false finding, a model `improved` on a null or leak, a wrong table
+      abstention_recall: {min: 1.0}           # abstain tasks that ended as the rubric requires
+      errors: {max: 0}
+      corpus_frozen: {min: 1.0}               # the corpus still matches corpus.lock.json
+      tasks: {min: 34}                        # the corpus may not shrink silently
   ask_fake:
     kind: deterministic
     runs: ci                                  # needs Postgres: tests/integration/test_ask_benchmark.py

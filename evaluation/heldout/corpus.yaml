@@ -1,0 +1,412 @@
+# P4-08 held-out evaluation corpus. Sealed rubrics: written with the generators, before any scored run.
+#
+# * Disjoint from the development benchmarks (evaluation/datasets.py, ml_datasets.py, ask_questions/, the
+#   recipe fixtures): new tables, columns, planted effects and seeds (7000-7999). tests/unit/test_heldout_corpus.py
+#   enforces it.
+# * Frozen: `corpus.lock.json` holds the sha256 of every task's generated data and reference. Changing a
+#   generator, seed or rubric without bumping `version` (and re-locking with a changelog entry) fails the unit test.
+# * Consumption: once a version's results have been used to change the product, that version is *consumed* for
+#   generalization claims. Rotate (new seeds and generators, version + 1) before using it as a fresh gate.
+# * The planner and model prompts never see this file: it lives outside the application package and nothing under
+#   src/ reads it.
+#
+# Rubric vocabulary
+#   expect: deliver | abstain
+#   deliver/analysis   accepted = every planted effect verified with its expected top segment, and no false finding
+#   deliver/engineering accepted = the output equals `reference` (generators.py, pandas, independent of the compilers)
+#                       and the dropped-row count matches
+#   deliver/ml         accepted = verdict `improved`, baseline and candidates on identical splits, sealed report
+#   abstain            `abstain_kind`: no_finding (runs, claims nothing), refused (stopped before running or fitting:
+#                       validation, join pre-flight, readiness, leakage), blocked (a fail gate keeps the last good output)
+#   confident-wrong    any false verified finding; an ML `improved` on a null, leaky or refused case; an engineering
+#                       output published that differs from the reference or should have been refused or blocked
+#   truth              truth graph (node -> parents) for classifying findings; a node is associated with another exactly
+#                       when they share an ancestor (evaluation.datasets.Dataset.associated)
+version: 1
+frozen: 2026-09-27
+changelog:
+  - {version: 1, date: 2026-09-27, change: "initial held-out corpus: 18 analysis (ITSM, sales, finance), 8 engineering, 8 ML tasks"}
+
+tasks:
+  # ============================================================================ analysis: ITSM
+  - id: HO-ITSM-01
+    family: analysis
+    domain: itsm
+    generator: itsm_change_request
+    seed: 7001
+    objective: "Explain what drives change rollbacks and change downtime, and where to focus the change advisory boards."
+    rubric:
+      expect: deliver
+      truth: {rollback_needed: [change_model], downtime_minutes: [risk_tier], approvals_required: [risk_tier]}
+      planted:
+        - {id: rollback_by_model, method: rate_by_segment, outcome: rollback_needed, segment: change_model, top: emergency}
+        - {id: downtime_by_risk, method: numeric_by_segment, outcome: downtime_minutes, segment: risk_tier, top: critical}
+      nulls: [change_board, requester_org]
+  - id: HO-ITSM-02
+    family: analysis
+    domain: itsm
+    generator: itsm_change_request
+    seed: 7002
+    objective: "Which kinds of change fail and need a rollback, and which cause the most downtime?"
+    rubric:
+      expect: deliver
+      truth: {rollback_needed: [change_model], downtime_minutes: [risk_tier], approvals_required: [risk_tier]}
+      planted:
+        - {id: rollback_by_model, method: rate_by_segment, outcome: rollback_needed, segment: change_model, top: emergency}
+        - {id: downtime_by_risk, method: numeric_by_segment, outcome: downtime_minutes, segment: risk_tier, top: critical}
+      nulls: [change_board, requester_org]
+  - id: HO-ITSM-03
+    family: analysis
+    domain: itsm
+    generator: itsm_service_request
+    seed: 7003
+    objective: "Find why some catalog requests escalate, take long to fulfil or cost more effort."
+    rubric:
+      expect: deliver
+      truth: {escalated: [catalog_item], effort_hours: [fulfilment_team], "submitted_ts->fulfilled_ts": [site]}
+      planted:
+        - {id: escalation_by_item, method: rate_by_segment, outcome: escalated, segment: catalog_item, top: Laptop refresh}
+        - {id: effort_by_team, method: numeric_by_segment, outcome: effort_hours, segment: fulfilment_team, top: Field Ops}
+        - {id: fulfilment_by_site, method: numeric_by_segment, outcome: "submitted_ts->fulfilled_ts", segment: site, top: Rotterdam}
+      nulls: [request_channel, cost_center]
+  - id: HO-ITSM-04
+    family: analysis
+    domain: itsm
+    generator: itsm_service_request
+    seed: 7004
+    objective: "What makes service requests slow or escalated?"
+    rubric:
+      expect: deliver
+      truth: {escalated: [catalog_item], effort_hours: [fulfilment_team], "submitted_ts->fulfilled_ts": [site]}
+      planted:
+        - {id: escalation_by_item, method: rate_by_segment, outcome: escalated, segment: catalog_item, top: Laptop refresh}
+        - {id: effort_by_team, method: numeric_by_segment, outcome: effort_hours, segment: fulfilment_team, top: Field Ops}
+        - {id: fulfilment_by_site, method: numeric_by_segment, outcome: "submitted_ts->fulfilled_ts", segment: site, top: Rotterdam}
+      nulls: [request_channel, cost_center]
+  - id: HO-ITSM-05
+    family: analysis
+    domain: itsm
+    generator: itsm_change_request
+    seed: 7005
+    effects: false
+    objective: "Explain what drives change rollbacks and change downtime."
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "global null: rollbacks and downtime are independent of every column"
+      truth: {approvals_required: [risk_tier]}
+      planted: []
+      nulls: [change_board, requester_org, change_model]
+  - id: HO-ITSM-06
+    family: analysis
+    domain: itsm
+    generator: itsm_change_request
+    seed: 7006
+    effects: false
+    degenerate: tiny
+    objective: "Which change boards approve the riskiest changes?"
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "insufficient data: 36 changes, no real effect"
+      truth: {approvals_required: [risk_tier]}
+      planted: []
+      nulls: [change_board, requester_org, change_model]
+
+  # ============================================================================ analysis: sales
+  - id: HO-SALES-01
+    family: analysis
+    domain: sales
+    generator: sales_subscription
+    seed: 7011
+    objective: "Why do subscriptions churn within 90 days, and what drives recurring revenue per account?"
+    rubric:
+      expect: deliver
+      truth: {churned_90d: [billing_cycle], mrr_usd: [plan_tier, seats]}
+      planted:
+        - {id: churn_by_cycle, method: rate_by_segment, outcome: churned_90d, segment: billing_cycle, top: monthly}
+        - {id: mrr_by_tier, method: numeric_by_segment, outcome: mrr_usd, segment: plan_tier, top: Enterprise}
+      nulls: [acquisition_channel, country_group]
+  - id: HO-SALES-02
+    family: analysis
+    domain: sales
+    generator: sales_subscription
+    seed: 7012
+    objective: "Where is early churn concentrated?"
+    rubric:
+      expect: deliver
+      truth: {churned_90d: [billing_cycle], mrr_usd: [plan_tier, seats]}
+      planted:
+        - {id: churn_by_cycle, method: rate_by_segment, outcome: churned_90d, segment: billing_cycle, top: monthly}
+        - {id: mrr_by_tier, method: numeric_by_segment, outcome: mrr_usd, segment: plan_tier, top: Enterprise}
+      nulls: [acquisition_channel, country_group]
+  - id: HO-SALES-03
+    family: analysis
+    domain: sales
+    generator: sales_opportunity
+    seed: 7013
+    objective: "What wins deals and what makes them bigger?"
+    rubric:
+      expect: deliver
+      truth: {won: [lead_source], deal_size_eur: [industry]}
+      planted:
+        - {id: win_by_source, method: rate_by_segment, outcome: won, segment: lead_source, top: partner}
+        - {id: size_by_industry, method: numeric_by_segment, outcome: deal_size_eur, segment: industry, top: Manufacturing}
+      nulls: [sales_team, product_line]
+  - id: HO-SALES-04
+    family: analysis
+    domain: sales
+    generator: sales_opportunity
+    seed: 7014
+    objective: "Which lead sources and industries should the pipeline review focus on?"
+    rubric:
+      expect: deliver
+      truth: {won: [lead_source], deal_size_eur: [industry]}
+      planted:
+        - {id: win_by_source, method: rate_by_segment, outcome: won, segment: lead_source, top: partner}
+        - {id: size_by_industry, method: numeric_by_segment, outcome: deal_size_eur, segment: industry, top: Manufacturing}
+      nulls: [sales_team, product_line]
+  - id: HO-SALES-05
+    family: analysis
+    domain: sales
+    generator: sales_opportunity
+    seed: 7015
+    effects: false
+    objective: "What wins deals and what makes them bigger?"
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "global null: win rate and deal size are independent of every column"
+      truth: {}
+      planted: []
+      nulls: [sales_team, product_line, lead_source, industry]
+  - id: HO-SALES-06
+    family: analysis
+    domain: sales
+    generator: sales_subscription
+    seed: 7016
+    effects: false
+    degenerate: flat
+    objective: "Why do subscriptions churn?"
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "nothing varies: one price, one seat, no churn recorded"
+      truth: {}
+      planted: []
+      nulls: [acquisition_channel, country_group, plan_tier, billing_cycle]
+
+  # ============================================================================ analysis: finance
+  - id: HO-FIN-01
+    family: analysis
+    domain: finance
+    generator: finance_expense_claim
+    seed: 7021
+    objective: "Where do expense claims breach policy, and which claims are largest?"
+    rubric:
+      expect: deliver
+      truth: {claim_amount: [expense_type], policy_breach: [department]}
+      planted:
+        - {id: amount_by_type, method: numeric_by_segment, outcome: claim_amount, segment: expense_type, top: travel}
+        - {id: breach_by_department, method: rate_by_segment, outcome: policy_breach, segment: department, top: Sales}
+      nulls: [submission_channel, employee_band]
+  - id: HO-FIN-02
+    family: analysis
+    domain: finance
+    generator: finance_expense_claim
+    seed: 7022
+    objective: "Which departments and expense types need an audit?"
+    rubric:
+      expect: deliver
+      truth: {claim_amount: [expense_type], policy_breach: [department]}
+      planted:
+        - {id: amount_by_type, method: numeric_by_segment, outcome: claim_amount, segment: expense_type, top: travel}
+        - {id: breach_by_department, method: rate_by_segment, outcome: policy_breach, segment: department, top: Sales}
+      nulls: [submission_channel, employee_band]
+  - id: HO-FIN-03
+    family: analysis
+    domain: finance
+    generator: finance_receivable
+    seed: 7023
+    objective: "What drives overdue receivables and write-offs?"
+    rubric:
+      expect: deliver
+      truth: {days_overdue: [payment_terms], written_off: [customer_tier]}
+      planted:
+        - {id: overdue_by_terms, method: numeric_by_segment, outcome: days_overdue, segment: payment_terms, top: NET90}
+        - {id: writeoff_by_tier, method: rate_by_segment, outcome: written_off, segment: customer_tier, top: Small}
+      nulls: [collector, invoice_currency]
+  - id: HO-FIN-04
+    family: analysis
+    domain: finance
+    generator: finance_receivable
+    seed: 7024
+    objective: "Where should collections focus?"
+    rubric:
+      expect: deliver
+      truth: {days_overdue: [payment_terms], written_off: [customer_tier]}
+      planted:
+        - {id: overdue_by_terms, method: numeric_by_segment, outcome: days_overdue, segment: payment_terms, top: NET90}
+        - {id: writeoff_by_tier, method: rate_by_segment, outcome: written_off, segment: customer_tier, top: Small}
+      nulls: [collector, invoice_currency]
+  - id: HO-FIN-05
+    family: analysis
+    domain: finance
+    generator: finance_receivable
+    seed: 7025
+    effects: false
+    objective: "What drives overdue receivables and write-offs?"
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "global null: overdue days and write-offs are independent of every column"
+      truth: {}
+      planted: []
+      nulls: [collector, invoice_currency, payment_terms, customer_tier]
+  - id: HO-FIN-06
+    family: analysis
+    domain: finance
+    generator: finance_expense_claim
+    seed: 7026
+    effects: false
+    degenerate: sparse
+    objective: "Which departments breach expense policy?"
+    rubric:
+      expect: abstain
+      abstain_kind: no_finding
+      why: "insufficient data: 97% of the outcomes were never recorded, and no real effect"
+      truth: {}
+      planted: []
+      nulls: [submission_channel, employee_band, department, expense_type]
+
+  # ============================================================================ engineering
+  - id: HO-DE-01
+    family: engineering
+    domain: engineering
+    generator: de_shipments
+    seed: 7201
+    variant: clean
+    objective: "Publish delivered shipment weight per carrier and mode from the duplicated feed plus the late batch."
+    rubric: {expect: deliver}
+  - id: HO-DE-02
+    family: engineering
+    domain: engineering
+    generator: de_shipments
+    seed: 7202
+    variant: clean
+    objective: "Rebuild the carrier weight table after a feed replay."
+    rubric: {expect: deliver}
+  - id: HO-DE-03
+    family: engineering
+    domain: engineering
+    generator: de_shipments
+    seed: 7203
+    variant: null_key_drop
+    objective: "Publish delivered shipments; drop and count the ones without a carrier."
+    rubric: {expect: deliver}
+  - id: HO-DE-04
+    family: engineering
+    domain: engineering
+    generator: de_shipments
+    seed: 7204
+    variant: negative_weight_fail
+    objective: "Publish delivered shipments; a negative weight must never reach the output."
+    rubric: {expect: abstain, abstain_kind: blocked, why: "5 negative weights: the fail gate keeps the last good output"}
+  - id: HO-DE-05
+    family: engineering
+    domain: engineering
+    generator: de_shipments
+    seed: 7205
+    variant: undeclared_column
+    objective: "Publish carrier weight using the status column."
+    rubric: {expect: abstain, abstain_kind: refused, why: "the recipe reads a column that does not exist (shipment_status)"}
+  - id: HO-DE-06
+    family: engineering
+    domain: engineering
+    generator: de_meters
+    seed: 7206
+    variant: clean
+    objective: "Monthly energy and cost per customer segment from the meter readings."
+    rubric: {expect: deliver}
+  - id: HO-DE-07
+    family: engineering
+    domain: engineering
+    generator: de_meters
+    seed: 7207
+    variant: fanout
+    objective: "Monthly energy and cost per customer segment (the tariff table has an overlapping copy)."
+    rubric: {expect: abstain, abstain_kind: refused, why: "a duplicated tariff makes the declared many-to-one join many-to-many"}
+  - id: HO-DE-08
+    family: engineering
+    domain: engineering
+    generator: de_meters
+    seed: 7208
+    variant: clean
+    objective: "Monthly energy and cost per customer segment, second meter population."
+    rubric: {expect: deliver}
+
+  # ============================================================================ ML
+  - id: HO-ML-01
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7301
+    variant: classify
+    objective: "Predict which pumps fail within 30 days of an inspection."
+    rubric: {expect: deliver}
+  - id: HO-ML-02
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7302
+    variant: regress
+    objective: "Predict next quarter's repair cost per pump."
+    rubric: {expect: deliver}
+  - id: HO-ML-03
+    family: ml
+    domain: ml
+    generator: ml_calls
+    seed: 7303
+    variant: forecast
+    objective: "Forecast daily contact-centre calls for the next two weeks."
+    rubric: {expect: deliver}
+  - id: HO-ML-04
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7304
+    variant: null_target
+    objective: "Predict the noise flag from the inspection readings."
+    rubric: {expect: abstain, abstain_kind: no_finding, why: "the target is a coin flip: no model beats the baseline"}
+  - id: HO-ML-05
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7305
+    variant: leak_copy
+    objective: "Predict pump failure using every column available."
+    rubric: {expect: abstain, abstain_kind: refused, why: "work_order_raised is a copy of the outcome"}
+  - id: HO-ML-06
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7306
+    variant: leak_post_outcome
+    objective: "Predict pump failure including the failure date."
+    rubric: {expect: abstain, abstain_kind: refused, why: "failure_date is only known after the outcome"}
+  - id: HO-ML-07
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7307
+    variant: repeated_entities
+    objective: "Predict pump failure from repeated inspections."
+    rubric: {expect: abstain, abstain_kind: refused, why: "each pump appears three times under a random split"}
+  - id: HO-ML-08
+    family: ml
+    domain: ml
+    generator: ml_pumps
+    seed: 7308
+    variant: tiny
+    objective: "Predict pump failure for a pilot site."
+    rubric: {expect: abstain, abstain_kind: refused, why: "18 rows: too little data to train and hold out"}
