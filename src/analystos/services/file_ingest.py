@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from analystos.connectors.naming import sanitize_identifier
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
+from analystos.db import column_presence as presence
 from analystos.db.base import session_scope
 from analystos.db.models import Source, SourceAsset, SourceColumn, User
 from analystos.governance.policy import load_in_workspace, scoped_loader
@@ -224,17 +225,20 @@ def ingest_file(user: User, source_id: str, spec: IngestSpec, workspace_id: str 
             s.flush()
         asset.selected, asset.row_count, asset.freshness_at, asset.snapshot = True, info["row_count"], utcnow(), snapshot
         asset.lifecycle = "active"
-        existing = {c.name: c for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))}
+        existing = {c.name: c for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id)
+                                                 .execution_options(**presence.INCLUDE_ABSENT))}
         wanted = [c["name"] for c in info["columns"]]
+        now = utcnow()
         for name, col in existing.items():
             if name not in wanted:
-                s.delete(col)
+                presence.retire(s, col, now)  # a curated column is kept (absent) for when the file brings it back
         by_target = {m["target"]: m["source"] for m in applied}
         for i, c in enumerate(info["columns"]):
             col = existing.get(c["name"])
             if col is None:
                 col = SourceColumn(asset_id=asset.id, name=c["name"], tags=[], profile={}, semantics={})
                 s.add(col)
+            presence.restore(col)
             col.ordinal, col.data_type, col.nullable = i, c["type"], True
             col.is_key = c["name"] in spec.keys
             if by_target.get(c["name"]) not in (None, c["name"]) and not col.business_name and col.business_name_origin != "user":

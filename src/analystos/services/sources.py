@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from analystos.core.config import get_settings
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
+from analystos.db import column_presence as presence
 from analystos.db.base import session_scope
 from analystos.db.models import Source, SourceAsset, SourceColumn, User
 from analystos.events.bus import emit
@@ -177,8 +178,11 @@ def _register_soft_delete_column(session: Session, asset: SourceAsset, info: dic
     staged = {c["name"]: c["type"] for c in info.get("columns") or []}
     if SOFT_DELETE_COLUMN not in staged:
         return
-    known = {c.name for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))}
-    if SOFT_DELETE_COLUMN not in known:
+    known = {c.name: c for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id)
+                                                .execution_options(**presence.INCLUDE_ABSENT))}
+    if SOFT_DELETE_COLUMN in known:
+        presence.restore(known[SOFT_DELETE_COLUMN])
+    else:
         session.add(SourceColumn(asset_id=asset.id, name=SOFT_DELETE_COLUMN, ordinal=len(known),
                                  data_type=staged[SOFT_DELETE_COLUMN], tags=[], profile={}, semantics={},
                                  description="Set when the source no longer holds this key (soft delete)"))

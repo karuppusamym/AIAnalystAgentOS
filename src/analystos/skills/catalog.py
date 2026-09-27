@@ -23,6 +23,7 @@ import ipaddress
 import json
 import re
 from collections.abc import Iterable, Sequence
+from functools import lru_cache
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -1034,13 +1035,30 @@ def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
     """Neutralise metadata text before it is shown to a model: drop code fences, markup, URLs,
     control/zero-width characters and any sentence that reads like an instruction to the model;
     cap the length. Names and comments are untrusted data from the source system."""
+    return _screen(str(s), max_chars)[0] if s else ""
+
+
+SCREENED_LABEL = "[screened: instruction-like text removed]"
+
+
+def screen_for_prompt(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
+    """Catalog text of any origin (source, rule, model, owner or user) at prompt build (P7-20): screened as
+    crawled text is, and when a part read like an instruction the rest carries `SCREENED_LABEL`, so the
+    model (and a reviewer reading the prompt) sees that something was withheld rather than a silent gap."""
     if not s:
         return ""
+    text, flagged = _screen(str(s), max_chars)
+    return f"{text} {SCREENED_LABEL}".strip() if flagged else text
+
+
+@lru_cache(maxsize=8192)
+def _screen(s: str, max_chars: int) -> tuple[str, bool]:
     # Screen the raw text: invisible characters, URLs and markup are evidence the detector reads.
-    sentences = re.split(r"(?<=[.!?;\n])\s+", str(s))
+    sentences = re.split(r"(?<=[.!?;\n])\s+", s)
     kept = [x for x in sentences if not is_injection(x)]
-    if len(kept) == len(sentences) and is_injection(str(s)):
+    if len(kept) == len(sentences) and is_injection(s):
         kept = []  # an instruction spread over several sentences or lines: nothing of it is kept
+    flagged = len(kept) < len(sentences)
     t = _CTRL.sub(" ", " ".join(kept))
     t = _FENCE.sub(" ", t)
     t = _TAGS.sub(" ", t)
@@ -1049,7 +1067,7 @@ def screen_text(s: str | None, *, max_chars: int = MAX_SCREENED_CHARS) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     if len(t) > max_chars:
         t = t[:max_chars].rsplit(" ", 1)[0].rstrip() + "..."
-    return t
+    return t, flagged
 
 
 def _baseline(sem: Any) -> dict[str, Any]:
@@ -1094,14 +1112,14 @@ def enrichment_batches(items: list[dict[str, Any]], *, max_tables: int = 25, max
             entry = {"name": screen_text(str(c.get("name", "")), max_chars=64),
                      "type": normalize_type(c.get("data_type") or c.get("type"))}
             if c.get("description"):
-                entry["comment"] = screen_text(c["description"], max_chars=120)
+                entry["comment"] = screen_for_prompt(c["description"], max_chars=120)
             cols_out.append(entry)
         p: dict[str, Any] = {"key": it.get("key") or it.get("name"),
                              "table": screen_text(str(it.get("name") or it.get("key") or ""), max_chars=128),
                              "baseline": _baseline(it.get("semantics") or it.get("baseline")),
                              "columns": cols_out}
         if it.get("description"):
-            p["source_comment"] = screen_text(it["description"])
+            p["source_comment"] = screen_for_prompt(it["description"])
         if omitted:
             p["columns_omitted"] = omitted
         payloads.append(p)

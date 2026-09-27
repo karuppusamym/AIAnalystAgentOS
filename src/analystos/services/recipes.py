@@ -34,6 +34,7 @@ from analystos.contracts.recipe import (
 from analystos.core.config import get_settings
 from analystos.core.errors import AnalystOSError, Conflict, InvalidInput, NotFound
 from analystos.core.ids import new_id, utcnow
+from analystos.db import column_presence as presence
 from analystos.db.base import session_scope
 from analystos.db.models import RecipeRun, RecipeVersion, Source, SourceAsset, SourceColumn, User, Workspace
 from analystos.events.bus import emit
@@ -206,16 +207,19 @@ def _register_asset(session: Session, src: Source, info: dict[str, Any], *, reci
                       "source_total_rows": info["row_count"], "total_rows_basis": "count", "row_cap": None,
                       "staged_at": utcnow().isoformat(), "load_id": new_id("load"),
                       "content_fingerprint": info["content_fingerprint"]}
-    existing = {c.name: c for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))}
+    existing = {c.name: c for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id)
+                                                   .execution_options(**presence.INCLUDE_ABSENT))}
     wanted = [c["name"] for c in info["columns"]]
+    now = utcnow()
     for name, col in existing.items():
         if name not in wanted:
-            session.delete(col)
+            presence.retire(session, col, now)
     for i, c in enumerate(info["columns"]):
         col = existing.get(c["name"])
         if col is None:
             col = SourceColumn(asset_id=asset.id, name=c["name"], tags=[], profile={}, semantics={})
             session.add(col)
+        presence.restore(col)
         col.ordinal, col.data_type = i, c["type"]
         # tags only tighten: the lineage's tags are added, a person's tags stay
         col.tags = sorted(set(col.tags or []) | set(tags.get(c["name"], [])))
