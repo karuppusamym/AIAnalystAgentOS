@@ -144,12 +144,19 @@ def run_recipe_compute(job: dict) -> dict:
 
 
 def run_ml_compute(job: dict) -> dict:
-    """An ML job (`analystos.ml.jobs.run_ml_job`, ADR-0024) on the Temporal `compute` pool until the isolated
-    `compute-ml` pool exists (P7-06); in-process when the orchestrator is local or Temporal cannot take it.
-    The job reads and writes only content-addressed files, so both paths give the same result."""
+    """An ML job (`analystos.ml.jobs.run_ml_job`, ADR-0024). When the installation runs the isolated `compute-ml`
+    pool (P7-06) the job runs there, without credentials, and packages are unpickled only there; a failure there
+    is the job's answer, never a silent fallback. Otherwise on the Temporal `compute` pool, or in-process when
+    the orchestrator is local or Temporal cannot take it. The job reads and writes only content-addressed
+    files, so every path gives the same result."""
     from analystos.ml.jobs import run_ml_job
+    from analystos.workers.dispatch import pool_configured
 
     settings = get_settings()
+    if pool_configured("compute-ml", settings):
+        from analystos.workers.ml import run_ml_isolated
+
+        return run_ml_isolated(job, settings=settings)
     if settings.orchestrator != "temporal":
         return run_ml_job(job)
 

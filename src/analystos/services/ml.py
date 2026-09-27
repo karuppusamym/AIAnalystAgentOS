@@ -80,10 +80,11 @@ def caps_for(spec: MLSpec, override: dict[str, Any] | None = None) -> dict[str, 
             "max_features": s.ml_max_features}
 
 
-def _compute(job: dict[str, Any]) -> dict[str, Any]:
+def _compute(job: dict[str, Any], workspace_id: str | None = None) -> dict[str, Any]:
     from analystos.workflows.orchestrator import run_ml_compute
 
-    return run_ml_compute({**job, "artifact_dir": str(get_settings().artifact_dir)})
+    return run_ml_compute({**job, "artifact_dir": str(get_settings().artifact_dir),
+                           **({"workspace_id": workspace_id} if workspace_id else {})})
 
 
 def usable_method(session: Session, workspace_id: str, task: str, run: AnalysisRun | None = None) -> Any:
@@ -259,7 +260,7 @@ def start_experiment(user: User, workspace_id: str, definition: Any, *, run_id: 
                            f"(now {snap['digest'][:12]})")
         job = {"spec": spec.model_dump(mode="json"), "snapshot": snap["digest"], "column_types": types, "as_of": as_of,
                "caps": caps}
-        prep = _compute({**job, "kind": "prepare"})
+        prep = _compute({**job, "kind": "prepare"}, workspace_id)
         if prep["status"] != "ready":
             problems = prep["readiness"]["problems"]
             _finish(exp_id, "refused", event="ml.experiment.refused", readiness=prep["readiness"],
@@ -271,7 +272,7 @@ def start_experiment(user: User, workspace_id: str, definition: Any, *, run_id: 
             row = s.get(MLExperiment, exp_id)
             row.split_id, row.manifest_hash, row.reproduction_of = split_id, prep["manifest_hash"], reproduction_of
             row.readiness = prep["readiness"]
-        result = _compute({**job, "kind": "train", "expected_manifest_hash": prep["manifest_hash"]})
+        result = _compute({**job, "kind": "train", "expected_manifest_hash": prep["manifest_hash"]}, workspace_id)
         if result.get("status") != "succeeded":
             raise InvalidInput(f"training {result.get('status')}: {result.get('error') or 'no candidate succeeded'}",
                                details={"experiment_id": exp_id})
@@ -508,15 +509,27 @@ def verification_of(session: Session, exp: MLExperiment) -> dict[str, Any]:
     return state_of(latest(session, SUBJECT, [exp.id]).get(exp.id))
 
 
-def load_package(session: Session, workspace_id: str, package_hash: str) -> dict[str, Any]:
+def verify_package(session: Session, workspace_id: str, package_hash: str) -> bytes:
     """Only a package a platform experiment produced (same workspace, succeeded) whose bytes still hash to
-    that record loads. There is no upload path: an unknown hash is refused before any file is read."""
+    that record may be used. There is no upload path: an unknown hash is refused before any file is read.
+    Returns the verified bytes without unpickling them."""
     exp = session.scalar(select(MLExperiment).where(MLExperiment.workspace_id == workspace_id,
                                                     MLExperiment.package_hash == package_hash,
                                                     MLExperiment.status == "succeeded").limit(1))
     if exp is None:
         raise PolicyDenied(f"package {package_hash[:12]} has no platform experiment record in this workspace; "
                            "only platform-produced packages load")
+    return _store().package_bytes(package_hash)
+
+
+def load_package(session: Session, workspace_id: str, package_hash: str) -> dict[str, Any]:
+    """`verify_package`, then unpickle. With the isolated `compute-ml` pool configured, packages are unpickled
+    only in that worker (P7-06): the control plane refuses to load one itself."""
+    from analystos.workers.dispatch import pool_configured
+
+    verify_package(session, workspace_id, package_hash)
+    if pool_configured("compute-ml"):
+        raise PolicyDenied("model packages load only in the isolated compute-ml worker on this installation")
     return _store().load_package(package_hash)
 
 
@@ -787,11 +800,11 @@ def execute_scoring(user: User, scoring_id: str, workspace_id: str | None = None
         apr = verify_for_execution(s, approval_id or row.approval_id, payload=payload, plan_hash=plan_hash)
         if apr.action != SCORE or apr.workspace_id != ws:
             raise PolicyDenied("the approval does not authorize this scoring run")
-        load_package(s, ws, payload["package_hash"])  # the platform record + hash check, before anything is written
+        verify_package(s, ws, payload["package_hash"])  # the platform record + hash check, before anything is written
         consume(s, apr)
     try:
         out = _compute({"kind": "score", "package_hash": payload["package_hash"], "snapshot": payload["input_version"],
-                        "entity_keys": keys})
+                        "entity_keys": keys}, ws)
         if out.get("status") != "succeeded":
             raise PolicyDenied("scoring refused: " + (out.get("error") or "the job refused"))
         written = _write_scores(user, scoring_id, ws, output, keys, out)
@@ -888,9 +901,10 @@ def export_mlflow(user: User, experiment_id: str, workspace_id: str | None = Non
         if exp.status != "succeeded":
             raise Conflict(f"experiment {experiment_id} is {exp.status}; only a completed experiment exports")
         records = {t: (s.get(Artifact, a).content if (a := (exp.artifacts or {}).get(t)) else None) for t in RECORD_TYPES}
-        package = _store().package_bytes(exp.package_hash)
-        load_package(s, exp.workspace_id, exp.package_hash)
+        package = verify_package(s, exp.workspace_id, exp.package_hash)
         view = experiment_view(exp)
+    from analystos.workers.dispatch import pool_configured
+
     buf = io.BytesIO()
-    export_zip(buf, view, records, package)
+    export_zip(buf, view, records, package, unpickle=not pool_configured("compute-ml"))
     return f"mlflow-{experiment_id}.zip", buf.getvalue()

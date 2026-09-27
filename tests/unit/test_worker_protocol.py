@@ -296,3 +296,47 @@ def test_the_isolated_workflow_is_registered_where_the_control_plane_runs():
     assert IsolatedTaskWorkflow.__temporal_workflow_definition.name == "IsolatedTaskWorkflow"
     assert record_task_events in BY_WORKLOAD["analysis"]
     assert all(run_isolated_task not in acts for acts in BY_WORKLOAD.values())  # only isolated workers run it
+
+
+def test_ml_compute_goes_to_compute_ml_only_when_the_pool_is_configured(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.workflows import orchestrator
+
+    calls = []
+    monkeypatch.setattr("analystos.workers.ml.run_ml_isolated", lambda job, **kw: calls.append(job) or {"iso": 1})
+    monkeypatch.setattr("analystos.ml.jobs.run_ml_job", lambda job: {"inline": True})
+    monkeypatch.setattr(get_settings(), "orchestrator", "local")
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-py")
+    assert orchestrator.run_ml_compute({"x": 1}) == {"inline": True} and not calls
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-ml")
+    assert orchestrator.run_ml_compute({"x": 1}) == {"iso": 1} and calls == [{"x": 1}]
+
+
+def test_the_ml_capability_hash_covers_the_ml_package():
+    from analystos.workers import handlers
+
+    h = handlers.HANDLERS["ml.job"]
+    assert h.target == "analystos.workers.ml:ml_job" and "analystos.ml" in h.covers
+    files = handlers._sources("ml.job", "analystos.ml")
+    assert any(p.name == "jobs.py" for p in files) and any(p.name == "tabular.py" for p in files)
+
+
+def test_with_the_ml_pool_the_control_plane_never_unpickles_a_package(monkeypatch):
+    from analystos.core.config import get_settings
+    from analystos.services import ml
+
+    monkeypatch.setattr(ml, "verify_package", lambda s, ws, h: b"bytes")
+    monkeypatch.setattr(ml, "_store", lambda: pytest.fail("the control plane opened the package store to unpickle"))
+    monkeypatch.setattr(get_settings(), "isolated_pools", "compute-ml")
+    with pytest.raises(errors.PolicyDenied, match="isolated compute-ml worker"):
+        ml.load_package(None, "ws", "ab" * 32)
+
+
+def test_the_mlflow_export_can_skip_unpickling():
+    from analystos.ml.mlflow_export import files
+
+    view = {"id": "mlx_1", "definition_key": "d", "definition_version": 1, "task": "classify", "package_hash": "ab" * 32,
+            "created_at": "2026-09-26T10:00:00+00:00", "finished_at": "2026-09-26T10:01:00+00:00"}
+    fs = files(view, {"ml_trials": {"trials": []}}, b"not a pickle", unpickle=False)
+    assert any(p.endswith("model/analystos_package.pkl") for p in fs)
+    assert not any(p.endswith("model/model.pkl") for p in fs)

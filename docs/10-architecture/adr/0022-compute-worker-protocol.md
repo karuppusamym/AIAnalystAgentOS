@@ -80,6 +80,12 @@ deployment to operate; `inline` remains the default so small skills pay nothing.
   plane's router with the workspace policy. A job child has no network, so only the supervisor can call it
   today; exposing it to a job goes through the supervisor.
 * First consumer: recipe snapshot jobs (`workers/recipe.py`) when `compute-py` is configured.
+* ML jobs (`workers/ml.py`, 2026-09-27) when `compute-ml` is configured: the dataset snapshot (and, for scoring,
+  the package) go out as input artifacts; the job's dict (`result`, wall-clock timings returned inline) and a
+  tar of the files it wrote (`files`) come back, and each file is re-verified against its content address
+  before it enters `<artifact_dir>`. The `ml.job` capability hash covers the whole `analystos.ml` package.
+  With the pool configured the control plane never unpickles a package (`services/ml.load_package` refuses;
+  the MLflow export then carries the platform package without the separate sklearn flavor).
 * Conformance: `tests/conformance/worker/` (any implementation via `ANALYSTOS_CONFORMANCE_IMPL`); green for
   both pools on the local subprocess transport and on Temporal (dev server). Not verified here: the compose
   `isolated` network and the Helm NetworkPolicy under a real CNI (no Docker or cluster in the test environment).
