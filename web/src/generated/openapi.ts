@@ -1762,6 +1762,155 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/branches/{branch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Branch */
+        get: operations["get_branch_api_workspaces__workspace_id__branches__branch_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/branches/{branch_id}/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare Branches
+         * @description Two branches side by side: steps paired by lineage, with spec diffs, numeric deltas and both verdicts.
+         */
+        get: operations["compare_branches_api_workspaces__workspace_id__branches__branch_id__compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/branches/{branch_id}/forks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fork Branch */
+        post: operations["fork_branch_api_workspaces__workspace_id__branches__branch_id__forks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/branches/{branch_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Branch
+         * @description Merge a branch into a (new or earlier) Data Thread report; a void verdict refuses the merge.
+         */
+        post: operations["merge_branch_api_workspaces__workspace_id__branches__branch_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/branches/{branch_id}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Step
+         * @description Add a step to a branch and run it (SQL through the gateway, self-checked, verdict recorded).
+         */
+        post: operations["add_step_api_workspaces__workspace_id__branches__branch_id__steps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Brief */
+        get: operations["get_brief_api_workspaces__workspace_id__brief_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Brief
+         * @description State, review, reject or remove assertions: a new brief version. `If-Match` (the brief version) is required.
+         */
+        patch: operations["patch_brief_api_workspaces__workspace_id__brief_patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/brief/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Brief */
+        post: operations["refresh_brief_api_workspaces__workspace_id__brief_suggestions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/brief/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Brief Versions */
+        get: operations["brief_versions_api_workspaces__workspace_id__brief_versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/build-targets": {
         parameters: {
             query?: never;
@@ -1792,6 +1941,26 @@ export interface paths {
         put?: never;
         /** Start Build */
         post: operations["start_build_api_workspaces__workspace_id__builds_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Job Kinds
+         * @description Start work: every job kind, whether it can start here for this caller, and why not.
+         */
+        get: operations["job_kinds_api_workspaces__workspace_id__capabilities_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2603,6 +2772,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Workspace Memory */
+        post: operations["workspace_memory_api_workspaces__workspace_id__memory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/monitors": {
         parameters: {
             query?: never;
@@ -2615,6 +2801,135 @@ export interface paths {
         put?: never;
         /** Create Monitor */
         post: operations["create_monitor_api_workspaces__workspace_id__monitors_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notebooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notebooks */
+        get: operations["list_notebooks_api_workspaces__workspace_id__notebooks_get"];
+        put?: never;
+        /** Create Notebook */
+        post: operations["create_notebook_api_workspaces__workspace_id__notebooks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notebooks/{notebook_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Notebook */
+        get: operations["get_notebook_api_workspaces__workspace_id__notebooks__notebook_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notebooks/{notebook_id}/cells": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Cell
+         * @description Add a cell and run it: SQL through the gateway, Python in the sandbox on earlier cells' results.
+         */
+        post: operations["add_cell_api_workspaces__workspace_id__notebooks__notebook_id__cells_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notebooks/{notebook_id}/cells/{step_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Cell
+         * @description Edit a cell: a new version, re-run with the cells that read it (their verdicts void). If-Match required.
+         */
+        patch: operations["edit_cell_api_workspaces__workspace_id__notebooks__notebook_id__cells__step_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/notebooks/{notebook_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Notebook */
+        post: operations["run_notebook_api_workspaces__workspace_id__notebooks__notebook_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/pins/{pin_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Pin */
+        get: operations["get_pin_api_workspaces__workspace_id__pins__pin_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/pins/{pin_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Pin
+         * @description Replay the pin's frozen query on today's data (a tile refresh).
+         */
+        post: operations["refresh_pin_api_workspaces__workspace_id__pins__pin_id__refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2673,6 +2988,40 @@ export interface paths {
          *     caller and, when accepted, the source's plan through the gateway (EXPLAIN only).
          */
         post: operations["explain_query_api_workspaces__workspace_id__query_explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Assess */
+        post: operations["assess_api_workspaces__workspace_id__readiness_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/readiness/{assessment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assessment */
+        get: operations["get_assessment_api_workspaces__workspace_id__readiness__assessment_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3500,6 +3849,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/steps/{step_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Step
+         * @description One version (default: current) with its result snapshot. ETag = the current version.
+         */
+        get: operations["get_step_api_workspaces__workspace_id__steps__step_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Step
+         * @description Edit: version + 1, re-run it and its dependents; earlier verdicts turn VOID. If-Match is required.
+         */
+        patch: operations["edit_step_api_workspaces__workspace_id__steps__step_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/steps/{step_id}/pins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pin Step
+         * @description Pin a verified step version to a tile or a schedule: 202 with the approval to request, then (with the
+         *     approved `approval_id`) 201 with the pin.
+         */
+        post: operations["pin_step_api_workspaces__workspace_id__steps__step_id__pins_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/steps/{step_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rerun Step */
+        post: operations["rerun_step_api_workspaces__workspace_id__steps__step_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/steps/{step_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Step Versions */
+        get: operations["step_versions_api_workspaces__workspace_id__steps__step_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/threads/{container_type}/{container_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Thread
+         * @description The container's main branch with its steps, and every branch of it.
+         */
+        get: operations["get_thread_api_workspaces__workspace_id__threads__container_type___container_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/threads/{container_type}/{container_id}/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Thread
+         * @description Record a run's plan, tested hypotheses and findings, or an Ask thread's answered turns, as steps
+         *     (idempotent; nothing is re-run).
+         */
+        post: operations["ingest_thread_api_workspaces__workspace_id__threads__container_type___container_id__ingest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/uploads": {
         parameters: {
             query?: never;
@@ -3575,6 +4044,26 @@ export interface paths {
          * @description Replace the typed spec: a new revision. `If-Match` is required (428 without, 412 when stale).
          */
         patch: operations["patch_work_order_api_workspaces__workspace_id__work_orders__work_order_id__patch"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/work-orders/{work_order_id}/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assess Work Order
+         * @description The work order's current revision against its job kind's readiness checks.
+         */
+        post: operations["assess_work_order_api_workspaces__workspace_id__work_orders__work_order_id__assessments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/workspaces/{workspace_id}/work-orders/{work_order_id}/runs": {
@@ -3767,6 +4256,27 @@ export interface components {
             /** Question */
             question: string;
         };
+        /**
+         * AssertionIn
+         * @description A person states an assertion (origin `user`, reviewed by them).
+         */
+        AssertionIn: {
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Field */
+            field: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "decision" | "domain" | "data_semantics" | "time_measures" | "ml_objective" | "constraints" | "knowledge";
+            /** Note */
+            note?: string | null;
+            /** Subject */
+            subject?: string | null;
+            /** Value */
+            value: unknown;
+        };
         /** AssetMetadataIn */
         AssetMetadataIn: {
             /** Business Name */
@@ -3813,6 +4323,30 @@ export interface components {
             /** File */
             file: string;
         };
+        /**
+         * BriefOp
+         * @description One change in a brief PATCH. `set` states a user assertion; `review` accepts a suggestion as it is;
+         *     `reject` keeps it visible as rejected; `remove` drops an assertion.
+         */
+        BriefOp: {
+            assertion?: components["schemas"]["AssertionIn"] | null;
+            /** Key */
+            key?: string | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Op
+             * @enum {string}
+             */
+            op: "set" | "review" | "reject" | "remove";
+        };
+        /** BriefPatch */
+        BriefPatch: {
+            /** Ops */
+            ops: components["schemas"]["BriefOp"][];
+            /** Reason */
+            reason?: string | null;
+        };
         /** BuildIn */
         BuildIn: {
             /** Autonomy Level */
@@ -3853,6 +4387,29 @@ export interface components {
             arguments?: {
                 [key: string]: unknown;
             };
+        };
+        /** CellEdit */
+        CellEdit: {
+            /** Source */
+            source: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** CellIn */
+        CellIn: {
+            /**
+             * Cell
+             * @enum {string}
+             */
+            cell: "markdown" | "sql" | "python";
+            /** Depends On */
+            depends_on?: string[] | null;
+            /** Source */
+            source: string;
+            /** Source Id */
+            source_id?: string | null;
+            /** Title */
+            title?: string | null;
         };
         /** ClassifyIn */
         ClassifyIn: {
@@ -4042,6 +4599,23 @@ export interface components {
             } | null;
         };
         /**
+         * EvidenceRef
+         * @description What an assertion rests on: an asset, a column profile, a relationship, a context entry, a check.
+         */
+        EvidenceRef: {
+            /** Detail */
+            detail?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "asset" | "column" | "profile" | "relationship" | "context" | "metric" | "query" | "check" | "user_note";
+            /** Ref */
+            ref: string;
+        };
+        /**
          * ExperimentSpec
          * @description Placeholder for P5 experiment design. Not executable yet.
          */
@@ -4094,6 +4668,22 @@ export interface components {
              * @enum {string}
              */
             signal: "accept" | "dismiss" | "wrong";
+        };
+        /** ForkIn */
+        ForkIn: {
+            /** From Step Id */
+            from_step_id: string;
+            /**
+             * Include Downstream
+             * @default false
+             */
+            include_downstream?: boolean;
+            /** Name */
+            name?: string | null;
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** GrantIn */
         GrantIn: {
@@ -4208,6 +4798,23 @@ export interface components {
             /** Role */
             role: string;
         };
+        /** MemoryIn */
+        MemoryIn: {
+            /**
+             * Limit
+             * @default 8
+             */
+            limit?: number;
+            /** Query */
+            query: string;
+        };
+        /** MergeIn */
+        MergeIn: {
+            /** Report Id */
+            report_id?: string | null;
+            /** Title */
+            title?: string | null;
+        };
         /**
          * MetricProposalIn
          * @description API body for a user proposal.
@@ -4303,6 +4910,41 @@ export interface components {
             /** Password */
             password: string;
         };
+        /** NotebookIn */
+        NotebookIn: {
+            /** Title */
+            title: string;
+        };
+        /**
+         * PinIn
+         * @description Pin one step version to a tile or a schedule. Both write outside the step, so both are approvals
+         *     bound to the frozen payload's hash: the first call returns the approval, the second (with the
+         *     approved `approval_id`) pins.
+         */
+        PinIn: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /** Cron */
+            cron?: string | null;
+            /** Dashboard */
+            dashboard?: string | null;
+            /** Destination */
+            destination?: string | null;
+            /** Name */
+            name?: string | null;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "tile" | "schedule";
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone?: string;
+            /** Version */
+            version?: number | null;
+        };
         /**
          * PipelineSpec
          * @description Placeholder for P6-04 (recipe IR). Envelope-level fields only; not executable yet.
@@ -4359,6 +5001,21 @@ export interface components {
         ReadIn: {
             /** Ids */
             ids: number[];
+        };
+        /** ReadinessIn */
+        ReadinessIn: {
+            /** Assets */
+            assets?: string[];
+            /** Horizon */
+            horizon?: number | null;
+            /** Job Kind */
+            job_kind: string;
+            /** Measures */
+            measures?: string[];
+            /** Target */
+            target?: string | null;
+            /** Time Column */
+            time_column?: string | null;
         };
         /** ReasonIn */
         ReasonIn: {
@@ -4582,6 +5239,42 @@ export interface components {
             dialect?: string;
             /** Sql */
             sql: string;
+        };
+        /**
+         * StepEdit
+         * @description Edit a step: a new version with this spec (and/or title/chart), then re-run it and its dependents.
+         */
+        StepEdit: {
+            /** Chart Spec */
+            chart_spec?: {
+                [key: string]: unknown;
+            } | null;
+            /** Spec */
+            spec?: {
+                [key: string]: unknown;
+            } | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** StepIn */
+        StepIn: {
+            /** Chart Spec */
+            chart_spec?: {
+                [key: string]: unknown;
+            } | null;
+            /** Depends On */
+            depends_on?: string[];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "plan" | "query" | "method" | "recipe" | "train" | "chart" | "claim";
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title?: string | null;
         };
         /** SupersetCrawlIn */
         SupersetCrawlIn: {
@@ -8539,6 +9232,338 @@ export interface operations {
             };
         };
     };
+    get_branch_api_workspaces__workspace_id__branches__branch_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_branches_api_workspaces__workspace_id__branches__branch_id__compare_get: {
+        parameters: {
+            query: {
+                with: string;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fork_branch_api_workspaces__workspace_id__branches__branch_id__forks_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForkIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_branch_api_workspaces__workspace_id__branches__branch_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_step_api_workspaces__workspace_id__branches__branch_id__steps_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StepIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_brief_api_workspaces__workspace_id__brief_get: {
+        parameters: {
+            query?: {
+                version?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_brief_api_workspaces__workspace_id__brief_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BriefPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_brief_api_workspaces__workspace_id__brief_suggestions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    brief_versions_api_workspaces__workspace_id__brief_versions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_build_targets_api_workspaces__workspace_id__build_targets_get: {
         parameters: {
             query?: never;
@@ -8662,6 +9687,40 @@ export interface operations {
                 "application/json": components["schemas"]["BuildIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_kinds_api_workspaces__workspace_id__capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -10475,6 +11534,44 @@ export interface operations {
             };
         };
     };
+    workspace_memory_api_workspaces__workspace_id__memory_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_monitors_api_workspaces__workspace_id__monitors_get: {
         parameters: {
             query?: never;
@@ -10526,6 +11623,298 @@ export interface operations {
                 "application/json": components["schemas"]["MonitorIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_notebooks_api_workspaces__workspace_id__notebooks_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_notebook_api_workspaces__workspace_id__notebooks_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotebookIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_notebook_api_workspaces__workspace_id__notebooks__notebook_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_cell_api_workspaces__workspace_id__notebooks__notebook_id__cells_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CellIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_cell_api_workspaces__workspace_id__notebooks__notebook_id__cells__step_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                notebook_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CellEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_notebook_api_workspaces__workspace_id__notebooks__notebook_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pin_api_workspaces__workspace_id__pins__pin_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_pin_api_workspaces__workspace_id__pins__pin_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                pin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -10642,6 +12031,79 @@ export interface operations {
                 "application/json": components["schemas"]["SqlIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assess_api_workspaces__workspace_id__readiness_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadinessIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_assessment_api_workspaces__workspace_id__readiness__assessment_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                assessment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -12468,6 +13930,264 @@ export interface operations {
             };
         };
     };
+    get_step_api_workspaces__workspace_id__steps__step_id__get: {
+        parameters: {
+            query?: {
+                version?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_step_api_workspaces__workspace_id__steps__step_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StepEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pin_step_api_workspaces__workspace_id__steps__step_id__pins_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PinIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_step_api_workspaces__workspace_id__steps__step_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    step_versions_api_workspaces__workspace_id__steps__step_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                step_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thread_api_workspaces__workspace_id__threads__container_type___container_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                container_type: string;
+                container_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_thread_api_workspaces__workspace_id__threads__container_type___container_id__ingest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                container_type: string;
+                container_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     upload_api_workspaces__workspace_id__uploads_post: {
         parameters: {
             query?: never;
@@ -12713,6 +14433,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assess_work_order_api_workspaces__workspace_id__work_orders__work_order_id__assessments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                work_order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
