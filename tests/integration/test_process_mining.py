@@ -187,6 +187,47 @@ def test_catalog_tasks_show_cancellations_before_work(api, world, candidate):
     assert any(b["source"] == "On hold" and b["target"] == "Resumed" for b in a["bottlenecks"])
 
 
+def test_demo_seed_builds_the_process_mining_workspace_through_the_api(api, world, servicenow_url):
+    """`analystos demo-seed --only process` against the app: workspace, members, source, selection, brief and
+    one saved analysis per task type; a second run changes nothing."""
+    from fastapi.testclient import TestClient
+
+    from analystos.api.app import app
+    from analystos.demo import seed
+
+    def as_user(email: str) -> seed.Api:
+        client = TestClient(app)
+        r = client.post("/api/auth/login", json={"email": email, "password": PASSWORD})
+        assert r.status_code == 200, r.text
+        client.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
+        user = seed.Api.__new__(seed.Api)
+        user.c = client
+        return user
+
+    admin, analyst = as_user("admin@analystos.local"), as_user("analyst@analystos.local")
+    wid = seed.ensure_process_workspace(admin, analyst, servicenow_url)
+    saved = analyst.get(f"/api/workspaces/{wid}/process/analyses")
+    wanted = seed.process_demo()["process"]["analyses"]
+    assert sorted(a["name"] for a in saved) == sorted(a["name"] for a in wanted)
+    by_segment = {a["segment"]: a for a in saved}
+    assert by_segment["change_request"]["summary"]["fitness"] < 1.0
+    outputs = analyst.get(f"/api/workspaces/{wid}/artifacts", params={"type": "process_analysis"})
+    assert len(outputs) == len(wanted)
+
+    writes: list[str] = []
+    for u in (admin, analyst):
+        original = u.call
+
+        def spy(method, path, body=None, _original=original, **kw):  # noqa: ANN001, ANN202
+            if method != "GET":
+                writes.append(f"{method} {path}")
+            return _original(method, path, body, **kw)
+
+        u.call = spy  # type: ignore[method-assign]
+    assert seed.ensure_process_workspace(admin, analyst, servicenow_url) == wid
+    assert writes == []
+
+
 def test_a_mapping_to_an_unknown_column_is_refused(api, world, candidate):
     body = {"asset_id": candidate["asset_id"], **candidate["mapping"], "activity_column": "no_such_column"}
     r = api.post(f"/api/workspaces/{world['ws']}/process/analyze", json=body)

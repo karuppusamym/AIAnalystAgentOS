@@ -168,6 +168,25 @@ Timings are from the live evidence run on a loaded machine: an investigation rea
 * **Say:** "The same governance covers data preparation and quick questions: recipes compile to SQL with
   quality gates and lineage; Ask answers through the same gateway."
 
+### Step 10 (optional) — Process and task mining (2 min)
+
+`demo-seed` also builds **ServiceNow process mining (demo)** (`--only process` builds just it): the ServiceNow
+source with the task activity log `u_task_activity` (every created, assigned, reassigned, work started, on hold,
+resolved, reopened, closed or cancelled step of incidents, changes and catalog tasks, last six months) and the
+records it describes, and three saved process analyses (one per task type) in **Outputs**.
+
+* **Click:** that workspace → **Work → Process**. The log is detected with its mapping pre-filled (case
+  `task_sys_id`, activity, time `activity_at`, resource `assignment_group`; declared by the ITSM pack). Choose
+  **Segment → Change requests** → **Analyze**.
+* **Show:** the highlights; the process map (thicker = more often, orange = back to an earlier step); the most
+  common paths with the expected one marked; **Conformance**: "'Authorized' skipped in … completed cases" (mostly
+  emergency changes); **Cancellations**: after *Assessed* or, for database upgrades, after *Scheduled*.
+* **Then:** **Segment → Incidents** → **Analyze**: **Handovers** shows Network Operations ⇄ Cloud Platform /
+  Security Operations ping-pong and *Reassigned* as the top rework; **Catalog tasks**: *On hold → Resumed* is the
+  biggest wait (End User Computing waiting for stock).
+* **Say:** "Every event was read through the same governed gateway (see *How this was computed*: the query ids);
+  the analysis is deterministic, and a saved one is a versioned output with lineage to its queries."
+
 ### Close (30 s)
 
 "Governed data access, reproducible findings, people approving side effects, and a platform that tells you
