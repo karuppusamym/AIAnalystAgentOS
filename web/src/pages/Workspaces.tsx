@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { to } from "../routes";
-import { api } from "../api";
+import { api, type WorkMode } from "../api";
+import { WorkModeChoices, WorkModesSettings } from "../components/WorkModes";
 import { Card, EmptyState, ErrorBox, Field, Loading, PageHeader, Value } from "../components/ui";
 import { useAction, useAsync } from "../lib/hooks";
 import { fmtDate } from "../lib/format";
@@ -10,6 +11,7 @@ export function WorkspacesPage() {
   const list = useAsync(() => api.listWorkspaces(), []);
   const [showCreate, setShowCreate] = useState(false);
   const [inspectId, setInspectId] = useState<string | null>(null);
+  const [modesId, setModesId] = useState<string | null>(null);
   const inventory = useAsync(() => inspectId ? api.workspaceInventory(inspectId) : Promise.resolve(null), [inspectId]);
   const statusAction = useAction();
   const changeStatus = async (id: string, name: string, status: "active" | "disabled") => {
@@ -53,7 +55,10 @@ export function WorkspacesPage() {
                   </button>
                   <button type="button" className="btn btn-sm" aria-expanded={inspectId === w.id}
                     onClick={() => setInspectId(inspectId === w.id ? null : w.id)}>Data inventory</button>
+                  {w.status === "active" && <button type="button" className="btn btn-sm" aria-expanded={modesId === w.id}
+                    onClick={() => setModesId(modesId === w.id ? null : w.id)}>Work modes</button>}
                 </div>}
+                {modesId === w.id && <WorkModesSettings wsId={w.id} />}
                 {inspectId === w.id && <div className="stack" aria-label={`Data inventory for ${w.name}`}>
                   <ErrorBox error={inventory.error} onRetry={inventory.reload} />
                   {inventory.data?.workspace_id !== w.id && !inventory.error && <Loading />}
@@ -88,10 +93,12 @@ function CreateWorkspace() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [objective, setObjective] = useState("");
+  const [workModes, setWorkModes] = useState<WorkMode[]>(["analysis"]);
   const act = useAction();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective }));
+    if (!workModes.length) return;
+    const ws = await act.run(() => api.createWorkspace({ name: name.trim(), description, objective, work_modes: workModes }));
     if (ws) nav(to.workspace(ws.id));
   };
   return (
@@ -107,9 +114,11 @@ function CreateWorkspace() {
           <textarea id="ws-obj" rows={3} value={objective} onChange={(e) => setObjective(e.target.value)}
             placeholder="Why are incident resolution times increasing, and which groups drive SLA breaches?" />
         </Field>
+        <WorkModeChoices selected={workModes} onChange={setWorkModes} />
+        <p className="small muted">These selections enable work playbooks. Roles, data grants and approvals are configured separately.</p>
         <ErrorBox error={act.error} />
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={act.busy || !name.trim()}>{act.busy ? "Creating…" : "Create workspace"}</button>
+          <button type="submit" className="btn btn-primary" disabled={act.busy || !name.trim() || !workModes.length}>{act.busy ? "Creating…" : "Create workspace"}</button>
         </div>
       </form>
     </Card>

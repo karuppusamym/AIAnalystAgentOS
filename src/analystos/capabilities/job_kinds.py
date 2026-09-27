@@ -57,6 +57,8 @@ JOB_KINDS: tuple[JobKind, ...] = (
             (), "editor", COMMON, ("freshness",)),
 )
 BY_KEY = {k.key: k for k in JOB_KINDS}
+MODE_FOR_JOB = {"explain": "analysis", "compare": "analysis", "monitor": "analysis",
+                "prepare": "engineering", "forecast": "ml", "predict": "ml"}
 # Work-order kinds (contracts.work.JobKind) that have no Start-work choice of their own map onto one.
 WORK_ORDER_KIND = {"diagnose": "explain", "describe": "explain", "compare": "compare", "forecast": "forecast",
                    "predict": "predict", "prepare": "prepare", "monitor": "monitor", "experiment": "predict"}
@@ -75,16 +77,17 @@ def _reason(code: str, message: str, remediation: str) -> dict[str, str]:
     return {"code": code, "message": message, "remediation": remediation}
 
 
-def published_ml_specs(session: Session, workspace_id: str) -> int:
-    """How many published (or deprecated, still runnable) ml_spec definitions the workspace has."""
-    from sqlalchemy import func, select
+def published_ml_specs(session: Session, workspace_id: str, job_key: str | None = None) -> int:
+    """Count runnable ML plans that match the job the user is about to start."""
+    from sqlalchemy import select
 
-    from analystos.contracts.definition import RUNNABLE_STATUSES
     from analystos.db.models import Definition
 
-    return session.scalar(select(func.count(Definition.id)).where(Definition.workspace_id == workspace_id,
-                                                                  Definition.kind == "ml_spec",
-                                                                  Definition.status.in_(RUNNABLE_STATUSES))) or 0
+    specs = session.scalars(select(Definition.spec).where(Definition.workspace_id == workspace_id,
+                                                         Definition.kind == "ml_spec",
+                                                         Definition.status == "published"))
+    tasks = {"forecast": {"forecast"}, "predict": {"classify", "regress"}}.get(job_key)
+    return sum(1 for spec in specs if tasks is None or (spec or {}).get("task") in tasks)
 
 
 def executor_reason(job: JobKind, session: Session | None = None, workspace_id: str | None = None) -> dict[str, str] | None:
@@ -93,9 +96,9 @@ def executor_reason(job: JobKind, session: Session | None = None, workspace_id: 
     from analystos.contracts.work import EXECUTABLE_TYPES
 
     if job.entry["type"] == "work_order" and job.entry["payload_type"] == "ml" and session is not None and workspace_id:
-        if published_ml_specs(session, workspace_id):
+        if published_ml_specs(session, workspace_id, job.key):
             return None
-        return _reason("no_executor", f"{job.label} trains a published ml_spec definition, and this workspace has none yet",
+        return _reason("no_executor", f"{job.label} needs a published ml_spec definition for this task, and this workspace has none yet",
                        "Publish an ml_spec definition (a reviewed MLSpec) and start the work order with that exact spec; "
                        "or choose Explain or Compare explicitly. Nothing is started in its place.")
     if job.entry["type"] == "work_order" and job.entry["payload_type"] not in EXECUTABLE_TYPES:
@@ -154,10 +157,12 @@ def capability_state(job: JobKind, snapshot: Any, explicit: dict[str, bool]) -> 
 def availability(session: Session, user: Any, workspace_id: str, *, snapshot: Any = None) -> list[dict[str, Any]]:
     """Every Start-work job kind for this caller in this workspace, with its reasons."""
     from analystos.capabilities import enablement, registry
-    from analystos.governance.policy import member_role, require_role, resolve_scope
+    from analystos.governance.policy import get_workspace, member_role, require_role, resolve_scope
+    from analystos.services.workspace_modes import current as current_modes
 
     require_role(session, user, workspace_id, "viewer")
     snap = snapshot or registry.current()
+    selected_modes = current_modes(get_workspace(session, workspace_id))
     explicit = enablement.overrides(session, workspace_id)
     role = "owner" if getattr(user, "is_admin", False) else (member_role(session, user, workspace_id) or "viewer")
     try:
@@ -167,6 +172,10 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
     out = []
     for job in JOB_KINDS:
         reasons: list[dict[str, str]] = []
+        mode = MODE_FOR_JOB[job.key]
+        if mode not in selected_modes:
+            reasons.append(_reason("work_mode", f"{mode} work is not selected for this workspace",
+                                   "A workspace owner can enable it in Workspace work modes."))
         if (r := executor_reason(job, session, workspace_id)) is not None:
             reasons.append(r)
         caps, cap_reasons = capability_state(job, snap, explicit)
@@ -174,12 +183,12 @@ def availability(session: Session, user: Any, workspace_id: str, *, snapshot: An
         if not role_at_least(role, job.min_role):
             reasons.append(_reason("role", f"{job.label} needs the {job.min_role} role here; you are {role}",
                                    "Ask a workspace owner for the role."))
-        if not assets:
+        if not assets and job.key != "prepare":
             reasons.append(_reason("no_data", "no selected, ready table is in your scope",
                                    "Add a source, discover it and select its tables (Data > Sources)."))
         entry = {**job.entry, **({"route": job.entry["route"].format(workspace_id=workspace_id)} if "route" in job.entry
                                  else {"route": f"/api/workspaces/{workspace_id}/work-orders"})}
-        out.append(JobKindAvailability(key=job.key, label=job.label, work_order_kind=job.work_order_kind,  # type: ignore[arg-type]
+        out.append(JobKindAvailability(key=job.key, label=job.label, mode=mode, work_order_kind=job.work_order_kind,  # type: ignore[arg-type]
                                        available=not reasons, reasons=reasons, capabilities=caps, entry=entry,
                                        readiness_checks=list(job.checks), min_role=job.min_role).model_dump(mode="json"))
     return out

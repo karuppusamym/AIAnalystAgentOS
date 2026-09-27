@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Source, type WorkspaceDetail } from "../api";
-import { jobKindsFromCapabilities, type JobKind, type JobKindId } from "../lib/jobKinds";
+import { api, type DefinitionVersion, type Source, type WorkspaceDetail } from "../api";
+import { jobKindsFromServer, type JobKind, type JobKindId } from "../lib/jobKinds";
 import { useAction, useAsync } from "../lib/hooks";
 import { autonomyInWords } from "../lib/status";
 import { to } from "../routes";
@@ -10,11 +10,12 @@ import { ErrorBox, Field, KeyValue, Loading, Notice, TechnicalDetails, Value } f
 
 /** The job kinds for a workspace: the registry, the caller's role and whether any source is ready. */
 export function useJobKinds(wsId: string, ws: WorkspaceDetail | undefined, sources: Source[] | undefined) {
-  const caps = useAsync(() => api.listCapabilities({ workspace_id: wsId }), [wsId]);
-  const kinds = caps.data && ws && sources
-    ? jobKindsFromCapabilities(caps.data.capabilities, { readySources: sources.filter((s) => s.status === "ready").length, role: ws.role })
+  const available = useAsync(() => api.jobAvailability(wsId), [wsId]);
+  const modes = useAsync(() => api.getWorkModes(wsId), [wsId]);
+  const kinds = available.data && modes.data && ws && sources
+    ? jobKindsFromServer(available.data.job_kinds, modes.data.current)
     : undefined;
-  return { kinds, error: caps.error, reload: caps.reload };
+  return { kinds, error: available.error ?? modes.error, reload: async () => { await available.reload(); await modes.reload(); } };
 }
 
 interface Draft { kind?: JobKindId; objective?: string; sourceId?: string }
@@ -110,13 +111,81 @@ export function StartWorkDialog({ wsId, onClose, initialKind }: { wsId: string; 
           <TechnicalDetails value={kinds.map((k) => ({ kind: k.id, enabled: k.enabled, uses: k.uses }))} label="Technical details" />
         </>
       )}
-      {chosen && ws.data && sources.data && (
+      {chosen?.action === "ml" && <MLStartForm kind={chosen} wsId={wsId}
+        onBack={() => update({ kind: undefined })}
+        onStarted={(id) => { saveDraft(wsId, null); onClose(); nav(to.work(wsId, "ml", { experiment: id })); }} />}
+      {chosen && chosen.action === "investigate" && ws.data && sources.data && (
         <InvestigationForm kind={chosen} ws={ws.data} sources={sources.data} draft={draft} update={update}
           onBack={() => update({ kind: undefined })}
           onStarted={(runId) => { saveDraft(wsId, null); onClose(); nav(to.run(wsId, runId)); }} />
       )}
     </Drawer>
   );
+}
+
+function mlTaskMatches(kind: JobKindId, definition: DefinitionVersion): boolean {
+  const task = definition.spec?.task;
+  return kind === "forecast" ? task === "forecast" : task === "classify" || task === "regress";
+}
+
+async function publishedMLPlans(wsId: string): Promise<DefinitionVersion[]> {
+  const result: DefinitionVersion[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await api.listDefinitions(wsId, { kind: "ml_spec", status: "published", ...(cursor ? { cursor } : {}) });
+    result.push(...await Promise.all(page.items.map((d) => api.getDefinition(wsId, d.id))));
+    cursor = page.next_cursor;
+  } while (cursor);
+  return result;
+}
+
+/** A published spec pins the dataset, target, split and budget; this form never invents a spec. */
+function MLStartForm({ kind, wsId, onBack, onStarted }: {
+  kind: JobKind; wsId: string; onBack: () => void; onStarted: (id: string) => void;
+}) {
+  const id = useId();
+  const defs = useAsync(() => publishedMLPlans(wsId), [wsId]);
+  const act = useAction();
+  const [selected, setSelected] = useState("");
+  const options = (defs.data ?? []).filter((d) => mlTaskMatches(kind.id, d));
+  const chosen = options.find((d) => d.id === selected);
+  const spec = chosen?.spec ?? {};
+  const dataset = spec.dataset && typeof spec.dataset === "object" ? spec.dataset as Record<string, unknown> : {};
+  const search = spec.search && typeof spec.search === "object" ? spec.search as Record<string, unknown> : {};
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!chosen) return;
+    const result = await act.run(() => api.startMlExperiment(wsId, chosen.id));
+    if (result) onStarted(result.id);
+  };
+  return <form className="form" onSubmit={submit} aria-label={`Start ${kind.label.toLowerCase()}`}>
+    <p className="small muted">Choose a published model plan. Training reads the approved data, checks readiness and leakage, and evaluates on held-out rows.</p>
+    <ErrorBox error={defs.error} onRetry={defs.reload} />
+    {defs.loading && !defs.data && <Loading />}
+    {defs.data && !options.length && <Notice tone="info">No published {kind.id === "forecast" ? "forecast" : "classification or regression"} plan is available. Create and publish an ML definition in Data → Definitions first.</Notice>}
+    {!!options.length && <Field label="Published model plan" htmlFor={`${id}-spec`} hint="The exact version selected here will be trained.">
+      <select id={`${id}-spec`} value={selected} onChange={(e) => setSelected(e.target.value)}>
+        <option value="">Choose a plan…</option>
+        {options.map((d) => <option key={d.id} value={d.id}>{d.title || d.key} · v{d.version}</option>)}
+      </select>
+    </Field>}
+    {chosen && <section className="preflight" aria-labelledby={`${id}-pf`}>
+      <h3 id={`${id}-pf`}>Before it starts</h3>
+      <KeyValue items={[
+        ["Task", String(spec.task || "unknown")],
+        ["Reads", String(dataset.asset || "no dataset")],
+        ["Target", String(spec.target || "not set")],
+        ["Maximum trials", String(search.max_trials ?? "platform limit")],
+        ["Maximum seconds", String(search.max_seconds ?? "platform limit")],
+        ["Version", `${chosen.key} v${chosen.version}`],
+      ]} />
+    </section>}
+    <ErrorBox error={act.error} />
+    <div className="form-actions">
+      <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button>
+      <button type="submit" className="btn btn-primary" disabled={!chosen || act.busy}>{act.busy ? "Training and evaluating…" : "Start experiment"}</button>
+    </div>
+  </form>;
 }
 
 /** The brief and a preflight: what will be read, the limits it runs under, and what needs a person. */

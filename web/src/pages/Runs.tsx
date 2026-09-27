@@ -1,17 +1,18 @@
 import { useCallback } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, type MlExperiment } from "../api";
 import { useAuth } from "../auth";
 import { BuildPanel } from "../components/BuildPanel";
 import { PreparePanel } from "../components/PreparePanel";
 import { StartWorkButton } from "../components/StartWork";
-import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
+import { EmptyState, ErrorBox, KeyValue, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
 import { durationBetween, fmtDate } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 import { to, type WorkTab } from "../routes";
 
 const TABS: { id: WorkTab; label: string }[] = [
   { id: "investigations", label: "Investigations" }, { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" },
+  { id: "ml", label: "ML experiments" },
 ];
 
 /**
@@ -47,9 +48,52 @@ export function WorkPage() {
           onSelectRecipe={(id) => set({ recipe: id })} />}
         {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
           canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
+        {tab === "ml" && <MLExperiments wsId={wsId} selected={params.get("experiment")}
+          onSelect={(id) => set({ experiment: id })} />}
       </div>
     </div>
   );
+}
+
+function MLExperiments({ wsId, selected, onSelect }: { wsId: string; selected: string | null; onSelect: (id: string | null) => void }) {
+  const rows = useAsync(() => api.listMlExperiments(wsId), [wsId]);
+  const detail = useAsync(() => selected ? api.getMlExperiment(wsId, selected) : Promise.resolve(null), [wsId, selected]);
+  return <>
+    <ErrorBox error={rows.error} onRetry={rows.reload} />
+    {rows.loading && !rows.data && <Loading />}
+    {rows.data?.length === 0 && <EmptyState title="No ML experiments yet">Publish a model plan in Data → Definitions, then choose Forecast or Predict in Start work.</EmptyState>}
+    {!!rows.data?.length && <div className="table-wrap card">
+      <table className="table"><caption className="sr-only">ML experiments</caption>
+        <thead><tr><th>Plan</th><th>Task</th><th>Dataset</th><th>Status</th><th>Started</th><th><span className="sr-only">Actions</span></th></tr></thead>
+        <tbody>{rows.data.map((r: MlExperiment) => <tr key={r.id}>
+          <td>{r.definition_key} v{r.definition_version}</td><td>{r.task}</td><td>{r.dataset_asset}</td>
+          <td><StatusBadge status={r.status} /></td><td className="small">{fmtDate(r.created_at)}</td>
+          <td><button type="button" className="btn btn-xs btn-ghost" onClick={() => onSelect(r.id)}>View result<span className="sr-only"> for {r.definition_key} v{r.definition_version}</span></button></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+    {selected && <section className="card" aria-label="ML experiment result">
+      <button type="button" className="btn btn-ghost" onClick={() => onSelect(null)}>Close result</button>
+      <ErrorBox error={detail.error} onRetry={detail.reload} />
+      {detail.loading && !detail.data && <Loading />}
+      {detail.data && <>
+        <h2>{detail.data.definition_key} v{detail.data.definition_version}</h2>
+        <p><StatusBadge status={detail.data.status} /> {detail.data.verdict && <span>{detail.data.verdict}</span>}</p>
+        {detail.data.error && <p className="warn-text" role="status">{detail.data.error}</p>}
+        <p>Task: {detail.data.task} · Dataset: {detail.data.dataset_asset}</p>
+        {Object.keys(detail.data.summary ?? {}).length > 0 && <KeyValue items={[
+          ["Metric", String(detail.data.summary.metric ?? "not evaluated")],
+          ["Candidate", String(detail.data.summary.candidate ?? "—")],
+          ["Baseline", String(detail.data.summary.baseline ?? "—")],
+          ["Decision", String(detail.data.summary.decision ?? detail.data.verdict ?? "pending")],
+          ["Estimator", String(detail.data.summary.estimator ?? "—")],
+        ]} />}
+        {Object.keys(detail.data.summary ?? {}).length > 0 && <details><summary>Full evaluation details</summary><pre>{JSON.stringify(detail.data.summary, null, 2)}</pre></details>}
+        {Object.keys(detail.data.readiness ?? {}).length > 0 && <details><summary>Readiness checks</summary><pre>{JSON.stringify(detail.data.readiness, null, 2)}</pre></details>}
+        {detail.data.verification && <details><summary>Verification</summary><pre>{JSON.stringify(detail.data.verification, null, 2)}</pre></details>}
+      </>}
+    </section>}
+  </>;
 }
 
 function Investigations({ wsId }: { wsId: string }) {

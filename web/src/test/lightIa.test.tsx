@@ -16,7 +16,7 @@ import { fieldText, fieldValue, setField } from "../lib/policy";
 import { autonomyInWords } from "../lib/status";
 import { firstRunSteps, nextStep } from "../pages/WorkspaceHome";
 import { canSee, CONCEPTS, SCREENS } from "../routes";
-import { CAPABILITIES, INSIGHT, mockBackend, RUN, USER, WORKSPACE, WS } from "./mockBackend";
+import { INSIGHT, mockBackend, resetMockState, RUN, USER, WORKSPACE, WS } from "./mockBackend";
 import { INSIGHT_VOID_ID } from "./mockWave1";
 
 type Handler = (method: string, path: string, body: string | null) => { status: number; body: unknown } | null;
@@ -157,6 +157,21 @@ const cap = (id: string, kind: string, extra: Partial<CapabilitySummary> = {}): 
   certification: { status: "certified" }, autonomous_ok: true, needs_approval: false, tags: [], enabled: true, ...extra,
 });
 
+it("lets an owner review and save combined workspace work modes", async () => {
+  resetMockState();
+  const f = mockFetch();
+  renderAt("/");
+  fireEvent.click(await screen.findByRole("button", { name: "Work modes" }));
+  const choice = await screen.findByRole("checkbox", { name: /ML and experiments/ });
+  fireEvent.click(choice);
+  fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save work modes" }));
+  await waitFor(() => expect(calls(f, "PUT", /\/work-modes$/)).toHaveLength(1));
+  const [, init] = calls(f, "PUT", /\/work-modes$/)[0];
+  expect(JSON.parse(String(init?.body))).toEqual({ modes: ["analysis", "engineering"] });
+  resetMockState();
+});
+
 describe("Start work job kinds (from the capability registry)", () => {
   const registry = [
     cap("playbook.investigate", "Playbook"), cap("method.rate_by_segment", "Method", { tags: ["statistical", "segment"] }),
@@ -198,7 +213,7 @@ describe("Start work job kinds (from the capability registry)", () => {
       expect(within(item).getByText(/Needs /)).toBeTruthy();
     }
     expect(calls(f, "POST", /\/analysis$/)).toEqual([]);
-    expect(calls(f, "GET", /\/api\/capabilities\?workspace_id=ws_demo$/)).toHaveLength(1);
+    expect(calls(f, "GET", /\/api\/workspaces\/ws_demo\/capabilities$/)).toHaveLength(1);
     fireEvent.click(within(kinds).getByRole("button", { name: /Explain/ }));
     const form = await within(dialog).findByRole("form", { name: "Start explain" });
     expect(within(form).getByRole("heading", { name: "Before it starts" })).toBeTruthy();
@@ -212,8 +227,10 @@ describe("Start work job kinds (from the capability registry)", () => {
   });
 
   it("Prepare data opens its panel in Work when an engine is installed (no new screen)", async () => {
-    mockFetch((method, path) => (method === "GET" && path === "/api/capabilities"
-      ? { status: 200, body: { digest: "d", capabilities: [...CAPABILITIES, cap("engine.duckdb", "Engine")].map((c) => ({ ...c, enabled: true })) } }
+    mockFetch((method, path) => (method === "GET" && path === `/api/workspaces/${WS}/capabilities`
+      ? { status: 200, body: { workspace_id: WS, digest: "d", job_kinds: [
+        { key: "prepare", label: "Prepare data", mode: "engineering", available: true, reasons: [], capabilities: [], entry: { type: "recipe" } },
+      ] } }
       : null));
     renderAt(`/w/${WS}/work`);
     fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
@@ -222,6 +239,40 @@ describe("Start work job kinds (from the capability registry)", () => {
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=prepare`));
     expect(await screen.findByRole("form", { name: "Load a file" })).toBeTruthy();
     expect(SCREENS.length).toBeLessThanOrEqual(20);
+  });
+
+  it("starts Forecast from an exact published ML plan and shows its experiment in Work", async () => {
+    const plan = { id: "defn_forecast", workspace_id: WS, kind: "ml_spec", key: "weekly_volume", version: 2,
+      status: "published", title: "Weekly volume", spec: { task: "forecast", target: "orders",
+        dataset: { asset: "sales.orders" }, search: { max_trials: 4, max_seconds: 120 } } };
+    const experiment = { id: "mlx_forecast", workspace_id: WS, definition_id: plan.id, definition_key: plan.key,
+      definition_version: 2, task: "forecast", status: "succeeded", verdict: "verified",
+      dataset_asset: "sales.orders", summary: { metric: "mae", candidate: 4.2 }, readiness: {}, artifacts: {},
+      error: null, created_at: "2026-09-26T12:00:00Z", finished_at: "2026-09-26T12:01:00Z" };
+    const f = mockFetch((method, path) => {
+      if (method === "GET" && path === `/api/workspaces/${WS}/capabilities`) return { status: 200, body: {
+        workspace_id: WS, digest: "d", job_kinds: [{ key: "forecast", label: "Forecast", mode: "ml",
+          available: true, reasons: [], capabilities: [], entry: { type: "work_order" } }],
+      } };
+      if (method === "GET" && path === `/api/workspaces/${WS}/definitions`) return { status: 200, body: { items: [plan], next_cursor: null } };
+      if (method === "GET" && path === `/api/workspaces/${WS}/definitions/${plan.id}`) return { status: 200, body: plan };
+      if (method === "POST" && path === `/api/workspaces/${WS}/ml/experiments`) return { status: 201, body: experiment };
+      if (method === "GET" && path === `/api/workspaces/${WS}/ml/experiments`) return { status: 200, body: [experiment] };
+      if (method === "GET" && path === `/api/workspaces/${WS}/ml/experiments/${experiment.id}`) return { status: 200, body: { ...experiment, verification: { status: "passed" } } };
+      return null;
+    });
+    renderAt(`/w/${WS}/work`);
+    fireEvent.click(await screen.findByRole("button", { name: "Start work" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Forecast/ }));
+    const form = await screen.findByRole("form", { name: "Start forecast" });
+    fireEvent.change(await within(form).findByLabelText("Published model plan"), { target: { value: plan.id } });
+    expect(within(form).getByText("sales.orders")).toBeTruthy();
+    fireEvent.click(within(form).getByRole("button", { name: "Start experiment" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(`/w/${WS}/work?tab=ml&experiment=${experiment.id}`));
+    expect(await screen.findByRole("region", { name: "ML experiment result" })).toBeTruthy();
+    expect(calls(f, "POST", /\/analysis$/)).toHaveLength(0);
+    const [, init] = calls(f, "POST", /\/ml\/experiments$/)[0];
+    expect(JSON.parse(String(init?.body))).toEqual({ definition: plan.id });
   });
 });
 

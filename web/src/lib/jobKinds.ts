@@ -6,13 +6,13 @@
  * the only place that knows the mapping, and the one function to replace when the endpoint lands.
  * A kind that cannot run is returned disabled with its reason, so the UI never starts a pretend run.
  */
-import type { CapabilitySummary } from "../api";
+import type { CapabilitySummary, JobAvailability, WorkMode } from "../api";
 import { roleAtLeast } from "../routes";
 
 export type JobKindId = "explain" | "compare" | "forecast" | "predict" | "prepare" | "monitor";
 
 /** What starting the kind does: an investigation, the Prepare data panel, or a new monitor. */
-export type JobAction = "investigate" | "prepare" | "monitor";
+export type JobAction = "investigate" | "prepare" | "monitor" | "ml";
 
 export interface JobKind {
   id: JobKindId;
@@ -105,5 +105,25 @@ export function jobKindsFromCapabilities(capabilities: CapabilitySummary[], ctx:
     }
     return { id: spec.id, label: spec.label, description: spec.description, action: spec.action, enabled: reason === null, reason, uses,
       objectivePrefix: spec.objectivePrefix };
+  });
+}
+
+/** The server decides availability. A selected mode affects this menu, not data access. */
+export function jobKindsFromServer(rows: JobAvailability[], modes: WorkMode[]): JobKind[] {
+  return rows.map((row) => {
+    const id = row.key;
+    const mode = row.mode;
+    let reason = !modes.includes(mode) ? `Enable ${mode === "ml" ? "ML" : mode} in Workspace work modes first.`
+      : !row.available ? row.reasons.map((r) => r.message).join(" ") || "This work is not ready here."
+        : null;
+    return { id, label: row.label, description: {
+      explain: "Investigate a question and keep verified findings.",
+      compare: "Compare groups or periods with tested findings.",
+      forecast: "Forecast from a published ML definition.",
+      predict: "Train and evaluate a model from a published ML definition.",
+      prepare: "Load data or build a checked recipe.",
+      monitor: "Watch a metric and raise an alert.",
+    }[id], action: id === "prepare" ? "prepare" : id === "monitor" ? "monitor" : id === "forecast" || id === "predict" ? "ml" : "investigate",
+    enabled: reason === null, reason, uses: row.capabilities.filter((c) => c.usable).map((c) => c.id) };
   });
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type CatalogAsset, type Insight, type Run, type Source, type WorkspaceDetail } from "../api";
 import { StartWorkButton } from "../components/StartWork";
+import { WorkModesSettings } from "../components/WorkModes";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, Stat, Value } from "../components/ui";
 import { fmtDate } from "../lib/format";
 import { useAction, useAsync, type AsyncState } from "../lib/hooks";
@@ -71,6 +72,7 @@ export function WorkspaceHomePage() {
           <AtAGlance ws={w} runs={runs.data} />
         </>
       )}
+      {w.role === "owner" && !!runs.data?.length && <WorkModesSettings wsId={wsId} />}
     </div>
   );
 }
