@@ -116,14 +116,14 @@ def install_egress_guard(endpoints: Iterable[str] = ()) -> None:
 
     endpoints = list(endpoints)
     names, pairs = resolve_allowed(endpoints)
-    _installed.update(names=names, pairs=pairs, endpoints=endpoints, resolved_at=time.monotonic())
+    _installed.update(names=names, pairs=pairs, endpoints=endpoints, looked_up=time.monotonic())
     if _installed.get("patched"):
         return
 
     def refresh() -> None:
-        if _installed["endpoints"] and time.monotonic() - _installed["resolved_at"] >= 5:
+        if _installed["endpoints"] and time.monotonic() - _installed["looked_up"] >= 5:
             _installed["names"], _installed["pairs"] = resolve_allowed(_installed["endpoints"])
-            _installed["resolved_at"] = time.monotonic()
+            _installed["looked_up"] = time.monotonic()
 
     real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
     real_sendto, real_getaddrinfo = socket.socket.sendto, socket.getaddrinfo
