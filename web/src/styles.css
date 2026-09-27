@@ -927,7 +927,7 @@ button.job-kind-button:focus-visible { outline: 2px solid var(--accent); outline
 .guide-trigger { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-2); }
 .guide-mark { display: inline-grid; place-items: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; border: 1.5px solid currentColor;
   font-size: 0.72rem; font-weight: 700; line-height: 1; }
-@media (max-width: 640px) { .guide-trigger { padding-inline: 0.45rem; } }
+@media (max-width: 640px) { .guide-trigger { padding-inline: 0.45rem; } .guide-trigger > .guide-label { display: none; } }
 .guide-drawer { width: min(600px, 100%); }
 .guide-hint { color: var(--text-2); background: var(--surface-2); border-radius: var(--radius-sm); padding: 0.5rem 0.7rem; margin: 0.6rem 0; }
 .guide-group { margin-top: 1rem; }

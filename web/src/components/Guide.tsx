@@ -18,8 +18,8 @@ export function GuideButton({ wsId }: { wsId?: string }) {
   return (
     <>
       <button type="button" ref={ref} className="btn btn-sm guide-trigger" data-tour="guide" aria-haspopup="dialog"
-        onClick={() => setOpen(true)}>
-        <span aria-hidden="true" className="guide-mark">?</span> Guide
+        aria-label="Guide" onClick={() => setOpen(true)}>
+        <span aria-hidden="true" className="guide-mark">?</span><span className="guide-label" aria-hidden="true"> Guide</span>
       </button>
       {open && <GuideDrawer wsId={wsId} onClose={() => { setOpen(false); ref.current?.focus(); }} />}
     </>

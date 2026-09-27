@@ -36,7 +36,7 @@ test.describe("light IA (spec v4 §15)", () => {
     const nav = page.getByRole("navigation", { name: "Main" });
     await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Ask" }).click();
     await expect(page).toHaveURL(`/w/${WS}/work/ask`);
-    await page.getByLabel("Question").fill("How many P1 incidents per assignment group?");
+    await page.getByLabel("Question", { exact: true }).fill("How many P1 incidents per assignment group?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByText("P1 incidents by assignment group.")).toBeVisible();
     await expect(page.getByText(/SELECT assignment_group/)).toBeVisible();
@@ -385,7 +385,7 @@ test.describe("wave-1 panels", () => {
 test.describe("Ask (P4-U02)", () => {
   test("ask → promote to monitor → investigate", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/ask`);
-    await page.getByLabel("Question").fill("How many P1 incidents per assignment group?");
+    await page.getByLabel("Question", { exact: true }).fill("How many P1 incidents per assignment group?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const answer = page.getByRole("article", { name: "Question 1" });
     await expect(answer.getByText("P1 incidents by assignment group.")).toBeVisible();
@@ -411,7 +411,7 @@ test.describe("Ask (P4-U02)", () => {
 
   test("a distribution is answered by the rules without a model, and a follow-up grouping is one click", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/ask`);
-    await page.getByLabel("Question").fill("distribution of incident");
+    await page.getByLabel("Question", { exact: true }).fill("distribution of incident");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const answer = page.getByRole("article").first();
     await expect(answer.getByText("Built from the catalog · no model")).toBeVisible();
@@ -422,7 +422,7 @@ test.describe("Ask (P4-U02)", () => {
 
   test("no provider key: the refusal says which key to set and to restart the containers", async ({ page }) => {
     await signIn(page, `/w/${WS}/ask`);
-    await page.getByLabel("Question").fill("Which configuration items had incidents in two consecutive weeks?");
+    await page.getByLabel("Question", { exact: true }).fill("Which configuration items had incidents in two consecutive weeks?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const turn = page.getByRole("article", { name: "Question 1" });
     await expect(turn.getByText("No model provider key is set for the API")).toBeVisible();
@@ -431,7 +431,7 @@ test.describe("Ask (P4-U02)", () => {
 
   test("a vague question gets the clarify refusal with its remedy", async ({ page }) => {
     await signIn(page, `/w/${WS}/ask`);
-    await page.getByLabel("Question").fill("what about it?");
+    await page.getByLabel("Question", { exact: true }).fill("what about it?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const turn = page.getByRole("article", { name: "Question 1" });
     await expect(turn.getByText("The question needs more detail")).toBeVisible();
@@ -559,7 +559,7 @@ test.describe("knowledge studio (P4-U04)", () => {
     // Ask: the approved document is in the context of the answer, as a receipt.
     const nav = page.getByRole("navigation", { name: "Main" });
     await nav.getByRole("group", { name: "Work" }).getByRole("link", { name: "Ask" }).click();
-    await page.getByLabel("Question").fill("What is the reopen rate for P1 incidents?");
+    await page.getByLabel("Question", { exact: true }).fill("What is the reopen rate for P1 incidents?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByRole("article", { name: "Question 1" })).toBeVisible();
     const inspector = page.getByRole("complementary", { name: "Answer inspector" });
@@ -622,7 +622,7 @@ test.describe("operate and the gear (P4-U06, P4-U07)", () => {
     await run.getByRole("button", { name: "Run" }).click();
     const result = page.locator("[data-renderer='renderer.stat_result']");
     await expect(result.getByText("0.0042", { exact: true })).toBeVisible();
-    await expect(result.getByText("cramers_v", { exact: true })).toBeVisible();
+    await expect(result.getByText("Cramér's V effect", { exact: true })).toBeVisible(); // effect codes in plain words (P2-17)
     expect(api.unmatched).toEqual([]);
   });
 
