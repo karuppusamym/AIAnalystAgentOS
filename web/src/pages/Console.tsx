@@ -13,6 +13,8 @@ type Tab = "messages" | "tools" | "models" | "queries";
 export function ConsolePage() {
   const { wsId = "", runId = "" } = useParams();
   const data = useAsync(() => api.console(wsId, runId), [wsId, runId]);
+  // The investigation's question names it; its id stays in the link's tooltip.
+  const run = useAsync(() => api.getRun(wsId, runId), [wsId, runId]);
   const [tab, setTab] = useState<Tab>("messages");
   const [agent, setAgent] = useState("");
 
@@ -25,7 +27,7 @@ export function ConsolePage() {
 
   return (
     <div className="page">
-      <PageHeader title="Agent console" subtitle={<>Investigation <Link to={to.run(wsId, runId)}><code>{runId}</code></Link>: what each agent thought, called and queried.</>}
+      <PageHeader title="Agent console" subtitle={<>What each agent thought, called and queried in <Link to={to.run(wsId, runId)} title={runId}>{run.data?.objective ?? "this investigation"}</Link>.</>}
         actions={<button type="button" className="btn btn-sm" onClick={data.reload} disabled={data.loading}>{data.loading ? "Refreshing…" : "Refresh"}</button>} />
       <div className="stats-row card card-body">
         <Stat label="Cost" value={<Value value={d.cost?.usd} format="usd" />} />

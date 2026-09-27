@@ -92,7 +92,7 @@ describe("Outputs → Managed tables: rollback", () => {
     expect(within(table).getByText("superseded")).toBeTruthy();
     fireEvent.click(within(table).getByRole("button", { name: "Roll back v2" }));
     expect(await screen.findByText(/Rolled back: aos_out\.p1_clean serves version 1 again; version 2 is kept as rolled back\./)).toBeTruthy();
-    expect(await within(table).findByText("rolled_back")).toBeTruthy();
+    expect(await within(table).findByText("rolled back")).toBeTruthy();
   });
 });
 

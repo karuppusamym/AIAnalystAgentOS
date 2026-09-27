@@ -42,21 +42,21 @@ export function WorkspacesPage() {
                 {w.description && <p className="muted clamp-2">{w.description}</p>}
                 {w.objective && <p className="small clamp-2"><strong>Objective:</strong> {w.objective}</p>}
                 <div className="chip-row small">
-                  <span className="tag"><Value value={w.counts?.sources} format="int" suffix="sources" unknownLabel="sources unknown" /></span>
-                  <span className="tag"><Value value={w.counts?.runs} format="int" suffix="investigations" unknownLabel="investigations unknown" /></span>
-                  <span className="tag tag-success"><Value value={w.counts?.verified_insights} format="int" suffix="verified findings" unknownLabel="verified findings unknown" /></span>
-                  <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix="dashboards" unknownLabel="dashboards unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.sources} format="int" suffix={w.counts?.sources === 1 ? "source" : "sources"} unknownLabel="sources unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.runs} format="int" suffix={w.counts?.runs === 1 ? "investigation" : "investigations"} unknownLabel="investigations unknown" /></span>
+                  <span className="tag tag-success"><Value value={w.counts?.verified_insights} format="int" suffix={w.counts?.verified_insights === 1 ? "verified finding" : "verified findings"} unknownLabel="verified findings unknown" /></span>
+                  <span className="tag"><Value value={w.counts?.dashboard} format="int" suffix={w.counts?.dashboard === 1 ? "dashboard" : "dashboards"} unknownLabel="dashboards unknown" /></span>
                 </div>
                 <p className="muted small">Created {fmtDate(w.created_at)}</p>
                 {w.role === "owner" && <div className="chip-row">
-                  <button type="button" className="btn btn-sm" disabled={statusAction.busy}
+                  {w.status === "active" && <button type="button" className="btn btn-sm" aria-expanded={modesId === w.id}
+                    onClick={() => setModesId(modesId === w.id ? null : w.id)}>Work modes</button>}
+                  <button type="button" className="btn btn-sm" aria-expanded={inspectId === w.id}
+                    onClick={() => setInspectId(inspectId === w.id ? null : w.id)}>Data inventory</button>
+                  <button type="button" className={`btn btn-sm ${w.status === "active" ? "btn-ghost btn-danger-text" : ""}`} disabled={statusAction.busy}
                     onClick={() => void changeStatus(w.id, w.name, w.status === "active" ? "disabled" : "active")}>
                     {w.status === "active" ? "Disable workspace" : "Reactivate workspace"}
                   </button>
-                  <button type="button" className="btn btn-sm" aria-expanded={inspectId === w.id}
-                    onClick={() => setInspectId(inspectId === w.id ? null : w.id)}>Data inventory</button>
-                  {w.status === "active" && <button type="button" className="btn btn-sm" aria-expanded={modesId === w.id}
-                    onClick={() => setModesId(modesId === w.id ? null : w.id)}>Work modes</button>}
                 </div>}
                 {modesId === w.id && <WorkModesSettings wsId={w.id} />}
                 {inspectId === w.id && <div className="stack" aria-label={`Data inventory for ${w.name}`}>
