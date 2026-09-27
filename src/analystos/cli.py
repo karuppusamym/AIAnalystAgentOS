@@ -63,6 +63,12 @@ def provision_analytics_roles() -> dict:
         out["builder_login"] = ensure_builder_login(settings)
     except Exception as exc:  # noqa: BLE001
         log.warning("build login provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
+    try:  # the managed output writer's login (P6-03); clusters from before it lack it
+        from analystos.pipelines.writer import ensure_writer_login
+
+        out["writer_login"] = ensure_writer_login(settings)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("writer login provisioning skipped: %s", str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__)
     return out
 
 
@@ -134,7 +140,8 @@ def export_contracts() -> None:
               "definition_ref": definition.DefinitionRef, "pin_status": definition.PinStatus, "work_order": work.WorkOrderSpec,
               "recipe": recipe.Recipe, "workspace_brief": brief.WorkspaceBriefDoc,
               "readiness_assessment": brief.ReadinessAssessmentDoc, "job_kind": brief.JobKindAvailability,
-              "step": step.Step, "branch": step.Branch}
+              "step": step.Step, "branch": step.Branch,
+              "pipeline": work.PipelineSpec}
     for name, model in models.items():
         (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
     from analystos.contracts.events import EVENT_TYPES

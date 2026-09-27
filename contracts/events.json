@@ -61,6 +61,18 @@
   "notebook.created",
   "notebook.updated",
   "notification.created",
+  "pipeline.dry_run.blocked",
+  "pipeline.dry_run.completed",
+  "pipeline.dry_run.failed",
+  "pipeline.freshness.breached",
+  "pipeline.materialization.failed",
+  "pipeline.materialized",
+  "pipeline.published",
+  "pipeline.rolled_back",
+  "pipeline.run.blocked",
+  "pipeline.run.completed",
+  "pipeline.run.failed",
+  "pipeline.saved",
   "policy.denied",
   "profile.completed",
   "quality.issue.detected",
@@ -115,5 +127,6 @@
   "work_order.created",
   "work_order.updated",
   "workspace.created",
-  "workspace.updated"
+  "workspace.updated",
+  "writer_destination.provisioned"
 ]

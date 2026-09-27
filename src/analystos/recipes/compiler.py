@@ -14,6 +14,7 @@ the postgres form into a dbt model (`recipes/dbt.py`).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlglot import exp
@@ -104,12 +105,42 @@ def _literal(value: Any) -> exp.Expression:
     return exp.Literal.string(str(value))
 
 
+@dataclass(frozen=True)
+class SourceWindow:
+    """A watermark window on one source node (P6-02): `since <= column <= until`, either bound optional.
+    `until` is the high watermark measured before the run (the fixed cursor); `keep_nulls` keeps rows
+    without a watermark (a full rebuild does, an increment cannot see them)."""
+
+    column: str
+    type: str
+    since: Any = None
+    until: Any = None
+    keep_nulls: bool = False
+
+
+def window_predicate(w: SourceWindow, table: str | None = None) -> exp.Expression | None:
+    value = _cast(col(w.column, table), w.type)
+    bounds: list[exp.Expression] = []
+    if w.since is not None:
+        bounds.append(exp.GTE(this=value, expression=_cast(_literal(w.since), w.type)))
+    if w.until is not None:
+        bounds.append(exp.LTE(this=value.copy(), expression=_cast(_literal(w.until), w.type)))
+    if not bounds:
+        return None
+    pred = _and(bounds)
+    if w.keep_nulls:
+        pred = exp.Or(this=exp.Paren(this=pred), expression=exp.Is(this=col(w.column, table), expression=exp.Null()))
+    return exp.Paren(this=pred)
+
+
 class Compiler:
-    def __init__(self, validated: ValidatedRecipe, dialect: str = "postgres") -> None:
+    def __init__(self, validated: ValidatedRecipe, dialect: str = "postgres", *,
+                 windows: dict[str, SourceWindow] | None = None) -> None:
         if dialect not in COMPILER_DIALECTS:
             raise InvalidInput(f"no recipe compiler for dialect {dialect} (supported: {', '.join(COMPILER_DIALECTS)})")
         self.v = validated
         self.dialect = dialect
+        self.windows = dict(windows or {})
 
     # ------------------------------------------------------------------ one node
     def _names(self, node_id: str) -> list[str]:
@@ -122,8 +153,10 @@ class Compiler:
             alias = node.asset.split(".", 1)[1]
             table = _asset_table(node.asset)
             table.set("alias", exp.TableAlias(this=ident(alias)))
-            return exp.select(*[exp.alias_(_cast(col(c.name, alias), c.type), ident(c.name))
-                                for c in node.output_schema or []]).from_(table)
+            q = exp.select(*[exp.alias_(_cast(col(c.name, alias), c.type), ident(c.name))
+                             for c in node.output_schema or []]).from_(table)
+            pred = window_predicate(self.windows[node.id], alias) if node.id in self.windows else None
+            return q.where(pred) if pred is not None else q
         if isinstance(node, OutputNode):
             return exp.select(*[col(c.name) for c in node.output_schema or []]).from_(_table(cte_name(node.input)))
         if isinstance(node, SelectNode):

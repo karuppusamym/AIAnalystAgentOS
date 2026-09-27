@@ -30,6 +30,8 @@ x-app-env: &app-env
   ANALYSTOS_ANALYTICS_READER_URL: postgresql+psycopg://analystos_reader:reader@${ANALYSTOS_PG_POOLER:-postgres:5432}/analytics
   # dbt keeps its role for the whole session: never through a transaction-mode pooler.
   ANALYSTOS_ANALYTICS_BUILDER_URL: postgresql+psycopg://analystos_builder:builder@postgres:5432/analytics
+  # the managed output writer (P6-03) sets a role per transaction; a direct connection like the builder.
+  ANALYSTOS_ANALYTICS_WRITER_URL: postgresql+psycopg://analystos_writer:writer@postgres:5432/analytics
   # true when the URLs above go through PgBouncer in transaction mode (no server-side prepared statements).
   ANALYSTOS_DB_TRANSACTION_POOLER: ${ANALYSTOS_DB_TRANSACTION_POOLER:-false}
   ANALYSTOS_NEO4J_URI: bolt://neo4j:7687

@@ -111,12 +111,19 @@ def _typed(model: Any) -> Validator:
     return check
 
 
+def _recipe(session: Session, workspace_id: str, key: str, spec: dict[str, Any]) -> dict[str, Any]:
+    from analystos.contracts.recipe import validate_recipe
+
+    return validate_recipe(spec).stamped()
+
+
 def _register_builtin_kinds() -> None:
     from analystos.contracts.work import MLSpec, PipelineSpec
 
     register_kind("playbook", _playbook)
     register_kind("saved_analysis", _saved_analysis)
-    register_kind("recipe", _typed(PipelineSpec))  # P6-04 replaces the placeholder contract
+    register_kind("recipe", _recipe)  # the recipe IR (P6-04)
+    register_kind("pipeline", _typed(PipelineSpec))  # P6-01
     register_kind("ml_spec", _typed(MLSpec))  # P5-01 replaces the placeholder contract
     register_kind("query_tool")  # P7-11
 

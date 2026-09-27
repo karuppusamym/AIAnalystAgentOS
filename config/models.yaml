@@ -122,6 +122,9 @@ ladders:
   metric_match: [cache, rules, decision]
   join_path_choice: [cache, rules, decision]
   decision_structured: [cache, llm_small]  # the DecisionService's structured-output backend
+  # P6-08: the `engineer` agent proposes recipe nodes and PipelineSpecs. The rules rung is skill.pipeline_propose's
+  # catalog-derived staging recipe; whatever a model proposes passes the recipe IR validator before any compile.
+  pipeline_proposal: [cache, rules, llm_small]
   health_probe: [cache, llm_small]  # never cached (not a cacheable purpose); admin `GET /api/admin/models/health?probe=1`: one tiny billable request
 
 routing:
@@ -137,6 +140,7 @@ routing:
   dashboard_design: low_cost
   feedback_interpretation: coding
   summarization: low_cost
+  pipeline_proposal: low_cost  # P6-08 engineer agent; the IR validator decides
   agent_actions: low_cost  # declarative agents (agents/generic.py) propose typed actions; default_actions are the rule path
   metadata_enrichment: low_cost
   verification: independent_model_family
@@ -164,6 +168,7 @@ escalation:
     metadata_enrichment: never   # batch crawl prompts; the deterministic semantics already ran
     decision_structured: never   # the DecisionService falls back to its rules backend
     agent_actions: never         # declarative agents have default_actions
+    pipeline_proposal: never     # the engineer agent has default_actions (rules)
     dashboard_design: never
     summarization: never
     health_probe: never

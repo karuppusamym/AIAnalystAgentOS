@@ -1,0 +1,24 @@
+# Data preparation (P6-08, job kind `prepare`): collect metadata of the selected tables, then the declarative
+# engineer agent proposes a recipe and a PipelineSpec, each validated by the recipe IR validator before anything
+# could compile it. The output is a proposal artifact: a person saves and publishes the recipe and the pipeline,
+# dry-runs it, and a materialization needs its own hash-bound approval. Published with the platform (built-in
+# playbooks resolve as published definitions, ADR-0021); disabled per workspace until an owner enables it and,
+# being `tested`, it runs only below autonomy 3 and never on a schedule until it is certified.
+apiVersion: analystos/v1
+kind: Playbook
+id: playbook.prepare
+version: 1.0.0
+summary: Prepare the selected tables (collect metadata, then the engineer agent proposes a validated recipe and PipelineSpec)
+determinism: model
+side_effect: write_internal
+cost_class: llm_small
+certification: {status: tested, evidence: tests/unit/test_engineer_agent.py}
+tags: [transformation, pipelines]
+spec:
+  framing: false
+  steps:
+    - {key: metadata, use: agent.metadata, title: Discover technical metadata of selected tables}
+    - key: proposal
+      use: agent.engineer
+      title: Propose a validated recipe and PipelineSpec for the selected tables
+      after: [metadata]

@@ -39,7 +39,8 @@ config:
 
 secrets:
   # Name of a Secret holding at least ANALYSTOS_DATABASE_URL, ANALYSTOS_ANALYTICS_LOADER_URL,
-  # ANALYSTOS_ANALYTICS_READER_URL, ANALYSTOS_ANALYTICS_BUILDER_URL (the BuildGateway's login; outside
+  # ANALYSTOS_ANALYTICS_READER_URL, ANALYSTOS_ANALYTICS_BUILDER_URL (the BuildGateway's login) and
+  # ANALYSTOS_ANALYTICS_WRITER_URL (the managed output writer's login; for both, outside
   # env=dev its password must not be the development default, or provisioning and builds refuse), ANALYSTOS_REDIS_URL, ANALYSTOS_JWT_SECRET, ANALYSTOS_BOOTSTRAP_ADMIN_PASSWORD,
   # ANALYSTOS_SUPERSET_PASSWORD; optional OPENROUTER_API_KEY, ANTHROPIC_API_KEY, AZURE_OPENAI_API_KEY,
   # ANALYSTOS_OIDC_CLIENT_SECRET and source passwords referenced by `secret_ref: env:NAME`.

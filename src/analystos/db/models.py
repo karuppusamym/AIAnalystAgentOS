@@ -1663,3 +1663,106 @@ class Notebook(Base):
     created_by: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Pipeline(Base):
+    """One version of a PipelineSpec (P6-01): the envelope around published recipes (input versions, output
+    contract, join expectations, reconciliation checks, freshness, budgets, incremental block and managed
+    destination). Drafts until published (ADR-0021); a changed save is a new version."""
+
+    __tablename__ = "pipeline"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", "version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published | superseded
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class PipelineRun(Base):
+    """One pipeline execution: a dry run (compiled SQL, per-source scope and snapshot manifest, key/fan-out/
+    unmatched checks, the reconciled virtual output and its candidate snapshot) or a run into the managed
+    recipe output (incremental window, full, reconcile, backfill). A dry run of a pipeline with a destination
+    asks for the hash-bound approval its materialization needs. Provenance: pipeline -> run -> materialization."""
+
+    __tablename__ = "pipeline_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    pipeline_id: Mapped[str] = mapped_column(ForeignKey("pipeline.id", ondelete="CASCADE"), index=True)
+    pipeline_name: Mapped[str] = mapped_column(String(60))
+    pipeline_version: Mapped[int] = mapped_column(Integer)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(20))  # dry_run | auto | full | reconcile | backfill
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|blocked|awaiting_approval|failed|refused
+    recipes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{name, version, id, spec_hash}]
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    sql: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    reconciliation: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    candidate: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    recipe_run_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    plan_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WriterDestination(Base):
+    """An allowlisted destination of the managed output writer (P6-03, ADR-0011): a schema the workspace
+    owner designated, and optionally the tables allowed in it. The writer's per-workspace role holds CREATE
+    on these schemas only; sources, build targets and system schemas are never destinations."""
+
+    __tablename__ = "writer_destination"
+    __table_args__ = (UniqueConstraint("engine", "schema_name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    engine: Mapped[str] = mapped_column(String(80))  # postgres:analytics
+    schema_name: Mapped[str] = mapped_column(String(63))
+    tables: Mapped[list[str]] = mapped_column(JSON, default=list)  # empty = any table name in the schema
+    writer_role: Mapped[str] = mapped_column(String(63))
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | retired
+    provisioning: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+
+
+class Materialization(Base):
+    """One version of a destination table written by the managed writer (P6-03): staged as its own
+    version table, validated, then promoted atomically (the destination view is re-pointed in one
+    transaction). `previous_id` is the rollback pointer to the good version it replaced; `idempotency_key`
+    makes a retry of the same approved candidate resume from its `checkpoint` instead of writing twice."""
+
+    __tablename__ = "materialization"
+    __table_args__ = (UniqueConstraint("idempotency_key"), UniqueConstraint("destination_id", "table_name", "version"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    destination_id: Mapped[str] = mapped_column(ForeignKey("writer_destination.id", ondelete="CASCADE"), index=True)
+    schema_name: Mapped[str] = mapped_column(String(63))
+    table_name: Mapped[str] = mapped_column(String(63))
+    version: Mapped[int] = mapped_column(Integer)
+    version_table: Mapped[str] = mapped_column(String(63))
+    pipeline_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    pipeline_run_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    candidate: Mapped[str] = mapped_column(String(64))  # the approved candidate snapshot digest
+    # approved | staged | promoted | superseded | rolled_back | failed
+    status: Mapped[str] = mapped_column(String(20), default="approved")
+    row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    checkpoint: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

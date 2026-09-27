@@ -168,14 +168,14 @@ class RecipeExecutor:
 
     def __init__(self, gateway: Any, scope: DataScope, validated: ValidatedRecipe, plan: ExecutionPlan, *, actor: str,
                  store: SnapshotStore, compute: Any = None, run_id: str | None = None, max_rows: int | None = None,
-                 timeout_seconds: int | None = None) -> None:
+                 timeout_seconds: int | None = None, windows: dict[str, Any] | None = None) -> None:
         self.gateway, self.scope, self.v, self.plan = gateway, scope, validated, plan
         self.actor, self.store, self.run_id = actor, store, run_id
         self.compute = compute or (lambda job: run_snapshot_job(job, store=store))
         settings = gateway.settings
         self.max_rows = min(x for x in (max_rows, scope.max_rows, settings.query_max_rows) if x)
         self.timeout = min(x for x in (timeout_seconds, scope.timeout_seconds, settings.query_timeout_seconds) if x)
-        self.compiler = Compiler(validated, plan.dialect)
+        self.compiler = Compiler(validated, plan.dialect, windows=windows)
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.query_ids: list[str] = []
 
