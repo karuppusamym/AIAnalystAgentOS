@@ -9,6 +9,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from analystos.core.config import get_settings
+from analystos.core.errors import UpstreamUnavailable
 from analystos.core.logging import get_logger
 from analystos.runtime import engine
 
@@ -200,8 +201,8 @@ def run_ml_compute(job: dict) -> dict:
     """An ML job (`analystos.ml.jobs.run_ml_job`, ADR-0024). When the installation runs the isolated `compute-ml`
     pool (P7-06) the job runs there, without credentials, and packages are unpickled only there; a failure there
     is the job's answer, never a silent fallback. Otherwise on the Temporal `compute` pool, or in-process when
-    the orchestrator is local or Temporal cannot take it. The job reads and writes only content-addressed
-    files, so every path gives the same result."""
+    the orchestrator is local or Temporal cannot be reached (a workflow failure or timeout is raised, not
+    re-run). The job reads and writes only content-addressed files, so every path gives the same result."""
     from analystos.ml.jobs import run_ml_job
     from analystos.workers.dispatch import pool_configured
 
@@ -217,15 +218,47 @@ def run_ml_compute(job: dict) -> dict:
         from analystos.core.ids import new_id
         from analystos.workflows.queues import queue_name, workflow_options
 
-        client = await _temporal_client()
-        return await client.execute_workflow("MLComputeWorkflow", args=[job, workflow_options()], id=new_id("ml-compute"),
-                                             task_queue=queue_name(settings.temporal_queue_prefix, "analysis"))
+        try:
+            client = await _temporal_client()
+            handle = await client.start_workflow("MLComputeWorkflow", args=[job, workflow_options()], id=new_id("ml-compute"),
+                                                 task_queue=queue_name(settings.temporal_queue_prefix, "analysis"))
+        except Exception as exc:  # noqa: BLE001 - classified below: only a connection failure means nothing started
+            if _connection_failure(exc):
+                raise TemporalUnreachable(str(exc)) from exc
+            raise
+        return await handle.result()
+
+    fut: Future = asyncio.run_coroutine_threadsafe(go(), _event_loop())
     try:
-        fut: Future = asyncio.run_coroutine_threadsafe(go(), _event_loop())
         return fut.result(timeout=max(900, int(settings.ml_max_seconds) + 300))
     except Exception as exc:
-        log.warning("ML compute not handed to Temporal (%s); running it in-process", exc)
+        if not temporal_unreachable(exc):
+            # The workflow ran (or is running) on Temporal: its failure or timeout is the job's answer.
+            # Running it again in-process would wait as long again and could train it twice.
+            fut.cancel()
+            raise UpstreamUnavailable(f"ML compute on Temporal did not finish: {type(exc).__name__}: {str(exc)[:300]}") from exc
+        log.warning("Temporal unreachable for ML compute (%s); running it in-process", exc)
         return run_ml_job(job)
+
+
+class TemporalUnreachable(Exception):
+    """Temporal could not be reached before the workflow started, so running the job in-process is safe."""
+
+
+def _connection_failure(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError):
+        return False
+    # temporalio's Client.connect raises RuntimeError when it cannot connect; ImportError = no temporal extra
+    if isinstance(exc, OSError | RuntimeError | ImportError):
+        return True
+    status = getattr(exc, "status", None)  # temporalio.service.RPCError: the service is unavailable
+    return type(exc).__name__ == "RPCError" and getattr(status, "name", None) == "UNAVAILABLE"
+
+
+def temporal_unreachable(exc: BaseException) -> bool:
+    """Only a failure to reach Temporal before the workflow started allows the in-process fallback; a
+    workflow failure or a timeout while waiting for its result does not (the workflow may still run)."""
+    return isinstance(exc, TemporalUnreachable)
 
 
 # ------------------------------------------------------------------------------ local orchestrator

@@ -138,8 +138,13 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
 def report_file(art: Artifact, fmt: str) -> tuple[bytes, str, str]:
     info = (art.content.get("files") or {}).get(fmt)
     if not info:
-        raise NotFound(f"format {fmt} not generated for this report")
-    content = Path(info["path"]).read_bytes()
+        why = (art.content.get("unavailable_formats") or {}).get(fmt)
+        raise NotFound(f"format {fmt} not generated for this report" + (f": {why}" if why else ""))
+    try:
+        content = Path(info["path"]).read_bytes()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        raise NotFound(f"the stored {fmt} file of this report is missing from the artifact store; generate the report again",
+                       details={"artifact_id": art.id, "format": fmt, "remedy": "regenerate"}) from None
     if hashlib.sha256(content).hexdigest() != info["sha256"]:
         raise InvalidInput("stored report does not match its recorded hash")
     return content, info["mime"], info["ext"]

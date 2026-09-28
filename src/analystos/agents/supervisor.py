@@ -136,14 +136,30 @@ def finalize(ctx: RunContext) -> dict:
     report_id = None
     report_cfg = (ctx.run.origin or {}).get("report")
     if report_cfg:
-        from analystos.services.reports import generate_report
+        report_id = _scheduled_report(ctx, report_cfg)
+    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
+            "registered_hypotheses": registered}
 
+
+def _scheduled_report(ctx: RunContext, report_cfg: dict) -> str | None:
+    """The report a schedule asked for is best effort: the summary is already committed, so a disabled
+    feature or a missing PDF/XLSX extra is recorded on the run (`report_error`) and never fails the run."""
+    from analystos.core.logging import get_logger
+    from analystos.services.reports import generate_report
+
+    try:
         with session_scope() as s:
             art = generate_report(s, ctx.run.id, kind=report_cfg.get("kind", "weekly_summary"),
                                   formats=tuple(report_cfg.get("formats", ["html", "pdf", "xlsx"])), actor=f"agent:{ctx.agent.id}",
                                   finalizing=True)
-            report_id = art.id
             run = s.get(AnalysisRun, ctx.run.id)
-            run.summary = {**(run.summary or {}), "report_artifact_id": report_id}
-    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
-            "registered_hypotheses": registered}
+            run.summary = {**(run.summary or {}), "report_artifact_id": art.id}
+            return art.id
+    except Exception as exc:  # noqa: BLE001 - recorded and said; the findings stand without the report
+        message = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
+        get_logger(__name__).warning("report for run %s not generated: %s", ctx.run.id, message)
+        with session_scope() as s:
+            run = s.get(AnalysisRun, ctx.run.id)
+            run.summary = {**(run.summary or {}), "report_error": str(message)[:1000]}
+        ctx.say(f"The report was not generated: {str(message)[:300]}. The findings and summary are saved.", kind="decision")
+        return None

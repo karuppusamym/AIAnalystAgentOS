@@ -173,6 +173,26 @@ def test_drafts_and_leakage_are_refused_and_recorded(world):
         assert exp.query_ids  # the dataset came through the gateway
 
 
+def test_an_unexpected_failure_ends_the_experiment_as_failed(world, monkeypatch):
+    from analystos.core.errors import AnalystOSError
+    from analystos.db.base import session_scope
+    from analystos.db.models import MLExperiment
+    from analystos.services import ml
+
+    spec = _publish(world, "ml_spec", "crashes", _spec(world))
+
+    def crash(job, workspace_id):
+        raise KeyError("an internal detail")
+
+    monkeypatch.setattr(ml, "_compute", crash)
+    with pytest.raises(AnalystOSError, match="unexpected error") as err:
+        ml.start_experiment(world["owner"], world["ws"], spec["id"])
+    assert "internal detail" not in err.value.message
+    with session_scope() as s:
+        exp = s.get(MLExperiment, err.value.details["experiment_id"])
+        assert exp.status == "failed" and exp.finished_at is not None and "unexpected error" in exp.error
+
+
 # ------------------------------------------------------------------------------------ the governed lifecycle
 def test_train_evaluate_approve_score_monitor(world):
     from analystos.core.config import get_settings
