@@ -66,8 +66,9 @@ def update_workspace(session: Session, user: User, workspace_id: str, patch: dic
 
 
 def delete_workspace(session: Session, user: User, workspace_id: str) -> None:
-    require_role(session, user, workspace_id, "owner")
-    ws = get_workspace(session, workspace_id)
+    # A disabled workspace is the usual one to clean up; it must not be stuck in the list for good.
+    require_role(session, user, workspace_id, "owner", allow_disabled=True)
+    ws = get_workspace(session, workspace_id, allow_disabled=True)
     ws.status = "disabled"
     ws.deleted_at = utcnow()
     audit(f"user:{user.id}", "workspace.deleted", workspace_id=ws.id, session=session)
