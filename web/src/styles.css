@@ -475,22 +475,10 @@ details.json pre { margin-top: 0.4rem; }
 .event-payload { grid-column: 2 / -1; }
 @media (max-width: 700px) { .event { grid-template-columns: 60px minmax(0, 1fr); } .event-text, .event-payload { grid-column: 1 / -1; } }
 
-.tree-question { margin-bottom: 1rem; }
-.tree-question-head { font-weight: 620; padding: 0.4rem 0.6rem; background: var(--surface-2); border-radius: var(--radius-sm); }
+.tree-question-head { font-weight: 620; font-size: 0.92rem; margin: 0 0 0.45rem; padding: 0.4rem 0.6rem; background: var(--surface-2); border-radius: var(--radius-sm); }
 .tree-kind { display: inline-block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 700; margin-right: 0.4rem; }
-.tree-hyps, .tree-children, .tree-findings { list-style: none; margin: 0; padding: 0 0 0 1.1rem; border-left: 2px solid var(--border); }
-.tree-hyps { margin-left: 0.6rem; }
-.tree-hyp > details > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem; padding: 0.45rem 0; list-style: none; }
-.tree-hyp > details > summary::-webkit-details-marker { display: none; }
-.tree-hyp > details > summary::before { content: "▸"; color: var(--text-3); width: 0.8rem; }
-.tree-hyp > details[open] > summary::before { content: "▾"; }
-.tree-statement { flex: 1 1 280px; min-width: 0; }
 .hyp-icon { font-weight: 800; width: 1.1rem; text-align: center; }
-.tree-hyp-body { padding: 0 0 0.5rem 1.3rem; }
 .highlights { list-style: none; padding: 0; margin: 0.3rem 0; display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; }
-.tree-finding { padding: 0.45rem 0.6rem; margin: 0.35rem 0; background: var(--success-bg); border: 1px solid var(--success-border); border-radius: var(--radius-sm); list-style: none; }
-.tree-finding-head { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; align-items: baseline; margin-bottom: 0.2rem; }
-.tree-finding-meta { max-width: 260px; }
 .groups { margin: 0.3rem 0; }
 
 .approvals { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -672,24 +660,36 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .success-text { color: var(--success); }
 
 .board-wrap { display: flex; flex-direction: column; gap: 0.9rem; }
-/* Columns wrap to the next row rather than scroll sideways, so no card is ever cut off at the edge. */
-.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.7rem; padding-bottom: 0.3rem; }
-.board-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.board-col-head h3 { margin: 0; font-size: 0.9rem; }
-.board-col-head p { margin: 0; }
-.board-col-supported { border-top: 3px solid var(--success); }
-.board-col-rejected { border-top: 3px solid var(--danger); }
-.board-col-inconclusive { border-top: 3px solid var(--warning); }
-.board-col-testing { border-top: 3px solid var(--running); }
-.board-col-proposed { border-top: 3px solid var(--info); }
-.board-empty { margin: 0; }
+.hyp-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.hyp-toolbar .seg-btn { text-transform: none; }
+.hyp-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.hyp-children { margin: 0.5rem 0 0 0.4rem; padding-left: 0.8rem; border-left: 2px solid var(--border); }
+.hyp-row > article { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--neutral-border); border-radius: var(--radius-sm); }
+.hyp-row-supported > article { border-left-color: var(--success); }
+.hyp-row-rejected > article { border-left-color: var(--danger); }
+.hyp-row-inconclusive > article { border-left-color: var(--warning); }
+.hyp-row-testing > article { border-left-color: var(--running); }
+.hyp-row-proposed > article { border-left-color: var(--info); }
+.hyp-row-superseded > article { opacity: 0.75; }
+.hyp-row details > summary { display: grid; grid-template-columns: 0.9rem 1.1rem auto minmax(0, 1fr) auto; align-items: baseline; gap: 0.15rem 0.5rem;
+  padding: 0.5rem 0.7rem; cursor: pointer; list-style: none; }
+.hyp-row details > summary::-webkit-details-marker { display: none; }
+.hyp-row details > summary::before { content: "▸"; color: var(--text-3); }
+.hyp-row details[open] > summary::before { content: "▾"; }
+.hyp-row-statement { min-width: 0; font-weight: 520; }
+.hyp-row-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; justify-self: end; }
+.hyp-row-tags .tag { margin-left: 0; }
+.hyp-row-result { grid-column: 4 / -1; }
+.hyp-row-body { padding: 0 0.7rem 0.6rem 2.8rem; }
+.hyp-row-body > p { margin: 0.3rem 0; }
+@media (max-width: 700px) {
+  .hyp-row details > summary { grid-template-columns: 0.9rem 1.1rem minmax(0, 1fr); }
+  .hyp-row-statement, .hyp-row-tags, .hyp-row-result { grid-column: 3 / -1; justify-self: start; }
+  .hyp-row-body { padding-left: 0.9rem; }
+}
 .board-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
 .board-cards-row { flex-direction: row; flex-wrap: wrap; }
 .board-cards-row > li { flex: 1 1 260px; max-width: 420px; }
-.hyp-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; box-shadow: var(--shadow); }
-.hyp-card-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.hyp-card-head .tag { margin-left: 0; }
-.hyp-card-statement { margin: 0.35rem 0; font-size: 0.9rem; }
 .finding-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 .finding-card { border: 1px solid var(--border); border-left: 3px solid var(--neutral-border); border-radius: var(--radius-sm); padding: 0.5rem 0.6rem; background: var(--surface); }
 .finding-card.finding-verified { border-left-color: var(--success); }
@@ -697,7 +697,6 @@ p a:not(.btn), .empty-body a, .alert a, .muted a, .small a { text-decoration: un
 .finding-card p { margin: 0.3rem 0; }
 .finding-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.45rem; }
 .finding-reject { margin-top: 0.45rem; gap: 0.4rem; }
-.board-superseded ul { margin: 0.3rem 0 0; }
 
 .drawer-backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(10, 10, 12, 0.45); display: flex; justify-content: flex-end; }
 .drawer { width: min(520px, 100%); height: 100%; background: var(--surface); color: var(--text); border-left: 1px solid var(--border-strong); box-shadow: -8px 0 30px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }

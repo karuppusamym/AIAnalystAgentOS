@@ -260,7 +260,7 @@ describe("investigation board", () => {
   it("shows no raw JSON on the default path", async () => {
     mockFetch();
     const { container } = renderAt(`/w/${WS}/investigate/${RUN}`);
-    await screen.findByRole("heading", { name: /Supported/ });
+    await screen.findByRole("article", { name: "Hypothesis H1" });
     await screen.findByText(/Tokens avoided/);
     const blocks = [...container.querySelectorAll(".json")];
     expect(blocks.length).toBeGreaterThan(0); // the compiled constraints exist …
@@ -272,16 +272,24 @@ describe("investigation board", () => {
     expect(container.querySelector("details.json")).toBeNull();
   });
 
-  it("lays out the board, the redirect chat and the cost meter", async () => {
+  it("lays out the hypotheses, the redirect chat and the cost meter", async () => {
     mockFetch();
     const { container } = renderAt(`/w/${WS}/investigate/${RUN}`);
-    const supported = await screen.findByRole("listitem", { name: /Supported/ });
-    expect(within(supported).getByText("Network resolves P1s slower")).toBeTruthy();
-    expect(within(supported).getByRole("article", { name: "Finding F1" })).toBeTruthy();
-    expect(within(screen.getByRole("listitem", { name: /Rejected/ })).getByText("P1 volume rose in Q3")).toBeTruthy();
-    expect(within(screen.getByRole("listitem", { name: /Testing/ })).getByText("Reassignments lengthen P1 resolution")).toBeTruthy();
-    expect(within(screen.getByRole("listitem", { name: /Proposed/ })).getByText("Change freezes delay fixes")).toBeTruthy();
-    expect(within(screen.getByRole("listitem", { name: /Inconclusive/ })).getByRole("article", { name: "Finding F2" })).toBeTruthy();
+    // Board and tree are one view: status counts that filter, and one row per hypothesis carrying its findings.
+    const filters = await screen.findByRole("radiogroup", { name: "Show hypotheses" });
+    expect(within(filters).getAllByRole("radio").map((b) => b.textContent?.replace(/^\W+/, "").trim()))
+      .toEqual(["All (5)", "Proposed (1)", "Testing (1)", "Supported (1)", "Rejected (1)", "Inconclusive (1)"]);
+    const h1 = screen.getByRole("article", { name: "Hypothesis H1" });
+    expect(within(h1).getByText("Network resolves P1s slower")).toBeTruthy();
+    expect(within(h1).getByRole("article", { name: "Finding F1" })).toBeTruthy();
+    expect((h1.querySelector("details") as HTMLDetailsElement).open).toBe(true);
+    // a rejected hypothesis reads from its row but starts closed
+    expect((screen.getByRole("article", { name: "Hypothesis H2" }).querySelector("details") as HTMLDetailsElement).open).toBe(false);
+    expect(within(screen.getByRole("article", { name: "Hypothesis H5" })).getByRole("article", { name: "Finding F2" })).toBeTruthy();
+    fireEvent.click(within(filters).getByRole("radio", { name: /Rejected \(1\)/ }));
+    expect(screen.getByRole("article", { name: "Hypothesis H2" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Hypothesis H1" })).toBeNull();
+    fireEvent.click(within(filters).getByRole("radio", { name: /All/ }));
     expect(screen.queryByText("An earlier framing replaced by a replan")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Show superseded hypotheses \(1\)/ }));
     expect(screen.getByText("An earlier framing replaced by a replan")).toBeTruthy();

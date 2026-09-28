@@ -1,30 +1,60 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, type Approval, type Hypothesis, type Insight } from "../api";
-import { buildBoard, caveatsOf, modelOpinions, relevantApprovals, trustFacts, type TrustState } from "../lib/board";
-import { fmtNumber, fmtP } from "../lib/format";
+import { buildBoard, caveatsOf, columnOf, modelOpinions, relevantApprovals, trustFacts, type ColumnId, type TrustState } from "../lib/board";
+import { fmtNumber, fmtP, fmtValue } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
-import { toneFor } from "../lib/status";
+import { hypothesisIcon, toneFor } from "../lib/status";
+import { buildInvestigationTree, type HypNode } from "../lib/tree";
 import { to } from "../routes";
-import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
+import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, RecordTable, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
 import { VerificationBadge, voidCause, WhyNumberButton } from "./WhyNumber";
 import { methodLabel, methodsLabel } from "../lib/methods";
 
+type Filter = ColumnId | "all";
+
 /**
- * The live hypothesis board (P4-U03, spec v3 §9 Investigate): one column per status, each
- * hypothesis card carrying its findings. A finding card opens "Why trust this" and records an
- * accept or reject signal for calibration. Raw JSON appears only under "Technical details".
+ * Keep the nodes that pass; a hidden node's visible follow-ups move up to its place, so filtering
+ * by status or hiding superseded hypotheses never hides a follow-up that matches.
  */
-export function InvestigationBoard({ wsId, runId, hypotheses, insights, approvals, readOnly, onChanged }: {
-  wsId: string; runId: string; hypotheses: Hypothesis[]; insights: Insight[]; approvals: Approval[]; readOnly: boolean; onChanged: () => void;
+function visibleNodes(nodes: HypNode[], keep: (h: Hypothesis) => boolean): HypNode[] {
+  return nodes.flatMap((n) => {
+    const children = visibleNodes(n.children, keep);
+    return keep(n.hypothesis) ? [{ ...n, children }] : children;
+  });
+}
+
+/**
+ * The investigation's hypotheses in one view (P4-U03, spec v3 §9 Investigate): status counts that
+ * filter, then question -> hypothesis -> follow-ups, each hypothesis carrying its test result and
+ * finding cards. A finding card opens "Why trust this" and records an accept or reject signal for
+ * calibration. Raw JSON appears only under "Technical details".
+ */
+export function InvestigationBoard({ wsId, runId, objective, hypotheses, insights, approvals, readOnly, onChanged }: {
+  wsId: string; runId: string; objective: string; hypotheses: Hypothesis[]; insights: Insight[]; approvals: Approval[]; readOnly: boolean;
+  onChanged: () => void;
 }) {
+  const [filter, setFilter] = useState<Filter>("all");
   const [showSuperseded, setShowSuperseded] = useState(false);
   const [trustFor, setTrustFor] = useState<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const board = buildBoard(hypotheses, insights);
   if (hypotheses.length === 0 && insights.length === 0) {
     return <EmptyState title="No hypotheses yet">The investigator proposes hypotheses after context, metadata and profiling.</EmptyState>;
   }
+  const board = buildBoard(hypotheses, insights);
+  const counted = board.columns.filter((c) => c.items.length > 0);
+  const active = counted.reduce((n, c) => n + c.items.length, 0);
+  const keep = (h: Hypothesis) => {
+    const col = columnOf(h.status);
+    if (col === null) return showSuperseded && filter === "all";
+    return filter === "all" || col === filter;
+  };
+  const questions = buildInvestigationTree(objective, hypotheses, insights)
+    .map((q) => ({ question: q.question, nodes: visibleNodes(q.hypotheses, keep) }))
+    .filter((q) => q.nodes.length > 0);
+  // A heading earns its place when it groups hypotheses; one question per hypothesis reads better as a
+  // flat list with the question inside each row, and a lone question that is the objective repeats the title.
+  const titled = questions.some((q) => q.nodes.length > 1) && !(questions.length === 1 && questions[0].question === objective);
   const hypById = new Map(hypotheses.map((h) => [h.id, h]));
   const open = insights.find((i) => i.id === trustFor) ?? null;
   const openTrust = (id: string, el: HTMLElement) => {
@@ -35,42 +65,41 @@ export function InvestigationBoard({ wsId, runId, hypotheses, insights, approval
 
   return (
     <div className="board-wrap">
-      <div className="board" role="list" aria-label="Hypotheses by status">
-        {board.columns.map((c) => (
-          <div key={c.id} className={`board-col board-col-${c.id}`} role="listitem" aria-labelledby={`col-${c.id}`}>
-            <header className="board-col-head">
-              <h3 id={`col-${c.id}`}>{c.label} <span className="muted">({c.items.length})</span></h3>
-              <p className="muted small">{c.hint}</p>
-            </header>
-            {c.items.length === 0 ? <p className="muted small board-empty">None</p> : (
-              <ul className="board-cards">
-                {c.items.map(({ hypothesis: h, findings }) => (
-                  <li key={h.id}><HypothesisCard hypothesis={h} findings={findings} {...cardProps} /></li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ))}
+      <div className="hyp-toolbar">
+        <div className="seg" role="radiogroup" aria-label="Show hypotheses">
+          <button type="button" role="radio" aria-checked={filter === "all"} className={`seg-btn ${filter === "all" ? "active" : ""}`}
+            onClick={() => setFilter("all")}>All ({active})</button>
+          {counted.map((c) => (
+            <button key={c.id} type="button" role="radio" aria-checked={filter === c.id} title={c.hint}
+              className={`seg-btn ${filter === c.id ? "active" : ""}`} onClick={() => setFilter(c.id)}>
+              <span className={`tone-${toneFor(c.id)}`} aria-hidden="true">{hypothesisIcon(c.id)}</span> {c.label} ({c.items.length})
+            </button>
+          ))}
+        </div>
+        {board.superseded.length > 0 && filter === "all" && (
+          <button type="button" className="btn btn-xs btn-ghost" aria-expanded={showSuperseded} onClick={() => setShowSuperseded((v) => !v)}>
+            {showSuperseded ? "Hide" : "Show"} superseded hypotheses ({board.superseded.length})
+          </button>
+        )}
       </div>
-      {board.orphans.length > 0 && (
+      {questions.length === 0 && <p className="muted small">No hypotheses with this status.</p>}
+      {questions.map((q) => (
+        <section key={q.question} className="hyp-question" aria-label={titled ? `Question: ${q.question}` : "Hypotheses"}>
+          {titled && <h3 className="tree-question-head"><span className="tree-kind">Question</span> {q.question}</h3>}
+          <ul className="hyp-rows">
+            {q.nodes.map((n) => (
+              <HypothesisRow key={n.hypothesis.id} node={n} question={titled || q.question === objective ? undefined : q.question} {...cardProps} />
+            ))}
+          </ul>
+        </section>
+      ))}
+      {board.orphans.length > 0 && filter === "all" && (
         <section className="board-orphans" aria-labelledby="orphans-h">
           <h3 id="orphans-h">Findings without a hypothesis</h3>
           <ul className="board-cards board-cards-row">
             {board.orphans.map((i) => <li key={i.id}><FindingCard insight={i} {...cardProps} /></li>)}
           </ul>
         </section>
-      )}
-      {board.superseded.length > 0 && (
-        <div className="board-superseded">
-          <button type="button" className="btn btn-xs btn-ghost" aria-expanded={showSuperseded} onClick={() => setShowSuperseded((v) => !v)}>
-            {showSuperseded ? "Hide" : "Show"} superseded hypotheses ({board.superseded.length})
-          </button>
-          {showSuperseded && (
-            <ul className="small">
-              {board.superseded.map((h) => <li key={h.id}><strong>{h.code}</strong> {h.statement} <span className="muted">— replaced by a replan</span></li>)}
-            </ul>
-          )}
-        </div>
       )}
       {open && (
         <TrustDrawer insight={open} hypothesis={open.hypothesis_id ? hypById.get(open.hypothesis_id) ?? null : null}
@@ -86,28 +115,62 @@ export function InvestigationBoard({ wsId, runId, hypotheses, insights, approval
 
 type CardProps = { wsId: string; runId: string; readOnly: boolean; onChanged: () => void; onTrust: (id: string, el: HTMLElement) => void };
 
-function HypothesisCard({ hypothesis: h, findings, ...rest }: { hypothesis: Hypothesis; findings: Insight[] } & CardProps) {
+/** One line per hypothesis that reads without opening it; open it for the evidence, findings and follow-ups. */
+function HypothesisRow({ node, question, ...rest }: { node: HypNode; question?: string } & CardProps) {
+  const h = node.hypothesis;
   const r = h.result;
+  const col = columnOf(h.status);
+  const highlights = r?.highlights ? Object.entries(r.highlights).filter(([, v]) => v !== null && v !== undefined && typeof v !== "object") : [];
   return (
-    <article className={`hyp-card tone-border-${toneFor(h.status)}`} aria-label={`Hypothesis ${h.code}`}>
-      <div className="hyp-card-head">
-        <strong>{h.code}</strong>
-        <Tag tone={h.priority === "high" ? "danger" : h.priority === "medium" ? "warning" : "neutral"}>{h.priority}</Tag>
-        <StatusBadge status={h.status} />
-      </div>
-      <p className="hyp-card-statement">{h.statement}</p>
-      <p className="muted small">
-        <span title={r?.test ?? h.methods.join(", ")}>{r?.test ? methodLabel(r.test) : (methodsLabel(h.methods) || "method pending")}</span>
-        {r && <> · n <Value value={r.n} format="int" /> · q {r.p_adjusted === null || r.p_adjusted === undefined ? <Value value={null} /> : fmtP(r.p_adjusted)}
-          {r.effect_size !== null && r.effect_size !== undefined && <> · <span title={r.effect_label ?? undefined}>{r.effect_label ? methodLabel(r.effect_label) : "effect"}</span> {fmtNumber(r.effect_size, 3)}</>}</>}
-      </p>
-      {h.conclusion && <p className="small">{h.conclusion}</p>}
-      {findings.length > 0 && (
-        <ul className="finding-list" aria-label={`Findings for ${h.code}`}>
-          {findings.map((i) => <li key={i.id}><FindingCard insight={i} {...rest} /></li>)}
-        </ul>
-      )}
-    </article>
+    <li className={`hyp-row hyp-row-${col ?? "superseded"}`}>
+      <article aria-label={`Hypothesis ${h.code}`}>
+        {/* Rejected and superseded rows start closed: what was supported, or is still open, comes first. */}
+        <details open={col !== null && col !== "rejected"}>
+          <summary>
+            <span className={`hyp-icon tone-${toneFor(h.status)}`} aria-hidden="true">{hypothesisIcon(h.status)}</span>
+            <strong>{h.code}</strong>
+            <span className="hyp-row-statement">{h.statement}</span>
+            <span className="hyp-row-tags">
+              <Tag tone={h.priority === "high" ? "danger" : h.priority === "medium" ? "warning" : "neutral"}>{h.priority}</Tag>
+              <StatusBadge status={h.status} />
+              {node.findings.length > 0 && <span className="muted small">{node.findings.length} finding{node.findings.length > 1 ? "s" : ""}</span>}
+            </span>
+            <span className="hyp-row-result muted small">
+              <span title={r?.test ?? h.methods.join(", ")}>{r?.test ? methodLabel(r.test) : (methodsLabel(h.methods) || "method pending")}</span>
+              {r && <> · n <Value value={r.n} format="int" /> · q {r.p_adjusted === null || r.p_adjusted === undefined ? <Value value={null} /> : fmtP(r.p_adjusted)}
+                {r.effect_size !== null && r.effect_size !== undefined && <> · <span title={r.effect_label ?? undefined}>{r.effect_label ? methodLabel(r.effect_label) : "effect"}</span> {fmtNumber(r.effect_size, 3)}</>}</>}
+            </span>
+          </summary>
+          <div className="hyp-row-body">
+            {question && <p className="small"><span className="tree-kind">Question</span> {question}</p>}
+            {h.conclusion && <p className="small">{h.conclusion}</p>}
+            {highlights.length > 0 && (
+              <ul className="highlights small">
+                {highlights.map(([k, v]) => <li key={k}><span className="muted">{k.replace(/_/g, " ")}:</span> {fmtValue(v)}</li>)}
+              </ul>
+            )}
+            {r?.warnings?.length ? <p className="small warn-text">⚠ {r.warnings.join("; ")}</p> : null}
+            {r?.groups?.length ? (
+              <details className="groups">
+                <summary className="small">Groups ({r.groups.length})</summary>
+                <RecordTable records={r.groups} maxRows={30} />
+              </details>
+            ) : null}
+            {node.findings.length > 0 && (
+              <ul className="finding-list" aria-label={`Findings for ${h.code}`}>
+                {node.findings.map((i) => <li key={i.id}><FindingCard insight={i} {...rest} /></li>)}
+              </ul>
+            )}
+            {node.children.length > 0 && (
+              <ul className="hyp-rows hyp-children" aria-label={`Follow-ups of ${h.code}`}>
+                {node.children.map((c) => <HypothesisRow key={c.hypothesis.id} node={c} {...rest} />)}
+              </ul>
+            )}
+            <p className="muted small">Proposed by {h.origin} · iteration {h.iteration}</p>
+          </div>
+        </details>
+      </article>
+    </li>
   );
 }
 
