@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type CatalogAsset, type Insight, type Run, type Source, type WorkspaceDetail } from "../api";
 import { BriefSummary } from "../components/Brief";
+import { DataShapeCard } from "../components/DataShape";
 import { WelcomeCard } from "../components/Guide";
 import { useTour } from "../components/Tour";
 import { StartWorkButton } from "../components/StartWork";
@@ -74,6 +75,7 @@ export function WorkspaceHomePage() {
         <>
           <NeedsYou wsId={wsId} runs={runs.data} sources={sources.data} />
           <AtAGlance ws={w} runs={runs.data} />
+          <DataShapeCard wsId={wsId} role={w.role} />
         </>
       )}
       {w.role === "owner" && !!runs.data?.length && <WorkModesSettings wsId={wsId} collapsed />}

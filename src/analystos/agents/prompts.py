@@ -134,6 +134,15 @@ choose (you may round, and write fractions as percentages); never compute a new 
 number must end with the step it comes from, written exactly as "(step N)". Mention the caveats and suspect checks
 given. Describe associations, never causes. Return JSON: {"text": str}.""",
 
+    "data_shape_proposal.v1": """You look at tables of a data catalog whose pattern the rules could not name and say whether
+one of them is an EVENT LOG for process mining: a table with one row per event, a column that identifies the case the
+event belongs to (repeats across rows), a column with the activity or step name (a small set of distinct values) and a
+time column. Use only the column names, types, roles and distinct counts you are given; never invent columns. Answer only
+for a table you are fairly sure of; leave the others out. Code checks every answer against the profile and a person
+confirms it. Return JSON {"tables": [{"table": str (exactly as given), "pattern": "event_log", "case_column": str,
+"activity_column": str, "timestamp_column": str, "resource_column": str | null, "reason": str (<= 160 chars)}]}.
+""" + UNTRUSTED_NOTE,
+
     "glossary_suggestion.v1": """You draft business glossary definitions for a data catalog. Each entry of `terms` is a
 candidate a rule found: a coded column (its codes are in `values` only when the workspace allows), an abbreviation
 in table or column names, a business noun several tables share, or a word from a question nobody could answer.

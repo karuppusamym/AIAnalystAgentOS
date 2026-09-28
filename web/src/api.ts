@@ -3742,7 +3742,39 @@ export const api = {
   /** Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` for Ask, investigations and dashboards. */
   buildProcessTables: (ws: string, body: Schemas["ProcessTablesIn"]) =>
     post("/api/workspaces/{workspace_id}/process/tables", { path: W(ws), body }) as Promise<ProcessTablesResult>,
+
+  // what the selected tables are good for (Overview card)
+  dataShape: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/data-shape", { path: W(ws) }) as Promise<DataShape>,
+  markDataShape: (ws: string, body: Schemas["ShapeMarkIn"]) =>
+    post("/api/workspaces/{workspace_id}/data-shape/mark", { path: W(ws), body }),
+  proposeDataShape: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/data-shape/propose", { path: W(ws) }) as Promise<DataShapeProposal>,
 };
+
+/** api/routers/data_shape.py: the patterns of the selected tables, from the catalog's own measurements. */
+export type ShapeKind = "event_log" | "time_series" | "ml_candidate" | "fact" | "dimension" | "bridge" | "reference";
+export interface ShapePattern {
+  kind: ShapeKind;
+  confidence: number;
+  reasons: string[];
+  detail: Record<string, unknown>;
+  next_step: { action: "process_analysis" | "investigation" | "experiment" | "ask"; label: string } | null;
+  origin: "rules" | "model";
+  state: "suggested" | "proposed" | "confirmed";
+}
+export interface ShapeTable {
+  asset_id: string; fq: string; name: string; business_name: string | null; role: string; row_count: number | null;
+  patterns: ShapePattern[]; unexplained: boolean;
+}
+export interface DataShape {
+  version: string;
+  workspace: { kind: string; label: string; reasons: string[]; tables: string[] }[];
+  tables: ShapeTable[];
+  summary: Partial<Record<ShapeKind, number>>;
+  generated_at: string;
+}
+export interface DataShapeProposal { called: boolean; considered: number; proposed: number; rejected: { table: string; why: string }[]; skipped?: string }
 
 export interface ProcessTablesResult {
   source_id: string;
