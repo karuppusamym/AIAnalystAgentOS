@@ -255,3 +255,37 @@ def test_integer_codes_from_the_profile_shape_or_a_governed_read():
     assert not g.needs_code_query({**gaps, "tags": ["pii"]})  # never for a sensitive column
     wide = {**base, "profile": {"min": 1, "max": 400, "distinct": 90}}
     assert g._code_values(wide) is None and not g.needs_code_query(wide)
+
+
+def test_a_column_its_source_or_a_person_explains_is_not_a_code_set():
+    cats = catalog()
+    cats[0]["columns"].append(col("handovers", "integer", [0, 1, 2, 3], description="How many times the work changed hands.",
+                                  origin="source"))
+    cats[0]["columns"].append(col("rework", "boolean", None, "Rework", description="True when any step repeats.", origin="user"))
+    keys = {c.key for c in g.code_set_candidates(cats)}
+    assert "priority" in keys and not {"handovers", "rework"} & keys
+    assert g.explained({"description_origin": "source"}) and not g.explained({"description_origin": "rule"})
+
+
+def test_pending_questions_close_once_their_column_is_explained():
+    from analystos.db.models import KnowledgeSuggestion
+
+    cats = catalog()
+    cats[0]["columns"][0]["description_origin"] = "user"  # a person described incident.priority meanwhile
+
+    class Session:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self, _query):
+            return self.rows
+
+    term = KnowledgeSuggestion(kind=g.KIND_TERM, subject="glossary:priority", status="pending", fields={
+        "mapped_columns": {"value": ["src_x.incident.priority"]}, "evidence": {"value": [{"kind": "code_set"}]}})
+    ask_term = KnowledgeSuggestion(kind=g.KIND_TERM, subject="glossary:backlog", status="pending", fields={
+        "mapped_columns": {"value": []}, "evidence": {"value": [{"kind": "ask"}]}})
+    question = KnowledgeSuggestion(kind=g.KIND_QUESTION, subject="describe:column:a1:priority", status="pending", fields={})
+    open_question = KnowledgeSuggestion(kind=g.KIND_QUESTION, subject="describe:column:a1:state", status="pending", fields={})
+    assert g.close_explained(Session([term, ask_term, question, open_question]), "ws", cats) == 2
+    assert (term.status, question.status) == ("superseded", "superseded")
+    assert (ask_term.status, open_question.status) == ("pending", "pending")

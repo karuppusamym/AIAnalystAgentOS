@@ -174,6 +174,11 @@ def _fq(asset: dict[str, Any], col: dict[str, Any]) -> str:
     return f"{asset['schema']}.{asset['name']}.{col['name']}"
 
 
+def explained(col: dict[str, Any]) -> bool:
+    """A column a person, its source or an accepted draft already explains: never asked about again."""
+    return col.get("description_origin") in ("user", "source", "model") or bool((col.get("semantics") or {}).get("reviewed"))
+
+
 def _coded_role(col: dict[str, Any]) -> bool:
     """A column whose role may carry codes: a dimension, flag, code or a name the rules did not understand;
     never a key, a time, free text, a count or an amount."""
@@ -264,7 +269,7 @@ def code_set_candidates(assets: list[dict[str, Any]]) -> list[Candidate]:
     found: dict[str, list[tuple[dict[str, Any], dict[str, Any], list[str]]]] = {}
     for a in assets:
         for c in a.get("columns") or []:
-            values = _code_values(c)
+            values = None if explained(c) else _code_values(c)
             if values:
                 found.setdefault(c["name"].lower(), []).append((a, c, values))
     out: list[Candidate] = []
@@ -864,6 +869,7 @@ def scan(session: Session, workspace_id: str, *, proposed_by: str = "process:glo
     elif router is not None and any(c.placeholder for c in cands):
         _record_avoided(router, workspace_id, [c for c in cands if c.placeholder])
     terms = propose_terms(session, workspace_id, cands, batch=batch, proposed_by=proposed_by)
+    closed = close_explained(session, workspace_id, assets)
     questions = 0
     if include_descriptions:
         asked = _subjects(session, workspace_id, "describe:", ["pending", "approved", "rejected"])
@@ -879,8 +885,36 @@ def scan(session: Session, workspace_id: str, *, proposed_by: str = "process:glo
     by_rule: dict[str, int] = {}
     for c in cands:
         by_rule[c.rule] = by_rule.get(c.rule, 0) + 1
-    return {"glossary_terms": terms, "description_questions": questions, "candidates": len(cands), "by_rule": by_rule,
+    return {"glossary_terms": terms, "description_questions": questions, "closed_explained": closed,
+            "candidates": len(cands), "by_rule": by_rule,
             "skipped_known": skipped["known"], "skipped_decided": skipped["decided"], "assets": len(assets), "model": model}
+
+
+def close_explained(session: Session, workspace_id: str, assets: list[dict[str, Any]]) -> int:
+    """Pending questions a person no longer needs to answer: a description question, or a code-set term, whose
+    columns have since been explained (by a person, the source or an accepted draft). They are superseded, not
+    rejected, so they would be asked again if the explanation were removed."""
+    from analystos.db.models import KnowledgeSuggestion
+
+    by_fq = {f"{a['schema']}.{a['name']}.{c['name']}".lower(): c for a in assets for c in a.get("columns") or []}
+    by_id = {(a["id"], c["name"]): c for a in assets for c in a.get("columns") or []}
+    closed = 0
+    for row in session.scalars(select(KnowledgeSuggestion).where(
+            KnowledgeSuggestion.workspace_id == workspace_id, KnowledgeSuggestion.status == "pending",
+            KnowledgeSuggestion.kind.in_([KIND_QUESTION, KIND_TERM]))):
+        fields = row.fields or {}
+        if row.kind == KIND_QUESTION:
+            parts = (row.subject or "").split(":")  # describe:column:<asset>:<column>
+            col = by_id.get((parts[2], parts[3])) if len(parts) == 4 and parts[1] == "column" else None
+            stale = col is not None and explained(col)
+        else:
+            evidence = _value(fields, "evidence", []) or []
+            mapped = [by_fq.get(str(m).lower()) for m in (_value(fields, "mapped_columns", []) or [])]
+            stale = bool(evidence) and all(e.get("kind") == "code_set" for e in evidence if isinstance(e, dict))                 and bool(mapped) and all(c is not None and explained(c) for c in mapped)
+        if stale:
+            row.status, row.reason = "superseded", "the column is now described; nothing to ask"
+            closed += 1
+    return closed
 
 
 def from_ask_turn(session: Session, workspace_id: str, turn: Any) -> int:

@@ -150,6 +150,11 @@ def materialize(user: User, workspace_id: str, *, asset_id: str, case_column: st
     with session_scope() as s:
         src_id = _derived_source(s, user, workspace_id).id
     discover_source(user, src_id, workspace_id=workspace_id)
+    with session_scope() as s:  # described before the crawl, so its glossary scan asks nothing about them
+        for kind, name in names.items():
+            a = s.scalar(select(SourceAsset).where(SourceAsset.source_id == src_id, SourceAsset.name == name))
+            if a is not None:
+                _describe(s, a, kind, log_label)
     with session_scope() as s:  # selecting re-stages from the files; keep other event logs' tables selected
         keep = [a.name for a in s.scalars(select(SourceAsset).where(SourceAsset.source_id == src_id, SourceAsset.selected.is_(True)))]
     select_assets(user, src_id, sorted(set(keep) | set(names.values())), workspace_id=workspace_id)
