@@ -158,3 +158,32 @@ describe("process map helpers", () => {
     expect(CAPABILITIES.find((c) => c.id === "process")!.href(WS)).toBe(`/w/${WS}/work?tab=process`);
   });
 });
+
+describe("process tables for Ask, investigations and dashboards", () => {
+  const BUILT = {
+    source_id: "src_pm", event_log: { asset_id: "ast_act", fq: "stg_sn.u_task_activity" }, cases: 14170, transitions: 75264,
+    truncated: false, segments: [{ segment: "incident", cases: 9731, expected_path: ["Created", "Closed"], expected_path_source: "pack" }],
+    tables: [
+      { kind: "cases", name: "u_task_activity_cases", fq: "src_pm.u_task_activity_cases", asset_id: "ast_c", rows: 14170, business_name: "Process cases (Task Activity)" },
+      { kind: "transitions", name: "u_task_activity_transitions", fq: "src_pm.u_task_activity_transitions", asset_id: "ast_t", rows: 75264,
+        business_name: "Process transitions (Task Activity)" }],
+  };
+
+  it("an editor builds the case and transition tables from the detected log and is pointed at Ask and Start work", async () => {
+    const f = mockFetch((method, path, body, url) => {
+      if (method === "POST" && path.endsWith("/process/tables")) return { status: 200, body: BUILT };
+      return processApi()(method, path, body, url);
+    });
+    renderAt(`/w/${WS}/work?tab=process`);
+    const card = await screen.findByRole("region", { name: "Process tables" });
+    expect(within(card).getByText(/Not built yet/)).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Build the process tables" }));
+    expect(await within(card).findByText(/Built 14,170 cases and 75,264 transitions/)).toBeTruthy();
+    expect(bodyOf(calls(f, "POST", /\/process\/tables$/)[0][1])).toEqual({
+      asset_id: "ast_act", case_column: "task_sys_id", activity_column: "activity", timestamp_column: "activity_at",
+      resource_column: "assignment_group" });
+    expect(within(card).getByRole("link", { name: "Ask about them" }).getAttribute("href")).toBe(`/w/${WS}/work/ask`);
+    expect(within(card).getByText("“average wait hours by from activity”")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Refresh the process tables" })).toBeTruthy();
+  });
+});

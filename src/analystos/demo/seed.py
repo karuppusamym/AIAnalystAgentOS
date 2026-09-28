@@ -159,7 +159,8 @@ def ensure_brief(analyst: Api, wid: str, d: dict[str, Any] | None = None) -> Non
         log("reviewed", f"brief v{brief['version']}: grain of {len(review)} tables")
 
 
-def ensure_investigation(analyst: Api, approver: Api, wid: str, timeout: float) -> str:
+def ensure_investigation(analyst: Api, approver: Api, wid: str, timeout: float, *, objective: str | None = None,
+                         source_ids: list[str] | None = None) -> str:
     runs = analyst.get(f"/api/workspaces/{wid}/analysis")
     for r in runs:
         if r["status"] in DONE and (r.get("origin") or {}).get("type", "user") == "user":
@@ -175,8 +176,9 @@ def ensure_investigation(analyst: Api, approver: Api, wid: str, timeout: float) 
     else:
         # The workspace also holds the file source: the investigation is scoped to the demo's system of record.
         kind = demo()["source"]["kind"]
-        ids = [s["id"] for s in analyst.get(f"/api/workspaces/{wid}/sources") if s["kind"] == kind]
-        run = analyst.post(f"/api/workspaces/{wid}/analysis", {"objective": demo()["workspace"]["objective"], "source_ids": ids})
+        ids = source_ids or [s["id"] for s in analyst.get(f"/api/workspaces/{wid}/sources") if s["kind"] == kind]
+        run = analyst.post(f"/api/workspaces/{wid}/analysis", {"objective": objective or demo()["workspace"]["objective"],
+                                                               "source_ids": ids})
         log("started", f"investigation {run['id']} (runs on the worker; a few minutes at most)")
     rid, started, last = run["id"], time.time(), None
     while time.time() - started < timeout:
@@ -291,12 +293,35 @@ def ensure_process_analyses(analyst: Api, wid: str, d: dict[str, Any] | None = N
                      f"{round(100 * s['fitness'])}% follow the expected path")
 
 
-def ensure_process_workspace(admin: Api, analyst: Api, instance_url: str) -> str:
+def ensure_process_tables(analyst: Api, wid: str, d: dict[str, Any] | None = None) -> str:
+    """The event log as the workspace's case and transition tables (Work → Process → Use this process everywhere),
+    so Ask, investigations, metrics and dashboards work on process data. Returns the tables' source id."""
+    spec = (d or process_demo())["process"]
+    names = {f"{spec['table']}_cases", f"{spec['table']}_transitions"}
+    src = next((s for s in analyst.get(f"/api/workspaces/{wid}/sources") if s["name"] == "Process mining tables"), None)
+    if src is not None and names <= {n for n, a in _assets(analyst, wid, src["id"]).items() if a.get("selected")}:
+        log("exists", f"process tables {', '.join(sorted(names))}")
+        return src["id"]
+    cand = next((c for c in analyst.get(f"/api/workspaces/{wid}/process/candidates")["candidates"] if c["name"] == spec["table"]), None)
+    if cand is None:
+        raise SystemExit(f"{spec['table']} is not detected as an event log in workspace {wid}")
+    built = analyst.post(f"/api/workspaces/{wid}/process/tables", {"asset_id": cand["asset_id"], **cand["mapping"]})
+    log("built", f"process tables: {built['cases']} cases, {built['transitions']} transitions "
+                 f"({', '.join(t['name'] for t in built['tables'])})")
+    return built["source_id"]
+
+
+def ensure_process_workspace(admin: Api, analyst: Api, approver: Api, instance_url: str, *, timeout: float,
+                             investigate: bool = True) -> str:
     d = process_demo()
     wid = ensure_workspace(admin, d)
     ensure_source(analyst, wid, instance_url, d)
     ensure_brief(analyst, wid, d)
     ensure_process_analyses(analyst, wid, d)
+    tables_source = ensure_process_tables(analyst, wid, d)
+    inv = (d.get("process") or {}).get("investigation")
+    if investigate and inv:  # an investigation on the process tables: the same agents, gateway and approvals
+        ensure_investigation(analyst, approver, wid, timeout, objective=inv["objective"], source_ids=[tables_source])
     return wid
 
 
@@ -325,7 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     ready: list[tuple[str, str]] = []
     if build_process:  # quick (no worker needed), so it is ready while the investigation runs
         log("demo", process_demo()["workspace"]["name"])
-        ready.append((process_demo()["workspace"]["name"], ensure_process_workspace(admin, analyst, args.servicenow)))
+        ready.append((process_demo()["workspace"]["name"], ensure_process_workspace(
+            admin, analyst, approver, args.servicenow, timeout=args.timeout, investigate=not args.skip_investigation)))
     if build_investigation:
         log("demo", demo()["workspace"]["name"])
         wid = ensure_workspace(admin)

@@ -349,6 +349,12 @@ def _match(phrase: str, columns: list[Column], table: Table, lex: Any) -> Column
     """The one column a phrase names: every word of the phrase explained by the column's words
     (the table's own entity words may be dropped: "order region" on orders); an exact name wins.
     None when nothing matches; _Ambiguous when several match equally."""
+    # A phrase that spells a column's own name ("from activity" -> from_activity) names that column, even when
+    # a word of it is a stop word that would otherwise leave "activity" matching from_ and to_activity alike.
+    spelled = re.sub(r"[\s-]+", "_", phrase.strip().lower())
+    named = [c for c in columns if c.name.lower() == spelled]
+    if len(named) == 1:
+        return _readable(named[0], columns)
     want = set(_words(phrase, lex)) - {"by"}
     if not want:
         return None

@@ -182,7 +182,7 @@ def test_only_process_builds_just_the_process_workspace(monkeypatch):
     built = []
     monkeypatch.setattr(seed, "wait_for_api", lambda base, seconds: {"checks": {}})
     monkeypatch.setattr(seed, "Api", lambda base, email, password: email)
-    monkeypatch.setattr(seed, "ensure_process_workspace", lambda admin, analyst, url: built.append("process") or "ws_p")
+    monkeypatch.setattr(seed, "ensure_process_workspace", lambda admin, analyst, approver, url, **kw: built.append("process") or "ws_p")
     monkeypatch.setattr(seed, "ensure_workspace", lambda admin: built.append("investigation") or "ws_i")
     assert seed.main(["--only", "process"]) == 0
     assert built == ["process"]

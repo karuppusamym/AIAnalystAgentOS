@@ -4527,6 +4527,69 @@
         "title": "ProcessFilter",
         "type": "object"
       },
+      "ProcessTablesIn": {
+        "properties": {
+          "activity_column": {
+            "title": "Activity Column",
+            "type": "string"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "case_column": {
+            "title": "Case Column",
+            "type": "string"
+          },
+          "max_events": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Events"
+          },
+          "resource_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Column"
+          },
+          "segment_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Column"
+          },
+          "timestamp_column": {
+            "title": "Timestamp Column",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "case_column",
+          "activity_column",
+          "timestamp_column"
+        ],
+        "title": "ProcessTablesIn",
+        "type": "object"
+      },
       "PromoteIn": {
         "properties": {
           "description": {
@@ -25908,6 +25971,89 @@
           }
         },
         "summary": "Candidates",
+        "tags": [
+          "process"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/process/tables": {
+      "post": {
+        "description": "Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` (source \"Process mining\ntables\"): read through the gateway as the caller, staged, profiled and described like any selected table, so\nevery part of the platform can use them. Editor role; re-running replaces them.",
+        "operationId": "build_tables_api_workspaces__workspace_id__process_tables_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessTablesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Tables",
         "tags": [
           "process"
         ]

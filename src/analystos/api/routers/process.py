@@ -1,4 +1,5 @@
-"""Process and task mining (Work → Process): detect event logs in the catalog and analyse one.
+"""Process and task mining (Work → Process): detect event logs in the catalog, analyse one, and turn it into
+ordinary tables (`POST /process/tables`) that Ask, investigations, agents, metrics and dashboards use.
 
 `GET /process/candidates` lists the selected tables that look like an event log (a case id, an activity, a
 time; the crawler's `event` role and a pack's declared model help) with a suggested column mapping and the
@@ -14,16 +15,17 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from sqlglot import exp
 
 from analystos.api.deps import current_user, db
 from analystos.artifacts.registry import link, save_artifact
 from analystos.core.errors import Forbidden, InvalidInput, NotFound
 from analystos.core.ids import utcnow
 from analystos.db.models import Artifact, SourceAsset, SourceColumn, User
-from analystos.governance.policy import require_role, resolve_scope
+from analystos.governance.policy import require_role
+from analystos.services.process_tables import allowed_columns as _allowed_columns
+from analystos.services.process_tables import in_scope as _in_scope
+from analystos.services.process_tables import segment_values as _segment_values
 from analystos.skills import process_mining as pm
-from analystos.skills.sqlbuild import col, count_star, table, to_sql
 
 router = APIRouter(prefix="/api", tags=["process"])
 ARTIFACT_TYPE = "process_analysis"
@@ -54,28 +56,6 @@ def _asset_view(a: SourceAsset, cols: list[SourceColumn], allowed: set[str]) -> 
     return {"name": a.name, "role": (a.semantics or {}).get("role"), "row_count": a.row_count,
             "columns": [{"name": c.name, "data_type": c.data_type, "is_key": c.is_key, "tags": c.tags or [],
                          "profile": c.profile or {}} for c in cols if c.name in allowed]}
-
-
-def _in_scope(session: Session, user: User, workspace_id: str):  # noqa: ANN202 - (scope, assets by id)
-    scope = resolve_scope(session, session.merge(user), workspace_id)
-    fqs = set(scope.assets)
-    assets = [a for a in session.scalars(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id,
-                                                                   SourceAsset.selected.is_(True))
-                                         .order_by(SourceAsset.name, SourceAsset.id))
-              if f"{a.schema_name}.{a.name}" in fqs]
-    return scope, assets
-
-
-def _allowed_columns(scope: Any, fq: str) -> set[str]:
-    denied = set(scope.denied_columns)
-    return {c for c in scope.columns.get(fq, []) if f"{fq}.{c}" not in denied}
-
-
-def _segment_values(runner: Any, fq: str, column: str) -> list[dict[str, Any]]:
-    q = to_sql(exp.select(col(column), count_star().as_("n")).from_(table(fq)).group_by(col(column))
-               .order_by(exp.Ordered(this=count_star(), desc=True)), runner.dialect)
-    res = runner(q, purpose="process_mining.segments", max_rows=50)
-    return [{"value": r[0], "count": r[1]} for r in res.rows if r[0] is not None]
 
 
 @router.get("/workspaces/{workspace_id}/process/candidates")
@@ -202,3 +182,24 @@ def saved_analyses(workspace_id: str, user: User = Depends(current_user), sessio
              "updated_at": a.updated_at.isoformat() if a.updated_at else None,
              "asset": (a.content or {}).get("asset"), "segment": (a.content or {}).get("segment"),
              "mapping": (a.content or {}).get("mapping"), "summary": (a.content or {}).get("summary")} for a in arts]
+
+
+class ProcessTablesIn(BaseModel):
+    asset_id: str
+    case_column: str
+    activity_column: str
+    timestamp_column: str
+    resource_column: str | None = None
+    # One row per case of each segment value (e.g. per task type); omitted = the pack's declared segment column, if any
+    segment_column: str | None = None
+    max_events: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+@router.post("/workspaces/{workspace_id}/process/tables")
+def build_tables(workspace_id: str, body: ProcessTablesIn, user: User = Depends(current_user)):
+    """Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` (source "Process mining
+    tables"): read through the gateway as the caller, staged, profiled and described like any selected table, so
+    every part of the platform can use them. Editor role; re-running replaces them."""
+    from analystos.services.process_tables import materialize
+
+    return materialize(user, workspace_id, **body.model_dump())

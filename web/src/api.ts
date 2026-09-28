@@ -3732,7 +3732,20 @@ export const api = {
     post("/api/workspaces/{workspace_id}/process/analyze", { path: W(ws), body }) as Promise<ProcessAnalysis>,
   processAnalyses: (ws: string) =>
     get("/api/workspaces/{workspace_id}/process/analyses", { path: W(ws) }) as Promise<SavedProcessAnalysis[]>,
+  /** Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` for Ask, investigations and dashboards. */
+  buildProcessTables: (ws: string, body: Schemas["ProcessTablesIn"]) =>
+    post("/api/workspaces/{workspace_id}/process/tables", { path: W(ws), body }) as Promise<ProcessTablesResult>,
 };
+
+export interface ProcessTablesResult {
+  source_id: string;
+  event_log: { asset_id: string; fq: string };
+  tables: { kind: "cases" | "transitions" | string; name: string; fq: string; asset_id: string; rows: number | null; business_name: string | null }[];
+  segments: { segment: string | null; cases: number; expected_path: string[]; expected_path_source: string }[];
+  cases: number;
+  transitions: number;
+  truncated: boolean;
+}
 
 // ----------------------------------------------------------------------------------- run events (SSE)
 export interface EventStreamHandle {

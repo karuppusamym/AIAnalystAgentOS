@@ -678,3 +678,99 @@ def detect_event_log(asset: dict[str, Any]) -> dict[str, Any] | None:
     return {"mapping": {"case_column": k[1], "activity_column": a[1], "timestamp_column": t[1],
                         "resource_column": r[1] if r else None},
             "segments": segments, "score": round(score, 2), "reasons": reasons}
+
+
+# ----------------------------------------------------------------------------------------------- derived tables
+# The event log as two ordinary tables, so every other part of the platform (Ask, step-by-step answers, investigations
+# and their agents, metrics, monitors, schedules, dashboards) works on process data with no process-specific code:
+# one row per case and one row per step-to-step transition. Same definitions as the analysis above.
+CASE_TABLE_COLUMNS = ["case_id", "segment", "started_at", "ended_at", "duration_hours", "steps", "status", "path",
+                      "path_rank", "first_activity", "last_activity", "follows_expected_path", "skipped_steps",
+                      "steps_out_of_order", "repeated_steps", "rework", "cancelled", "first_resource", "last_resource",
+                      "resources", "handovers"]
+TRANSITION_TABLE_COLUMNS = ["case_id", "segment", "step", "from_activity", "to_activity", "transition", "from_at", "to_at",
+                            "wait_hours", "from_resource", "to_resource", "handover"]
+
+
+def case_rows(cases: dict[str, list[Event]], *, reference: Sequence[str], cancel: Sequence[str],
+              segment: str | None = None) -> list[dict[str, Any]]:
+    """One row per case. `status` is completed (last step = the reference's last step), cancelled or open;
+    `follows_expected_path` is only set for completed cases, as in `conformance`."""
+    reference = list(reference)
+    cancel_set = set(cancel)
+    rank = {v: i + 1 for i, (v, _) in enumerate(sorted(Counter(tuple(e.activity for e in evs) for evs in cases.values()).items(),
+                                                       key=lambda kv: (-kv[1], kv[0])))}
+    out = []
+    for case_id in sorted(cases):
+        evs = cases[case_id]
+        trace = [e.activity for e in evs]
+        counts = Counter(trace)
+        completed = bool(reference) and trace[-1] == reference[-1]
+        cancelled = bool(cancel_set & set(trace))
+        dev = trace_deviations(trace, reference) if completed else None
+        resources = [e.resource for e in evs if e.resource]
+        repeated = sum(c - 1 for c in counts.values() if c > 1)
+        out.append({
+            "case_id": str(case_id), "segment": segment, "started_at": evs[0].ts, "ended_at": evs[-1].ts,
+            "duration_hours": _r(_throughput(evs)), "steps": len(evs),
+            "status": "completed" if completed else "cancelled" if cancelled else "open",
+            "path": " → ".join(trace), "path_rank": rank[tuple(trace)], "first_activity": trace[0], "last_activity": trace[-1],
+            "follows_expected_path": (not any(dev.values())) if dev is not None else None,
+            "skipped_steps": ", ".join(dev["missing"]) or None if dev is not None else None,
+            "steps_out_of_order": ", ".join(dev["out_of_order"]) or None if dev is not None else None,
+            "repeated_steps": repeated, "rework": repeated > 0, "cancelled": cancelled,
+            "first_resource": resources[0] if resources else None, "last_resource": resources[-1] if resources else None,
+            "resources": len(set(resources)),
+            "handovers": sum(1 for a, b in zip(evs, evs[1:], strict=False) if a.resource and b.resource and a.resource != b.resource),
+        })
+    return out
+
+
+def transition_rows(cases: dict[str, list[Event]], *, segment: str | None = None) -> list[dict[str, Any]]:
+    """One row per consecutive pair of events in a case, with the wait between them and whether the work
+    changed hands."""
+    out = []
+    for case_id in sorted(cases):
+        evs = cases[case_id]
+        for i, (a, b) in enumerate(zip(evs, evs[1:], strict=False), start=1):
+            out.append({
+                "case_id": str(case_id), "segment": segment, "step": i, "from_activity": a.activity, "to_activity": b.activity,
+                "transition": f"{a.activity} → {b.activity}", "from_at": a.ts, "to_at": b.ts, "wait_hours": _r(_hours(a.ts, b.ts)),
+                "from_resource": a.resource, "to_resource": b.resource,
+                "handover": bool(a.resource and b.resource and a.resource != b.resource),
+            })
+    return out
+
+
+TABLE_DESCRIPTIONS = {
+    "cases": ("Process cases: one row per case of the event log {log} (a case is every step sharing one case id), with "
+              "when it started and ended, its duration in hours, its path of steps, whether it followed the expected path, "
+              "rework, cancellation and how often the work changed hands. Derived by the platform from the event log."),
+    "transitions": ("Process transitions: one row per step-to-step move in a case of the event log {log}, with the wait in "
+                    "hours between the two steps and whether the work changed hands. Derived by the platform from the event log."),
+}
+COLUMN_DESCRIPTIONS = {
+    "case_id": "The case: every event with this id is one case.",
+    "segment": "The kind of case (the event log's segment value, e.g. a task type); empty when the log has one kind.",
+    "started_at": "Time of the case's first step.", "ended_at": "Time of the case's last step so far.",
+    "duration_hours": "Hours from the case's first step to its last step (for an open case, so far).",
+    "steps": "Number of steps (events) in the case.",
+    "status": "completed (reached the expected path's last step), cancelled, or open.",
+    "path": "The case's steps in order, joined by arrows.",
+    "path_rank": "1 = the most common path of its kind, 2 = the next, and so on.",
+    "first_activity": "The case's first step.", "last_activity": "The case's last step so far.",
+    "follows_expected_path": "For a completed case: true when it followed the expected path exactly (no step skipped, "
+                             "added or out of order); empty for open or cancelled cases.",
+    "skipped_steps": "For a completed case: expected steps it skipped.",
+    "steps_out_of_order": "For a completed case: expected steps it took out of order.",
+    "repeated_steps": "How many steps repeat an earlier step of the case (rework loops, e.g. a second reassignment).",
+    "rework": "True when any step repeats.", "cancelled": "True when the case has a cancellation step.",
+    "first_resource": "Who (the team or person) did the case's first step.", "last_resource": "Who did the case's last step.",
+    "resources": "How many different teams or people worked on the case.",
+    "handovers": "How many times the work changed hands between consecutive steps.",
+    "step": "The position of this move in its case (1 = first to second step).",
+    "from_activity": "The step the move starts from.", "to_activity": "The step the move goes to.",
+    "transition": "The move, as 'from step → to step'.", "from_at": "Time of the from step.", "to_at": "Time of the to step.",
+    "wait_hours": "Hours between the two steps.", "from_resource": "Who did the from step.", "to_resource": "Who did the to step.",
+    "handover": "True when the two steps were done by different teams or people.",
+}

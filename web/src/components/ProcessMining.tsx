@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import * as echarts from "echarts/core";
 import { GraphChart } from "echarts/charts";
 import {
-  api, saveBlob, type ProcessAnalysis, type ProcessCandidate, type ProcessEdge, type ProcessMapping, type SavedProcessAnalysis,
+  api, saveBlob, type ProcessAnalysis, type ProcessCandidate, type ProcessEdge, type ProcessMapping, type ProcessTablesResult, type SavedProcessAnalysis,
 } from "../api";
 import { DARK, LIGHT } from "../lib/charts";
 import { fmtDate } from "../lib/format";
@@ -128,6 +128,7 @@ export function ProcessPanel({ wsId, role }: { wsId: string; role?: string | nul
         {!!cands.data?.candidates.length && (
           <ProcessForm wsId={wsId} candidates={cands.data.candidates} onDone={(a) => { setAnalysis(a); if (a.artifact) void saved.reload(); }} />
         )}
+        {!!cands.data?.candidates.length && <ProcessTablesCard wsId={wsId} candidate={cands.data.candidates[0]} role={role} />}
       </>}
       {!canRun && <Notice>Analysts run process analyses; you can open the saved ones below.</Notice>}
       {!!saved.data?.length && (
@@ -356,5 +357,73 @@ export function ProcessAnalysisView({ analysis: a, wsId }: { analysis: ProcessAn
         <CodeBlock code={a.provenance.sql} label="First page SQL" />
       </TechnicalDetails>
     </section>
+  );
+}
+
+
+/** Questions the rules answer from the process tables, no model (they read the tables' own column names). */
+export const PROCESS_QUESTIONS = [
+  "average duration hours by segment",
+  "cases by segment and status",
+  "average wait hours by from activity",
+  "cases by follows expected path",
+];
+
+/**
+ * The event log as two ordinary workspace tables (one row per case, one row per step-to-step move), so Ask, step-by-step
+ * answers, investigations and their agents, metrics, monitors and dashboards all work on process data through the
+ * paths they already use. Editors build or refresh them; everyone sees whether they exist and where to use them.
+ */
+export function ProcessTablesCard({ wsId, candidate, role }: { wsId: string; candidate: ProcessCandidate; role?: string | null }) {
+  const canBuild = roleAtLeast(role, "editor");
+  const catalog = useAsync(() => api.catalog(wsId, { q: candidate.name }), [wsId, candidate.name]);
+  const build = useAction();
+  const [built, setBuilt] = useState<ProcessTablesResult | null>(null);
+  const names = [`${candidate.name}_cases`, `${candidate.name}_transitions`];
+  const existing = (catalog.data ?? []).filter((a) => names.includes(a.name) && a.lifecycle === "active");
+  const ready = built ? built.tables.length === 2 : existing.length === 2;
+  const run = async () => {
+    const r = await build.run(() => api.buildProcessTables(wsId, {
+      asset_id: candidate.asset_id, ...candidate.mapping, resource_column: candidate.mapping.resource_column || null,
+    }));
+    if (r) {
+      setBuilt(r);
+      void catalog.reload();
+    }
+  };
+  return (
+    <Card title="Use this process everywhere" label="Process tables">
+      <p className="muted small">
+        Turns the event log into two ordinary tables of this workspace: <code>{names[0]}</code> (one row per case: duration,
+        path, status, whether it followed the expected path, rework, handovers) and <code>{names[1]}</code> (one row per
+        step-to-step move with its wait). Ask, step-by-step answers, investigations and their agents, metrics, monitors and
+        dashboards then work on process data like any other table — read through the same gateway, profiled and described.
+      </p>
+      {ready ? (
+        <Notice tone="success">
+          {built ? <>Built {n(built.cases)} cases and {n(built.transitions)} transitions
+            {built.segments.length > 1 ? ` across ${built.segments.length} kinds of case` : ""}. </> : <>The process tables exist. </>}
+          <Link to={to.ask(wsId)}>Ask about them</Link> · <Link to={to.workspace(wsId)}>Start work on them</Link> ·{" "}
+          <Link to={to.catalog(wsId)}>See them in the catalog</Link>
+        </Notice>
+      ) : (
+        <p className="small">Not built yet{canBuild ? "" : ": an editor builds them"}.</p>
+      )}
+      {ready && (
+        <div className="stack">
+          <p className="small muted">Try asking (answered from the tables by rules, no model):</p>
+          <ul className="small">{PROCESS_QUESTIONS.map((q) => <li key={q}>“{q}”</li>)}</ul>
+        </div>
+      )}
+      {built?.truncated && <Notice tone="warning">The event log was larger than one read allows, so the tables cover the first cases only.</Notice>}
+      {canBuild && (
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm btn-primary" disabled={build.busy} onClick={() => void run()}>
+            {build.busy ? "Building…" : ready ? "Refresh the process tables" : "Build the process tables"}
+          </button>
+        </div>
+      )}
+      <ErrorBox error={build.error} />
+    </Card>
   );
 }

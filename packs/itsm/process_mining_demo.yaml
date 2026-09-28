@@ -32,3 +32,10 @@ process:
     - {segment: incident, name: "Incident process (demo)"}
     - {segment: change_request, name: "Change process (demo)"}
     - {segment: sc_task, name: "Catalog task process (demo)"}
+  # The event log as tables (u_task_activity_cases / _transitions), then an investigation on them: the same agents,
+  # gateway, verification and approvals as any other data (Work -> Process -> Use this process everywhere).
+  investigation:
+    objective: >-
+      Why do some incidents, change requests and catalog tasks take much longer than others? Compare case duration by
+      kind of case and status, by how often the work changed hands, by rework and by whether the case followed the
+      expected path, and find where cases wait longest between steps.

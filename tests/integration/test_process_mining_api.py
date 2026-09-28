@@ -233,3 +233,71 @@ def test_a_mapping_to_an_unknown_column_is_refused(api, world, candidate):
     r = api.post(f"/api/workspaces/{world['ws']}/process/analyze", json=body)
     assert r.status_code in (400, 422)
     assert "no_such_column" in r.text
+
+
+# ------------------------------------------------------------------------------------ process data for everything else
+@pytest.fixture(scope="module")
+def process_tables(api, world, candidate):
+    """The event log as the workspace's case and transition tables (one row per case / per move)."""
+    body = {"asset_id": candidate["asset_id"], **candidate["mapping"]}
+    r = api.post(f"/api/workspaces/{world['ws']}/process/tables", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_event_log_becomes_profiled_described_tables_of_the_workspace(api, world, process_tables):
+    t = {x["kind"]: x for x in process_tables["tables"]}
+    assert set(t) == {"cases", "transitions"} and t["cases"]["name"] == "u_task_activity_cases"
+    assert {s["segment"] for s in process_tables["segments"]} == {"incident", "change_request", "sc_task"}
+    assert t["cases"]["rows"] == process_tables["cases"] and t["transitions"]["rows"] == process_tables["transitions"]
+    assert process_tables["transitions"] > process_tables["cases"] > 1000 and not process_tables["truncated"]
+    catalog = {a["name"]: a for a in api.get(f"/api/workspaces/{world['ws']}/catalog").json()}
+    cases = catalog["u_task_activity_cases"]
+    assert cases["selected"] and cases["business_name"].startswith("Process cases")
+    assert cases["description_origin"] == "source" and "one row per case" in cases["description"]
+    cols = {c["name"]: c for c in cases["columns"]}
+    assert cols["duration_hours"]["profile"] and cols["follows_expected_path"]["description_origin"] == "source"
+    # rebuilding replaces the tables (same names, same source), it does not add new ones
+    again = api.post(f"/api/workspaces/{world['ws']}/process/tables",
+                     json={"asset_id": process_tables["event_log"]["asset_id"], "case_column": "task_sys_id",
+                           "activity_column": "activity", "timestamp_column": "activity_at",
+                           "resource_column": "assignment_group"}).json()
+    assert again["source_id"] == process_tables["source_id"] and [x["fq"] for x in again["tables"]] == [x["fq"] for x in process_tables["tables"]]
+
+
+def test_ask_answers_process_questions_from_the_tables_without_a_model(world, process_tables):
+    from analystos.db.base import session_scope
+    from analystos.db.models import User
+    from analystos.services import ask as ask_svc
+
+    with session_scope() as s:
+        admin = s.scalar(select(User).where(User.email == "admin@analystos.local"))
+        thread = ask_svc.create_thread(s, admin, world["ws"])
+        s.expunge(admin)
+    turn = ask_svc.ask_in_thread(admin, thread["id"], "average duration hours by segment")
+    assert turn["status"] == "answered" and turn["answered_by"] == "rules", turn.get("refusal")
+    assert "u_task_activity_cases" in turn["sql"] and len(turn["result"]["rows"]) == 3
+    step = ask_svc.ask_in_thread(admin, thread["id"], "cases by segment and status", mode="analyst")
+    assert step["status"] == "answered" and all(s["answered_by"] == "rules" for s in step["analysis"]["steps"])
+    waits = ask_svc.ask_in_thread(admin, thread["id"], "average wait hours by from activity")
+    assert waits["status"] == "answered" and "u_task_activity_transitions" in waits["sql"]
+
+
+def test_an_investigation_runs_on_the_process_tables(world, process_tables):
+    from analystos.db.base import session_scope
+    from analystos.db.models import AnalysisRun, Hypothesis, User
+    from analystos.services.runs import create_run
+    from analystos.workflows.orchestrator import run_local
+
+    with session_scope() as s:
+        admin = s.scalar(select(User).where(User.email == "admin@analystos.local"))
+        s.expunge(admin)
+    run = create_run(admin, world["ws"], objective="Why do some cases take much longer than others?",
+                     source_ids=[process_tables["source_id"]], origin={"type": "user", "publish": "skip"})
+    assert run_local(run.id) == "COMPLETED"
+    with session_scope() as s:
+        r = s.get(AnalysisRun, run.id)
+        tested = list(s.scalars(select(Hypothesis).where(Hypothesis.run_id == run.id, Hypothesis.status.in_(
+            ["supported", "rejected", "inconclusive"]))))
+        assert r.status == "COMPLETED" and tested, r.error
+        assert any("u_task_activity_cases" in str(h.spec) or "u_task_activity_transitions" in str(h.spec) for h in tested)

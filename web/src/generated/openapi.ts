@@ -3929,6 +3929,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/process/tables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Build Tables
+         * @description Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` (source "Process mining
+         *     tables"): read through the gateway as the caller, staged, profiled and described like any selected table, so
+         *     every part of the platform can use them. Editor role; re-running replaces them.
+         */
+        post: operations["build_tables_api_workspaces__workspace_id__process_tables_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/query": {
         parameters: {
             query?: never;
@@ -6921,6 +6943,23 @@ export interface components {
             value?: string | number | boolean | null;
             /** Values */
             values?: (string | number | boolean)[] | null;
+        };
+        /** ProcessTablesIn */
+        ProcessTablesIn: {
+            /** Activity Column */
+            activity_column: string;
+            /** Asset Id */
+            asset_id: string;
+            /** Case Column */
+            case_column: string;
+            /** Max Events */
+            max_events?: number | null;
+            /** Resource Column */
+            resource_column?: string | null;
+            /** Segment Column */
+            segment_column?: string | null;
+            /** Timestamp Column */
+            timestamp_column: string;
         };
         /** PromoteIn */
         PromoteIn: {
@@ -16083,6 +16122,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    build_tables_api_workspaces__workspace_id__process_tables_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProcessTablesIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

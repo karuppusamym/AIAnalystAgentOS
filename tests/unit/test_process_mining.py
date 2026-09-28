@@ -228,3 +228,24 @@ def test_the_itsm_pack_declares_the_task_activity_log():
     assert model["segment_column"] == "task_type"
     assert set(model["segments"]) == {"incident", "change_request", "sc_task"}
     assert pm.declared_for(declared, ["something_else"]) is None
+
+
+def test_case_rows_are_one_row_per_case_with_status_path_conformance_and_handovers(cases):
+    rows = {r["case_id"]: r for r in pm.case_rows(cases, reference=REF, cancel=["Cancel"], segment="demo")}
+    assert list(rows) == ["A", "B", "C", "D", "E"] and all(set(r) == set(pm.CASE_TABLE_COLUMNS) for r in rows.values())
+    a, c, d, e = rows["A"], rows["C"], rows["D"], rows["E"]
+    assert (a["status"], a["follows_expected_path"], a["duration_hours"], a["steps"], a["handovers"]) == ("completed", True, 4.0, 4, 1)
+    assert a["path"] == "Start → Review → Approve → End" and a["path_rank"] == 1 and a["segment"] == "demo"
+    assert (c["repeated_steps"], c["rework"], c["follows_expected_path"], c["skipped_steps"]) == (1, True, True, None)
+    assert c["handovers"] == 2 and c["resources"] == 2 and c["first_resource"] == "T1" and c["last_resource"] == "T1"
+    assert (d["status"], d["cancelled"], d["follows_expected_path"], d["skipped_steps"]) == ("cancelled", True, None, None)
+    assert (e["follows_expected_path"], e["steps_out_of_order"], e["resources"], e["handovers"]) == (False, "Approve", 0, 0)  # Approve came before Review
+
+
+def test_transition_rows_are_one_row_per_move_with_wait_and_handover(cases):
+    rows = [r for r in pm.transition_rows(cases) if r["case_id"] == "B"]
+    assert [(r["step"], r["transition"], r["wait_hours"], r["handover"]) for r in rows] == [
+        (1, "Start → Review", 2.0, False), (2, "Review → Approve", 2.0, True), (3, "Approve → End", 4.0, False)]
+    assert all(set(r) == set(pm.TRANSITION_TABLE_COLUMNS) for r in rows)
+    assert len(pm.transition_rows(cases)) == sum(len(v) - 1 for v in cases.values())
+    assert set(pm.COLUMN_DESCRIPTIONS) >= set(pm.CASE_TABLE_COLUMNS) | set(pm.TRANSITION_TABLE_COLUMNS)

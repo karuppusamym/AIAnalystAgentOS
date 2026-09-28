@@ -255,3 +255,10 @@ def test_a_foreign_key_groups_by_its_readable_label():
     assert p.dims[0][0] == "assignment_group_name"
     p = plan("tickets by assignment group", [table])
     assert p.dims[0][0] == "assignment_group_name"
+
+
+def test_a_phrase_that_spells_a_column_name_names_that_column():
+    table = tickets()
+    table.columns += [col("from_activity", distinct=12), col("to_activity", distinct=12)]
+    p = plan("tickets by from activity", [table])
+    assert p is not None and p.status == "answer" and p.dims[0][0] == "from_activity"
