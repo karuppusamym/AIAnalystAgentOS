@@ -268,6 +268,75 @@ def discover_relationships(run_sql: RunSQL, assets: list[dict[str, Any]], *,
     return results
 
 
+MAX_POLYMORPHIC_COLUMNS = 8
+MAX_POLYMORPHIC_TARGETS = 10
+MIN_POLYMORPHIC_SHARE = 0.02  # a table must hold at least this share of the column's values to count as a target
+MIN_POLYMORPHIC_COVERAGE = 0.95
+
+
+class PolymorphicReference(BaseModel):
+    """One id column whose values live in several tables' keys (a ticket reference that is an incident, a task or a
+    change): no single join is right, so it is reported as evidence, never queued as a relationship."""
+    from_asset: str
+    from_column: str
+    targets: list[dict[str, Any]]  # [{asset, column, rows, share}] largest first
+    coverage: float  # share of the column's non-null rows found in one of the targets
+    rows: int
+    sql: list[str] = Field(default_factory=list)
+
+
+def discover_polymorphic_references(run_sql: RunSQL, assets: list[dict[str, Any]], *,
+                                    exclude: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset()
+                                    ) -> list[PolymorphicReference]:
+    """Id-named text columns that no single table explains (`exclude`: the columns a normal candidate already covers)
+    but that the keys of two or more tables together do. Measured through `run_sql` (the gateway): containment of the
+    column in each other table's surrogate key, bounded per column and overall. Text keys only (numeric ids overlap
+    between tables by chance) and the targets must be unique and disjoint: their matched rows may not add up to more
+    than the column's rows, which would mean the same value sits in several tables."""
+    from analystos.capabilities.packs import hints
+
+    dialect = _check_dialect(getattr(run_sql, "dialect", "duckdb"))
+    key_names = [k.lower() for k in hints().key_columns]
+
+    def key_of(a: dict[str, Any]) -> dict[str, Any] | None:
+        cols = a.get("columns", [])
+        by = {c["name"].lower(): c for c in cols}
+        pick = next((by[k] for k in key_names if k in by), None) or next((c for c in cols if c.get("is_key")), None)
+        return pick if pick is not None and type_family(pick.get("data_type", "")) == "text" else None
+
+    targets = [(a, k) for a in assets if (k := key_of(a)) is not None][:MAX_POLYMORPHIC_TARGETS]
+    if len(targets) < 2:
+        return []
+    uniq_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    out: list[PolymorphicReference] = []
+    columns = [(a, c) for a in assets for c in a.get("columns", [])
+               if (a["asset"], c["name"]) not in exclude and not c.get("is_key") and not c.get("references")
+               and c["name"].lower().endswith(("_id", "_key")) and type_family(c.get("data_type", "")) == "text"]
+    for a, c in columns[:MAX_POLYMORPHIC_COLUMNS]:
+        measured = []
+        for t, tk in targets:
+            if t["asset"] == a["asset"]:
+                continue
+            m = measure_candidate(run_sql, dialect, a, c, t, tk, "polymorphic", uniq_cache)
+            if m is None:
+                break
+            measured.append(m)
+        if not measured:
+            continue
+        rows = measured[0].evidence["fk_rows"]
+        hits = [m for m in measured if m.evidence["matched_rows"] / rows >= MIN_POLYMORPHIC_SHARE and m.evidence["target_unique"]]
+        matched = sum(m.evidence["matched_rows"] for m in hits)
+        if len(hits) < 2 or matched > rows or matched / rows < MIN_POLYMORPHIC_COVERAGE:
+            continue
+        hits.sort(key=lambda m: -m.evidence["matched_rows"])
+        out.append(PolymorphicReference(
+            from_asset=a["asset"], from_column=c["name"], rows=rows, coverage=round(matched / rows, 4),
+            targets=[{"asset": m.to_asset, "column": m.to_column, "rows": m.evidence["matched_rows"],
+                      "share": round(m.evidence["matched_rows"] / rows, 4)} for m in hits],
+            sql=[q for m in hits[:1] for q in m.evidence.get("sql", [])[:1]]))
+    return out
+
+
 # =====================================================================================================
 # P7-09: composite keys and composite foreign keys, measured through the gateway.
 #

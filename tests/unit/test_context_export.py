@@ -248,3 +248,10 @@ def test_a_sensitive_columns_values_are_reported_as_withheld_and_a_query_dataset
     line = export._dataset_source("SELECT a,\n   b FROM   src.some_table WHERE x = 1 " * 5)
     assert "\n" not in line and len(line) <= 80 and line.endswith("...")
     assert export._dataset_source("src.orders") == "src.orders"
+
+
+def test_a_polymorphic_reference_names_the_tables_its_values_live_in():
+    plain = {"role": "foreign_key"}
+    poly = {"role": "foreign_key", "polymorphic_reference": {"targets": [{"asset": "sn.incident"}, {"asset": "sn.sc_task"}]}}
+    assert export._role_text(plain) == "foreign_key" and export._role_text({}) == ""
+    assert export._role_text(poly) == "foreign_key → one of sn.incident, sn.sc_task"

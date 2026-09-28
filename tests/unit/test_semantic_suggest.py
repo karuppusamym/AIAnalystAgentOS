@@ -236,3 +236,11 @@ def test_an_ordinal_measure_becomes_a_dimension_not_a_candidate_metric(model_wor
     orders = next(t for t in _suggest()["tables"] if t["name"] == "orders")
     assert "priority" not in orders["measures"] and "priority" in orders["dimensions"]
     assert not any("priority" in m["expression"] for m in _suggest()["metrics"])
+
+
+def test_a_polymorphic_reference_is_an_issue_not_a_relationship(model_world):
+    with session_scope() as s:
+        c = s.scalars(select(SourceColumn).where(SourceColumn.asset_id == "ast_orders", SourceColumn.name == "late")).one()
+        c.semantics = {**(c.semantics or {}), "polymorphic_reference": {"targets": [{"asset": "sn.incident"}, {"asset": "sn.sc_task"}]}}
+    orders = next(t for t in _suggest()["tables"] if t["name"] == "orders")
+    assert any(i["code"] == "polymorphic_reference" and "sn.incident, sn.sc_task" in i["message"] for i in orders["issues"])

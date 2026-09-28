@@ -552,6 +552,8 @@ class _Crawl:
                 pii = cat.PiiResult.model_validate(prior_pii)  # a value-sampled classification is never lost on re-crawl
             col.semantics = {**(sem.model_dump(exclude={"name", "description"}) if sem else {}),
                              **({"glossary": col.semantics["glossary"]} if (col.semantics or {}).get("glossary") else {}),
+                             **({"polymorphic_reference": col.semantics["polymorphic_reference"]}
+                                if (col.semantics or {}).get("polymorphic_reference") else {}),
                              "pii": pii.model_dump() if pii.category else None}
             if col.business_name_origin != "user":
                 source_bn = cat.screen_text(c.business_name, max_chars=120) if c.business_name else None
@@ -816,7 +818,11 @@ class _Crawl:
         from analystos.governance.policy import resolve_scope
         from analystos.runtime.context import default_gateway
         from analystos.semantic import review
-        from analystos.skills.relationships import discover_composite_relationships, discover_relationships
+        from analystos.skills.relationships import (
+            discover_composite_relationships,
+            discover_polymorphic_references,
+            discover_relationships,
+        )
 
         ws, src = self.source.workspace_id, self.source.id
         with session_scope() as s:
@@ -836,8 +842,10 @@ class _Crawl:
         found = discover_relationships(run_sql, group, observed=observed)
         if len(group) <= MEASURE_COMPOSITE_MAX_ASSETS:
             found += discover_composite_relationships(run_sql, group, observed=observed)
+        poly = discover_polymorphic_references(run_sql, group, exclude={(c.from_asset, col) for c in found for col in c.from_columns})
         validated = queued = measured = 0
         with session_scope() as s:
+            self._record_polymorphic(s, by_fq, group, poly)
             for c in found:
                 fa, ta = by_fq.get(c.from_asset), by_fq.get(c.to_asset)
                 if fa is None or ta is None:
@@ -867,6 +875,30 @@ class _Crawl:
         self.log.stage("relationships", f"{measured} declared references measured ({validated} validated); "
                        f"{queued} measured join candidates queued for review")
         return {"count": measured + queued}
+
+    def _record_polymorphic(self, s: Any, by_fq: dict[str, str], group: list[dict[str, Any]], poly: list[Any]) -> None:
+        """Keep, on the column, the tables a polymorphic reference resolves to (evidence for readers and for the
+        suggested model; not a relationship). Marks the measured tables' columns no longer polymorphic are removed."""
+        now = utcnow().isoformat()
+        found = {(p.from_asset, p.from_column): p for p in poly}
+        for a in group:
+            asset_id = by_fq.get(a["asset"])
+            if asset_id is None:
+                continue
+            for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset_id)):
+                p = found.get((a["asset"], c.name))
+                sem = dict(c.semantics or {})
+                if p is not None:
+                    sem["polymorphic_reference"] = {"targets": p.targets, "coverage": p.coverage, "rows": p.rows,
+                                                    "measured_at": now, "crawl_id": self.run.id}
+                elif "polymorphic_reference" in sem:
+                    sem.pop("polymorphic_reference")
+                else:
+                    continue
+                c.semantics = sem
+        if poly:
+            self.log.stage("relationships", f"{len(poly)} columns reference several tables (polymorphic): "
+                           + ", ".join(f"{p.from_asset}.{p.from_column}" for p in poly[:5]))
 
     # -------------------------------------------------------------- 8. glossary
     def _glossary(self, ids: dict[str, str]) -> None:

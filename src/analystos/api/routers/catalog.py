@@ -217,7 +217,8 @@ def _column_view(c: SourceColumn, fq: str, curated: dict, *, profiled: bool) -> 
             "references": (c.profile or {}).get("references"),
             "role": sem.get("semantic_role"), "unit": unit or sem.get("unit"),
             "unit_origin": "brief" if unit else ("rule" if sem.get("unit") else None),
-            "alias": curated.get(("alias", ref)), "pii": sem.get("pii"), "glossary": sem.get("glossary")}
+            "alias": curated.get(("alias", ref)), "pii": sem.get("pii"), "glossary": sem.get("glossary"),
+            "polymorphic_reference": sem.get("polymorphic_reference")}
 
 
 class AssetMetadataIn(BaseModel):

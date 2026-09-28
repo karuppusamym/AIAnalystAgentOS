@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { session, type ProcessAnalysis, type ProcessCandidate } from "../api";
-import { fmtHours, mapLayers } from "../components/ProcessMining";
+import { fmtHours, mapLayers, parseExpectedPath } from "../components/ProcessMining";
 import { CAPABILITIES } from "../lib/guide";
 import { bodyOf, calls, mockFetch, renderAt, type Handler } from "./harness";
 import { resetMockState, USER, WS } from "./mockBackend";
@@ -119,6 +119,18 @@ describe("Work → Process", () => {
     expect(within(result).getByRole("region", { name: "Cancellations" }).textContent).toMatch(/after ‘Assessed’: 5 \(100%\)/);
     expect(within(result).getByRole("region", { name: "Handovers" }).textContent).toMatch(/Choose a resource column/);
     expect(screen.getByRole("link", { name: ANALYSIS.artifact!.name }).getAttribute("href")).toBe(`/w/${WS}/outputs?artifact=art_pm1`);
+  });
+
+  it("posts the happy path a person types, and nothing when it is left empty", async () => {
+    const f = mockFetch(processApi());
+    renderAt(`/w/${WS}/work?tab=process`);
+    const form = await screen.findByRole("form", { name: "Process analysis mapping" });
+    fireEvent.change(within(form).getByLabelText("Expected path (optional)"), { target: { value: "Created → Assessed > Closed\nArchived" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Analyze" }));
+    await screen.findByRole("region", { name: "Process analysis" });
+    expect(bodyOf(calls(f, "POST", /\/process\/analyze$/)[0][1]).reference_path).toEqual(["Created", "Assessed", "Closed", "Archived"]);
+    expect(parseExpectedPath("  ")).toBeNull();
+    expect(parseExpectedPath("A -> B")).toEqual(["A", "B"]);
   });
 
   it("explains what to do when no event log is selected", async () => {

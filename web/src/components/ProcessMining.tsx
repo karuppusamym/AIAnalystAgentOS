@@ -158,6 +158,12 @@ const SELECTS: [keyof ProcessMapping, string, boolean][] = [
   ["resource_column", "Resource (optional)", false],
 ];
 
+/** "Created → Assigned > Closed" or one step per line → the activity names in order; empty → null (the pack's or inferred path is used). */
+export function parseExpectedPath(text: string): string[] | null {
+  const steps = text.split(/\s*(?:→|->|>|\r?\n)\s*/).map((t) => t.trim()).filter(Boolean);
+  return steps.length ? steps : null;
+}
+
 function ProcessForm({ wsId, candidates, onDone }: { wsId: string; candidates: ProcessCandidate[]; onDone: (a: ProcessAnalysis) => void }) {
   const firstValue = (c: ProcessCandidate) => (c.segments[0]?.values[0] ? String(c.segments[0].values[0].value) : "");
   const [assetId, setAssetId] = useState(candidates[0].asset_id);
@@ -166,6 +172,7 @@ function ProcessForm({ wsId, candidates, onDone }: { wsId: string; candidates: P
   const segment = cand.segments[0];
   const [segValue, setSegValue] = useState<string>(firstValue(cand));
   const [save, setSave] = useState(true);
+  const [expected, setExpected] = useState("");
   const act = useAction();
   const [last, setLast] = useState<ProcessAnalysis | null>(null);
   const pick = (id: string) => {  // a table's own suggested mapping replaces the previous one
@@ -173,15 +180,18 @@ function ProcessForm({ wsId, candidates, onDone }: { wsId: string; candidates: P
     setAssetId(next.asset_id);
     setMapping(next.mapping);
     setSegValue(firstValue(next));
+    setExpected("");
   };
   const submit = () => void act.run(async () => {
     const filters = segment && segValue !== "" ? [{ column: segment.column, op: "=" as const, value: segValue }] : [];
     const a = await api.analyzeProcess(wsId, { asset_id: cand.asset_id, ...mapping, resource_column: mapping.resource_column || null,
-      filters, save });
+      filters, save, ...(parseExpectedPath(expected) ? { reference_path: parseExpectedPath(expected) } : {}) });
     setLast(a);
     onDone(a);
   });
   const id = (k: string) => `process-${k}`;
+  const declared = segment?.values.find((v) => String(v.value) === segValue)?.reference_path;
+  const pathHint = declared?.length ? { path: declared, by: cand.declared_by ?? "" } : null;
   return (
     <Card title="Event log" label="Event log">
       <form className="form" aria-label="Process analysis mapping" onSubmit={(e) => { e.preventDefault(); submit(); }}>
@@ -213,6 +223,12 @@ function ProcessForm({ wsId, candidates, onDone }: { wsId: string; candidates: P
             </Field>
           ))}
         </div>
+        <Field label="Expected path (optional)" htmlFor={id("expected")}
+          hint={pathHint ? `Leave empty to use the ${pathHint.by ? pathHint.by + " model" : "model"}: ${pathHint.path.join(" → ")}. Or type your own: activities in order, separated by →, > or new lines.`
+            : "Leave empty to compare with the most common completed path. Or type the happy path: activities in order, separated by →, > or new lines."}>
+          <textarea id={id("expected")} rows={2} value={expected} onChange={(e) => setExpected(e.target.value)}
+            placeholder={pathHint ? pathHint.path.join(" → ") : "Created → Assigned → Worked → Closed"} />
+        </Field>
         <div className="chip-row">
           <label className="field-check"><input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} /> Save to Outputs</label>
           <button type="submit" className="btn btn-primary" disabled={act.busy}>{act.busy ? "Analyzing…" : "Analyze"}</button>

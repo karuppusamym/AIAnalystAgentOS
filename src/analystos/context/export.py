@@ -313,6 +313,7 @@ def _column(c: Any, *, samples_allowed: bool) -> dict[str, Any]:
             "business_name": c.business_name, "business_name_origin": c.business_name_origin,
             "description": c.description, "description_origin": c.description_origin, "reviewed": bool(sem.get("reviewed")),
             "tags": sorted(c.tags or []), "pii": sem.get("pii"), "glossary": sem.get("glossary"),
+            "polymorphic_reference": sem.get("polymorphic_reference"),
             "sensitive": column_is_sensitive(c.tags, sem),
             "profile": export_profile(c.profile, c.tags, sem, samples_allowed=samples_allowed)}
 
@@ -379,6 +380,14 @@ def _cell(value: Any, limit: int = 300) -> str:
 def _table(headers: list[str], rows: Iterable[Iterable[Any]]) -> list[str]:
     body = ["| " + " | ".join(_cell(v) for v in row) + " |" for row in rows]
     return ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers), *body] if body else ["_None yet._"]
+
+
+def _role_text(c: Mapping[str, Any]) -> str:
+    """The column's role; a polymorphic reference says which tables its values live in."""
+    poly = c.get("polymorphic_reference")
+    if not isinstance(poly, dict) or not poly.get("targets"):
+        return str(c.get("role") or "")
+    return f"{c.get('role') or 'foreign_key'} → one of " + ", ".join(str(t.get("asset")) for t in poly["targets"])
 
 
 def _dataset_source(source: Any) -> str:
@@ -460,7 +469,7 @@ def render_markdown(content: Mapping[str, Any], *, generated_at: str) -> str:
                 f"{', unique' if key.get('unique') is True else ', not unique' if key.get('unique') is False else ''}); "
                 f"time column {a.get('time_column') or '—'}", "",
                 *_table(["column", "type", "role", "unit", "business name", "description", "tags / PII", "glossary", "profile"],
-                        [(c["name"], c["data_type"], c.get("role"), c.get("unit"),
+                        [(c["name"], c["data_type"], _role_text(c), c.get("unit"),
                           c.get("business_name"), (c.get("description") or "") + (f" ({c['description_origin']})"
                                                                                   if c.get("description_origin") else ""),
                           ", ".join(c.get("tags") or []) + (f" PII {(c.get('pii') or {}).get('category')}"

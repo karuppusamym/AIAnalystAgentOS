@@ -142,6 +142,12 @@ def _table(asset: SourceAsset, cols: list[SourceColumn], approved: list[str] | N
         issues.append({"code": "key_not_unique", "message": f"The key {', '.join(pk['columns'])} has duplicate or missing values"})
     if role in FACT_ROLES and not time_column:
         issues.append({"code": "fact_without_time", "message": "A fact table without a date or time column cannot be trended"})
+    for c in cols:
+        poly = (c.semantics or {}).get("polymorphic_reference")
+        if isinstance(poly, dict) and poly.get("targets"):
+            issues.append({"code": "polymorphic_reference", "message": (
+                f"{c.name} points at several tables ({', '.join(str(t['asset']) for t in poly['targets'])}): "
+                "no single join is right, so join it per kind of record")})
     if not (asset.stats or {}).get("profile_meta"):
         issues.append({"code": "not_profiled", "message": "Not profiled yet: keys and ranges are not measured"})
     confidence = float(sem.get("confidence") or 0.0)
