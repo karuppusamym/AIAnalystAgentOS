@@ -10,7 +10,7 @@ import { AskPage } from "../pages/Ask";
 import { CatalogPage } from "../pages/Catalog";
 import { MonitorForm } from "../pages/Monitoring";
 import { ScheduleForm } from "../pages/Schedules";
-import { AddSource } from "../pages/Sources";
+import { AddSource, SourceCard } from "../pages/Sources";
 import { buildCrawlInput, crawlStatsSummary, driftCounts, emptyCrawlForm, stageProgress } from "../lib/crawls";
 import { buildMonitorConfig, describeMonitorConfig, emptyMonitorForm, validateMonitorForm } from "../lib/monitors";
 import { buildScheduleConfig, emptyScheduleForm, formFromSchedule, mergeScheduleConfig } from "../lib/schedules";
@@ -175,6 +175,60 @@ describe("AddSource", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Add source" }));
     expect(await screen.findByText(/disabled by the administrator/)).toBeTruthy();
+  });
+});
+
+describe("EditSource", () => {
+  const CONFIGURED = { ...SOURCE, config: { host: "db.internal", database: "dw", username: "reader" } };
+
+  it("pre-fills from the source's own config and sends only the changed field", async () => {
+    const fetchMock = mockApi([
+      ["GET", /\/api\/source-kinds$/, KINDS],
+      ["PATCH", /\/api\/workspaces\/ws_1\/sources\/src_1$/, { ...CONFIGURED, name: "Warehouse (primary)" }],
+    ]);
+    const onChanged = vi.fn();
+    render(<MemoryRouter><SourceCard wsId="ws_1" source={CONFIGURED} assets={[]} onChanged={onChanged} onOpenAsset={vi.fn()}
+      activeAsset={null} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(((await screen.findByLabelText("Host *")) as HTMLInputElement).value).toBe("db.internal");
+    expect((screen.getByLabelText("Database *") as HTMLInputElement).value).toBe("dw");
+    expect((screen.getByLabelText("Secret reference (password)") as HTMLInputElement).value).toBe("env:PG");
+
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Warehouse (primary)" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const [, init] = calls(fetchMock, "PATCH", /\/sources\/src_1$/)[0];
+    expect(bodyOf(init)).toEqual({ name: "Warehouse (primary)" }); // config and secret untouched: not sent
+  });
+
+  it("refuses to save nothing, and Cancel closes without a request", async () => {
+    const fetchMock = mockApi([["GET", /\/api\/source-kinds$/, KINDS]]);
+    render(<MemoryRouter><SourceCard wsId="ws_1" source={CONFIGURED} assets={[]} onChanged={vi.fn()} onOpenAsset={vi.fn()}
+      activeAsset={null} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByLabelText("Host *");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Nothing changed yet.")).toBeTruthy();
+    expect(calls(fetchMock, "PATCH", /\/sources\//)).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText("Host *")).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+  });
+
+  it("sends clear_secret_ref when the secret reference is emptied", async () => {
+    const fetchMock = mockApi([
+      ["GET", /\/api\/source-kinds$/, KINDS],
+      ["PATCH", /\/api\/workspaces\/ws_1\/sources\/src_1$/, { ...CONFIGURED, secret_ref: null }],
+    ]);
+    render(<MemoryRouter><SourceCard wsId="ws_1" source={CONFIGURED} assets={[]} onChanged={vi.fn()} onOpenAsset={vi.fn()}
+      activeAsset={null} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(await screen.findByLabelText("Secret reference (password)"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls(fetchMock, "PATCH", /\/sources\/src_1$/)).toHaveLength(1));
+    const [, init] = calls(fetchMock, "PATCH", /\/sources\/src_1$/)[0];
+    expect(bodyOf(init)).toEqual({ clear_secret_ref: true });
   });
 });
 

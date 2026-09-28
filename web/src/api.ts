@@ -1813,6 +1813,7 @@ export interface SourceKindInfo {
 
 /** Request body of POST …/sources (generated). */
 export type SourceInput = Schemas["SourceIn"];
+export type SourceUpdatePatch = Schemas["SourceUpdateIn"];
 
 export interface RetypedColumn {
   name: string;
@@ -3269,6 +3270,10 @@ export const api = {
   listSources: (ws: string) => get("/api/workspaces/{workspace_id}/sources", { path: W(ws) }) as Promise<Source[]>,
   addSource: (ws: string, body: SourceInput) =>
     post("/api/workspaces/{workspace_id}/sources", { path: W(ws), body }) as Promise<Source>,
+  /** Rename a source or correct its connection (host, tables, other config, secret reference); only the
+    * fields sent change. The kind cannot change — add a new source for a different connector. */
+  updateSource: (ws: string, sourceId: string, body: SourceUpdatePatch) =>
+    patch("/api/workspaces/{workspace_id}/sources/{source_id}", { path: { workspace_id: ws, source_id: sourceId }, body }) as Promise<Source>,
   sourceKinds: () => get("/api/source-kinds", {}) as Promise<SourceKindInfo[]>,
   discover: (ws: string, sourceId: string) =>
     post("/api/workspaces/{workspace_id}/sources/{source_id}/discover", { path: { workspace_id: ws, source_id: sourceId } }) as Promise<DiscoverResponse>,

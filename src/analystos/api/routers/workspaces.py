@@ -67,6 +67,16 @@ class SourceIn(BaseModel):
     secret_ref: str | None = None
 
 
+class SourceUpdateIn(BaseModel):
+    """Only the fields sent change. The kind cannot change here (add a new source instead). Send
+    `clear_secret_ref: true` to remove a secret reference; `secret_ref` on its own only sets one."""
+
+    name: str | None = None
+    config: dict | None = None
+    secret_ref: str | None = None
+    clear_secret_ref: bool = False
+
+
 class Selection(BaseModel):
     assets: list[str]
 
@@ -211,6 +221,26 @@ def add_source(workspace_id: str, body: SourceIn, user: User = Depends(current_u
 def list_sources(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     return rows(session.scalars(select(Source).where(Source.workspace_id == workspace_id).order_by(Source.created_at)))
+
+
+@router.patch("/workspaces/{workspace_id}/sources/{source_id}")
+def edit_source(workspace_id: str, source_id: str, body: SourceUpdateIn, user: User = Depends(current_user),
+                session: Session = Depends(db, scope="function")):
+    """Rename a source or correct its connection (host, port, tables, other config, secret reference). The
+    kind cannot change; add a new source for a different connector. Changing the connection marks the
+    source `registered` again so the catalog shows it has not been checked against it yet."""
+    kwargs: dict = {}
+    if body.name is not None:
+        kwargs["name"] = body.name
+    if body.config is not None:
+        kwargs["config"] = body.config
+    if body.clear_secret_ref:
+        kwargs["clear_secret_ref"] = True
+    elif body.secret_ref is not None:
+        kwargs["secret_ref"] = body.secret_ref
+    src = source_svc.update_source(session, user, workspace_id, source_id, **kwargs)
+    session.flush()
+    return row(src)
 
 
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/discover")

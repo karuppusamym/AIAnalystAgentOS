@@ -5872,6 +5872,52 @@
         "title": "SourceIn",
         "type": "object"
       },
+      "SourceUpdateIn": {
+        "description": "Only the fields sent change. The kind cannot change here (add a new source instead). Send\n`clear_secret_ref: true` to remove a secret reference; `secret_ref` on its own only sets one.",
+        "properties": {
+          "clear_secret_ref": {
+            "default": false,
+            "title": "Clear Secret Ref",
+            "type": "boolean"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "secret_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Ref"
+          }
+        },
+        "title": "SourceUpdateIn",
+        "type": "object"
+      },
       "SplitSpec": {
         "additionalProperties": false,
         "properties": {
@@ -30809,6 +30855,98 @@
           }
         },
         "summary": "Add Source",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/sources/{source_id}": {
+      "patch": {
+        "description": "Rename a source or correct its connection (host, port, tables, other config, secret reference). The\nkind cannot change; add a new source for a different connector. Changing the connection marks the\nsource `registered` again so the catalog shows it has not been checked against it yet.",
+        "operationId": "edit_source_api_workspaces__workspace_id__sources__source_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceUpdateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Source",
         "tags": [
           "workspaces"
         ]

@@ -77,6 +77,18 @@ export interface SourceFormErrors {
   [field: string]: string;
 }
 
+/** The inverse of `buildSourceConfig`: an existing source's config as editable form strings (a list field
+  * joins with ", "), so an edit form starts from what is actually saved. */
+export function valuesFromConfig(kind: SourceKindInfo, config: Dict): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of [...kind.required, ...kind.optional]) {
+    const raw = config[field];
+    if (raw === undefined || raw === null) continue;
+    values[field] = Array.isArray(raw) ? raw.join(", ") : String(raw);
+  }
+  return values;
+}
+
 /** Convert raw form strings to the config object the API expects; empty optional fields are omitted. */
 export function buildSourceConfig(kind: SourceKindInfo, values: Record<string, string>, executionMode?: string): Dict {
   const config: Dict = {};
