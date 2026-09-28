@@ -275,8 +275,8 @@ MIN_POLYMORPHIC_COVERAGE = 0.95
 
 
 class PolymorphicReference(BaseModel):
-    """One id column whose values live in several tables' keys (a ticket reference that is an incident, a task or a
-    change): no single join is right, so it is reported as evidence, never queued as a relationship."""
+    """One id column whose values live in several tables' keys (a document reference that is an order, a return or an
+    invoice): no single join is right, so it is reported as evidence, never queued as a relationship."""
     from_asset: str
     from_column: str
     targets: list[dict[str, Any]]  # [{asset, column, rows, share}] largest first
