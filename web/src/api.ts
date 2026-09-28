@@ -1324,6 +1324,8 @@ export interface Health {
 export interface ModelHealth {
   checked_at: string;
   counters_available: boolean;
+  /** The store that proves hard spend caps: Redis, or Postgres in the lite profile. False = billable calls are refused. */
+  spend_counters?: { store: string; available: boolean };
   spend_today: { usd: number; cap_usd: number | null; source: "counter" | "database"; fraction: number | null;
     alert_fraction: number; resets_at: string };
   providers: ProviderHealth[];
@@ -4001,4 +4003,9 @@ export interface SavedProcessAnalysis {
   id: string; name: string; version: number; created_at: string | null; updated_at: string | null;
   asset: ProcessAnalysis["asset"] | null; segment: ProcessAnalysis["segment"]; mapping: ProcessMapping | null;
   summary: ProcessAnalysis["summary"] | null;
+}
+
+/** Whether billable model calls are refused because no store can prove the spend caps (Redis, or Postgres in lite). */
+export function spendCountersDown(h: { counters_available: boolean; spend_counters?: { available: boolean } }): boolean {
+  return h.spend_counters ? !h.spend_counters.available : !h.counters_available;
 }
