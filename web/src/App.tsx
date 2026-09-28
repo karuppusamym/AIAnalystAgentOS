@@ -1,4 +1,5 @@
-import { lazy, Suspense, type ReactElement, type ReactNode } from "react";
+import { Suspense, type ReactElement, type ReactNode } from "react";
+import { lazyWithReload } from "./lib/lazyReload";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { Layout } from "./components/Layout";
@@ -20,7 +21,7 @@ import { WorkspacesPage } from "./pages/Workspaces";
 import { legacyTarget, LEGACY_REDIRECTS, SCREENS, type LegacyRedirect as Legacy, type Screen, type ScreenId } from "./routes";
 
 // The knowledge studio (catalog, documents, review queue, graph, import/export) loads on first visit.
-const CatalogPage = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.CatalogPage })));
+const CatalogPage = lazyWithReload(() => import("./pages/Catalog").then((m) => ({ default: m.CatalogPage })));
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();

@@ -133,16 +133,18 @@ def finalize(ctx: RunContext) -> dict:
         emit(ctx.workspace.id, "analysis.completed", {"verified_insights": len(facts), "published": bool(published)},
              run_id=ctx.run.id, session=s)
         run.finished_at = utcnow()
-    report_id = None
-    report_cfg = (ctx.run.origin or {}).get("report")
-    if report_cfg:
-        report_id = _scheduled_report(ctx, report_cfg)
+    # every investigation leaves a report in Outputs (a schedule may ask for another kind or formats)
+    report_cfg = (ctx.run.origin or {}).get("report") or DEFAULT_REPORT
+    report_id = _scheduled_report(ctx, report_cfg)
     return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
             "registered_hypotheses": registered}
 
 
+DEFAULT_REPORT = {"kind": "executive", "formats": ["html", "pdf", "xlsx"]}
+
+
 def _scheduled_report(ctx: RunContext, report_cfg: dict) -> str | None:
-    """The report a schedule asked for is best effort: the summary is already committed, so a disabled
+    """The run's report (the one a schedule asked for, else the executive report) is best effort: the summary is already committed, so a disabled
     feature or a missing PDF/XLSX extra is recorded on the run (`report_error`) and never fails the run."""
     from analystos.core.logging import get_logger
     from analystos.services.reports import generate_report

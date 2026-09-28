@@ -49,7 +49,7 @@ def choose_destination(ctx: RunContext) -> str:
     return "preview"
 
 
-def build_bundle(ctx: RunContext, destination: str) -> PublishBundle:
+def build_bundle(ctx: RunContext, destination: str, *, pending_ok: bool = False) -> PublishBundle:
     ds, _ = dataset_def(ctx.run.id)
     parts = load_bundle_parts(ctx.run.id)
     charts = [ChartSpec.model_validate({**c.model_dump(), "preview": {}}) for c in parts["charts"]]  # previews are not published
@@ -63,7 +63,17 @@ def build_bundle(ctx: RunContext, destination: str) -> PublishBundle:
     with session_scope() as s:
         # P7-01: a chart presenting a finding whose verdict is VOID is refused, here and right before publishing.
         gate_publish(s, ctx.run.id, [code for c in bundle.charts for code in c.insight_codes])
-        return gate_bundle(s, ctx.workspace.id, ctx.policy, bundle)
+        # pending_ok: KPIs not approved yet stay in the bundle as proposed; the publication approval then carries them
+        # to the approver, whose one decision approves both (`publish` approves them before the side effect)
+        policy = ctx.policy.model_copy(update={"require_approved_metrics": False}) if pending_ok else ctx.policy
+        return gate_bundle(s, ctx.workspace.id, policy, bundle)
+
+
+def pending_metrics(ctx: RunContext, bundle: PublishBundle) -> list[str]:
+    """The bundle's KPIs the workspace policy wants approved and that are not yet (gate_bundle stamps approved ones)."""
+    if not getattr(ctx.policy, "require_approved_metrics", False):
+        return []
+    return [m.name for m in bundle.metrics if m.status != "approved"]
 
 
 def governance_review(ctx: RunContext, bundle: PublishBundle) -> dict:
@@ -93,22 +103,8 @@ def governance_review(ctx: RunContext, bundle: PublishBundle) -> dict:
 
 def request_publication(ctx: RunContext) -> dict:
     destination = choose_destination(ctx)
-    try:
-        bundle = build_bundle(ctx, destination)
-    except PolicyDenied as exc:
-        unapproved = (exc.details or {}).get("unapproved_metrics")
-        if not unapproved:
-            raise
-        # The analysis stands (findings verified, report and thread available); only publication waits for a person
-        # to approve the KPIs. Nothing is published: no approval is requested, so the publish step is skipped.
-        ctx.say(f"Not published: {len(unapproved)} KPI(s) are not approved yet ({', '.join(unapproved)}). An approver "
-                "approves them in the approvals inbox (semantic metrics), then the analysis is re-run to publish.",
-                kind="decision")
-        with session_scope() as s:
-            run = s.get(AnalysisRun, ctx.run.id)
-            run.summary = {**(run.summary or {}), "publication_blocked": {
-                "reason": "unapproved_metrics", "metrics": list(unapproved), "remedy": (exc.details or {}).get("remedy")}}
-        return {"approval_id": None, "blocked": "unapproved_metrics", "metrics": list(unapproved)}
+    bundle = build_bundle(ctx, destination, pending_ok=True)
+    pending = pending_metrics(ctx, bundle)
     review = governance_review(ctx, bundle)
     if not review["ok"]:
         ctx.say("Governance blocked publication: " + "; ".join(review["problems"][:5]), kind="decision")
@@ -128,11 +124,15 @@ def request_publication(ctx: RunContext) -> dict:
             affected_assets=[d.name for d in bundle.datasets] + [d.key for d in bundle.dashboards],
             evidence={"governance_review": review, "policy": decision.model_dump(),
                       "risk_tier_basis": "deterministic: publication is always high risk and approval-gated",
-                      "charts": len(bundle.charts), "metrics": len(bundle.metrics)})
+                      "charts": len(bundle.charts), "metrics": len(bundle.metrics),
+                      **({"kpis_to_approve": [{"name": m.name, "expression": m.sql_expression, "definition": m.definition}
+                                              for m in bundle.metrics if m.name in pending]} if pending else {})})
         task = s.scalar(select(RunTask).where(RunTask.run_id == run.id, RunTask.key == "publish"))
         task.input = {**task.input, "approval_id": approval.id, "destination": destination}
     ctx.say(f"Publication to {destination} awaits approval {approval.id} (bundle hash {approval.payload_hash[:12]}; "
-            f"{len(bundle.dashboards)} dashboards, {len(bundle.charts)} charts). Nothing is published until a person approves.",
+            f"{len(bundle.dashboards)} dashboards, {len(bundle.charts)} charts). Nothing is published until a person approves."
+            + (f" Approving it also approves the {len(pending)} KPI definition(s) it publishes ({', '.join(pending)}), as the "
+               "workspace requires approved KPIs." if pending else ""),
             kind="decision")
     return {"approval_id": approval.id, "destination": destination, "payload_hash": approval.payload_hash}
 
@@ -156,6 +156,35 @@ def record_contracts(ctx: RunContext, bundle: PublishBundle, result, pub_id: str
         ctx.say("ODCS data contracts: " + ", ".join(f"{i['path']} v{i['version']}" for i in written.values()))
 
 
+def _comparable(bundle: dict) -> dict:
+    """A bundle as the "changed after approval" check sees it: a KPI by its name and expression, so its approval (which
+    stamps the approved definition on it) is not a change; `verify_for_execution` still binds the exact approved payload."""
+    return {**bundle, "metrics": sorted((m.get("name"), m.get("sql_expression")) for m in bundle.get("metrics") or [])}
+
+
+def approve_bundled_metrics(ctx: RunContext, approval_id: str, names: list[str]) -> None:
+    """The publication's approver reviewed the KPI definitions in the bundle it approved: each still-proposed KPI is
+    approved in that person's name through the ordinary metric decision (role and separation of duties apply: the
+    run's requester cannot approve their own KPIs). A KPI that cannot be approved stops the publication."""
+    if not names:
+        return
+    from analystos.semantic.service import decide_metric
+
+    with session_scope() as s:
+        approval = s.get(Approval, approval_id)
+        approver = s.get(User, approval.decided_by) if approval and approval.decided_by else None
+        if approver is None:
+            raise PolicyDenied("the publication approval names no approver to approve its KPIs")
+        for name in names:
+            try:
+                decide_metric(s, ctx.workspace.id, name, approver, approve=True,
+                              reason=f"approved with publication approval {approval_id}")
+            except AnalystOSError as exc:
+                raise PolicyDenied(f"KPI {name} could not be approved with the publication: {exc.message}",
+                                   details={"metric": name}) from exc
+    ctx.say(f"Approved {len(names)} KPI definition(s) with the publication approval ({', '.join(names)}).", kind="decision")
+
+
 def publish(ctx: RunContext) -> dict:
     from analystos.publishing.base import get_publisher
 
@@ -171,13 +200,14 @@ def publish(ctx: RunContext) -> dict:
 
     if destination == "superset" and not platform().features.superset_publishing:
         raise PolicyDenied("Superset publishing was turned off by the administrator after this approval was granted")
-    current = build_bundle(ctx, destination).model_dump()
-    if stable_hash(current) != stable_hash(payload):
+    current = build_bundle(ctx, destination, pending_ok=True)
+    if stable_hash(_comparable(current.model_dump())) != stable_hash(_comparable(payload)):
         with session_scope() as s:
             a = s.get(Approval, approval_id)
             a.status, a.reason = "invalidated", "artifacts changed after approval"
         raise ApprovalRequired("artifacts changed after approval; a new approval is required")
     ctx.check_control()
+    approve_bundled_metrics(ctx, approval_id, pending_metrics(ctx, current))
     bundle = PublishBundle.model_validate(payload)
     ctx.check_output("publication", payload)  # the agent's output contract (FND-006), before the side effect
     key = f"{ctx.run.id}:{approval.payload_hash[:32]}"

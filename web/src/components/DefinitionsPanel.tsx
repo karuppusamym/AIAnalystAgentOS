@@ -1,4 +1,5 @@
-import { lazy, Suspense, useId, useState } from "react";
+import { Suspense, useId, useState } from "react";
+import { lazyWithReload } from "../lib/lazyReload";
 import { api, type DefinitionVersion, type RelationshipCandidate } from "../api";
 import { fmtDate, fmtPct, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
@@ -7,7 +8,7 @@ import { ModelSuggestion } from "./ModelSuggestion";
 import { isStaleEdit, StaleEditNotice } from "./StaleEdit";
 import { Card, EmptyState, ErrorBox, Loading, Notice, StatusBadge, TechnicalDetails } from "./ui";
 
-const SemanticGraph = lazy(() => import("./SemanticGraph").then((m) => ({ default: m.SemanticGraph })));
+const SemanticGraph = lazyWithReload(() => import("./SemanticGraph").then((m) => ({ default: m.SemanticGraph })));
 
 const CARDINALITY: Record<string, string> = {
   one_to_one: "one to one", many_to_one: "many to one", one_to_many: "one to many", many_to_many: "many to many",

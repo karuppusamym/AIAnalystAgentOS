@@ -108,3 +108,18 @@ def test_an_ml_proposal_on_dated_file_rows_splits_by_time_and_keeps_identifiers_
     spec = propose(cols, asset="s.orders", row_count=6000, target="returned", task="classify")["proposal"]
     assert spec["time_column"] == "order_date" and spec["entity_keys"] == ["order_id"]
     assert {f["column"] for f in spec["features"]} == {"quantity", "sales_channel"}
+
+
+def test_approving_a_kpi_with_its_publication_is_not_a_change_to_the_approved_bundle():
+    from types import SimpleNamespace
+
+    from analystos.agents.publisher import _comparable, pending_metrics
+
+    proposed = {"datasets": [{"name": "d"}], "metrics": [{"name": "rate", "sql_expression": "AVG(x)", "status": "proposed"}]}
+    approved = {"datasets": [{"name": "d"}], "metrics": [{"name": "rate", "sql_expression": "AVG(x)", "status": "approved",
+                                                          "display_name": "Rate", "owner": "u1"}]}
+    changed = {"datasets": [{"name": "d"}], "metrics": [{"name": "rate", "sql_expression": "SUM(x)", "status": "proposed"}]}
+    assert _comparable(proposed) == _comparable(approved) and _comparable(proposed) != _comparable(changed)
+    bundle = SimpleNamespace(metrics=[SimpleNamespace(name="rate", status="proposed"), SimpleNamespace(name="n", status="approved")])
+    assert pending_metrics(SimpleNamespace(policy=SimpleNamespace(require_approved_metrics=True)), bundle) == ["rate"]
+    assert pending_metrics(SimpleNamespace(policy=SimpleNamespace(require_approved_metrics=False)), bundle) == []
