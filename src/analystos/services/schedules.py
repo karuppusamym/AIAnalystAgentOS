@@ -457,7 +457,7 @@ def _mark_superseded(session: Session, previous_run_id: str | None, run_id: str)
     for art in session.scalars(select(Artifact).where(Artifact.run_id == previous_run_id, Artifact.type == "narrative",
                                                       Artifact.status == "final")):
         art.status = "stale"
-        link(session, art.workspace_id, ("artifact", art.id), "superseded_by", ("run", run_id), run_id=run_id)
+        link(session, art.workspace_id, (art.type, art.id), "superseded_by", ("run", run_id), run_id=run_id)
         marked.append(art.id)
     if marked:
         run = session.get(AnalysisRun, run_id)

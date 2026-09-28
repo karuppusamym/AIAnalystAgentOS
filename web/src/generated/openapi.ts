@@ -3130,7 +3130,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Lineage */
+        /**
+         * Lineage
+         * @description Provenance around one node (`node_type` + `node_id`), or every edge one run recorded (`run_id`).
+         */
         get: operations["lineage_api_workspaces__workspace_id__lineage_get"];
         put?: never;
         post?: never;
@@ -14421,9 +14424,10 @@ export interface operations {
     };
     lineage_api_workspaces__workspace_id__lineage_get: {
         parameters: {
-            query: {
-                node_type: string;
-                node_id: string;
+            query?: {
+                node_type?: string | null;
+                node_id?: string | null;
+                run_id?: string | null;
             };
             header?: {
                 authorization?: string | null;

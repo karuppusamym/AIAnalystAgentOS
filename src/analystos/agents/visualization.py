@@ -181,6 +181,9 @@ def design(ctx: RunContext) -> dict:
                                         native_filters=list(filters), summary_markdown=summary if audience == "executive" else ""))
     with session_scope() as s:
         ds_art = content["artifact_id"]
+        metric_ids = dict(s.execute(select(Artifact.name, Artifact.id).where(Artifact.run_id == ctx.run.id,
+                                                                            Artifact.type == "metric")).all())
+        insight_ids = dict(s.execute(select(Insight.code, Insight.id).where(Insight.run_id == ctx.run.id)).all())
         chart_ids = {}
         for c in charts:
             art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="chart", name=c.key, content=c.model_dump(),
@@ -188,9 +191,10 @@ def design(ctx: RunContext) -> dict:
             chart_ids[c.key] = art.id
             link(s, ctx.workspace.id, ("chart", art.id), "visualizes", ("dataset", ds_art), run_id=ctx.run.id)
             if c.metric:
-                link(s, ctx.workspace.id, ("chart", art.id), "shows_metric", ("metric", c.metric), run_id=ctx.run.id)
+                link(s, ctx.workspace.id, ("chart", art.id), "shows_metric", ("metric", metric_ids.get(c.metric, c.metric)),
+                     run_id=ctx.run.id)
             for code in c.insight_codes:
-                link(s, ctx.workspace.id, ("insight", code), "visualized_by", ("chart", art.id), run_id=ctx.run.id)
+                link(s, ctx.workspace.id, ("insight", insight_ids.get(code, code)), "visualized_by", ("chart", art.id), run_id=ctx.run.id)
             if c.preview.get("query_id"):
                 link(s, ctx.workspace.id, ("chart", art.id), "previewed_by", ("query", c.preview["query_id"]), run_id=ctx.run.id)
             ctx.event("chart.created", {"key": c.key, "type": c.chart_type, "title": c.title})

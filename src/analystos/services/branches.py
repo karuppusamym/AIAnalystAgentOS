@@ -256,8 +256,8 @@ def merge(user: User, workspace_id: str, branch_id: str, body: MergeIn) -> dict[
                             (s.get(Artifact, body.report_id).run_id if body.report_id else None),
                             creator_user=user.id, status="draft")
         for sec in sections:
-            steps_svc._link(s, workspace_id, ("step", sec["step_id"]), "included_in", ("artifact", art.id))
-        steps_svc._link(s, workspace_id, ("step_branch", branch.id), "merged_into", ("artifact", art.id))
+            steps_svc._link(s, workspace_id, ("step", sec["step_id"]), "included_in", (art.type, art.id))
+        steps_svc._link(s, workspace_id, ("step_branch", branch.id), "merged_into", (art.type, art.id))
         branch.status = "merged"
         branch.merged_into = list(dict.fromkeys([*(branch.merged_into or []), art.id]))
         emit(workspace_id, "branch.merged", {"branch_id": branch.id, "report_id": art.id, "sections": len(sections),

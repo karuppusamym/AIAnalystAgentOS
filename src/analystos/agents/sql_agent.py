@@ -131,9 +131,9 @@ def build_dataset(ctx: RunContext) -> dict:
                             creator_agent=ctx.agent.id)
         for a in ds.source_assets:
             link(s, ctx.workspace.id, ("dataset", art.id), "built_from", ("table", a), run_id=ctx.run.id)
-        for code in [i.code for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
-                                                   .order_by(*by_code(Insight.code)))]:
-            link(s, ctx.workspace.id, ("insight", code), "reproducible_in", ("dataset", art.id), run_id=ctx.run.id)
+        for ins_id in [i.id for i in s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
+                                                     .order_by(*by_code(Insight.code)))]:
+            link(s, ctx.workspace.id, ("insight", ins_id), "reproducible_in", ("dataset", art.id), run_id=ctx.run.id)
     ctx.event("dataset.created", {"name": name, "rows": ds.row_count, "columns": len(columns), "derived": list(derived)})
     ctx.say(f"Built virtual analytical dataset {name}: {ds.row_count:,} rows, {len(columns)} columns "
             f"({len(derived)} derived: {', '.join(derived)}){'; user filters applied' if filters else ''}. No source writes (minimum ETL).")

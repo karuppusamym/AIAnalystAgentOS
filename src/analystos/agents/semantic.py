@@ -215,6 +215,7 @@ def define_metrics(ctx: RunContext) -> dict:
         semantic.save_model(s, ctx.workspace.id, actor=f"agent:{ctx.agent.id}", origin=f"agent:{ctx.agent.id}",
                             datasets=[semantic.dataset_from_def(model_ds)], run_id=ctx.run.id)
         proposed = []
+        approved_rows = semantic.approved_metrics(s, ctx.workspace.id)
         for m in accepted:
             art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="metric", name=m.name,
                                 content=m.model_dump(), creator_agent=ctx.agent.id, status="validated")
@@ -226,6 +227,10 @@ def define_metrics(ctx: RunContext) -> dict:
                     proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id, source=("metric", art.id))
                 if created:
                     proposed.append(m.name)
+            else:
+                row = approved_rows.get(m.name)
+            if row is not None and row.status in semantic.ACTIVE:  # the workspace definition governing it
+                link(s, ctx.workspace.id, ("metric", art.id), "governed_by", ("semantic_metric", row.id), run_id=ctx.run.id)
         for m in clashing:
             semantic.propose_metric(s, ctx.workspace.id, semantic.from_metricdef(m, dataset=model_ds.name, sql_dialect=dialect),
                                     proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id)

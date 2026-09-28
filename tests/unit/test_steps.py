@@ -207,7 +207,7 @@ def test_fork_compare_and_merge_keep_both_branches_lineage(thread):
     assert len(content["sections"]) == 4 and second["report"]["version"] == 2
     with session_scope() as s:
         edges = {(e.from_type, e.relation, e.to_type) for e in s.scalars(select(LineageEdge).where(LineageEdge.workspace_id == WS))}
-    assert {("step", "included_in", "artifact"), ("step_branch", "merged_into", "artifact"),
+    assert {("step", "included_in", "report"), ("step_branch", "merged_into", "report"),
             ("step_branch", "forked_into", "step_branch"), ("step", "forked_into", "step")} <= edges
 
 

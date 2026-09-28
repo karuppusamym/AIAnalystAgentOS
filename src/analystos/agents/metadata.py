@@ -31,7 +31,7 @@ def collect_metadata(ctx: RunContext) -> dict:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="profile",
                             name="Technical metadata", content={"tables": tables}, creator_agent=ctx.agent.id)
         for t in tables:
-            link(s, ctx.workspace.id, ("table", t["asset"]), "described_by", ("artifact", art.id), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, ("table", t["asset"]), "described_by", (art.type, art.id), run_id=ctx.run.id)
     ctx.event("metadata.collected", {"tables": len(tables), "rows": sum(t["row_count"] for t in tables)})
     ctx.say("Metadata: " + "; ".join(f"{t['asset']} ({t['row_count']:,} rows, {len(t['columns'])} columns"
                                      + (f", {len(t['denied_columns'])} restricted" if t["denied_columns"] else "") + ")"
@@ -106,8 +106,9 @@ def discover_relationships(ctx: RunContext) -> dict:
             out.append(c)
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="relationship_map",
                             name="Relationship map", content={"relationships": out}, creator_agent=ctx.agent.id)
-        for c in out:
-            link(s, ctx.workspace.id, ("table", c["from_asset"]), "joins_to", ("table", c["to_asset"]), run_id=ctx.run.id)
+        for c in out:  # an unvalidated join is a review candidate, not context an agent may join on
+            if c["validated"]:
+                link(s, ctx.workspace.id, ("table", c["from_asset"]), "joins_to", ("table", c["to_asset"]), run_id=ctx.run.id)
     for c in out:
         ctx.event("relationship.discovered", {"from": f"{c['from_asset']}.{c['from_column']}",
                                               "to": f"{c['to_asset']}.{c['to_column']}", "confidence": c.get("confidence"),

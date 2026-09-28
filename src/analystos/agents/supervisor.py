@@ -112,9 +112,9 @@ def finalize(ctx: RunContext) -> dict:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="narrative",
                             name="Executive summary", content={"markdown": summary_md, "source": source},
                             creator_agent="supervisor", status="final")
-        link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", ("artifact", art.id), run_id=ctx.run.id)
+        link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", (art.type, art.id), run_id=ctx.run.id)
         for i in facts:
-            link(s, ctx.workspace.id, ("artifact", art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, (art.type, art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
         from analystos.registries.hypotheses import register_run
 
         registered = register_run(s, run.id)  # the hypothesis registry scheduled re-analysis replays (P4-T05)

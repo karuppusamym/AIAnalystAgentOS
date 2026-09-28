@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows, with_verification
-from analystos.artifacts.registry import lineage_for
+from analystos.artifacts.registry import lineage_for, run_lineage
 from analystos.contracts.policy import ApprovalSubject, ApprovalView
 from analystos.core.errors import InvalidInput
 from analystos.core.ids import utcnow
@@ -59,8 +59,14 @@ def get_artifact(artifact_id: str, user: User = Depends(current_user), session: 
 
 
 @router.get("/workspaces/{workspace_id}/lineage")
-def lineage(workspace_id: str, node_type: str, node_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def lineage(workspace_id: str, node_type: str | None = None, node_id: str | None = None, run_id: str | None = None,
+            user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Provenance around one node (`node_type` + `node_id`), or every edge one run recorded (`run_id`)."""
     require_role(session, user, workspace_id, "viewer")
+    if run_id:
+        return run_lineage(session, workspace_id, run_id)
+    if not (node_type and node_id):
+        raise InvalidInput("pass node_type and node_id, or run_id")
     return lineage_for(session, workspace_id, (node_type, node_id))
 
 
