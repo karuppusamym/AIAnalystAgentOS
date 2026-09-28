@@ -128,6 +128,12 @@ export function roleAtLeast(role: string | null | undefined, minimum: keyof type
   return role != null && (ROLE_RANK[role] ?? -1) >= ROLE_RANK[minimum];
 }
 
+/** Why an action is not offered: null when `role` may do it (the server still decides). */
+export function needsRole(role: string | null | undefined, minimum: keyof typeof ROLE_RANK, action: string): string | null {
+  if (roleAtLeast(role, minimum)) return null;
+  return `${action} needs the ${minimum} role in this workspace${role ? ` (yours: ${role})` : ""}.`;
+}
+
 /** Whether a person sees a screen: platform admins see everything, workspace owners the owner screens. */
 export function canSee(s: Screen, who: { isAdmin: boolean; role?: string | null }): boolean {
   if (s.audience === "everyone") return true;

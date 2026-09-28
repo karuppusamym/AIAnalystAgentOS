@@ -1,9 +1,9 @@
 import { Link } from "react-router-dom";
-import { to } from "../routes";
+import { roleAtLeast, to } from "../routes";
 import { api, type InsightDetail, type Verification } from "../api";
 import { LineageGraph } from "../components/LineageGraph";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, Notice, PreviewTable, RecordTable, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
-import { VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
+import { ReverifyButton, VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
 import { fmtDate, fmtMs, fmtNumber, fmtP, fmtPct, fmtValue, plural, shortHash } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 import { methodLabel } from "../lib/methods";
@@ -14,6 +14,7 @@ import { methodLabel } from "../lib/methods";
  */
 export function FindingDetail({ id, wsId }: { id: string; wsId: string }) {
   const d = useAsync(() => api.getInsight(id), [id]);
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
   if (d.error) return <ErrorBox error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const i = d.data;
@@ -25,7 +26,11 @@ export function FindingDetail({ id, wsId }: { id: string; wsId: string }) {
           : i.verified ? <span className="verified">✓ verified</span> : <Tag tone="warning">not verified</Tag>}
       </>}>
         {voidCause(i.verification_state) && (
-          <Notice tone="warning">This finding is void: {voidCause(i.verification_state)}. Re-run the investigation to verify it again.</Notice>)}
+          <Notice tone="warning">This finding is void: {voidCause(i.verification_state)}.{" "}
+            {roleAtLeast(ws.data?.role, "analyst")
+              ? <>Re-verify it: a replay run re-tests its frozen analysis on today&apos;s data. <ReverifyButton state={i.verification_state} /></>
+              : "An analyst can re-verify it."}
+          </Notice>)}
         <p className="finding">{i.finding}</p>
         <FindingNumbers insightId={i.id} />
         <div className="grid-2">

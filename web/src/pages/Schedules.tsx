@@ -8,7 +8,8 @@ import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import {
   CRON_PRESETS, REPORT_FORMATS, REPORT_KINDS, SCHEDULE_KINDS, buildScheduleInput, cronForPreset, describeCron, emptyScheduleForm,
-  fmtInZone, formFromSchedule, mergeScheduleConfig, presetForCron, timeZoneOptions, validateScheduleForm, type ScheduleFormErrors, type ScheduleFormState,
+  fmtInZone, formFromSchedule, mergeScheduleConfig, presetForCron, scheduleEditable, timeZoneOptions, validateScheduleForm, type ScheduleFormErrors,
+  type ScheduleFormState,
 } from "../lib/schedules";
 
 export function SchedulesPage() {
@@ -37,7 +38,7 @@ export function SchedulesPage() {
         <EmptyState title="No schedules yet">Create one to repeat an investigation weekly and get a “what changed” report.</EmptyState>
       )}
       <div className="stack">
-        {list.data?.map((s) => editing === s.id ? (
+        {list.data?.map((s) => editing === s.id && scheduleEditable(s.kind) ? (
           <Card key={s.id} title={`Edit “${s.name}”`}>
             <ScheduleForm wsId={wsId} initial={s} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void list.reload(); }} />
           </Card>
@@ -90,7 +91,9 @@ function ScheduleCard({ wsId, schedule: s, highlighted, canEdit, onEdit, onChang
             <span className="small">{s.enabled ? "enabled" : "disabled"}</span>
           </label>
           <button type="button" className="btn btn-sm" onClick={() => void runNow()} disabled={act.busy}>Run now</button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onEdit} disabled={act.busy}>Edit</button>
+          {scheduleEditable(s.kind) ? <button type="button" className="btn btn-sm btn-ghost" onClick={onEdit} disabled={act.busy}>Edit</button>
+            : <span className="small muted" title="Change it where it was made (its approval binds the calculation); pause or delete it here.">
+              Set by its source</span>}
           <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} disabled={act.busy}>Delete</button>
         </div>
       </header>

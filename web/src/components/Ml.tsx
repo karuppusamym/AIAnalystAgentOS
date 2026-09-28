@@ -3,7 +3,7 @@ import { ApiError, api, downloadFile, saveBlob, type ApprovalStep, type MLExperi
   type ModelVersion, type ScoringRun, type SplitManifest } from "../api";
 import { fmtDate, fmtNumber, fmtValue, shortHash } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
-import { roleAtLeast } from "../routes";
+import { needsRole, roleAtLeast } from "../routes";
 import { ApprovalStepper } from "./ApprovalStepper";
 import { Markdown } from "./Markdown";
 import { VerificationBadge } from "./WhyNumber";
@@ -461,11 +461,11 @@ function PromotePanel({ wsId, exp, role, onChanged }: { wsId: string; exp: MLExp
           <>
             <p className="small">Promotion makes this version the champion that scoring uses. It needs an approval bound to the package hash and the sealed
               evaluation{!verified ? "; this experiment's verdict is not active, so the server refuses it" : ""}.</p>
-            {roleAtLeast(role, "analyst") && (
+            {roleAtLeast(role, "editor") ? (
               <ApprovalStepper wsId={wsId} label={`Request promotion of v${mv.version}`} what={`promoting ${mv.name} v${mv.version}`} disabled={!verified}
                 request={() => api.promoteModel(wsId, mv.id)} confirm={(approvalId) => api.promoteModel(wsId, mv.id, approvalId)}
                 onDone={(r: ApprovalStep) => { setDone(`Promoted: ${mv.name} v${r.model_version?.version ?? mv.version} is now the champion.`); onChanged(); }} />
-            )}
+            ) : <p className="small muted" role="note">{needsRole(role, "editor", "Promoting a model version")}</p>}
           </>
         )}
       </div>
@@ -543,7 +543,9 @@ export function ExperimentsPanel({ wsId, role, selected, newKind, onSelect, onNe
 }) {
   const exps = useAsync(() => api.experiments(wsId), [wsId]);
   const creating = newKind === "predict" || newKind === "forecast" ? newKind : null;
-  const canRun = roleAtLeast(role, "analyst");
+  // Training publishes an ml_spec definition first (editor; api/routers/definitions.py), then trains it.
+  const canRun = roleAtLeast(role, "editor");
+  const hint = role === undefined ? null : needsRole(role, "editor", "Training a model");
   const sorted = useMemo(() => exps.data ?? [], [exps.data]);
   return (
     <div className="split">
@@ -554,6 +556,7 @@ export function ExperimentsPanel({ wsId, role, selected, newKind, onSelect, onNe
             <button type="button" className="btn btn-sm" onClick={() => onNew("forecast")}>New forecast</button>
           </div>
         )}
+        {hint && <p className="small muted" role="note">{hint}</p>}
         <ErrorBox error={exps.error} onRetry={exps.reload} />
         {exps.loading && !exps.data && <Loading />}
         {exps.data?.length === 0 && <EmptyState title="No experiments yet" />}
@@ -572,7 +575,7 @@ export function ExperimentsPanel({ wsId, role, selected, newKind, onSelect, onNe
         )}
       </div>
       <div className="split-detail">
-        {creating ? (
+        {creating && hint ? <EmptyState title="Training needs the editor role">{hint}</EmptyState> : creating ? (
           <MLSpecForm wsId={wsId} kind={creating} onCancel={() => onNew(null)}
             onStarted={(e) => { void exps.reload(); onSelect(e.id); }}
             onRefused={(expId) => { void exps.reload(); onSelect(expId); }} />
@@ -657,7 +660,9 @@ export function ModelsOutput({ wsId, role }: { wsId: string; role: string | unde
   const exps = useAsync(() => api.experiments(wsId), [wsId]);
   const runs = useAsync(() => api.scoringRuns(wsId), [wsId]);
   const [note, setNote] = useState<string | null>(null);
-  const canAct = roleAtLeast(role, "analyst");
+  // Rollback and scoring (a scoring definition, then the ml.score approval) need the editor role (services/ml.py).
+  const canAct = roleAtLeast(role, "editor");
+  const hint = role === undefined ? null : needsRole(role, "editor", "Scoring with a model or rolling it back");
   const reload = () => { void models.reload(); void runs.reload(); void exps.reload(); };
   if (models.error) return <ErrorBox error={models.error} onRetry={models.reload} />;
   if (!models.data) return <Loading />;
@@ -666,6 +671,7 @@ export function ModelsOutput({ wsId, role }: { wsId: string; role: string | unde
   return (
     <div className="stack">
       {note && <Notice tone="success">{note}</Notice>}
+      {hint && names.length > 0 && <p className="small muted" role="note">{hint}</p>}
       {names.length === 0 && <EmptyState title="No models yet">A model version is registered when an experiment beats its baseline.</EmptyState>}
       {names.map((name) => {
         const versions = models.data!.filter((m) => m.name === name).sort((a, b) => b.version - a.version);

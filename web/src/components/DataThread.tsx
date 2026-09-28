@@ -9,7 +9,7 @@ import { ChartView } from "./Chart";
 import { Drawer } from "./Drawer";
 import { FilteredPreview } from "./FilteredPreview";
 import { isStaleEdit, StaleEditNotice } from "./StaleEdit";
-import { VerificationBadge, WhyState } from "./WhyNumber";
+import { ReverifyButton, VerificationBadge, WhyState } from "./WhyNumber";
 import { CodeBlock, DataTable, EmptyState, ErrorBox, Field, Loading, Notice, StatusBadge, Tag, TechnicalDetails } from "./ui";
 
 /** Why a step has no verdict, in words (UI review P3-6: "no verdict recorded (recorded)" said nothing). */
@@ -296,7 +296,8 @@ function StepCard({ wsId, step, role, highlight, onRevised, onFork, forking }: {
         {step.inherited && <Tag tone="info">from the parent branch</Tag>}
         {highlight && <Tag tone="warning">{highlight}</Tag>}
       </div>
-      <div className="small"><VerificationBadge state={vr} /> {!vr && <span className="muted">{noVerdictText(step.kind, step.status)}</span>}</div>
+      <div className="small"><VerificationBadge state={vr} /> {!vr && <span className="muted">{noVerdictText(step.kind, step.status)}</span>}
+        {canRun && <ReverifyButton state={vr} onDone={() => void detail.reload()} />}</div>
       {step.checks.length > 0 && (
         <ul className="step-checks small" aria-label={`Checks of ${step.title}`}>
           {step.checks.map((c, k) => (

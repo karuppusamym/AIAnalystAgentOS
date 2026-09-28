@@ -197,6 +197,15 @@ export function emptyScheduleForm(timezone = browserTimeZone()): ScheduleFormSta
   };
 }
 
+/**
+ * Whether the schedule form can edit this kind. A saved-analysis, step or pipeline schedule is created
+ * from its source (an approved Ask calculation, a step pin, a pipeline) with a config the form does not
+ * know; editing it here would send re-analysis keys, so it is changed where it was made.
+ */
+export function scheduleEditable(kind: string): boolean {
+  return SCHEDULE_KINDS.some((k) => k.id === kind);
+}
+
 /** Pre-fill the form from an existing schedule (edit). */
 export function formFromSchedule(s: Schedule): ScheduleFormState {
   const base = emptyScheduleForm(s.timezone);

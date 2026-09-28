@@ -375,6 +375,17 @@ export interface WhyResponse {
   numbers: WhyNumber[];
 }
 
+/** POST /api/verification/{record_id}/reverify (evidence/reverify.py): a replay run to follow, or the new verdict. */
+export interface ReverifyResult {
+  record_id: string;
+  subject_type: string;
+  subject_id: string;
+  status: "started" | "reverified" | string;
+  run_id?: string;
+  message?: string;
+  [k: string]: unknown;
+}
+
 /** GET /api/workspaces/{ws}/analysis/{run}/why. */
 export interface WhyRunResponse {
   run_id: string;
@@ -726,11 +737,19 @@ export interface AskDecisionSummary {
 }
 
 export interface AskPromotion {
-  target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate" | string;
+  target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate" | "report" | "schedule" | string;
   id: string;
   status: string;
   name?: string;
   approval_id?: string | null;
+  /** While `status` is approval_required: the approval's current status (pending | approved | rejected | expired | ...). */
+  approval_status?: string;
+  destination?: string;
+  dashboard?: string;
+  url?: string | null;
+  note?: string;
+  expires_at?: string;
+  cron?: string;
   value?: unknown;
   at?: string;
   [k: string]: unknown;
@@ -1788,6 +1807,10 @@ export interface ReportContent {
   insights?: number;
   metrics?: number;
   alerts?: number;
+  /** Formats asked for that this installation cannot render, with the reason (services/reports.py). */
+  unavailable_formats?: Record<string, string>;
+  /** An Ask answer saved as a report (kind `ask_answer`). */
+  origin?: { type: string; turn_id?: string; thread_id?: string };
   [k: string]: unknown;
 }
 
@@ -3425,6 +3448,11 @@ export const api = {
     get("/api/insights/{insight_id}/why", { path: { insight_id: id }, query: q }) as Promise<WhyResponse>,
   whyRun: (ws: string, run: string) =>
     get("/api/workspaces/{workspace_id}/analysis/{run_id}/why", { path: { workspace_id: ws, run_id: run } }) as Promise<WhyRunResponse>,
+  /** An Ask answer's numbers, each traced fact -> query receipt -> data version -> definition -> verdict. */
+  whyAskTurn: (turnId: string) => get("/api/ask/turns/{turn_id}/why", { path: { turn_id: turnId } }) as Promise<WhyResponse>,
+  /** A new verdict by the subject's own deterministic path; the old (VOID) record stays readable. */
+  reverify: (recordId: string) =>
+    post("/api/verification/{record_id}/reverify", { path: { record_id: recordId } }) as Promise<ReverifyResult>,
 
   // schedule pins (P7-03)
   getSchedule: (ws: string, id: string) =>
@@ -3623,9 +3651,9 @@ export const api = {
   /** Analyst mode: rewrite the answer from the steps' current facts. */
   resynthesizeAsk: (turnId: string) => post("/api/ask/turns/{turn_id}/synthesize", { path: { turn_id: turnId } }) as Promise<AskTurn>,
   askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
-  rerunAsk: (turnId: string, sql?: string) => request<AskTurn>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/rerun`, { sql }),
+  rerunAsk: (turnId: string, sql?: string) => request<AskTurn>("POST", `/ask/turns/${encodeURIComponent(turnId)}/rerun`, { sql }),
   scheduleAsk: (turnId: string, body: { name: string; cron: string; timezone: string; approval_id?: string }) =>
-    request<{ status: string; approval_id?: string; expires_at?: string; id?: string }>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/schedule`, body),
+    request<{ status: string; approval_id?: string; expires_at?: string; id?: string }>("POST", `/ask/turns/${encodeURIComponent(turnId)}/schedule`, body),
   promoteTurn: (turnId: string, body: AskPromoteBody) =>
     post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
 

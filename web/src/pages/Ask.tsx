@@ -9,16 +9,17 @@ import { ChartView } from "../components/Chart";
 import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
 } from "../components/ui";
+import { NumberTrail, VerificationBadge, WhyState } from "../components/WhyNumber";
 import {
-  PROMOTE_LABELS, canPromote, decisionLine, groupThreads, promotionText, provenancePills, receiptView, refusalView, stalenessPill, topProbabilities,
-  turnSuggestions,
+  PROMOTE_LABELS, PROMOTE_MIN_ROLE, canComplete, canPromote, decisionLine, groupThreads, mergePromotion, promotionText, provenancePills, receiptView,
+  refusalView, stalenessPill, topProbabilities, turnSuggestions,
   type Pill,
 } from "../lib/ask";
 import { guessChart } from "../lib/charts";
 import { fmtDate, fmtMs, fmtNumber, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { exampleSql, starterQuestions } from "../lib/starters";
-import { to } from "../routes";
+import { needsRole, roleAtLeast, to } from "../routes";
 
 /** Reorder a result so the hinted x / y columns come first (chart builders read columns 0 and 1). */
 export function projectForChart(res: QueryResult, x?: string | null, y?: string | null) {
@@ -182,7 +183,12 @@ function RefusalState({ turn, ws, busy, onParameters, onRephrase, onExplain, onR
 // ------------------------------------------------------------------------------------ promote
 type MonitorKind = "metric_drift" | "metric_threshold";
 
-function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPromotion) => void }) {
+/** `role` undefined = not known yet: every action is offered and the server decides. */
+function allowed(role: string | null | undefined, target: string): boolean {
+  return role === undefined || roleAtLeast(role, PROMOTE_MIN_ROLE[target] ?? "analyst");
+}
+
+function PromoteBar({ turn, role, onRecorded }: { turn: AskTurn; role: string | null | undefined; onRecorded: (p: AskPromotion) => void }) {
   const { wsId = "" } = useParams();
   const navigate = useNavigate();
   const act = useAction();
@@ -206,15 +212,20 @@ function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPr
       : { target: "monitor", kind, grain });
     setMonitorOpen(false);
   };
+  const can = (target: string) => allowed(role, target);
+  const hint = role === undefined ? null
+    : needsRole(role, "analyst", "Saving, reporting and investigating an answer") ?? needsRole(role, "editor", "Proposing a metric, a monitor or a dashboard chart");
   return (
     <section className="stack" aria-label="Promote this answer">
       <div className="btn-row">
-        <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "verified_query" })}>{PROMOTE_LABELS.verified_query}</button>
-        <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "metric" })}>{PROMOTE_LABELS.metric}</button>
-        <button type="button" className="btn btn-sm" disabled={act.busy} aria-expanded={monitorOpen} onClick={() => setMonitorOpen((o) => !o)}>{PROMOTE_LABELS.monitor}</button>
-        <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "dashboard" })}>{PROMOTE_LABELS.dashboard}</button>
-        <button type="button" className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => void promote({ target: "investigate" })}>{PROMOTE_LABELS.investigate}</button>
+        {can("verified_query") && <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "verified_query" })}>{PROMOTE_LABELS.verified_query}</button>}
+        {can("metric") && <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "metric" })}>{PROMOTE_LABELS.metric}</button>}
+        {can("monitor") && <button type="button" className="btn btn-sm" disabled={act.busy} aria-expanded={monitorOpen} onClick={() => setMonitorOpen((o) => !o)}>{PROMOTE_LABELS.monitor}</button>}
+        {can("dashboard") && <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "dashboard" })}>{PROMOTE_LABELS.dashboard}</button>}
+        {can("report") && <button type="button" className="btn btn-sm" disabled={act.busy} onClick={() => void promote({ target: "report" })}>{PROMOTE_LABELS.report}</button>}
+        {can("investigate") && <button type="button" className="btn btn-sm btn-primary" disabled={act.busy} onClick={() => void promote({ target: "investigate" })}>{PROMOTE_LABELS.investigate}</button>}
       </div>
+      {hint && <p className="small muted" role="note">{hint}</p>}
       {monitorOpen && (
         <form className="form-row" aria-label="New monitor" onSubmit={submitMonitor}>
           <Field label="Watch for" htmlFor={`${id}-kind`}>
@@ -246,11 +257,21 @@ function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPr
       <ErrorBox error={act.error} />
       {turn.promotions.length > 0 && (
         <ul className="list compact" aria-label="Promotions">
-          {turn.promotions.map((p, i) => (
+          {turn.promotions.filter((p) => p.target !== "schedule").map((p, i) => (
             <li key={i} className="list-item small" role="status">
               {promotionText(p)}
+              {p.note && <span className="muted"> {p.note}</span>}
               {p.target === "monitor" && <Link to={to.monitoring(wsId)}>Open monitors</Link>}
-              {p.status === "approval_required" && <Link to={to.approvals(wsId)}>Open approvals</Link>}
+              {p.target === "report" && <Link to={to.reports(wsId, p.id)}>Open the report</Link>}
+              {p.target === "dashboard" && p.status === "published" && (
+                p.url && /^https?:\/\//.test(p.url) ? <a href={p.url} target="_blank" rel="noopener noreferrer">Open the dashboard</a>
+                  : <Link to={to.studio(wsId, p.id)}>Open the chart</Link>)}
+              {p.status === "approval_required" && !canComplete(p) && p.approval_status !== "rejected" && p.approval_status !== "expired"
+                && <Link to={to.approvals(wsId)}>Open approvals</Link>}
+              {canComplete(p) && p.target === "dashboard" && allowed(role, "dashboard") && (
+                <button type="button" className="btn btn-xs btn-primary" disabled={act.busy}
+                  onClick={() => void promote({ target: "dashboard", approval_id: p.approval_id })}>Complete: publish the chart</button>
+              )}
             </li>
           ))}
         </ul>
@@ -260,15 +281,26 @@ function PromoteBar({ turn, onRecorded }: { turn: AskTurn; onRecorded: (p: AskPr
 }
 
 // ------------------------------------------------------------------------------------ turn
-function ScheduleAnswer({ turn }: { turn: AskTurn }) {
-  const [open, setOpen] = useState(false);
-  const [cron, setCron] = useState("0 9 * * *");
-  const [approval, setApproval] = useState<string>();
-  const [expires, setExpires] = useState<string>();
-  const [created, setCreated] = useState(false);
+/** The schedule request recorded on the turn (services/saved_analysis.py), so a reload can still activate it. */
+export function scheduleRequest(turn: AskTurn): AskPromotion | null {
+  const all = turn.promotions.filter((p) => p.target === "schedule");
+  const last = all[all.length - 1];
+  if (!last || (last.status === "approval_required" && (last.approval_status === "rejected" || last.approval_status === "expired"
+    || last.approval_status === "invalidated" || last.approval_status === "missing"))) return null;
+  return last;
+}
+
+function ScheduleAnswer({ turn, role }: { turn: AskTurn; role: string | null | undefined }) {
+  const recorded = scheduleRequest(turn);
+  const [open, setOpen] = useState(!!recorded && recorded.status === "approval_required");
+  const [cron, setCron] = useState(recorded?.cron ?? "0 9 * * *");
+  const [approval, setApproval] = useState<string | undefined>(recorded?.status === "approval_required" ? recorded.approval_id ?? undefined : undefined);
+  const [expires, setExpires] = useState<string | undefined>(recorded?.expires_at);
+  const [created, setCreated] = useState(recorded?.status === "created");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const timezone = String(recorded?.timezone ?? "") || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const approved = recorded?.approval_id === approval && recorded?.approval_status === "approved";
   const submit = async () => {
     setBusy(true); setError(null);
     try {
@@ -279,6 +311,8 @@ function ScheduleAnswer({ turn }: { turn: AskTurn }) {
     finally { setBusy(false); }
   };
   if (created) return <Notice tone="success">Calculation scheduled. <Link to={to.schedules(turn.workspace_id)}>View schedules</Link></Notice>;
+  const hint = role === undefined ? null : needsRole(role, "editor", "Scheduling a calculation");
+  if (hint) return <p className="small muted" role="note">{hint}</p>;
   return <div className="stack">
     <button className="btn btn-sm" onClick={() => setOpen(!open)}>Schedule this calculation</button>
     {open && <div className="stack">
@@ -287,7 +321,8 @@ function ScheduleAnswer({ turn }: { turn: AskTurn }) {
       </select></label>
       <p className="small">Time zone: {timezone}. Each refresh uses this saved SQL and your current access.
         Changed metric definitions require a new analysis. Runs stop when the approval expires.</p>
-      {approval && <Notice tone="warning">Approval requested. <Link to={to.approvals(turn.workspace_id)}>Review approvals</Link>
+      {approval && <Notice tone={approved ? "success" : "warning"}>{approved ? "Approved: activate it now." : "Approval requested."}{" "}
+        <Link to={to.approvals(turn.workspace_id)}>Review approvals</Link>
         {expires && <> · expires {fmtDate(expires)}</>}</Notice>}
       <ErrorBox error={error ? errorMessage(error) : null} />
       <button className="btn" disabled={busy} onClick={() => void submit()}>{approval ? "Activate approved schedule" : "Request schedule approval"}</button>
@@ -295,9 +330,40 @@ function ScheduleAnswer({ turn }: { turn: AskTurn }) {
   </div>;
 }
 
-function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun, onRerunStep,
+/** "Why these numbers?": each number of the answer traced through GET /ask/turns/{id}/why, loaded when opened. */
+function AskWhy({ turn, onSelect }: { turn: AskTurn; onSelect: () => void }) {
+  const [open, setOpen] = useState(false);
+  const why = useAsync(() => (open ? api.whyAskTurn(turn.id) : Promise.resolve(undefined)), [turn.id, open]);
+  const d = why.data;
+  return (
+    <details className="stack" onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>Why these numbers?</summary>
+      <p className="small">Every value in this result comes from query <code>{turn.result?.query_id}</code>.
+        {turn.provenance.semantic ? " The calculation uses the approved definitions listed below." : " The SQL is an ad hoc calculation."}</p>
+      {turn.provenance.semantic && <KeyValue items={[
+        ["Semantic model", `Version ${turn.provenance.semantic.model_version}`],
+        ["Metric definitions", turn.provenance.semantic.metrics.map((m) => `${m.name} v${m.version}`).join(", ")],
+      ]} />}
+      {turn.evidence_status?.reasons.map((reason) => <p className="small" key={reason}>{reason}</p>)}
+      {open && !d && !why.error && <Loading label="Tracing the numbers…" />}
+      <ErrorBox error={why.error} onRetry={why.reload} />
+      {d && (
+        <section className="stack" aria-label="How each number is traced">
+          <p className="small">Verification: <VerificationBadge state={d.verification_state} />{" "}
+            {d.state === "ok" ? "Every link behind these numbers still holds." : <>At least one link is <WhyState state={d.state} />.</>}</p>
+          {d.numbers.length === 0 && <p className="small muted">No numbers in this answer.</p>}
+          {d.numbers.slice(0, 6).map((n, k) => <NumberTrail key={`${n.text}-${k}`} n={n} />)}
+          {d.numbers.length > 6 && <p className="small muted">Showing 6 of {d.numbers.length} numbers.</p>}
+        </section>
+      )}
+      <button className="btn btn-xs" type="button" onClick={onSelect}>Inspect SQL and source evidence</button>
+    </details>
+  );
+}
+
+function TurnView({ turn, role, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun, onRerunStep,
   onResynthesize }: {
-  turn: AskTurn; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
+  turn: AskTurn; role: string | null | undefined; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
   onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void; onAsk: (q: string) => void;
   onRerun: (sql?: string) => void; onRerunStep: (n: number, sql?: string) => void; onResynthesize: () => void;
 }) {
@@ -316,17 +382,7 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
         <div className="stack">
           <Pills label="Provenance" pills={[...provenancePills(turn), stalenessPill(turn.staleness)]} />
           {turn.explanation && <p>{turn.explanation}</p>}
-          <details className="stack">
-            <summary>Why these numbers?</summary>
-            <p className="small">Every value in this result comes from query <code>{turn.result.query_id}</code>.
-              {turn.provenance.semantic ? " The calculation uses the approved definitions listed below." : " The SQL is an ad hoc calculation."}</p>
-            {turn.provenance.semantic && <KeyValue items={[
-              ["Semantic model", `Version ${turn.provenance.semantic.model_version}`],
-              ["Metric definitions", turn.provenance.semantic.metrics.map((m) => `${m.name} v${m.version}`).join(", ")],
-            ]} />}
-            {turn.evidence_status?.reasons.map((reason) => <p className="small" key={reason}>{reason}</p>)}
-            <button className="btn btn-xs" type="button" onClick={onSelect}>Inspect SQL and source evidence</button>
-          </details>
+          <AskWhy turn={turn} onSelect={onSelect} />
           {turn.evidence_status?.state === "changed" && <Notice tone="warning">The evidence has changed since this answer.
             Review the recorded definitions and ask again before using these numbers.</Notice>}
           <ResultView res={turn.result} hint={turn.chart} caption={turn.question} />
@@ -341,8 +397,8 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
           </form>}
           {turn.sql && <CodeBlock code={turn.sql} label={`SQL${turn.model ? ` · ${turn.model}` : turn.answered_by === "registry" ? " · verified query" : turn.answered_by === "rules" ? " · built from the catalog" : ""}`} />}
           <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
-          {canPromote(turn) && <PromoteBar turn={turn} onRecorded={onRecorded} />}
-          {canPromote(turn) && <ScheduleAnswer turn={turn} />}
+          {canPromote(turn) && <PromoteBar turn={turn} role={role} onRecorded={onRecorded} />}
+          {canPromote(turn) && <ScheduleAnswer turn={turn} role={role} />}
         </div>
       ) : (
         <>
@@ -466,6 +522,9 @@ function Inspector({ turn }: { turn: AskTurn }) {
 export function AskPage() {
   const { wsId = "" } = useParams();
   const assets = useAsync(() => api.catalog(wsId), [wsId]);
+  const ws = useAsync(() => api.getWorkspace(wsId), [wsId]);
+  // undefined while unknown: actions stay offered and the server decides; null = not a member
+  const role = ws.data ? ws.data.role ?? null : undefined;
   const [params, setParams] = useSearchParams();
   const threadId = params.get("thread");
   const [search, setSearch] = useState("");
@@ -557,7 +616,7 @@ export function AskPage() {
   };
 
   const recordPromotion = (turnId: string, p: AskPromotion) =>
-    setThread((t) => (t ? { ...t, turns: t.turns.map((x) => (x.id === turnId ? { ...x, promotions: [...x.promotions, p] } : x)) } : t));
+    setThread((t) => (t ? { ...t, turns: t.turns.map((x) => (x.id === turnId ? { ...x, promotions: mergePromotion(x.promotions, p) } : x)) } : t));
 
   const rerun = async (turnId: string, statement?: string) => {
     setAsking(true);
@@ -645,7 +704,7 @@ export function AskPage() {
             actions={thread && thread.turns.length ? <Link className="btn btn-xs btn-ghost" to={to.thread(wsId, "ask_thread", thread.id)}>Open as a Data Thread</Link> : undefined}>
             <div className="stack">
               {thread?.turns.map((t) => (
-                <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
+                <TurnView key={t.id} turn={t} role={role} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
                   onParameters={(p) => void ask(t.question, p)} onRephrase={() => { setQuestion(t.question); questionRef.current?.focus(); }}
                   onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)}
                   onRerun={(statement) => void rerun(t.id, statement)}

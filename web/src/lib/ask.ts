@@ -116,20 +116,61 @@ export const PROMOTE_LABELS: Record<string, string> = {
   monitor: "Monitor this",
   dashboard: "Add to dashboard",
   investigate: "Investigate why",
+  report: "Save as report",
+};
+
+/** The workspace role each promotion needs (the server checks it again; services/ask.py, saved_analysis.py). */
+export const PROMOTE_MIN_ROLE: Record<string, "analyst" | "editor"> = {
+  verified_query: "analyst", metric: "editor", monitor: "editor", dashboard: "editor", investigate: "analyst", report: "analyst",
+  schedule: "editor",
+};
+
+const APPROVAL_WORDS: Record<string, string> = {
+  pending: "waiting for an approver", approved: "approved", rejected: "rejected", expired: "expired", invalidated: "no longer valid",
+  executed: "already used", missing: "no longer on record",
 };
 
 /** What a promotion did, in words (an approval is pending, not done). */
 export function promotionText(p: AskPromotion): string {
   const name = p.name ? ` "${p.name}"` : "";
+  const dashboard = String(p.dashboard ?? "").trim();
   switch (p.target) {
     case "verified_query": return `Saved as verified query${name}: the same question now answers without a model.`;
     case "metric": return p.status === "approved" ? `Metric${name} is approved.` : `Metric${name} proposed: an approver approves it in the semantic layer.`;
     case "monitor": return `Monitor${name} created.`;
-    case "dashboard": return p.status === "approval_required"
-      ? "Waiting for approval before the chart is added to the dashboard." : `Added to the dashboard ${String(p.dashboard ?? "")}.`.trim();
+    case "dashboard":
+      if (p.status === "approval_required") {
+        if (!p.approval_status || p.approval_status === "pending") {
+          return `Waiting for approval before the chart is added to ${dashboard || "the dashboard"}.`;
+        }
+        return p.approval_status === "approved"
+          ? `Approved: complete it to publish the chart to ${dashboard || "the dashboard"}.`
+          : `Adding the chart to ${dashboard || "the dashboard"}: approval ${APPROVAL_WORDS[p.approval_status] ?? p.approval_status}. Request it again.`;
+      }
+      if (p.status === "published") {
+        return p.destination === "preview"
+          ? `Published to ${dashboard || "the dashboard"} in the in-platform preview (no BI tool is connected).`
+          : `Published to ${dashboard || "the dashboard"} in ${String(p.destination ?? "the BI tool")}.`;
+      }
+      return `Added to the dashboard ${dashboard}.`.trim();
     case "investigate": return "Investigation started.";
+    case "report": return "Saved as a report: find it in Outputs, filtered to reports.";
+    case "schedule": return p.status === "created" ? "Calculation scheduled."
+      : `Schedule approval ${APPROVAL_WORDS[p.approval_status ?? "pending"] ?? p.approval_status}.`;
     default: return `${p.target}: ${p.status}`;
   }
+}
+
+/** A promotion waiting on its approval can be completed once approved; a rejected or expired one cannot. */
+export function canComplete(p: AskPromotion): boolean {
+  return p.status === "approval_required" && !!p.approval_id && p.approval_status === "approved";
+}
+
+/** Record a promotion on the turn as the server does: completing one replaces its pending entry. */
+export function mergePromotion(list: AskPromotion[], p: AskPromotion): AskPromotion[] {
+  const i = p.approval_id ? list.findIndex((x) => x.approval_id === p.approval_id && x.target === p.target && x.status === "approval_required") : -1;
+  if (i < 0) return list.some((x) => x.id === p.id && x.status === p.status && x.target === p.target) ? list : [...list, p];
+  return list.map((x, k) => (k === i ? p : x));
 }
 
 /** Only an answer that returned rows can be promoted; the server checks this again. */
