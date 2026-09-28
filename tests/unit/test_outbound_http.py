@@ -229,7 +229,7 @@ def test_http_tool_is_invocable_through_the_capability_runtime() -> None:
 def test_pinned_async_transport_rewrites_and_refuses() -> None:
     import asyncio
 
-    import httpx2
+    import httpx
 
     target = outbound.pin("https://mcp.example.com/mcp", allowlist=None, resolver=resolver("93.184.216.34"))
     seen: list = []
@@ -237,12 +237,12 @@ def test_pinned_async_transport_rewrites_and_refuses() -> None:
     def handler(request):  # noqa: ANN001, ANN202
         seen.append(request)
         if request.url.path == "/redirect":
-            return httpx2.Response(302, headers={"location": "http://127.0.0.1/"})
-        return httpx2.Response(200, json={"ok": 1})
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/"})
+        return httpx.Response(200, json={"ok": 1})
 
     async def go() -> None:
-        transport = outbound.pinned_async_transport(target, httpx2, inner=httpx2.MockTransport(handler))
-        async with httpx2.AsyncClient(transport=transport, follow_redirects=False, trust_env=False) as c:
+        transport = outbound.pinned_async_transport(target, httpx, inner=httpx.MockTransport(handler))
+        async with httpx.AsyncClient(transport=transport, follow_redirects=False, trust_env=False) as c:
             r = await c.post("https://mcp.example.com/mcp", json={})
             assert r.status_code == 200
             with pytest.raises(OutboundRefused, match="redirect"):

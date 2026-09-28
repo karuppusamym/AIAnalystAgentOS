@@ -13,7 +13,7 @@ tags: [domain, itsm, servicenow]
 spec:
   domain: it_operations
   applies_when:
-    tables: ["incident", "change_request", "problem", "sc_req_item", "sc_task", "cmdb_ci.*", "sys_user_group"]
+    tables: ["incident", "change_request", "problem", "sc_req_item", "sc_task", "cmdb_ci.*", "sys_user_group", "u_task_activity"]
   hints: hints.yaml
   templates: templates.yaml
   kpis: kpis.yaml

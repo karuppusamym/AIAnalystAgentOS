@@ -35,13 +35,16 @@ class ArtifactDecision(BaseModel):
     reason: str | None = None
 
 
+INTERNAL_ARTIFACT_TYPES = ("step_result",)
+
+
 @router.get("/workspaces/{workspace_id}/artifacts")
 def list_artifacts(workspace_id: str, type: str | None = None, run_id: str | None = None, user: User = Depends(current_user),
                    session: Session = Depends(db, scope="function")):
     require_role(session, user, workspace_id, "viewer")
     stmt = select(Artifact).where(Artifact.workspace_id == workspace_id)
-    if type:
-        stmt = stmt.where(Artifact.type == type)
+    # a Data Thread step's stored result belongs to its step, not to the Outputs list (ask for it by type)
+    stmt = stmt.where(Artifact.type == type) if type else stmt.where(Artifact.type.not_in(INTERNAL_ARTIFACT_TYPES))
     if run_id:
         stmt = stmt.where(Artifact.run_id == run_id)
     return rows(session.scalars(stmt.order_by(Artifact.created_at.desc()).limit(500)))

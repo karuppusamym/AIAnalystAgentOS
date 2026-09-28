@@ -286,6 +286,33 @@ def test_low_evidence_table_has_low_confidence():
     assert empty.confidence <= 0.3
 
 
+def test_measured_confirmation_cannot_reclassify_or_upgrade_a_sample():
+    source = asset("dim_customer", [col("customer_id", "integer", is_key=True), col("customer_name")])
+    base = cat.infer_table_semantics(source)
+    measured = {"row_count": 100,
+                "candidate_keys": [{"column": "customer_id", "unique": True, "null_count": 0}],
+                "columns": [{"name": "customer_id", "non_null": 100, "distinct": 100}]}
+    partial = cat.confirm_table_semantics(base, measured, representative=False)
+    assert partial.confidence == base.confidence
+    confirmed = cat.confirm_table_semantics(base, measured, representative=True)
+    assert (confirmed.role, confirmed.domain) == (base.role, base.domain)
+    assert confirmed.confidence > base.confidence
+    assert "measured non-null unique entity key" in confirmed.evidence
+    assert cat.confirm_table_semantics(confirmed, measured, representative=True).confidence == confirmed.confidence
+    measured["candidate_keys"][0]["unique"] = False
+    assert cat.confirm_table_semantics(base, measured, representative=True).confidence == base.confidence
+
+
+def test_domain_confirmation_needs_majority_values_without_a_competing_domain():
+    base = cat.infer_table_semantics(asset("orders", [col("channel")]))
+    assert base.domain == "sales" and base.role == "unknown"
+    profile = {"row_count": 100, "columns": [{"name": "channel", "semantic_type": "categorical", "non_null": 100,
+                "top_values": [{"value": "sales", "count": 70}, {"value": "other", "count": 30}]}]}
+    assert cat.confirm_table_semantics(base, profile, representative=True).confidence > base.confidence
+    profile["columns"][0]["top_values"][1]["value"] = "inventory"
+    assert cat.confirm_table_semantics(base, profile, representative=True).confidence == base.confidence
+
+
 def test_declared_business_name_wins():
     a = asset("t_0042", [col("id", "integer", is_key=True)], business_name="Warehouse Bins")
     assert cat.infer_table_semantics(a).business_name == "Warehouse Bins"

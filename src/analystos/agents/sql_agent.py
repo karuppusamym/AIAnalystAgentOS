@@ -13,6 +13,7 @@ from analystos.agents.common import (
     catalog_for_prompt,
     compact_json,
     compile_for,
+    defer_compile,
     llm_json,
     task_output,
 )
@@ -540,6 +541,21 @@ def _semantic_chart(query: Any) -> dict[str, Any] | None:
     return {"type": "kpi", "x": None, "y": query.metrics[0]}
 
 
+def ask_dialect(ctx: Any) -> str:
+    return next(iter(ctx.scope.source_dialects.values()), "postgres")
+
+
+def generation_context(ctx: Any, asked_text: str, *, redacted: bool = False) -> tuple[Any, dict[str, Any], list[dict[str, Any]]]:
+    """(compiled context, required inputs, catalog) of Ask's SQL generation for an already-redacted question: the
+    one path for the model call and for the context preview (context/preview.py)."""
+    catalog = catalog_for_prompt(ctx, objective=asked_text, capped=False)
+    required: dict[str, Any] = {"question": asked_text}  # the dialect is named once, in the system text
+    if redacted:
+        required["redacted_values"] = QUESTION_MODEL_INSTRUCTION
+    compiled = compile_for(ctx, "sql_generation", required, objective=asked_text, catalog=catalog, reference_text=asked_text)
+    return compiled, required, catalog
+
+
 def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: dict[str, Any] | None = None,
         use_registry: bool = True) -> dict[str, Any]:
     """NL question -> governed SQL -> result. Tool-first: `ask_route` sends a registry match to the
@@ -596,14 +612,9 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
     rq = redact_question(question)
     asked_text = rq.text
     _stage(ctx, "context", "Finding the tables that answer this")
-    catalog = catalog_for_prompt(ctx, objective=asked_text, capped=False)
-    dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
+    generation, required, catalog = generation_context(ctx, asked_text, redacted=bool(rq.redacted))
+    dialect = ask_dialect(ctx)
     _stage(ctx, "generate", "Writing the SQL")
-    required = {"question": asked_text, "dialect": dialect}
-    if rq.redacted:
-        required["redacted_values"] = QUESTION_MODEL_INSTRUCTION
-    generation = compile_for(ctx, "sql_generation", required, objective=asked_text, catalog=catalog,
-                             reference_text=asked_text)
     data, model = llm_json(ctx, "sql_generation", "sql_generation.v1", generation, prompt_vars={"dialect": dialect},
                            validate=has_sql)
     if has_sql(data):  # no data, or an answer without a SQL statement: say which cause stopped it
@@ -648,9 +659,9 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
             _stage(ctx, "repair", f"The gateway refused the SQL ({exc.message[:120]}); repairing it")
             sent_sql, sent_error = tokenize_values(sql, rq.values), tokenize_values(exc.message, rq.values)
             fix, _ = llm_json(ctx, "sql_repair", "sql_repair.v1",
-                              compile_for(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
-                                          objective=asked_text, catalog=catalog,
-                                          reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
+                              defer_compile(ctx, "sql_repair", {**required, "sql": sent_sql, "error": sent_error},
+                                            objective=asked_text, catalog=catalog,
+                                            reference_text=f"{sent_sql}\n{sent_error}"), validate=has_sql)
             if has_sql(fix):
                 raise
             sql = restore_values(str(fix["sql"]), rq.values)

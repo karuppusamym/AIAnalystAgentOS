@@ -149,6 +149,8 @@ def _strip_table_prefix(tokens: list[str]) -> tuple[list[str], list[str]]:
 def _entity_from_table(name: str) -> str:
     rest, _ = _strip_table_prefix(split_tokens(name))
     rest = [t for t in rest if t not in {"dim", "fact", "fct", "bridge", "xref", "map", "lookup", "lkp"}] or rest
+    if len(rest) > 1 and len(rest[0]) == 1:  # u_task_activity: `u_` marks a custom table, it is not part of the entity
+        rest = rest[1:]
     return " ".join(rest[:-1] + [singularize(rest[-1])]) if rest else name.lower()
 
 
@@ -539,7 +541,11 @@ def _structural_role(sem: list[ColumnSemantics], cols: list[DiscoveredColumn], n
     col_tokens = {t for c in cols for t in split_tokens(c.name)}
     if len(fk) >= 2 and not measures and len(other) <= 1:
         return "bridge", 0.75, ev + ["only references (plus at most one attribute)"]
-    names = [s for s in sem if s.semantic_role == "name"]
+    fk_stems = {s.name.lower() for s in fk} | {re.sub(r"_(id|key|sk)$", "", s.name.lower()) for s in fk}
+    # `owner_team_name` beside the reference `owner_team` displays that reference: it does not make the
+    # table a keyed, named entity (a transactional record with two such labels was read as a dimension)
+    names = [s for s in sem if s.semantic_role == "name" and not (s.name.lower().endswith("_name")
+                                                                   and s.name.lower()[:-5] in fk_stems)]
     if names and idents and len(desc) >= 2 and len(measures) <= 1:
         conf = 0.65 + (0.15 if inbound else 0.0)
         return "dimension", _conf(conf), ev + ["keyed entity with name attributes"] + (
@@ -585,17 +591,22 @@ def _inbound_references(asset: DiscoveredAsset, entity: str, all_assets: Iterabl
     return n
 
 
-def _domain(name_tokens: list[str], cols: list[DiscoveredColumn]) -> tuple[str, float, list[str]]:
+def _domain(name_tokens: list[str], cols: list[DiscoveredColumn],
+            reviewed_keywords: dict[str, frozenset[str]] | None = None) -> tuple[str, float, list[str]]:
     scores: dict[str, float] = {}
     hits: dict[str, list[str]] = {}
     tset = {singularize(t) for t in name_tokens} | set(name_tokens)
     col_tokens: set[str] = set()
     for c in cols:
         col_tokens |= {singularize(t) for t in split_tokens(c.name)} | set(split_tokens(c.name))
-    for dom, kws in domain_keywords().items():
+    reviewed_keywords = reviewed_keywords or {}
+    vocabulary = domain_keywords()
+    for dom, kws in vocabulary.items():
+        kws = kws | reviewed_keywords.get(dom, frozenset())
         th = sorted(tset & kws)
         ch = sorted((col_tokens & kws) - set(th))
-        s = 3.0 * len(th) + 1.0 * len(ch)
+        reviewed_hits = set(ch) & reviewed_keywords.get(dom, frozenset())
+        s = 3.0 * len(th) + 1.0 * len(ch) + 1.0 * len(reviewed_hits)
         if s:
             scores[dom], hits[dom] = s, th + ch
     if not scores:
@@ -662,7 +673,141 @@ def _describe(role: str, business_name: str, domain: str, grain: str, sem: list[
     return " ".join(parts)
 
 
-def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[DiscoveredAsset] | None = None) -> TableSemantics:
+# --------------------------------------------------------------------------------------------
+# 4b. profile-aware rule descriptions (what a catalog reader and an agent prompt see)
+# --------------------------------------------------------------------------------------------
+_COLUMN_MEANING = {
+    "identifier": "Identifier of the {entity}", "flag": "True/false flag", "date": "Calendar date",
+    "timestamp": "Date and time", "percent": "Percentage or rate", "duration": "Duration",
+    "measure": "Numeric measure", "amount": "Monetary amount", "contact": "Contact detail",
+    "geo": "Geographic attribute", "code": "Code", "name": "Name or label", "text": "Free text",
+    "dimension": "Descriptive attribute", "unknown": "Column",
+}
+ENUM_IN_DESCRIPTION = 8  # a complete enumeration up to this long is listed in a description
+
+
+def _pct(share: float) -> str:
+    p = share * 100
+    return f"{p:.0f}%" if p >= 1 or p == 0 else "under 1%"
+
+
+def _num_text(v: Any) -> str:
+    if isinstance(v, bool) or v is None:
+        return str(v)
+    if isinstance(v, int) or (isinstance(v, float) and v.is_integer() and abs(v) < 1e15):
+        return f"{int(v):,}"
+    if isinstance(v, float):
+        return f"{v:,.4g}" if abs(v) < 1e6 else f"{v:,.0f}"
+    return str(v)
+
+
+def _day(v: Any) -> str:
+    return str(v)[:10]
+
+
+NEARLY_UNIQUE = 0.98  # distinct/non-empty at or above this (but not all distinct) reads as a code that should be unique
+
+
+def _after_today(v: Any, today: str | None = None) -> bool:
+    """A datetime profile maximum after today: future-dated rows, usually a data-entry or timezone defect."""
+    from datetime import UTC, datetime
+
+    day = _day(v)
+    return len(day) == 10 and day > (today or datetime.now(UTC).strftime("%Y-%m-%d"))
+
+
+def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = None, references: str | None = None,
+                    sensitive: bool = False, entity: str = "record", today: str | None = None) -> str:
+    """One plain sentence: what the column means (rule role, unit, reference) and what the profile measured
+    (always present or missing in N% of rows, unique per row or nearly unique with repeats counted, N distinct
+    values or the complete short list of values, numeric/date range with future dates called out, share true).
+    Values and ranges are never stated for a sensitive column."""
+    role = str(sem.get("semantic_role") or "unknown")
+    unit = sem.get("unit")
+    if role == "foreign_key":
+        target = sem.get("references_entity") or "another entity"
+        meaning = f"Reference to {target}" + (f" ({references})" if references else "")
+    else:
+        meaning = _COLUMN_MEANING.get(role, "Column").format(entity=entity or "record")
+        if role in ("dimension", "code", "unknown") and (profile or {}).get("semantic_type") == "id":
+            meaning = "Identifier-like code"
+        if role == "duration" and unit:
+            meaning += f" in {unit}"
+        elif role == "measure" and unit == "count":
+            meaning = "Count"
+    facts: list[str] = []
+    p = profile or {}
+    non_null, nulls = p.get("non_null"), p.get("null_count")
+    if isinstance(non_null, int) and isinstance(nulls, int) and non_null + nulls > 0:
+        rows = non_null + nulls
+        if nulls == 0:
+            facts.append("always present")
+        elif non_null == 0:
+            facts.append("always empty")
+        else:
+            facts.append(f"missing in {_pct(nulls / rows)} of rows")
+        distinct = p.get("distinct")
+        continuous = role in ("measure", "amount", "percent", "duration", "timestamp", "date")
+        if isinstance(distinct, int) and non_null > 1 and not continuous:
+            if distinct == non_null:
+                facts.append("unique per row" if nulls == 0 else "unique where present")
+            elif distinct / non_null >= NEARLY_UNIQUE:
+                repeats = non_null - distinct
+                facts.append(f"nearly unique: {repeats:,} value{'s' if repeats != 1 else ''} repeat{'' if repeats != 1 else 's'} "
+                             f"(check for duplicates)")
+            elif not sensitive and p.get("values_complete") and p.get("values") \
+                    and len(p["values"]) <= ENUM_IN_DESCRIPTION:
+                facts.append("one of " + ", ".join(str(v) for v in p["values"]))
+            else:
+                facts.append(f"{distinct:,} distinct values")
+        if not sensitive:
+            lo, hi = p.get("min"), p.get("max")
+            if lo is not None and hi is not None and p.get("type_family") == "datetime":
+                facts.append(f"from {_day(lo)} to {_day(hi)}" if _day(lo) != _day(hi) else f"on {_day(lo)}")
+                if _after_today(hi, today):
+                    facts.append("some rows are dated after today")
+            elif lo is not None and hi is not None and p.get("type_family") == "numeric" and role != "identifier" \
+                    and role != "foreign_key":
+                facts.append(f"from {_num_text(lo)} to {_num_text(hi)}" if lo != hi else f"always {_num_text(lo)}")
+            if role == "flag" and isinstance(p.get("true_count"), int) and non_null:
+                facts.append(f"true in {_pct(p['true_count'] / non_null)} of non-empty rows")
+    return meaning + ("; " + "; ".join(facts) if facts else "") + "."
+
+
+def describe_table(sem: dict[str, Any], *, business_name: str, kind: str = "table", row_count: int | None = None,
+                   key_columns: list[str] | None = None, time_column: str | None = None, time_range: tuple[Any, Any] | None = None,
+                   references: list[str] | None = None) -> str:
+    """One or two plain sentences: role, entity and domain with the grain; then row count, key, time span and the
+    main tables it references. Only facts the metadata or the profile hold."""
+    role = str(sem.get("role") or "unknown")
+    noun = _ROLE_PHRASE.get(role, "Table")
+    if kind in ("view", "materialized_view", "external_table"):  # an API endpoint or a file still reads as a table
+        noun = noun.replace("table", kind.replace("_", " "))
+    domain = str(sem.get("domain") or "generic")
+    dom = f" in the {domain.replace('_', ' ')} domain" if domain != "generic" else ""
+    grain = sem.get("grain") or f"one row per {sem.get('entity') or 'record'}"
+    first = f"{noun} '{business_name}'{dom}, {grain}."
+    facts: list[str] = []
+    if row_count is not None:
+        facts.append(f"{row_count:,} rows")
+    if key_columns:
+        facts.append(("key " if len(key_columns) == 1 else "composite key ") + ", ".join(key_columns))
+    if time_column:
+        span = ""
+        if time_range and time_range[0] is not None and time_range[1] is not None:
+            span = f" from {_day(time_range[0])} to {_day(time_range[1])}"
+        facts.append(f"dated by {time_column}{span}")
+    links = list(dict.fromkeys(r for r in references or [] if r))
+    if links:
+        facts.append("references " + ", ".join(links[:4]) + (" and more" if len(links) > 4 else ""))
+    if not facts:
+        return first
+    second = "; ".join(facts)
+    return f"{first} {second[0].upper()}{second[1:]}."
+
+
+def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[DiscoveredAsset] | None = None,
+                          reviewed_keywords: dict[str, frozenset[str]] | None = None) -> TableSemantics:
     """Business name, role, domain, grain and a factual template description for one asset.
 
     Naming conventions (dim_/fact_/stg_ ...) and structure (references, measures, time columns,
@@ -719,7 +864,7 @@ def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[Discovered
     business_name = asset.business_name or humanize(bn_tokens)
     if asset.business_name:
         evidence.append("business name declared by the source")
-    domain, d_conf, d_ev = _domain(rest, asset.columns)
+    domain, d_conf, d_ev = _domain(rest, asset.columns, reviewed_keywords)
     evidence.extend(d_ev)
     grain, g_conf = _grain(role, entity, sem, asset.columns, name_set)
     evidence.append(f"grain confidence {g_conf}")
@@ -731,6 +876,58 @@ def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[Discovered
     return TableSemantics(key=asset_key(asset), business_name=business_name, entity=entity, domain=domain,
                           role=role, grain=grain, description=description, confidence=_conf(conf),  # type: ignore[arg-type]
                           evidence=evidence, columns=sem)
+
+
+def confirm_table_semantics(sem: TableSemantics, profile: dict[str, Any], *, representative: bool,
+                            reviewed_keywords: dict[str, frozenset[str]] | None = None) -> TableSemantics:
+    """Corroborate rule classifications with measured facts, without changing the class itself.
+
+    A capped/truncated population can describe the sample, but cannot increase classification
+    confidence. Raw sampled values are never included in the returned evidence.
+    """
+    rows = int(profile.get("row_count") or 0)
+    if not representative or rows < 20:
+        return sem
+    measured = {c.get("name"): c for c in profile.get("columns") or [] if isinstance(c, dict)}
+    signals: list[str] = []
+    key_names = {c.name for c in sem.columns if c.semantic_role == "identifier"}
+    unique_keys = {k.get("column") for k in profile.get("candidate_keys") or []
+                   if isinstance(k, dict) and k.get("unique") and not k.get("null_count")}
+    if sem.role in {"dimension", "reference"} and key_names & unique_keys:
+        signals.append("measured non-null unique entity key")
+    elif sem.role == "bridge":
+        fks = [c.name for c in sem.columns if c.semantic_role == "foreign_key"]
+        if len(fks) >= 2 and all(measured.get(n, {}).get("non_null", 0) / rows >= 0.95 for n in fks):
+            signals.append("measured coverage of two or more references")
+    elif sem.role in {"fact", "event"}:
+        times = [c.name for c in sem.columns if c.semantic_role in {"timestamp", "date"}]
+        if times and any(measured.get(n, {}).get("non_null", 0) / rows >= 0.95 for n in times):
+            signals.append("measured time-column coverage")
+
+    if sem.domain != "generic":
+        vocabulary = domain_keywords()
+        for domain, words in (reviewed_keywords or {}).items():
+            if domain in vocabulary:
+                vocabulary[domain] |= words
+        keywords = vocabulary.get(sem.domain, frozenset())
+        competing = set().union(*(words for domain, words in vocabulary.items() if domain != sem.domain))
+        for c in profile.get("columns") or []:
+            if not isinstance(c, dict) or c.get("semantic_type") != "categorical":
+                continue
+            if not c.get("top_values") or not c.get("non_null"):
+                continue
+            token_counts = [(set(split_tokens(v["value"])), int(v.get("count") or 0))
+                            for v in c["top_values"] if isinstance(v, dict) and isinstance(v.get("value"), str)]
+            matched = sum(count for tokens, count in token_counts if tokens & keywords)
+            conflicting = sum(count for tokens, count in token_counts if tokens & competing and not tokens & keywords)
+            if matched / int(c["non_null"]) >= 0.6 and conflicting == 0:
+                signals.append("measured categorical values corroborate the named domain")
+                break
+    signals = [signal for signal in signals if signal not in sem.evidence]
+    if not signals:
+        return sem
+    return sem.model_copy(update={"confidence": _conf(min(0.95, sem.confidence + 0.05 * len(signals))),
+                                  "evidence": [*sem.evidence, *signals]})
 
 
 # --------------------------------------------------------------------------------------------
@@ -774,6 +971,23 @@ def _person_nouns() -> frozenset[str] | set[str]:
     from analystos.capabilities.packs import hints
 
     return _PERSON_NOUNS | hints().person_nouns
+
+
+_PERSON_ROLE_NOUNS = {"assignee", "requester", "requestor", "caller", "reporter", "approver", "submitter", "creator"}
+_BY_VERBS = {"created", "updated", "modified", "opened", "closed", "resolved", "assigned", "approved", "requested",
+             "submitted", "owned", "reported", "entered", "changed", "edited", "completed", "raised", "logged"}
+_NOT_A_PERSON = {"id", "key", "uuid", "guid", "sk", "count", "cnt", "flag", "group", "team", "queue", "department",
+                 "dept", "status", "state", "date", "time", "at", "on", "type", "role"}
+
+
+def _names_a_person(tokens: list[str]) -> bool:
+    """A text column whose name says it holds who did or owns something (`assigned_to`, `opened_by`, `requester`),
+    without saying `name`: its values are people's names. A reference (`..._id`, `..._group`, a declared
+    foreign key) is not covered here: an opaque key is not a name."""
+    t = set(tokens)
+    if t & _NOT_A_PERSON:
+        return False
+    return bool(t & _PERSON_ROLE_NOUNS) or ("by" in t and bool(t & _BY_VERBS)) or {"assigned", "to"} <= t
 
 
 def _pii_from_name(tokens: list[str]) -> str | None:
@@ -858,7 +1072,8 @@ _VALUE_DETECTORS: list[tuple[str, str, Any]] = [
 ]
 
 
-def classify_pii(name: str, data_type: str, sample_values: list[str] | None = None) -> PiiResult:
+def classify_pii(name: str, data_type: str, sample_values: list[str] | None = None, *,
+                 references: bool = False) -> PiiResult:
     """PII category and sensitivity from the column name, strengthened by sample values.
 
     Values can add or upgrade a classification (e.g. a ``contact`` column holding e-mail
@@ -868,6 +1083,9 @@ def classify_pii(name: str, data_type: str, sample_values: list[str] | None = No
     tokens = split_tokens(name)
     dtype = normalize_type(data_type)
     cat = _pii_from_name(tokens)
+    person_reference = cat is None and dtype == "text" and not references and _names_a_person(tokens)
+    if person_reference:
+        cat = "person_name"
     if cat == "date_of_birth" and dtype not in {"date", "timestamp", "text"}:
         cat = None
     if cat == "free_text_risk" and dtype not in {"text", "json"}:
@@ -876,7 +1094,8 @@ def classify_pii(name: str, data_type: str, sample_values: list[str] | None = No
     if cat:
         rule = next(r for r in _PII_NAME_RULES if r[0] == cat)
         result = PiiResult(category=cat, sensitivity=rule[1], confidence=0.7 if cat != "free_text_risk" else 0.5,  # type: ignore[arg-type]
-                           reasons=[rule[2]])
+                           reasons=["column name says who owns or did the work: values are people's names"] if person_reference
+                           else [rule[2]])
 
     values = [str(v).strip() for v in (sample_values or [])[:500] if v is not None and str(v).strip()]
     if not values:
@@ -927,6 +1146,7 @@ class GlossaryLink(BaseModel):
     column_fq: str
     score: float
     reason: str
+    relation: str = "is"  # is: the column means the term | related: the term is a condition on the column
 
 
 _STOP = {"the", "of", "a", "an", "and", "or", "to", "in", "for", "by", "per", "on"}
@@ -951,28 +1171,42 @@ def link_glossary(columns: list[dict[str, Any]], terms: list[dict[str, Any]], *,
                   threshold: float = GLOSSARY_THRESHOLD) -> list[GlossaryLink]:
     """Best glossary term per column: explicit ``mapped_columns`` (score 1.0), else Dice overlap of
     stemmed tokens between the column (name + business name) and the term name or a synonym.
-    Links under ``threshold`` are dropped; ties break on term id for a stable result."""
+    Links under ``threshold`` are dropped; ties break on term id for a stable result.
+
+    A term with ``mapped_identity: False`` (a domain pack's: its `maps_to` lists the columns a definition
+    reads) is the column's own term only when the term's name or a synonym is contained in what the column
+    is called ("Sales region" for `sales_region`); otherwise it is a condition on the column ("Late order"
+    is `is_late = true`, "Weekend order" reads `ordered_at`), linked as `related`
+    while the column may still match its own term by name."""
     phrases: list[tuple[str, str, frozenset[str], str]] = []
     mapped: dict[str, str] = {}
+    labels: dict[str, list[frozenset[str]]] = {}
+    identity: dict[str, bool] = {}
     for term in terms:
         tid = str(term["id"])
+        identity[tid] = bool(term.get("mapped_identity", True))
         for m in term.get("mapped_columns") or []:
             mapped.setdefault(str(m).lower(), tid)
         for label, kind in [(term.get("name") or "", "name")] + [(s, "synonym") for s in term.get("synonyms") or []]:
             st = _stems(label)
             if st:
                 phrases.append((tid, label, st, kind))
+                labels.setdefault(tid, []).append(st)
     links: list[GlossaryLink] = []
     for col in columns:
         fq = str(col["fq"])
         low = fq.lower()
-        hit = mapped.get(low) or next((tid for m, tid in sorted(mapped.items())
-                                       if low.endswith("." + m) or m.endswith("." + low)), None)
-        if hit:
-            links.append(GlossaryLink(term_id=hit, column_fq=fq, score=1.0, reason="column is mapped to the term"))
-            continue
         name_st = _stems(str(col.get("name") or fq.split(".")[-1]))
         bn_st = _stems(str(col.get("business_name") or ""))
+        hit = mapped.get(low) or next((tid for m, tid in sorted(mapped.items())
+                                       if low.endswith("." + m) or m.endswith("." + low)), None)
+        related = None
+        if hit and (identity[hit] or any(st <= name_st | bn_st for st in labels.get(hit, []))):
+            links.append(GlossaryLink(term_id=hit, column_fq=fq, score=1.0, reason="column is mapped to the term"))
+            continue
+        if hit:
+            related = GlossaryLink(term_id=hit, column_fq=fq, score=1.0, relation="related",
+                                   reason="the term's definition reads this column")
         best: tuple[float, str, str] | None = None
         for tid, label, st, kind in phrases:
             for cs in {name_st, bn_st, name_st | bn_st}:
@@ -986,8 +1220,10 @@ def link_glossary(columns: list[dict[str, Any]], terms: list[dict[str, Any]], *,
                 cand = (round(score, 4), tid, f"token overlap with term {kind} '{label}'")
                 if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] < best[1]):
                     best = cand
-        if best and best[0] >= threshold:
+        if best and best[0] >= threshold and not (related and best[1] == related.term_id):
             links.append(GlossaryLink(term_id=best[1], column_fq=fq, score=best[0], reason=best[2]))
+        if related:
+            links.append(related)
     return links
 
 
@@ -1005,6 +1241,22 @@ def is_placeholder_description(text: str | None, *, table_name: str | None = Non
     if t in _PLACEHOLDERS or len(t) < 4 or "lorem ipsum" in t or t.startswith(("auto-generated", "autogenerated")):
         return True
     return bool(table_name) and t.replace(" ", "_") == table_name.lower()
+
+
+# Words a connector adds around a name when it has no real description ("Vendor table orders (Orders)",
+# "Uploaded file orders.csv", "From column 'Order Date' of orders.csv")
+_WRAPPER_WORDS = {"table", "view", "file", "uploaded", "upload", "from", "column", "field", "object", "api", "source",
+                  "data", "sheet", "csv", "tsv", "parquet", "xlsx", "xls", "json", "servicenow", "salesforce", "jira",
+                  "record", "records", "of", "the", "a", "an", "in", "for"}
+
+
+def restates_name(text: str | None, *names: str | None) -> bool:
+    """True when `text` says nothing beyond the given names and connector boilerplate: no description at all."""
+    if not text:
+        return True
+    known = {_stem(t) for n in names if n for t in split_tokens(n)}
+    rest = " ".join(w for w in re.findall(r"[A-Za-z0-9_]+", text) if w.lower() not in _WRAPPER_WORDS)
+    return all(w in known or w.isdigit() for w in (_stem(t) for t in split_tokens(rest)))
 
 
 def needs_enrichment(table: TableSemantics, *, existing_description: str | None, reviewed: bool) -> bool:
@@ -1086,6 +1338,41 @@ def _is_sensitive(col: dict[str, Any]) -> bool:
         sens, cat = r.sensitivity, r.category
     return SENSITIVITY_ORDER.get(str(sens), 1) >= SENSITIVITY_ORDER["confidential"] or (
         cat is not None and cat != "free_text_risk")
+
+
+COLUMN_ENRICH_CONFIDENCE = 0.5  # below this the name rules did not understand the column (u_flag2, attr1)
+COLUMN_ENRICH_MAX = 8  # columns per table sent for a model description
+
+
+def column_enrichment_payload(columns: list[dict[str, Any]], *, allow_values: bool = False,
+                              limit: int = COLUMN_ENRICH_MAX) -> list[dict[str, Any]]:
+    """The columns of one table whose rule semantics are unsure, as screened model input: name, normalized type and
+    the profile's shape (null share, distinct ratio, format masks). The complete list of values is added only when
+    the workspace policy allows samples to reach a model and the column is not sensitive. Never a sensitive column,
+    never one with a person's, the source's or an accepted model description.
+
+    Each column: {"name", "data_type", "semantics", "profile", "description_origin", "sensitive"}."""
+    out: list[dict[str, Any]] = []
+    for c in columns:
+        sem = c.get("semantics") or {}
+        if c.get("sensitive") or c.get("description_origin") not in (None, "rule"):
+            continue
+        if float(sem.get("confidence") or 0.0) >= COLUMN_ENRICH_CONFIDENCE or not sem.get("semantic_role"):
+            continue
+        prof = c.get("profile") or {}
+        shape = {k: prof[k] for k in ("null_rate", "distinct_ratio") if isinstance(prof.get(k), int | float)}
+        if prof.get("patterns"):
+            shape["patterns"] = [p.get("mask") for p in prof["patterns"] if isinstance(p, dict) and p.get("mask")][:3]
+        entry: dict[str, Any] = {"name": screen_text(str(c.get("name", "")), max_chars=64),
+                                 "type": normalize_type(c.get("data_type")), "rule_role": sem.get("semantic_role")}
+        if shape:
+            entry["shape"] = shape
+        if allow_values and prof.get("values_complete") and prof.get("values"):
+            entry["values"] = [screen_text(str(v), max_chars=40) for v in prof["values"]][:12]
+        out.append(entry)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def enrichment_batches(items: list[dict[str, Any]], *, max_tables: int = 25, max_columns: int = 12,

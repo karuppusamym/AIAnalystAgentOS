@@ -40,7 +40,7 @@ describe("step cards", () => {
     expect(within(count).getByText(/Corrected: a join multiplied rows 1\.4x/)).toBeTruthy();
     expect(await within(count).findByRole("table", { name: "Result of P1 incidents by assignment group" })).toBeTruthy();
     const plan = await card(/Plan: why/);
-    expect(within(plan).getByText(/no verdict recorded/)).toBeTruthy();
+    expect(within(plan).getByText(/plans are not verified/)).toBeTruthy(); // P3-6: says why, not "no verdict recorded (recorded)"
     // a plan has no number: no "Why this number?"
     expect(within(plan).queryByRole("button", { name: /Why this number/ })).toBeNull();
   });

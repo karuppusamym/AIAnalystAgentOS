@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type Artifact, type ArtifactDetail, type Insight, type RecipeRun, type Run } from "../api";
+import { api, type Artifact, type ArtifactDetail, type Insight, type ProcessAnalysis, type RecipeRun, type Run } from "../api";
 import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
 import { PublishCard } from "../components/DashboardPublish";
@@ -9,6 +9,7 @@ import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
 import { MaterializationsOutput } from "../components/Pipelines";
+import { ProcessAnalysisView } from "../components/ProcessMining";
 import { VerificationBadge, voidCause } from "../components/WhyNumber";
 import { StartWorkButton } from "../components/StartWork";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, PageHeader, RecordTable, StatusBadge, TechnicalDetails } from "../components/ui";
@@ -25,13 +26,14 @@ export function outputTypeOf(artifactType: string): OutputType | null {
   // ML experiment records (spec, split, trials, package, evaluation, card) live with their experiment in Work
   if (artifactType.startsWith("ml_")) return null;
   if (artifactType === "dashboard" || artifactType === "report" || artifactType === "dataset" || artifactType === "chart") return artifactType;
+  if (artifactType === "process_analysis") return "process";
   return "other";
 }
 
 export const OUTPUT_FILTERS: { id: OutputType; label: string }[] = [
   { id: "finding", label: "Findings" }, { id: "dashboard", label: "Dashboards" }, { id: "report", label: "Reports" },
   { id: "dataset", label: "Datasets" }, { id: "chart", label: "Charts" }, { id: "prepared", label: "Prepared data" },
-  { id: "model", label: "Models & scoring" }, { id: "table", label: "Managed tables" }, { id: "other", label: "Other" },
+  { id: "model", label: "Models & scoring" }, { id: "table", label: "Managed tables" }, { id: "process", label: "Process maps" }, { id: "other", label: "Other" },
 ];
 
 /** Output types shown as their own panel rather than as rows of the one list (models and their scoring runs). */
@@ -219,7 +221,7 @@ export function OutputsPage() {
 
 const TYPE_WORD: Record<OutputType, string> = {
   finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data",
-  model: "model", table: "managed table", other: "",
+  model: "model", table: "managed table", process: "process map", other: "",
 };
 
 function OutputRow({ item: i, run }: { item: Item; run?: Run }) {
@@ -331,6 +333,8 @@ function ArtifactContent({ a, wsId }: { a: ArtifactDetail; wsId: string }) {
       return <><PublishCard wsId={wsId} artifact={a} /><DashboardPreview wsId={wsId} artifact={a} /></>;
     case "report":
       return <ReportRow wsId={wsId} report={a} />;
+    case "process_analysis":
+      return <ProcessAnalysisView wsId={wsId} analysis={{ ...(a.content as unknown as ProcessAnalysis), artifact: { id: a.id, name: a.name, version: a.version } }} />;
     case "dataset":
       return (
         <Card title="Dataset definition">

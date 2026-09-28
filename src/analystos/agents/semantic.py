@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from analystos.agents.common import compile_for, llm_json, model_gate
+from analystos.agents.common import defer_compile, llm_json, model_gate
 from analystos.agents.sql_agent import dataset_def
 from analystos.artifacts.registry import link, save_artifact
 from analystos.contracts.bi import MetricDef
@@ -159,7 +159,7 @@ def define_metrics(ctx: RunContext) -> dict:
     approved = approved_workspace_metrics(ctx, columns, dialect)
     candidates = approved + previous_metrics(ctx) + default_metrics(ds)
     origin = ["approved"] * len(approved) + ["carried"] * (len(candidates) - len(approved))
-    payload = compile_for(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
+    payload = defer_compile(ctx, "semantic_modeling", {"objective": ctx.run.objective, "dataset_columns": ds.columns,
                                                      "existing": [m.name for m in candidates]})
     data, model = llm_json(ctx, "semantic_modeling", "semantic_modeling.v2", payload, validate=valid_metric_definitions) \
         if model_gate(ctx, "semantic_modeling", payload, deterministic_ok=len(candidates) >= 4) else (None, "deterministic")
@@ -209,8 +209,11 @@ def define_metrics(ctx: RunContext) -> dict:
         link(s, ctx.workspace.id, ("semantic_model", model_art.id), "models", ("dataset", content["artifact_id"]), run_id=ctx.run.id)
         from analystos.semantic import service as semantic
 
+        # The workspace model keeps one entry per objective, not per run: re-running an investigation leaves it
+        # unchanged (no new proposed version for review) and its KPIs keep pointing at the same dataset name.
+        model_ds = ds.model_copy(update={"name": ds.name.removesuffix(f"_{ctx.run.id[-6:]}")})
         semantic.save_model(s, ctx.workspace.id, actor=f"agent:{ctx.agent.id}", origin=f"agent:{ctx.agent.id}",
-                            datasets=[semantic.dataset_from_def(ds)], run_id=ctx.run.id)
+                            datasets=[semantic.dataset_from_def(model_ds)], run_id=ctx.run.id)
         proposed = []
         for m in accepted:
             art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="metric", name=m.name,
@@ -219,12 +222,12 @@ def define_metrics(ctx: RunContext) -> dict:
             ctx.event("metric.created", {"name": m.name, "display_name": m.display_name, "value": m.validation.get("value")})
             if m.status != "approved":  # a validated KPI becomes a proposal; only a person makes it a stable definition
                 row, created = semantic.propose_metric(
-                    s, ctx.workspace.id, semantic.from_metricdef(m, dataset=ds.name, sql_dialect=dialect),
+                    s, ctx.workspace.id, semantic.from_metricdef(m, dataset=model_ds.name, sql_dialect=dialect),
                     proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id, source=("metric", art.id))
                 if created:
                     proposed.append(m.name)
         for m in clashing:
-            semantic.propose_metric(s, ctx.workspace.id, semantic.from_metricdef(m, dataset=ds.name, sql_dialect=dialect),
+            semantic.propose_metric(s, ctx.workspace.id, semantic.from_metricdef(m, dataset=model_ds.name, sql_dialect=dialect),
                                     proposed_by=ctx.run.requested_by, via=f"agent:{ctx.agent.id}", run_id=ctx.run.id)
     n_approved = sum(1 for m in accepted if m.status == "approved")
     ctx.say(f"Defined {len(accepted)} validated KPIs ({', '.join(m.display_name for m in accepted)}); rejected {len(rejected)}"

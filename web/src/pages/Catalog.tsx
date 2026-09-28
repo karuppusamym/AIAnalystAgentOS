@@ -4,6 +4,7 @@ import { to, type DataTab } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
 import { ColumnCurationForm } from "../components/ColumnCuration";
 import { KpiEditor } from "../components/KpiEditor";
+import { ColumnProfilePanel, hasProfile, profileLine, profileMetaText } from "../components/ProfileView";
 import { ConfidenceBar, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, Card, Tabs } from "../components/ui";
 import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
@@ -121,7 +122,7 @@ function CatalogTab({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
 
   return (
     <div className="stack">
-      <p className="muted small">Every crawled table with its business meaning, role, grain and sensitive columns.</p>
+      <p className="muted small">Every crawled table with its business meaning, role, grain and sensitive columns. Select a table in Sources and run profiling to see measured column details.</p>
       <Card>
         <form className="form-inline catalog-filters" onSubmit={search} role="search" aria-label="Search the catalog">
           <label className="inline-field">
@@ -156,7 +157,7 @@ function CatalogTab({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
       )}
       {!!list.data?.length && (
         <Card title={`${list.data.length} table${list.data.length === 1 ? "" : "s"}`}>
-          <div className="table-wrap">
+          <div className="table-wrap" data-tour="catalog-table">
             <table className="table">
               <thead>
                 <tr><th>Table</th><th>Role</th><th>Domain</th><th>Grain</th><th>Confidence</th><th>Description</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
@@ -191,7 +192,10 @@ function CatalogTab({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
                       <tr className="row-detail" id={`cat-${a.id}`}>
                         <td colSpan={8}>
                           <AssetCuration asset={a} canEdit={canEdit} onCurated={onCurated} />
-                          <CatalogColumns columns={a.columns} curate={canEdit ? { wsId, assetId: a.id, fq: a.fq } : undefined} />
+                          {profileMetaText(a.profile_meta, fmtDate) &&
+                            <p className="muted small">{profileMetaText(a.profile_meta, fmtDate)}</p>}
+                          <CatalogColumns columns={a.columns} rowCount={a.profile_meta?.rows_profiled}
+                            curate={canEdit ? { wsId, assetId: a.id, fq: a.fq } : undefined} />
                         </td>
                       </tr>
                     )}
@@ -285,8 +289,10 @@ export function AssetCuration({ asset, canEdit, onCurated }: {
  * The columns of a table; with `curate`, an editor curates each column's tags, unit and glossary alias
  * in place (P4-07). The one home of column curation is here, in Data.
  */
-export function CatalogColumns({ columns, curate }: { columns: CatalogColumn[]; curate?: { wsId: string; assetId: string; fq: string } }) {
+export function CatalogColumns({ columns, curate, rowCount }: { columns: CatalogColumn[]; rowCount?: number | null;
+  curate?: { wsId: string; assetId: string; fq: string } }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   if (!columns.length) return <p className="muted small">No columns recorded.</p>;
   return (
@@ -300,7 +306,11 @@ export function CatalogColumns({ columns, curate }: { columns: CatalogColumn[]; 
           {columns.map((c) => (
             <Fragment key={c.name}>
             <tr>
-              <td><code>{c.name}</code>{c.business_name && <div className="muted small">{c.business_name}</div>}</td>
+              <td><code>{c.name}</code>{c.business_name && <div className="muted small">{c.business_name}</div>}
+                {hasProfile(c.profile) && <div><button type="button" className="btn btn-xs btn-ghost"
+                  aria-expanded={profileOpen === c.name} onClick={() => setProfileOpen((old) => old === c.name ? null : c.name)}>
+                  {profileOpen === c.name ? "Hide profile" : "View profile"}</button></div>}
+              </td>
               <td className="small">{c.data_type}</td>
               <td className="small">{c.role ?? <span className="muted">—</span>}</td>
               <td className="small">{c.unit ?? <span className="muted">—</span>}</td>
@@ -326,6 +336,14 @@ export function CatalogColumns({ columns, curate }: { columns: CatalogColumn[]; 
                   onClick={() => { setSaved(null); setOpen((o) => (o === c.name ? null : c.name)); }} aria-label={`Curate ${c.name}`}>Curate</button></td>
               )}
             </tr>
+            {profileOpen === c.name && hasProfile(c.profile) && (
+              <tr className="row-detail"><td colSpan={curate ? 9 : 8}>
+                <strong>{c.business_name || c.name}</strong>
+                <p className="muted small">{profileLine(c.profile, rowCount)}</p>
+                <ColumnProfilePanel profile={c.profile}
+                  sensitive={c.tags.some((t) => ["pii", "restricted", "sensitive"].includes(t))} rowCount={rowCount} />
+              </td></tr>
+            )}
             {curate && open === c.name && (
               <tr className="row-detail"><td colSpan={9}>
                 <ColumnCurationForm wsId={curate.wsId} assetId={curate.assetId} fq={curate.fq} column={c} onCancel={() => setOpen(null)}

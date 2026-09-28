@@ -100,6 +100,11 @@ ladders:
   # metric / display name / glossary-synonym match, the model only when no rule matched and the question names
   # a metric word. The compiler validates whatever is chosen; a model never writes this path's SQL.
   semantic_query: [cache, rules, llm_small]
+  # Ask analyst mode: the rules plan / template synthesis answer first. The planning model only for a one-step plan
+  # of a compound-looking question (validated: 1..4 non-empty, distinct steps); the synthesis model only when set to
+  # `always`, and its text is kept only when every number binds to a computed fact and cites its step.
+  analyst_planning: [cache, rules, llm_small]
+  analyst_synthesis: [cache, rules, llm_small]
   sql_repair: [cache, llm_large]
   statistical_interpretation: [cache, llm_large]
   insight_narrative: [cache, rules, llm_small]
@@ -110,6 +115,13 @@ ladders:
   agent_actions: [cache, rules, llm_small]
   ml_spec_proposal: [cache, rules, llm_small]  # P5-06: the ml_practitioner proposes MLSpec inputs; rules = default_actions
   metadata_enrichment: [cache, rules, llm_small]
+  domain_classification_assist: [cache, rules, llm_small]
+  # Stream E: the glossary scan's rules find terms and code sets; the model only drafts a definition for a
+  # candidate the rules could not define (validated, screened; a person approves every draft).
+  glossary_suggestion: [cache, rules, llm_small]
+  # Data shape: rules name the patterns of a table (event log, time series, ML candidate); the model only proposes an event
+  # log for a table the rules left unexplained, and code verifies the mapping against the profile.
+  data_shape_proposal: [cache, rules, llm_small]
   verification: [cache, llm_large]  # runs only when the workspace policy opts in (independent_model_verification)
   hypothesis_priority: [cache, rules, decision]
   risk_check: [cache, decision]  # escalate-only; no longer called at publish (the tier is fixed high)
@@ -134,6 +146,8 @@ routing:
   follow_up_generation: analytical_reasoning
   sql_generation: coding
   semantic_query: low_cost
+  analyst_planning: low_cost
+  analyst_synthesis: low_cost
   sql_repair: coding
   statistical_interpretation: analytical_reasoning
   insight_narrative: low_cost
@@ -145,6 +159,9 @@ routing:
   ml_spec_proposal: low_cost  # proposals only: skill.ml_propose_spec validates, readiness checks decide
   agent_actions: low_cost  # declarative agents (agents/generic.py) propose typed actions; default_actions are the rule path
   metadata_enrichment: low_cost
+  domain_classification_assist: low_cost
+  glossary_suggestion: low_cost
+  data_shape_proposal: low_cost
   verification: independent_model_family
   # JEV decision purposes
   hypothesis_priority: decision
@@ -168,6 +185,9 @@ escalation:
   default: on_validation_failure
   purposes:
     metadata_enrichment: never   # batch crawl prompts; the deterministic semantics already ran
+    domain_classification_assist: never  # proposals only; the catalog keeps its rule classification
+    glossary_suggestion: never   # drafts only; a person approves every glossary term
+    data_shape_proposal: never   # proposals only; code verifies and a person confirms
     decision_structured: never   # the DecisionService falls back to its rules backend
     agent_actions: never         # declarative agents have default_actions
     pipeline_proposal: never     # the engineer agent has default_actions (rules)
@@ -176,6 +196,7 @@ escalation:
     summarization: never
     health_probe: never
     semantic_query: never       # a refused or invalid choice falls through to the labelled ad-hoc path
+    analyst_planning: never     # an invalid plan falls back to the rules plan
 
 # DecisionService (ADR-0015, spec v3 §5). Every decision purpose declares its authority class, its
 # backends in order, a timeout and (through `rules`) a deterministic fallback. Backends: jev | rules |

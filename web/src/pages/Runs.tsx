@@ -7,6 +7,7 @@ import { DataThreadPanel } from "../components/DataThread";
 import { ExperimentsPanel } from "../components/Ml";
 import { NotebooksPanel } from "../components/Notebooks";
 import { PreparePanel } from "../components/PreparePanel";
+import { ProcessPanel } from "../components/ProcessMining";
 import { StartWorkButton } from "../components/StartWork";
 import { WorkflowPanel } from "../components/WorkflowPanel";
 import { EmptyState, ErrorBox, Loading, PageHeader, StatusBadge, Tabs, Tag, Value } from "../components/ui";
@@ -18,6 +19,7 @@ const TABS: { id: WorkTab; label: string }[] = [
   { id: "investigations", label: "Investigations" }, { id: "thread", label: "Data Thread" }, { id: "notebooks", label: "Notebooks" },
   { id: "experiments", label: "Experiments" },
   { id: "prepare", label: "Prepare data" }, { id: "builds", label: "dbt builds" }, { id: "workflows", label: "Workflows" },
+  { id: "process", label: "Process" },
 ];
 
 /**
@@ -63,6 +65,7 @@ export function WorkPage() {
         {tab === "builds" && <BuildPanel wsId={wsId} selected={params.get("job")} onSelect={selectJob}
           canDesignate={!!user?.is_admin || ws.data?.role === "owner"} />}
         {tab === "workflows" && <WorkflowPanel wsId={wsId} role={role} />}
+        {tab === "process" && <ProcessPanel wsId={wsId} role={role} />}
       </div>
     </div>
   );

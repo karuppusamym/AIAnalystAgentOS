@@ -71,6 +71,69 @@ def _source(session: Session, user: User, source_id: str, minimum: str = "editor
     return load_in_workspace(session, Source, source_id, workspace_id, user=user, minimum=minimum, label="source")
 
 
+_UNSET = object()
+
+
+@scoped_loader
+def update_source(session: Session, user: User, workspace_id: str, source_id: str, *, name: str | None = None,
+                  config: dict | None = None, secret_ref: Any = _UNSET, clear_secret_ref: bool = False) -> Source:
+    """Rename a source, or correct its connection: host, port, tables and other `config` fields, and the
+    secret reference. Only the fields given change. The kind cannot change (a different kind is a different
+    connector; add a new source and move table selection over instead). Changing `config` or the secret
+    reference invalidates nothing already crawled or staged, but the source goes back to `registered` and
+    its last error is cleared, so the catalog shows plainly that it has not been checked against the new
+    connection yet: discover it again before relying on it.
+
+    Every input is validated before anything is assigned to the ORM-tracked source, so a rejected edit
+    never leaves a partial change for the caller's transaction to undo: raising here must be as good as
+    never having been called."""
+    from analystos.connectors import kinds
+    from analystos.services.platform_settings import get as platform
+
+    src = load_in_workspace(session, Source, source_id, workspace_id, user=user, minimum="editor", label="source")
+    spec = kinds.get_kind(src.kind)
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise InvalidInput("name cannot be empty")
+
+    new_config, new_mode = None, None
+    if config is not None:
+        settings = platform().sources
+        new_config = dict(config or {})
+        if _credential_in_config(new_config):
+            raise InvalidInput("put credentials in a secret reference (env:NAME or file:/path), never in source config")
+        missing = [f for f in spec.required if new_config.get(f) in (None, "")]
+        if missing:
+            raise InvalidInput(f"{spec.label} needs: {', '.join(missing)}")
+        new_mode = kinds.execution_mode_for(spec.kind, new_config.pop("execution_mode", None) if settings.allow_pushdown else "staged")
+        if new_mode == "staged":  # a snapshot must say which population it is (P4-C12)
+            from analystos.connectors.sampling import validate_sampling
+
+            validate_sampling(spec.kind, spec.is_sql, new_config, spec.sqlglot_dialect)
+
+    effective_secret = None if clear_secret_ref else (src.secret_ref if secret_ref is _UNSET else secret_ref)
+    if not effective_secret and spec.secret and spec.secret.required:
+        raise InvalidInput(f"{spec.label} needs a secret reference (env:NAME or file:/path) for its {spec.secret.field}")
+
+    changed: dict[str, Any] = {}
+    if name is not None and name != src.name:
+        src.name, changed["name"] = name, True
+    reconnect = new_config is not None and (new_config != src.config or new_mode != src.execution_mode)
+    if reconnect:
+        src.config, src.execution_mode, changed["config"] = new_config, new_mode, True
+    if effective_secret != src.secret_ref:
+        src.secret_ref, changed["secret_ref"], reconnect = effective_secret, True, True
+    if not changed:
+        raise InvalidInput("nothing to change")
+    if reconnect:
+        src.status, src.last_error = "registered", None
+    audit(f"user:{user.id}", "source.updated", workspace_id=workspace_id, target=src.id,
+          details={"changed": sorted(changed), "reconnect_needed": reconnect}, session=session)
+    return src
+
+
 @scoped_loader
 def discover_source(user: User, source_id: str, workspace_id: str | None = None) -> dict:
     """Full metadata crawl without profiling (one code path with scheduled crawls).
@@ -103,10 +166,38 @@ def discover_source(user: User, source_id: str, workspace_id: str | None = None)
 
 @scoped_loader
 def select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None = None, *,
-                  refresh: str = "auto") -> dict:
+                  refresh: str = "auto", schedule: Any | None = None) -> dict:
     """Mark the assets the workspace may analyse, then sync them (staged: bounded snapshot load, or a
     watermark window for a table the source config declares `incremental`; `refresh` = auto | full |
-    reconcile)."""
+    reconcile). With `schedule` (the API's BackgroundTasks.add_task) and `crawl.profile_on_select`, the tables
+    that are newly selected or never profiled are then profiled and value-sampled by an incremental crawl in
+    the background: the first discovery crawl ran before the source was ready, so it could not."""
+    out = _select_assets(user, source_id, asset_names, workspace_id, refresh=refresh)
+    out["profile_crawl"] = _profile_selection(user, source_id, out.pop("_unprofiled"), schedule)
+    return out
+
+
+def _profile_selection(user: User, source_id: str, keys: list[str], schedule: Any | None) -> dict:
+    from analystos.services import crawler
+    from analystos.services.platform_settings import get as platform
+
+    if not keys:
+        return {"status": "not_needed", "assets": []}
+    if schedule is None or not platform().crawl.profile_on_select:
+        return {"status": "not_requested", "assets": keys}
+    try:
+        with session_scope() as s:  # committed before scheduling: the background task reads the row in its own session
+            run = crawler.start_crawl(s, s.get(User, user.id), source_id, mode="incremental", include=keys, profile=True,
+                                      trigger="selection", actor=f"user:{user.id}")
+            crawl_id = run.id
+    except InvalidInput as exc:  # e.g. a crawl already running: it will not profile these; say so
+        return {"status": "skipped", "assets": keys, "reason": exc.message}
+    how = crawler.schedule_crawl(crawl_id, user.id, schedule)
+    return {"status": "scheduled", "crawl_id": crawl_id, "assets": keys, "via": how}
+
+
+@scoped_loader
+def _select_assets(user: User, source_id: str, asset_names: list[str], workspace_id: str | None, *, refresh: str) -> dict:
     from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
     from analystos.connectors.registry import build_connector
     from analystos.evidence.manifest import mark_stale
@@ -122,8 +213,14 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
         unknown = wanted - {a.name for a in assets} - {a.source_name for a in assets}
         if unknown:
             raise InvalidInput(f"unknown assets: {', '.join(sorted(unknown))}")
+        unprofiled = []
         for a in assets:
+            was = a.selected
             a.selected = a.name in wanted or a.source_name in wanted
+            if a.selected and (not was or not (a.stats or {}).get("profile_meta")):
+                unprofiled.append((a.semantics or {}).get("source_key") or a.name)
+                if not was:
+                    a.stats = {}  # measurements of an earlier selection describe an earlier snapshot
         selected = [(a.id, a.source_name, a.name, a.schema_name,
                      [DiscoveredColumn(name=c.name, data_type=c.data_type, nullable=c.nullable, is_key=c.is_key,
                                        references=(c.profile or {}).get("references"))
@@ -168,7 +265,7 @@ def select_assets(user: User, source_id: str, asset_names: list[str], workspace_
               details={"assets": asset_names, "loaded": loaded}, session=s)
         emit(row.workspace_id, "metadata.collected", {"source_id": source_id, "selected": asset_names, "loaded": loaded},
              actor=f"user:{user.id}", session=s)
-    return {"selected": asset_names, "loaded": loaded}
+    return {"selected": asset_names, "loaded": loaded, "_unprofiled": sorted(unprofiled)}
 
 
 def _register_soft_delete_column(session: Session, asset: SourceAsset, info: dict) -> None:

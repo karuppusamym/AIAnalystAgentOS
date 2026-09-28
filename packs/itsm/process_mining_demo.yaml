@@ -1,0 +1,41 @@
+# The process-mining demo workspace `analystos demo-seed` builds next to the incident one (src/analystos/demo/seed.py,
+# `--only process` builds just this one). Domain data lives here, in the pack. Not a capability manifest.
+workspace:
+  name: ServiceNow process mining (demo)
+  description: "Demo workspace created by `analystos demo-seed`: how incidents, changes and catalog tasks really flow."
+  objective: >-
+    Mine the ServiceNow task activity log: how incidents, change requests and catalog tasks are created, assigned,
+    reassigned, worked, put on hold, resolved, closed or cancelled. Find where cases wait, which teams hand work back
+    and forth, which steps are skipped against the expected process, and what gets cancelled and when.
+  policy: {require_approved_metrics: false}
+
+source:
+  kind: servicenow
+  name: ServiceNow task activity
+  secret_ref: env:SERVICENOW_PASSWORD
+  username: admin
+  page_size: 10000
+  # u_task_activity is the flattened lifecycle log (see process_models.yaml); the records it describes come along
+  tables: [u_task_activity, incident, change_request, sc_task]
+  select: [u_task_activity, incident, change_request, sc_task]
+
+brief:
+  - {group: decision, field: question, value: "Where do incidents, changes and catalog tasks lose time, get bounced between teams, or skip required steps?"}
+  - {group: decision, field: audience, value: "Head of IT service management and the process owners for incident, change and request fulfilment"}
+  - {group: decision, field: intended_action, value: "Fix the worst handover loops, enforce change authorization, and cut on-hold waiting in fulfilment"}
+  - {group: time_measures, field: timezone, value: Europe/London}
+
+# Saved process analyses (Work -> Process; they appear in Outputs). The mapping comes from process_models.yaml.
+process:
+  table: u_task_activity
+  analyses:
+    - {segment: incident, name: "Incident process (demo)"}
+    - {segment: change_request, name: "Change process (demo)"}
+    - {segment: sc_task, name: "Catalog task process (demo)"}
+  # The event log as tables (u_task_activity_cases / _transitions), then an investigation on them: the same agents,
+  # gateway, verification and approvals as any other data (Work -> Process -> Use this process everywhere).
+  investigation:
+    objective: >-
+      Why do some incidents, change requests and catalog tasks take much longer than others? Compare case duration by
+      kind of case and status, by how often the work changed hands, by rework and by whether the case followed the
+      expected path, and find where cases wait longest between steps.

@@ -3,6 +3,7 @@ import { guessChart, type Preview } from "../lib/charts";
 import { fmtNumber, fmtP } from "../lib/format";
 import { ChartView } from "./Chart";
 import { DataTable, EmptyState, KeyValue, RecordTable, StatusBadge, TechnicalDetails, Value } from "./ui";
+import { methodLabel } from "../lib/methods";
 
 /**
  * Result renderers keyed by a manifest's `ui.renderer` (spec v3 §9). A capability names the
@@ -97,13 +98,13 @@ export function StatResultRenderer({ value }: RendererProps) {
     <div className="renderer renderer-stat">
       <div className="chip-row">
         {supported !== null && <StatusBadge status={supported ? "supported" : "rejected"} label={supported ? "supported" : "not supported"} />}
-        {typeof v.test === "string" && <span className="small"><span className="muted">test</span> <code>{v.test}</code></span>}
+        {typeof v.test === "string" && <span className="small"><span className="muted">test</span> <span title={v.test}>{methodLabel(v.test)}</span></span>}
       </div>
       <KeyValue items={[
         ["n", <Value key="n" value={v.n} format="int" />],
         ["p-value", v.p_value === undefined || v.p_value === null ? <Value key="p" value={null} /> : fmtP(v.p_value)],
         ["q-value (BH-adjusted)", v.p_adjusted === undefined || v.p_adjusted === null ? <Value key="q" value={null} /> : fmtP(v.p_adjusted)],
-        [String(v.effect_label ?? "effect size"), v.effect_size === undefined || v.effect_size === null ? <Value key="e" value={null} /> : fmtNumber(v.effect_size, 3)],
+        [v.effect_label ? methodLabel(String(v.effect_label)) : "effect size", v.effect_size === undefined || v.effect_size === null ? <Value key="e" value={null} /> : fmtNumber(v.effect_size, 3)],
       ]} />
       {warnings.length > 0 && <p className="small warn-text">⚠ {warnings.join("; ")}</p>}
       {groups.length > 0 && <RecordTable records={groups} maxRows={30} />}

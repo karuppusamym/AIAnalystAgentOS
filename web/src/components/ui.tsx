@@ -78,7 +78,7 @@ export function PageHeader({ title, subtitle, actions }: { title: ReactNode; sub
   return (
     <div className="page-header">
       <div>
-        <h1>{title}</h1>
+        <h1 data-tour="page-title">{title}</h1>
         {subtitle && <p className="muted">{subtitle}</p>}
       </div>
       {actions && <div className="page-actions">{actions}</div>}
@@ -274,7 +274,7 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
     <div className="tabs" role="tablist" aria-label="Sections">
       {tabs.map((t) => (
         <button key={t.id} id={`${id}-${t.id}`} role="tab" type="button" aria-selected={value === t.id}
-          className={`tab ${value === t.id ? "tab-active" : ""}`} onClick={() => onChange(t.id)}>
+          data-tour={`tab-${t.id}`} className={`tab ${value === t.id ? "tab-active" : ""}`} onClick={() => onChange(t.id)}>
           {t.label}
         </button>
       ))}

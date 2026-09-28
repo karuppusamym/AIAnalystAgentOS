@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
 
+from analystos.context import cache as context_cache
 from analystos.core.errors import AnalystOSError, ContextOverBudget
 from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
@@ -22,19 +25,38 @@ def task_output(run_id: str, key: str) -> dict[str, Any]:
         return dict(task.output or {}) if task else {}
 
 
+def _memo(ctx: Any, name: str) -> dict:
+    """A per-step (RunContext) or per-request (Ask context) memo: the context object is rebuilt for
+    every step and request, so nothing memoised here outlives an edit by more than one step."""
+    holder = getattr(ctx, "__dict__", None)
+    return holder.setdefault(name, {}) if isinstance(holder, dict) else {}
+
+
 def asset_rows(ctx: RunContext) -> list[tuple[SourceAsset, list[SourceColumn]]]:
-    out = []
+    """The scope's tables with their columns, in scope order: two queries for the whole scope (not two
+    per table), once per step or request."""
+    wanted = [tuple(fq.split(".", 1)) for fq in ctx.scope.assets]
+    memo = _memo(ctx, "_aos_asset_rows")
+    key = (ctx.workspace.id, tuple(wanted))
+    if key in memo:
+        return list(memo[key])
+    by_name: dict[tuple[str, str], SourceAsset] = {}
+    cols: dict[str, list[SourceColumn]] = {}
     with session_scope() as s:
-        for fq in ctx.scope.assets:
-            schema, name = fq.split(".", 1)
-            asset = s.scalar(select(SourceAsset).where(SourceAsset.workspace_id == ctx.workspace.id,
-                                                       SourceAsset.schema_name == schema, SourceAsset.name == name))
-            if asset is None:
-                continue
-            cols = list(s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id).order_by(SourceColumn.ordinal)))
-            s.expunge_all()
-            out.append((asset, cols))
-    return out
+        names = sorted({n for _, n in wanted})
+        if names:
+            for a in s.scalars(select(SourceAsset).where(SourceAsset.workspace_id == ctx.workspace.id, SourceAsset.name.in_(names))
+                               .order_by(SourceAsset.id)):
+                by_name.setdefault((a.schema_name, a.name), a)
+        ids = [by_name[w].id for w in wanted if w in by_name]
+        if ids:
+            for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id.in_(ids))
+                               .order_by(SourceColumn.asset_id, SourceColumn.ordinal)):
+                cols.setdefault(c.asset_id, []).append(c)
+        s.expunge_all()
+    out = [(by_name[w], cols.get(by_name[w].id, [])) for w in wanted if w in by_name]
+    memo[key] = out
+    return list(out)
 
 
 _SEMANTIC_PRIORITY = {"boolean": 0, "datetime": 1, "categorical": 2, "numeric": 3, "text": 5, "id": 6}
@@ -71,51 +93,108 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
     objective and analytical usefulness, then capped; identifiers and free text go last. The context
     compiler asks for the uncapped catalog (`capped=False`) and applies its purpose profile's caps
     itself, so what it leaves out is listed as omitted."""
+    import copy
+
     from analystos.services.platform_settings import get as platform
 
     llm = platform().llm
     tokens = objective_tokens(objective if objective is not None else (ctx.run.objective if ctx.run else None))
     samples_allowed = bool(getattr(getattr(ctx, "policy", None), "send_data_samples_to_models", False))
     denied = set(ctx.scope.denied_columns)
+    memo = _memo(ctx, "_aos_catalog")
+    key = (include_values, capped, samples_allowed, tuple(sorted(denied)),
+           (tuple(sorted(tokens)), llm.compact_prompts, llm.catalog_max_columns_per_table, llm.catalog_max_tables) if capped else None)
+    if key in memo:
+        return copy.deepcopy(memo[key])
     catalog = []
     for asset, cols in asset_rows(ctx):
         fq = f"{asset.schema_name}.{asset.name}"
         entries = []
         for c in cols:
-            if f"{fq}.{c.name}" in denied:
+            if f"{fq}.{c.name}" in denied or f"*.{c.name}" in denied:
                 continue
             p = c.profile or {}
+            sem = getattr(c, "semantics", None) or {}
             entry: dict[str, Any] = {"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type or p.get("semantic_type")}
+            if sem.get("semantic_role"):
+                entry["role"] = sem["semantic_role"]
             # Owner- and user-written text is as untrusted as crawled text here: screened at build (P7-20).
-            meaning = _meaning(c.business_name, c.description)
+            # A model's unreviewed draft never reaches a prompt (knowledge/suggestions.py).
+            draft = not sem.get("reviewed")
+            meaning = _meaning(None if draft and getattr(c, "business_name_origin", None) == "model" else c.business_name,
+                               None if draft and getattr(c, "description_origin", None) == "model" else c.description)
             if meaning:
                 entry["meaning"] = meaning
             if p.get("distinct") is not None:
                 entry["distinct"] = p.get("distinct")
             if p.get("null_rate") is not None:
                 entry["null_rate"] = round(float(p["null_rate"]), 3)
+            if p.get("has_blanks"):
+                entry["has_blanks"] = True
             for k in ("min", "max", "mean", "p50"):
                 if p.get(k) is not None and entry.get("semantic_type") in ("numeric", "datetime"):
                     entry[k] = p[k]
-            top = p.get("top_values") or []
-            if include_values and samples_allowed and top and "pii" not in (c.tags or []) and (p.get("distinct") or 999) <= 40:
-                entry["values"] = [t.get("value") for t in top[:12]]
+            if p.get("patterns"):
+                entry["patterns"] = list(p["patterns"])[:3]
+            values = complete_values(p) if include_values and samples_allowed and not sensitive(c) else None
+            if values:
+                entry["values"] = values
             entries.append(entry)
         if capped and llm.compact_prompts and len(entries) > llm.catalog_max_columns_per_table:
             entries.sort(key=lambda e: column_rank(e, tokens))
             entries = entries[:llm.catalog_max_columns_per_table]
-        catalog.append({"asset": fq, "business_name": screen_for_prompt(asset.business_name, max_chars=200) or None,
-                        "row_count": asset.row_count, "columns": entries})
+        catalog.append({"asset": fq, **table_facts(asset), "row_count": asset.row_count, "columns": entries})
     if capped and llm.compact_prompts and len(catalog) > llm.catalog_max_tables:
         catalog.sort(key=lambda t: -table_relevance(t, tokens))
         catalog = catalog[:llm.catalog_max_tables]
-    return catalog
+    memo[key] = catalog
+    return copy.deepcopy(catalog)
+
+
+SENSITIVE_TAGS = frozenset({"pii", "sensitive", "restricted", "confidential", "secret"})
+MAX_PROMPT_VALUES = 12
+
+
+def sensitive(column: Any) -> bool:
+    """A column whose values never reach a prompt: a sensitive tag, or a PII classification."""
+    tags = {str(t).lower() for t in (getattr(column, "tags", None) or [])}
+    return bool(tags & SENSITIVE_TAGS) or bool((getattr(column, "semantics", None) or {}).get("pii"))
+
+
+def complete_values(profile: dict[str, Any]) -> list[Any] | None:
+    """The column's full value set when the profile knows it is complete and short (≤ 12): a partial
+    top-N list would let a model believe the values it did not see do not exist."""
+    values = profile.get("values")
+    if isinstance(values, list) and profile.get("values_complete") and 0 < len(values) <= MAX_PROMPT_VALUES:
+        return list(values)
+    top = [t.get("value") for t in profile.get("top_values") or [] if isinstance(t, dict)]
+    distinct = profile.get("distinct")
+    if top and isinstance(distinct, int) and distinct <= MAX_PROMPT_VALUES and len(top) >= distinct:
+        return top[:MAX_PROMPT_VALUES]
+    return None
+
+
+def table_facts(asset: Any) -> dict[str, Any]:
+    """Business name, description, role and grain of a table for prompts. An unreviewed model draft is
+    replaced by the crawler's rule text (drafts never reach a prompt)."""
+    sem = getattr(asset, "semantics", None) or {}
+    draft = not getattr(asset, "reviewed", False)
+    name = sem.get("business_name") if draft and getattr(asset, "business_name_origin", None) == "model" \
+        else getattr(asset, "business_name", None)
+    desc = sem.get("description") if draft and getattr(asset, "description_origin", None) == "model" \
+        else getattr(asset, "description", None)
+    out = {"business_name": screen_for_prompt(name, max_chars=200) or None,
+           "description": screen_for_prompt(desc, max_chars=300) or None}
+    for k in ("role", "grain"):
+        if sem.get(k):
+            out[k] = str(sem[k])
+    return out
 
 
 def _meaning(business_name: str | None, description: str | None) -> str:
     name = screen_for_prompt(business_name, max_chars=200)
     desc = screen_for_prompt(description)
-    return name + (f" - {desc}" if desc else "")
+    return " - ".join(x for x in (name, desc) if x)
 
 
 def model_gate(ctx: RunContext, purpose: str, payload: Any, *, deterministic_ok: bool) -> bool:
@@ -138,12 +217,57 @@ def compact_json(value: Any) -> str:
 def _prompt_text(payload: Any) -> str:
     from analystos.context.compiler import CompiledContext
 
+    if isinstance(payload, DeferredContext):
+        return payload.estimate_text()
     if isinstance(payload, CompiledContext):
         return compact_json(payload.header) + compact_json(payload.body)
     return compact_json(payload)
 
 
 _SCOPE_CATALOG: Any = object()
+
+
+@dataclass
+class DeferredContext:
+    """A context compiled only when a model call will actually happen (Stream B): `model_gate` and the
+    refusal paths account for an avoided call with `estimate_text()` (the mandatory inputs plus the
+    scope's column names, no DB or retrieval); `llm_json` compiles it after the mode, agent-budget and
+    route checks passed."""
+
+    ctx: Any
+    purpose: str
+    required: dict[str, Any]
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+    def estimate_text(self) -> str:
+        scope = getattr(self.ctx, "scope", None)
+        denied = set(getattr(scope, "denied_columns", None) or ())
+        names = {a: [c for c in cols if f"{a}.{c}" not in denied]
+                 for a, cols in (getattr(scope, "columns", None) or {}).items()}
+        return compact_json({**self.required, "catalog": names})
+
+    def resolve(self) -> Any:
+        return compile_for(self.ctx, self.purpose, self.required, **self.kwargs)
+
+
+def defer_compile(ctx: Any, purpose: str, required: dict[str, Any], **kwargs: Any) -> DeferredContext:
+    """`compile_for`, deferred until `llm_json` knows the call will be sent (compile after the gate)."""
+    return DeferredContext(ctx=ctx, purpose=purpose, required=required, kwargs=kwargs)
+
+
+def knowledge_version_for(ctx: Any) -> str | None:
+    """The workspace knowledge version (P4-T06), once per step or request: RunContext memoises its own
+    (scope packs); any other context memoises the policy-pack version on itself."""
+    if isinstance(getattr(type(ctx), "knowledge_version", None), property):
+        return ctx.knowledge_version
+    memo = _memo(ctx, "_aos_kv")
+    if "v" not in memo:
+        from analystos.context import version
+
+        workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+        memo["v"] = version.workspace_knowledge_version(workspace_id, policy=getattr(ctx, "policy", None)) \
+            if workspace_id else None
+    return memo["v"]
 
 
 def context_header(ctx: Any) -> dict[str, Any]:
@@ -204,14 +328,16 @@ def compile_for(ctx: Any, purpose: str, required: dict[str, Any], *, objective: 
     header = context_header(ctx)
     limit = int(settings.llm.max_prompt_tokens * 3.6) - _SYSTEM_RESERVE_CHARS
     key = _context_key(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
-                       reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars)
-    reused = _COMPILED.get(key, purpose) if key else None
+                       reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars) \
+        if settings.context.cache_enabled else None
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    reused = _COMPILED.get(key, purpose, workspace_id=workspace_id) if key else None
     if reused is not None:
         return reused
     compiled, complete = _compile(ctx, purpose, profile, settings, objective=objective, required=required, catalog=catalog,
                                   reference_text=reference_text, header=header, limit=limit, knowledge_chars=knowledge_chars)
     if key and complete:  # a context compiled without its knowledge (load failed) is not kept
-        _COMPILED.put(key, purpose, compiled)
+        _COMPILED.put(key, purpose, compiled, ttl=settings.context.cache_ttl_seconds, workspace_id=workspace_id)
     return compiled
 
 
@@ -244,13 +370,21 @@ def _compile(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: 
     sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
     workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
     if sections and workspace_id:
-        try:
-            with session_scope() as s:
-                knowledge = load_knowledge(s, workspace_id, sections, run_id=getattr(run, "id", None),
-                                           query=" ".join(x for x in (objective, reference_text) if x) or None)
-        except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
-            log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
-            complete = False
+        query = _retrieval_query(objective, reference_text)
+        cache_key = _retrieval_key(ctx, sections, query) if settings.context.cache_enabled else None
+        cached = context_cache.get("retrieval", purpose, cache_key) if cache_key else None
+        if cached is not None:
+            knowledge = [_knowledge_item(d) for d in cached]
+        else:
+            try:
+                with session_scope() as s:
+                    knowledge = load_knowledge(s, workspace_id, sections, run_id=getattr(run, "id", None), query=query)
+                if cache_key:
+                    rows = [dataclasses.asdict(k) for k in knowledge]
+                    context_cache.put(cache_key, rows, chars=len(compact_json(rows)), ttl=settings.context.cache_ttl_seconds)
+            except Exception as exc:  # knowledge is optional context; its sections then say NO_MATCH
+                log.warning("context compiler: knowledge unavailable for %s: %s", purpose, exc)
+                complete = False
     generic = {w for a in (getattr(getattr(ctx, "scope", None), "assets", None) or []) for w in terms(a.split(".")[-1])}
     try:
         return compile_context(purpose, profile, objective=objective, required=required, catalog=catalog,
@@ -283,76 +417,153 @@ class CompiledContextCache:
     prompt may cite) is bounded by the run/thread and a TTL. A context without a run or thread, or
     whose knowledge version cannot be computed, is never cached. Hits return a copy."""
 
-    def __init__(self, ttl: float = COMPILED_CONTEXT_TTL_SECONDS, max_entries: int = COMPILED_CONTEXT_MAX_ENTRIES) -> None:
+    def __init__(self, ttl: float = COMPILED_CONTEXT_TTL_SECONDS, max_entries: int = COMPILED_CONTEXT_MAX_ENTRIES,
+                 store: Any = None) -> None:
         import threading
-        from collections import OrderedDict
 
         self.ttl, self.max_entries = ttl, max_entries
-        self._items: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self._store = store
         self._lock = threading.Lock()
         self.stats: dict[str, dict[str, int]] = {}
 
-    def _count(self, purpose: str, what: str, chars: int = 0) -> None:
-        row = self.stats.setdefault(purpose, {"compiled": 0, "reused": 0, "chars_reused": 0})
-        row[what] += 1
-        row["chars_reused"] += chars
+    @property
+    def store(self) -> Any:
+        """The shared context store (Redis when configured, else an in-process LRU honouring the TTL)."""
+        return self._store if self._store is not None else context_cache.store()
 
-    def get(self, key: str, purpose: str) -> Any | None:
-        import copy
-        import time
-
+    def _count(self, purpose: str, what: str, chars: int = 0, workspace_id: str | None = None) -> None:
         with self._lock:
-            item = self._items.get(key)
-            if item is None or time.monotonic() - item[0] > self.ttl:
-                self._items.pop(key, None)
-                return None
-            self._items.move_to_end(key)
-            self._count(purpose, "reused", item[1].chars)
-            return copy.deepcopy(item[1])
+            row = self.stats.setdefault(purpose, {"compiled": 0, "reused": 0, "chars_reused": 0})
+            row[what] += 1
+            row["chars_reused"] += chars
+        context_cache.note("compiled", purpose, "hits" if what == "reused" else "misses", chars=chars,
+                           workspace_id=workspace_id)
 
-    def put(self, key: str, purpose: str, compiled: Any) -> None:
-        import copy
-        import time
+    @staticmethod
+    def _key(key: str, workspace_id: str | None) -> str:
+        """Under the workspace's context-cache prefix, so its entries can be counted and cleared."""
+        return context_cache.entry_key("compiled", workspace_id, key)
 
-        with self._lock:
-            self._count(purpose, "compiled")
-            self._items[key] = (time.monotonic(), copy.deepcopy(compiled))
-            self._items.move_to_end(key)
-            while len(self._items) > self.max_entries:
-                self._items.popitem(last=False)
+    def get(self, key: str, purpose: str, *, workspace_id: str | None = None) -> Any | None:
+        from analystos.context.compiler import CompiledContext
+
+        try:
+            hit = self.store.get(self._key(key, workspace_id))
+        except Exception:
+            hit = None
+        if not isinstance(hit, dict):
+            return None
+        compiled = CompiledContext.from_dict(hit)  # a JSON round trip: every hit is a fresh copy
+        self._count(purpose, "reused", compiled.chars, workspace_id)
+        return compiled
+
+    def put(self, key: str, purpose: str, compiled: Any, *, ttl: float | None = None, workspace_id: str | None = None) -> None:
+        self._count(purpose, "compiled", workspace_id=workspace_id)
+        try:
+            self.store.set(self._key(key, workspace_id), compiled.to_dict(), self.ttl if ttl is None else min(ttl, self.ttl))
+        except Exception as exc:  # pragma: no cover - reuse is an optimisation
+            log.warning("compiled context not stored: %s", exc)
 
     def clear(self) -> None:
         with self._lock:
-            self._items.clear()
             self.stats = {}
+        self.store.clear_local()
 
 
 _COMPILED = CompiledContextCache()
 
 
 def compiled_context_stats() -> dict[str, dict[str, int]]:
-    """Per purpose: contexts compiled (misses, stored) and reused (hits), with the characters reused."""
+    """Per purpose, this process: contexts compiled (misses, stored) and reused (hits), with the
+    characters reused. `context_cache.stats()` has the shared counters (compiled, retrieval)."""
     return {p: dict(v) for p, v in _COMPILED.stats.items()}
+
+
+def clear_context_caches() -> None:
+    """Measurement and test reset: compiled contexts, retrieval results and their counters."""
+    _COMPILED.clear()
+    context_cache.clear()
+
+
+def _session_of(ctx: Any) -> str | None:
+    run = getattr(ctx, "run", None)
+    return f"run:{run.id}" if getattr(run, "id", None) else (
+        f"thread:{ctx.thread_id}" if getattr(ctx, "thread_id", None) else None)
+
+
+def _scope_hash(ctx: Any) -> str:
+    from analystos.core.ids import stable_hash
+
+    scope = getattr(ctx, "scope", None)
+    return scope.scope_hash() if hasattr(scope, "scope_hash") else stable_hash(compact_json(scope))
+
+
+# Sections whose content changes without a knowledge version (other runs' findings, episodes, the
+# run's external results): their retrieval is shared only within the run or thread.
+_SESSION_SECTIONS = {"prior_findings", "negative_knowledge", "external", "episodes"}
+
+
+def _retrieval_key(ctx: Any, sections: list[str], query: str | None) -> str | None:
+    """Knowledge retrieval (BM25 + vector over the packs) for the same query and sections is done once:
+    shared by every purpose, step, worker and Ask request with the same workspace knowledge version."""
+    workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
+    knowledge = knowledge_version_for(ctx)
+    if workspace_id is None or knowledge is None:
+        return None
+    session = _session_of(ctx) if set(sections) & _SESSION_SECTIONS else None
+    if set(sections) & _SESSION_SECTIONS and session is None:
+        return None
+    run = getattr(ctx, "run", None)
+    return context_cache.key("retrieval", workspace_id, {"knowledge": knowledge, "sections": sorted(sections), "query": query,
+                                                         "session": session, "run": getattr(run, "id", None)})
+
+
+def _retrieval_query(objective: str | None, reference_text: str | None) -> str | None:
+    return " ".join(x for x in (objective, reference_text) if x) or None
+
+
+def knowledge_retrieval_key(ctx: Any, purpose: str, *, objective: str | None, reference_text: str | None = None) -> str | None:
+    """The shared-cache key `compile_for` looks up for this call's knowledge retrieval (None when the purpose has
+    no knowledge sections, the cache is off, or the entry cannot be shared). The context preview reads it to say
+    whether a call would reuse retrieval work."""
+    from analystos.context.compiler import KNOWLEDGE_SECTIONS
+    from analystos.contracts.platform import PurposeProfile
+    from analystos.services.platform_settings import get as platform
+
+    settings = platform()
+    if not settings.context.cache_enabled or not getattr(getattr(ctx, "workspace", None), "id", None):
+        return None
+    profile, _ = knowledge_scope(ctx, settings.context.profiles.get(purpose) or PurposeProfile(max_chars=1_500_000))
+    sections = [x for x in profile.sections if x in KNOWLEDGE_SECTIONS]
+    return _retrieval_key(ctx, sections, _retrieval_query(objective, reference_text)) if sections else None
+
+
+def _knowledge_item(data: dict[str, Any]) -> Any:
+    from analystos.context.compiler import KnowledgeItem
+
+    fields = KnowledgeItem.__dataclass_fields__
+    values = {k: v for k, v in data.items() if k in fields}
+    for k in ("mapped_columns", "synonyms"):
+        values[k] = tuple(values.get(k) or ())
+    return KnowledgeItem(**values)
 
 
 def _context_key(ctx: Any, purpose: str, profile: Any, settings: Any, *, objective: str, required: dict[str, Any],
                  catalog: Any, reference_text: str | None, header: dict[str, Any], limit: int,
                  knowledge_chars: int | None = None) -> str | None:
-    from analystos.context.version import workspace_knowledge_version
+    """(purpose, knowledge version, scope hash, inputs hash, run/thread). The inputs hash covers the
+    catalog as sent, so a catalog edit (curation, crawl) compiles afresh: that is the catalog version."""
     from analystos.core.ids import stable_hash
 
-    run = getattr(ctx, "run", None)
-    session = f"run:{run.id}" if getattr(run, "id", None) else (
-        f"thread:{ctx.thread_id}" if getattr(ctx, "thread_id", None) else None)
+    session = _session_of(ctx)
     workspace_id = getattr(getattr(ctx, "workspace", None), "id", None)
     if session is None or workspace_id is None:
         return None
-    knowledge = workspace_knowledge_version(workspace_id, policy=getattr(ctx, "policy", None))
+    knowledge = knowledge_version_for(ctx)
     if knowledge is None:
         return None
-    scope = getattr(ctx, "scope", None)
     try:
-        scope_hash = scope.scope_hash() if hasattr(scope, "scope_hash") else stable_hash(compact_json(scope))
+        scope_hash = _scope_hash(ctx)
         inputs = stable_hash({"required": required, "objective": objective, "reference_text": reference_text,
                               "catalog": catalog, "header": header, "profile": profile.model_dump(mode="json"),
                               "limit": limit, "min_relevance": settings.context.min_relevance,
@@ -444,6 +655,51 @@ def fit_payload(payload: dict[str, Any], *, max_chars: int, objective: str | Non
     return out
 
 
+@dataclass
+class PromptLayout:
+    """What `llm_json` sends after the system text: the cached preamble (workspace header and the run-stable
+    part as text) and the volatile per-call inputs, after the final `fit_payload` guard."""
+
+    header: dict[str, Any]
+    stable: dict[str, Any]
+    volatile: dict[str, Any]
+    preamble: str
+    fitted: dict[str, Any]
+    trimmed: bool
+
+    @property
+    def volatile_text(self) -> str:
+        return compact_json(self.volatile)
+
+
+def prompt_layout(ctx: Any, payload: Any, *, system: str, prompt_vars: dict[str, str] | None = None,
+                  stable: dict[str, Any] | None = None) -> PromptLayout:
+    """The prompt messages for `payload` (a CompiledContext or a plain dict) after the system text `system`: one
+    function for the model call and for the context preview (context/preview.py), so the preview cannot drift."""
+    from analystos.context.compiler import CompiledContext, render_stable
+    from analystos.services.platform_settings import get as platform
+
+    compiled = payload if isinstance(payload, CompiledContext) else None
+    body: dict[str, Any] = compiled.body if compiled is not None else payload
+    llm = platform().llm
+    header = dict(compiled.header) if compiled is not None else {}
+    if prompt_vars and "dialect" in prompt_vars:
+        header.pop("dialects", None)  # the system text already names the dialect: say it once
+    stable_part = {k: body[k] for k in compiled.stable if k in body} if compiled is not None else dict(stable or {})
+    merged = {**stable_part, **{k: v for k, v in body.items() if k not in stable_part}}
+    budget = int(llm.max_prompt_tokens * 3.6) - len(system) - len(compact_json(header)) - 200  # inverse of estimate_tokens
+    run = getattr(ctx, "run", None)
+    fitted = fit_payload(merged, max_chars=max(2_000, budget), objective=run.objective if run else None)
+    kept_stable = {k: fitted[k] for k in stable_part if k in fitted}
+    volatile = {k: v for k, v in fitted.items() if k not in kept_stable}
+    if compiled is not None:
+        preamble = render_stable(header, kept_stable, compiled.omitted) if (header or kept_stable) else ""
+    else:
+        preamble = compact_json(kept_stable) if kept_stable else ""
+    return PromptLayout(header=header, stable=kept_stable, volatile=volatile, preamble=preamble, fitted=fitted,
+                        trimmed=fitted is not merged)
+
+
 def _agent_refusal(ctx: Any, purpose: str) -> tuple[str, str] | None:
     """Agent manifest enforcement (P4-X03): only the agent's declared model purposes are routed, and
     only while its per-step budget (`llm_calls`, `usd`) lasts. Contexts without a manifest (Ask,
@@ -515,7 +771,8 @@ def model_outcome(exc: AnalystOSError) -> ModelOutcome:
 def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
              exclude_families: list[str] | None = None, max_tokens: int | None = None,
              prompt_vars: dict[str, str] | None = None, validate: Callable[[Any], str | None] | None = None,
-             escalate: str | None = None, escalated_from: str | None = None) -> tuple[Any | None, str | None]:
+             escalate: str | None = None, escalated_from: str | None = None,
+             stable: dict[str, Any] | None = None) -> tuple[Any | None, str | None]:
     """Call a chat model for JSON. Returns (data, model) or (None, ModelOutcome) — callers degrade
     visibly, and can say which of the causes in `ModelOutcome` stopped the call.
 
@@ -525,24 +782,24 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     as `escalated_from`) asks the large tier directly after a check further downstream failed; an
     answer that still fails validation is returned all the same and the caller's own checks decide.
 
-    `payload` is a CompiledContext (`compile_for`, P4-T03) or, for purposes without run context
-    (narrative, verification, summary), a plain dict. The prompt is laid out for provider prompt
-    caching (P4-T04): static system text (with the method vocabulary) → workspace header → the
-    volatile compiled context last; the first two are marked as the stable prefix.
+    `payload` is a CompiledContext (`compile_for`, P4-T03), a DeferredContext (`defer_compile`:
+    compiled here, only once the call will be sent) or, for purposes without run context (narrative,
+    verification, summary), a plain dict; `stable` is a plain payload's run-stable part.
+
+    Prompt layout for provider prompt caching (P4-T04, Stream B): message 1 the static system text
+    (with the method vocabulary), message 2 the workspace + run preamble (header, objective, pinned
+    context, catalog and knowledge as sorted text — identical for every call that shares them),
+    both marked as the stable prefix; message 3 the purpose's volatile inputs only.
 
     The call context carries the workspace policy (provider list, residency, approval threshold),
     `prompt_version = <name>@<hash of the exact system text>`, the compiler's receipts and the
-    workspace knowledge version (L0 cache key, P4-T06); the volatile part is fitted to the admin
-    prompt limit by dropping whole entries (fit_payload, the final guard), never by cutting JSON."""
-    import dataclasses
-
+    workspace knowledge version (L0 cache key, P4-T06); the prompt is fitted to the admin prompt
+    limit by dropping whole entries (fit_payload, the final guard), never by cutting JSON."""
     from analystos.agents.prompts import prompt, prompt_version_id
     from analystos.context.compiler import CompiledContext
     from analystos.llm.cache import estimate_tokens
     from analystos.services.platform_settings import get as platform
 
-    compiled = payload if isinstance(payload, CompiledContext) else None
-    body: dict[str, Any] = compiled.body if compiled is not None else payload
     if ctx.router.mode(purpose) == "off":
         model_gate(ctx, purpose, payload, deterministic_ok=True)  # records the avoided call
         return None, ModelOutcome("mode_off", f"model use for '{purpose}' is turned off by the administrator", purpose=purpose)
@@ -555,6 +812,13 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
     system = prompt(prompt_name, **(prompt_vars or {}))
     call = dataclasses.replace(ctx.call_ctx(exclude_families=exclude_families), prompt_version=prompt_version_id(prompt_name, system))
     call.with_policy(getattr(ctx, "policy", None))
+    if not ctx.router.available(purpose, call):  # before compiling: an unavailable route needs no context
+        why = getattr(ctx.router, "unavailable", lambda *_: None)(purpose, call)
+        return None, (model_outcome(why) if why is not None else ModelOutcome("no_route", f"no model route for {purpose}"))
+    if isinstance(payload, DeferredContext):
+        payload = payload.resolve()
+    compiled = payload if isinstance(payload, CompiledContext) else None
+    body: dict[str, Any] = compiled.body if compiled is not None else payload
     if compiled is not None and compiled.refused:
         message = (f"Context for {purpose} not sent: {compiled.refused} (mandatory {compiled.mandatory_chars} chars > "
                    f"budget {compiled.budget_chars}); using the deterministic path.")
@@ -563,28 +827,21 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
         _record_context_refusal(ctx, purpose, call, message, estimate_tokens(compact_json(body)) + len(system) // 4)
         return None, ModelOutcome("context_over_budget", message, purpose=purpose, mandatory_chars=compiled.mandatory_chars,
                                   budget_chars=compiled.budget_chars)
-    if not ctx.router.available(purpose, call):
-        why = getattr(ctx.router, "unavailable", lambda *_: None)(purpose, call)
-        return None, (model_outcome(why) if why is not None else ModelOutcome("no_route", f"no model route for {purpose}"))
     llm = platform().llm
     if call.knowledge_version is None and call.workspace_id and llm.cache_enabled and purpose in llm.cacheable_purposes:
-        from analystos.context.version import workspace_knowledge_version
-
-        call.knowledge_version = workspace_knowledge_version(call.workspace_id, policy=getattr(ctx, "policy", None))
-    header = compiled.header if compiled is not None else {}
-    header_text = compact_json({"workspace_context": header}) if header else ""
-    budget = int(llm.max_prompt_tokens * 3.6) - len(system) - len(header_text) - 200  # inverse of estimate_tokens, minus margin
-    run = getattr(ctx, "run", None)
-    fitted = fit_payload(body, max_chars=max(2_000, budget), objective=run.objective if run else None)
-    if fitted is not body:
+        call.knowledge_version = knowledge_version_for(ctx)
+    layout = prompt_layout(ctx, compiled if compiled is not None else body, system=system, prompt_vars=prompt_vars,
+                           stable=stable)
+    if layout.trimmed:
+        fitted = layout.fitted
         ctx.say(f"Prompt for {purpose} trimmed to fit the model budget (~{estimate_tokens(compact_json(fitted))} tokens); "
                 f"omitted: {compact_json({k: v for k, v in fitted['omitted'].items() if k != 'reason'})[:300]}", kind="decision")
     if compiled is not None:
         call.context_receipts = compiled.receipts
     messages: list[dict[str, Any]] = [{"role": "system", "content": system, "cache": True}]
-    if header_text:
-        messages.append({"role": "user", "content": header_text, "cache": True})
-    messages.append({"role": "user", "content": compact_json(fitted)})
+    if layout.preamble:
+        messages.append({"role": "user", "content": layout.preamble, "cache": True})
+    messages.append({"role": "user", "content": layout.volatile_text})
     spend = getattr(ctx, "spend", None)
     if spend is not None:
         spend("llm_calls")
@@ -610,3 +867,26 @@ def llm_json(ctx: RunContext, purpose: str, prompt_name: str, payload: Any, *,
                 + (f" {remedy}" if remedy else ""), kind="decision",
                 data={"purpose": purpose, "code": exc.code, **({"remedy": remedy} if remedy else {})})
         return None, model_outcome(exc)
+
+
+def llm_json_batch(ctx: RunContext, purpose: str, prompt_name: str, items: list[dict[str, Any]], *, list_key: str,
+                   max_tokens: int | None = None, exclude_families: list[str] | None = None,
+                   validate: Callable[[Any], str | None] | None = None) -> tuple[dict[str, dict] | None, Any]:
+    """One model call for a run's per-item prompts (Stream B: narratives, reviews) instead of one each,
+    so the static system text is sent once. Every item carries an `id`; the answer is
+    `{list_key: [{"id", ...}]}`. Returns ({id: answer}, model), or (None, ModelOutcome) when no call
+    was made, or (None, model name) when the answer is malformed — the caller then asks per item.
+    Each answer is still validated by the caller, item by item."""
+    def malformed(data: Any) -> str | None:
+        if not isinstance(data, dict) or not isinstance(data.get(list_key), list):
+            return f"answer is not an object with a {list_key} list"
+        return validate(data) if validate is not None else None
+
+    data, model = llm_json(ctx, purpose, prompt_name, {list_key: items}, max_tokens=max_tokens,
+                           exclude_families=exclude_families, validate=malformed)
+    if data is None:
+        return None, model
+    if not isinstance(data, dict) or not isinstance(data.get(list_key), list):
+        return None, str(model)
+    wanted = {str(i.get("id")) for i in items}
+    return {str(a["id"]): a for a in data[list_key] if isinstance(a, dict) and str(a.get("id")) in wanted}, model

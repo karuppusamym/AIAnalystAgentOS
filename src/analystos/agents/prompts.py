@@ -36,7 +36,17 @@ as associations (not causal claims). """ + UNTRUSTED_NOTE,
     "follow_up_generation.v1": """You are the Investigation Agent reviewing test results. Propose up to 3 FOLLOW-UP hypotheses
 that drill deeper into SUPPORTED findings (e.g. restrict with a filter to the top segment and segment by another
 dimension, or test an interaction), or that test an alternative explanation (confounder) for a supported finding.
-Use the same closed spec vocabulary as before and only catalog columns. Do not repeat tested specs.
+Use this closed spec vocabulary and only catalog columns:
+
+{method_vocabulary}
+derivation = {"type": column|duration_hours|after_hours|bucket|equals|is_true|date_trunc|hour_of_day|day_of_week,
+  "column": str, "end_column": str|null (duration_hours), "value": any (equals), "edges": [numbers] (bucket),
+  "grain": day|week|month|quarter (date_trunc), "label": short business label}
+filter = {"column": str, "op": "=|!=|>|>=|<|<=|in|not in|is null|is not null", "value": any}
+spec = {"method", "asset": "schema.table", "outcome", "segment", "drivers": [], "time", "filters": []}
+
+`results` gives the SUPPORTED and INCONCLUSIVE tests with their specs and key statistics, and every other
+test as "code status: statement". Do not repeat a tested question (repeats are dropped).
 Return JSON: {"hypotheses": [{"question","statement","rationale","priority","spec":{...}, "parent": "H-n"}], "done": bool}.
 """ + UNTRUSTED_NOTE,
 
@@ -44,6 +54,20 @@ Return JSON: {"hypotheses": [{"question","statement","rationale","priority","spe
 for a statistically supported result. You may ONLY use numbers that appear in the provided `facts` (you may round
 percentages to whole numbers or one decimal). Describe an association, never causation. No speculation.
 Return JSON: {"title": str (<= 12 words), "finding": str, "recommended_action": str}.""",
+
+    # One call per run instead of one per finding (Stream B); each item is still validated on its own.
+    "insight_narrative_batch.v1": """You are the Insight Analyst. For EACH item in `findings` (a statistically supported result),
+write a concise business finding (1-2 sentences) and a short title. For an item you may ONLY use numbers that appear
+in that item's own `facts` (you may round percentages to whole numbers or one decimal). Describe an association,
+never causation. No speculation. Return JSON: {"findings": [{"id": the item's id, "title": str (<= 12 words),
+"finding": str, "recommended_action": str}]} with one entry per item.""",
+
+    "verification_batch.v1": """You are an independent reviewer (REV critic) from a different model family than the analyst.
+For EACH item in `claims`, judge whether its statistical evidence supports the claim as worded.
+Check: method fit, sample size, significance after multiple-testing adjustment, effect size, overreach
+(causal wording, generalisation beyond the population), and missing caveats. Judge each item on its own evidence.
+Return JSON: {"reviews": [{"id": the item's id, "supports": bool, "confidence": 0..1, "concerns": [short strings],
+"suggested_caveat": str|null}]} with one entry per item.""",
 
     "verification.v1": """You are an independent reviewer (REV critic) from a different model family than the analyst.
 Given a claim and its statistical evidence, judge whether the evidence supports the claim as worded.
@@ -94,6 +118,39 @@ ONLY numbers present in `history`. Return JSON: {"actions": [{"capability": str,
     "run_summary.v1": """Write an executive summary (<=120 words, markdown bullet list) of the verified findings for the objective.
 Use only numbers present in `facts`. Associations, not causation. End with one line of recommended next steps.
 Return JSON: {"summary_markdown": str}.""",
+
+    "analyst_planning.v1": """You plan an analytics question into at most 4 steps. Each step is ONE standalone
+natural-language question that a single governed query can answer (a total, a breakdown by one or two dimensions, a
+trend, a ranking, or two periods side by side). You never write SQL; the platform answers each step through its own
+governed path. Use only the dimensions and measures in the catalog. Prefer ONE step; add steps only when the question
+asks for several things at once. Return JSON: {"approach": "one sentence", "steps": [{"goal": "short goal",
+"question": "standalone question", "kind": "total|breakdown|trend|ranking|comparison|drivers|question"}]}.
+""" + UNTRUSTED_NOTE,
+
+    "analyst_synthesis.v1": """Write the answer to the analytics question from the computed facts of each step. Start with
+one sentence that answers the question directly, then short evidence bullets, then caveats. Every number you write
+must be one of the numbers in `steps` (facts, measures, series, comparison, drivers or rows), at the precision you
+choose (you may round, and write fractions as percentages); never compute a new number. Every sentence that contains a
+number must end with the step it comes from, written exactly as "(step N)". Mention the caveats and suspect checks
+given. Describe associations, never causes. Return JSON: {"text": str}.""",
+
+    "data_shape_proposal.v1": """You look at tables of a data catalog whose pattern the rules could not name and say whether
+one of them is an EVENT LOG for process mining: a table with one row per event, a column that identifies the case the
+event belongs to (repeats across rows), a column with the activity or step name (a small set of distinct values) and a
+time column. Use only the column names, types, roles and distinct counts you are given; never invent columns. Answer only
+for a table you are fairly sure of; leave the others out. Code checks every answer against the profile and a person
+confirms it. Return JSON {"tables": [{"table": str (exactly as given), "pattern": "event_log", "case_column": str,
+"activity_column": str, "timestamp_column": str, "resource_column": str | null, "reason": str (<= 160 chars)}]}.
+""" + UNTRUSTED_NOTE,
+
+    "glossary_suggestion.v1": """You draft business glossary definitions for a data catalog. Each entry of `terms` is a
+candidate a rule found: a coded column (its codes are in `values` only when the workspace allows), an abbreviation
+in table or column names, a business noun several tables share, or a word from a question nobody could answer.
+Use only what the metadata shows (names, types, where it was found, the profile shape); never invent numbers,
+thresholds or business facts. When the metadata does not tell you what a term means, leave it out rather than guess.
+A person reviews every draft. Return JSON {"terms": [{"key": str (exactly as given), "definition": str (<= 300 chars,
+one or two plain sentences; for a code set name each code), "synonyms": [str] (<= 5), "confidence": number 0-1}]}.
+""" + UNTRUSTED_NOTE,
 }
 
 

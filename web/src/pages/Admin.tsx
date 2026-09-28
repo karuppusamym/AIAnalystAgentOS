@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, type AgentSpec, type ModelHealth, type ToolSpec } from "../api";
+import { api, spendCountersDown, type AgentSpec, type ModelHealth, type ToolSpec } from "../api";
 import { useAuth } from "../auth";
 import { Card, EmptyState, EnabledToggle, ErrorBox, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { fmtDate, fmtMs, fmtUsd } from "../lib/format";
@@ -184,8 +184,11 @@ export function ModelHealthPanel() {
         {probe.busy ? "Probing…" : "Probe credits"}
       </button>}>
       <ErrorBox error={probe.error} />
-      {d.providers.filter((p) => p.message).map((p) => <Notice key={p.provider} tone="danger">{p.message}</Notice>)}
-      {!d.counters_available && <Notice tone="warning">Spend counters (Redis) are unavailable: billable model calls are paused (fail closed) until Redis is back.</Notice>}
+      {Array.from(new Set(d.providers.map((p) => p.message).filter((m): m is string => !!m)))
+        .map((m) => <Notice key={m} tone="danger">{m}</Notice>)}
+      {spendCountersDown(d) && <Notice tone="warning">
+        Spend counters ({d.spend_counters?.store ?? "Redis"}) are unavailable: billable model calls are paused (fail closed) until
+        they are back.</Notice>}
       <p className={`small ${over ? "" : "muted"}`}>
         Spend today (UTC): <strong>{fmtUsd(s.usd)}</strong>{s.cap_usd != null ? <> of the {fmtUsd(s.cap_usd)} daily cap
           ({Math.round((s.fraction ?? 0) * 100)}%)</> : " (no daily cap)"}; resets {fmtDate(s.resets_at)}.

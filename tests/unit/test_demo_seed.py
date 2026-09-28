@@ -135,3 +135,54 @@ def test_the_pack_demo_file_is_complete_and_its_recipe_validates():
     spec["nodes"].insert(0, {"op": "source", "id": "targets", "asset": "src_x.team_targets",
                              "schema": [{"name": c, "type": types.get(c, "text")} for c in header]})
     assert validate_recipe(spec).hash
+
+
+# ------------------------------------------------------------------------------ process mining workspace
+def test_the_process_demo_file_names_a_second_workspace_over_the_activity_log():
+    from analystos.skills.process_mining import declared_event_logs, declared_for
+
+    d = seed.process_demo()
+    assert d["workspace"]["name"] != seed.demo()["workspace"]["name"]
+    assert set(d["source"]["select"]) <= set(d["source"]["tables"])
+    assert d["process"]["table"] in d["source"]["select"]
+    model = declared_for(declared_event_logs(), [d["process"]["table"]])
+    assert {a["segment"] for a in d["process"]["analyses"]} <= set(model["segments"])
+
+
+CANDIDATE = {"asset_id": "ast_1", "name": "u_task_activity", "segments": [{"column": "task_type", "values": []}],
+             "mapping": {"case_column": "task_sys_id", "activity_column": "activity", "timestamp_column": "activity_at",
+                         "resource_column": "assignment_group"}}
+SUMMARY = {"summary": {"cases": 10, "variants": 2, "fitness": 0.8}}
+
+
+def test_missing_process_analyses_are_saved_with_the_detected_mapping():
+    d = seed.process_demo()
+    first = d["process"]["analyses"][0]
+    api = FakeApi({"/api/workspaces/ws_p/process/analyses": [{"name": first["name"]}],
+                   "/api/workspaces/ws_p/process/candidates": {"candidates": [CANDIDATE]},
+                   ("POST", "/api/workspaces/ws_p/process/analyze"): SUMMARY})
+    seed.ensure_process_analyses(api, "ws_p")
+    bodies = [w[2] for w in api.writes]
+    assert [b["name"] for b in bodies] == [a["name"] for a in d["process"]["analyses"][1:]]
+    assert bodies[0] == {"asset_id": "ast_1", **CANDIDATE["mapping"], "save": True, "name": bodies[0]["name"],
+                         "filters": [{"column": "task_type", "op": "=", "value": d["process"]["analyses"][1]["segment"]}]}
+
+
+def test_saved_process_analyses_are_not_made_again_and_a_missing_log_stops_the_seed():
+    names = [{"name": a["name"]} for a in seed.process_demo()["process"]["analyses"]]
+    api = FakeApi({"/api/workspaces/ws_p/process/analyses": names})
+    seed.ensure_process_analyses(api, "ws_p")
+    assert api.writes == []
+    api = FakeApi({"/api/workspaces/ws_p/process/analyses": [], "/api/workspaces/ws_p/process/candidates": {"candidates": []}})
+    with pytest.raises(SystemExit, match="not detected as an event log"):
+        seed.ensure_process_analyses(api, "ws_p")
+
+
+def test_only_process_builds_just_the_process_workspace(monkeypatch):
+    built = []
+    monkeypatch.setattr(seed, "wait_for_api", lambda base, seconds: {"checks": {}})
+    monkeypatch.setattr(seed, "Api", lambda base, email, password: email)
+    monkeypatch.setattr(seed, "ensure_process_workspace", lambda admin, analyst, approver, url, **kw: built.append("process") or "ws_p")
+    monkeypatch.setattr(seed, "ensure_workspace", lambda admin: built.append("investigation") or "ws_i")
+    assert seed.main(["--only", "process"]) == 0
+    assert built == ["process"]

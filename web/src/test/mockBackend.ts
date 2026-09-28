@@ -8,6 +8,7 @@ import type {
   CapabilityManifest, CapabilitySummary, CatalogAsset, ConsoleData, Health, Hypothesis, Insight, InsightDetail, MetricValidation, ModelHealth, Monitor, ModelsView,
   PlatformSettings, Run, RunDetail, Schedule, SemanticMetric, SkillSpec, Source, SourceKindInfo, TokenSavings, ToolSpec, Usage, User, WorkspaceDetail,
 } from "../api";
+import { contextRoute } from "./mockContext";
 import { knowledgeReceipts, knowledgeRoute, recordQuestion, resetKnowledgeState } from "./mockKnowledge";
 import { INSIGHT_VOID_ID, resetWave1, VERIFIED_STATE, voidInsight, wave1Route } from "./mockWave1";
 import { wave2Approvals } from "./mockApprovals";
@@ -736,7 +737,7 @@ export function mockBackend(method: string, path: string, requestBody?: string |
   if (wave) return json(wave.body, wave.status);
   const asked = askRoute(m, p, requestBody);
   if (asked) return asked;
-  const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows);
+  const known = knowledgeRoute(m, p, url, requestBody, WS, kpiRows) ?? contextRoute(m, p, url, WS);
   if (known) {
     return known.contentType ? { status: known.status, body: String(known.body), contentType: known.contentType } : json(known.body, known.status);
   }

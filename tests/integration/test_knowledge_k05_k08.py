@@ -225,6 +225,62 @@ def test_drafts_never_overwrite_owner_content(workspace):
 
 
 # ------------------------------------------------------------------------------------ K07 crawler enrichment
+def test_reviewed_domain_keyword_becomes_workspace_rule_and_can_be_revoked(workspace):
+    from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
+    from analystos.db.models import Source, SourceAsset, SourceColumn
+    from analystos.knowledge.suggestions import field, propose, review, reviewed_domain_keywords
+    from analystos.services.crawler import _Crawl
+    from analystos.skills import catalog as cat
+    from analystos.skills.catalog import infer_table_semantics
+
+    table = DiscoveredAsset(source_name="t_01", name="t_01", schema_name="public",
+                            columns=[DiscoveredColumn(name="orders", data_type="text")])
+    assert infer_table_semantics(table).domain == "generic"
+    with session_scope() as s:
+        src = Source(id=new_id("src"), workspace_id=workspace, kind="postgres", name="keyword test", config={})
+        s.add(src)
+        s.flush()
+        asset = SourceAsset(id=new_id("ast"), source_id=src.id, workspace_id=workspace,
+                            schema_name="public", name="t_01", source_name="t_01", semantics={"domain": "generic"})
+        s.add(asset)
+        s.flush()
+        s.add(SourceColumn(asset_id=asset.id, name="orders", ordinal=0, data_type="text", tags=[], profile={}, semantics={}))
+        suggestion = propose(s, workspace, kind="domain_candidate", subject=f"asset:{asset.id}",
+                             title="Review domain for public.t_01",
+                             fields={"domain": field("sales", 0.6, source="model"),
+                                     "body": field("The orders column may mean sales.", 0.6, source="model")},
+                             origin="crawler.domain", proposed_by="model:test")
+        sid, path, asset_id = suggestion.id, suggestion.path, asset.id
+    with session_scope() as s:
+        admin = _admin(s)
+        refused = review(s, workspace, admin, [{"id": sid, "action": "approve"}])
+        assert refused["errors"] == [{"id": sid, "error": "reviewed_keyword_required"}]
+        assert reviewed_domain_keywords(s, workspace) == {}
+        accepted = review(s, workspace, admin, [{"id": sid, "action": "edit", "fields": {"keyword": "Orders"}}])
+        assert accepted["errors"] == [] and accepted["revision"] is not None
+        assert reviewed_domain_keywords(s, workspace) == {"sales": frozenset({"orders"})}
+        assert reviewed_domain_keywords(s, "other-workspace") == {}
+        assert infer_table_semantics(table, reviewed_keywords=reviewed_domain_keywords(s, workspace)).domain == "sales"
+    crawl = _Crawl.__new__(_Crawl)
+    crawl.source = SimpleNamespace(id=src.id, workspace_id=workspace)
+    crawl.staged_schema = None
+    crawl.stats = {}
+    crawl.log = SimpleNamespace(stage=lambda *args, **kwargs: None)
+    key = cat.asset_key(table)
+    diff = cat.diff_crawl({}, [table], full=True)
+    crawl._apply({key: table}, {key: asset_id}, {key}, diff)
+    with session_scope() as s:
+        assert s.get(SourceAsset, asset_id).semantics["domain"] == "sales"
+    with session_scope() as s:
+        pack = store.workspace_pack(s, workspace)
+        store.commit(s, pack, {}, author="human:test", reason="revoke rule", origin="user",
+                     merge=True, deletes=(path,))
+        assert reviewed_domain_keywords(s, workspace) == {}
+    crawl._apply({key: table}, {key: asset_id}, {key}, diff)
+    with session_scope() as s:
+        assert s.get(SourceAsset, asset_id).semantics["domain"] == "generic"
+
+
 def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
     from analystos.db.models import Source, SourceAsset
     from analystos.knowledge.suggestions import review
@@ -247,8 +303,9 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
         def __init__(self, text):
             self.text = text
 
-        def complete_json(self, purpose, system, user, *, ctx=None, max_tokens=None):
-            sent.append(json.loads(user))
+        def complete(self, purpose, messages, *, ctx=None, json_output=False, max_tokens=None):
+            assert messages[0]["role"] == "system" and messages[0]["cache"] is True and json_output  # a cached prefix
+            sent.append(json.loads(messages[1]["content"]))
             return SimpleNamespace(data={"tables": [{"key": "public.tbl_x1", "business_name": "Shipment exceptions",
                                                      "description": self.text, "confidence": 0.95}]}, model="m-test")
 
@@ -259,7 +316,7 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
     crawl.log = SimpleNamespace(stage=lambda *a, **k: None)
     crawl._call_ctx = lambda: None
     batch = [{"key": "public.tbl_x1", "name": "tbl_x1"}]
-    by_key = {"public.tbl_x1": {"asset_id": asset_id, "semantics": sem}}
+    by_key = {"public.tbl_x1": {"asset_id": asset_id, "semantics": sem, "describe": True}}
     text = "Shipments that missed their promised delivery date, one row per exception."
     assert crawl._enrich_batch(Router(text), batch, by_key) == 1
     with session_scope() as s:
@@ -271,11 +328,14 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
                                                    "prompt_version": "crawl-enrich-v2", "crawl_run": "crawl_test"}
         assert f["description"]["before"] == {"value": None, "origin": None}
         assert f["role"]["provenance"]["source"] == "rule" and f["role"]["confidence"] == 0.3
-        assert s.get(SourceAsset, asset_id).description == text  # placeholder filled, unreviewed
+        a = s.get(SourceAsset, asset_id)
+        # drafts never reach the catalog (or a prompt) before a person accepts them; the asset only points at one
+        assert a.description is None and a.semantics["model_description_draft"]["suggestion_id"] == row.id
         out = review(s, workspace, _admin(s), [{"id": row.id, "action": "reject", "reason": "wrong table"}])
-        assert out["rejected"][0]["catalog"] == "catalog restored"
+        assert out["rejected"][0]["catalog"] == "catalog unchanged"
         a = s.get(SourceAsset, asset_id)
         assert (a.description, a.description_origin, a.reviewed) == (None, None, False)
+        assert "model_description_draft" not in a.semantics
     # the next crawl tells the model what was rejected and never applies it again
     assert crawl._enrich_batch(Router(text), batch, by_key) == 0
     assert sent[-1]["tables"][0]["rejected"] == [text.lower()]
@@ -288,6 +348,7 @@ def test_crawler_enrichment_queues_drafts_and_avoids_rejected_text(workspace):
         assert out["approved"][0]["catalog"] == "catalog updated"
         a = s.get(SourceAsset, asset_id)
         assert a.description == other and a.reviewed  # a human reviewed it: crawls never touch it again
+        assert a.description_origin == "model" and "model_description_draft" not in (a.semantics or {})
         doc = okf.parse_document(row.path, store.revision_files(s, store.workspace_pack(s, workspace))[row.path])
         assert doc.type == "Table" and doc.extension["review"]["fields"]["description"]["provenance"]["model"] == "m-test"
 

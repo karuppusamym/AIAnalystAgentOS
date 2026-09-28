@@ -4,8 +4,8 @@
  * the rules the screen follows are tested without rendering it.
  */
 import type {
-  Dict, KnowledgeDocSummary, KnowledgeDocument, KnowledgeGraph, KnowledgeSuggestion, ReviewDecisionBody, SuggestionField,
-  VerifiedEntry,
+  Dict, GlossaryScanResult, KnowledgeDocSummary, KnowledgeDocument, KnowledgeGraph, KnowledgeSuggestion, ReviewDecisionBody,
+  SuggestionField, VerifiedEntry,
 } from "../api";
 import type { ChartPalette } from "./charts";
 
@@ -124,7 +124,56 @@ export function matchesDoc(d: KnowledgeDocSummary, q: string): boolean {
 // ------------------------------------------------------------------------------------ review queue
 /** The field that carries a draft's text (the server's `primary_field`). */
 export function primaryField(kind: string): string {
-  return kind === "attested_computation" ? "statement" : kind === "table_description" ? "description" : "body";
+  if (kind === "attested_computation") return "statement";
+  if (kind === "table_description" || kind === "column_description") return "description";
+  return kind === "description_question" ? "question" : "body";
+}
+
+/** Drafts that ask a person something (Stream E): a glossary term from a scan, a missing description. */
+export const QUESTION_KINDS = new Set(["glossary_term", "description_question"]);
+
+/** The fields a person edits on a question draft; the question, evidence and flags stay as found. */
+const QUESTION_FIELDS: Record<string, string[]> = {
+  glossary_term: ["body", "name", "synonyms", "mapped_columns"],
+  description_question: ["description"],
+};
+
+/**
+ * True when approving as-is would be refused: a glossary skeleton ("1 = ?") nobody defined, or a description
+ * question whose guess is a rule's (only a person's answer or a model draft they accept is written).
+ */
+export function needsAnswer(s: KnowledgeSuggestion): boolean {
+  if (s.kind === "glossary_term") return s.fields.placeholder?.value === true && s.fields.body?.provenance?.source !== "human";
+  if (s.kind === "description_question") {
+    const d = s.fields.description;
+    return !d || !String(d.value ?? "").trim() || !["model", "human"].includes(String(d.provenance?.source ?? ""));
+  }
+  return false;
+}
+
+interface EvidenceItem { kind?: string; where?: string; detail?: string; question?: string }
+
+/** Plain-language evidence lines: where the scan found the term, and the questions that used it. */
+export function evidenceLines(s: KnowledgeSuggestion): string[] {
+  const items = Array.isArray(s.fields.evidence?.value) ? (s.fields.evidence!.value as EvidenceItem[]) : [];
+  return items.map((e) => {
+    if (e.kind === "ask") return `asked in Ask: “${e.question ?? ""}”`;
+    if (e.kind === "code_set") return `found in ${e.where}: ${e.detail ?? "a small set of codes"}`;
+    if (e.kind === "abbreviation") return `abbreviation in the name ${e.where}`;
+    if (e.kind === "recurring") return `found in ${e.where} (${e.detail ?? "shared by several tables"})`;
+    return [e.where, e.detail].filter(Boolean).join(": ");
+  }).filter(Boolean);
+}
+
+/** One sentence for the result of a scan, in plain words. */
+export function scanSummary(r: GlossaryScanResult): string {
+  const parts = [
+    `${r.glossary_terms} new glossary ${r.glossary_terms === 1 ? "suggestion" : "suggestions"}`,
+    `${r.description_questions} ${r.description_questions === 1 ? "question" : "questions"} about descriptions`,
+  ];
+  const known = r.skipped_known ? ` ${r.skipped_known} ${r.skipped_known === 1 ? "was" : "were"} already in your glossary.` : "";
+  const ai = r.model.called ? ` AI drafted ${r.model.filled} ${r.model.filled === 1 ? "definition" : "definitions"} for you to check.` : "";
+  return `Found ${parts.join(" and ")}.${known}${ai}`;
 }
 
 export function fieldText(f: SuggestionField | undefined): string {
@@ -137,8 +186,11 @@ export function fieldText(f: SuggestionField | undefined): string {
 
 /** Editable fields: text and lists of text (a computation stays as proposed). */
 export function editableFields(s: KnowledgeSuggestion): string[] {
-  return Object.entries(s.fields).filter(([, f]) => typeof f.value === "string" || (Array.isArray(f.value) && f.value.every((x) => typeof x === "string")))
-    .map(([k]) => k).sort((a, b) => (a === primaryField(s.kind) ? -1 : b === primaryField(s.kind) ? 1 : a.localeCompare(b)));
+  if (QUESTION_FIELDS[s.kind]) return QUESTION_FIELDS[s.kind].filter((k) => k === "description" || k in s.fields);
+  const names = Object.entries(s.fields).filter(([, f]) => typeof f.value === "string" || (Array.isArray(f.value) && f.value.every((x) => typeof x === "string")))
+    .map(([k]) => k);
+  if (s.kind === "domain_candidate" && !names.includes("keyword")) names.push("keyword");
+  return names.sort((a, b) => (a === primaryField(s.kind) ? -1 : b === primaryField(s.kind) ? 1 : a.localeCompare(b)));
 }
 
 /** Edited values back to the field's type; unchanged fields are left out (they keep their provenance). */
@@ -146,8 +198,10 @@ export function editedFields(s: KnowledgeSuggestion, edits: Record<string, strin
   const out: Dict = {};
   for (const [name, text] of Object.entries(edits)) {
     const f = s.fields[name];
-    if (!f || text === fieldText(f)) continue;
-    out[name] = Array.isArray(f.value) ? text.split(",").map((x) => x.trim()).filter(Boolean) : text;
+    if (!f && !(s.kind === "domain_candidate" && name === "keyword")) continue;
+    if (f && text === fieldText(f)) continue;
+    if (!f && !text.trim()) continue;
+    out[name] = Array.isArray(f?.value) ? text.split(",").map((x) => x.trim()).filter(Boolean) : text;
   }
   return out;
 }

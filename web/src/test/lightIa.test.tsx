@@ -529,6 +529,8 @@ describe("wave-1 features as panels in the new areas", () => {
   it("Data → Definitions: joins to confirm (measured), the model diff and draft → publish", async () => {
     const f = mockFetch();
     const { container } = renderAt(`/w/${WS}/data/catalog?tab=definitions`);
+    // Definitions open on the suggested model; the proposed changes are the "Data model" section
+    fireEvent.click(await screen.findByRole("button", { name: /^Data model/ }));
     expect(await screen.findByRole("table", { name: "Data model changes" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Joins to confirm/ }));
     const join = await screen.findByRole("article", { name: "Join stg_sn.incident to stg_sn.sys_user_group" });

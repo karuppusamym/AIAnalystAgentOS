@@ -268,7 +268,7 @@ class ServiceNowConnector:
                         nullable=not is_key,
                         is_key=is_key,
                         business_name=f["label"] or None,
-                        description=f"ServiceNow {f['internal_type'] or 'string'} field {table}.{element}",
+                        description=f["comments"] or None,  # the dictionary's own help text; never synthesized
                         references=f"{reference}.sys_id" if reference else None,
                     )
                 )
@@ -299,7 +299,7 @@ class ServiceNowConnector:
                     kind="api_table",
                     row_count=total,
                     business_name=label,
-                    description=f"ServiceNow table {table} ({label})",
+                    description=None,  # sys_db_object has a label (the business name), no description
                     freshness_at=freshness,
                     columns=columns,
                 )
@@ -322,7 +322,7 @@ class ServiceNowConnector:
                 "sys_dictionary",
                 {
                     "sysparm_query": f"name={table}^ORDERBYsys_id",
-                    "sysparm_fields": "element,internal_type,column_label,reference,max_length,primary",
+                    "sysparm_fields": "element,internal_type,column_label,reference,max_length,primary,comments",
                     "sysparm_limit": self.page_size,
                     "sysparm_offset": offset,
                     "sysparm_exclude_reference_link": "true",
@@ -341,6 +341,7 @@ class ServiceNowConnector:
                         "label": _plain(r.get("column_label")),
                         "reference": _plain(r.get("reference")),
                         "primary": _plain(r.get("primary")).lower() == "true",
+                        "comments": _plain(r.get("comments")),
                     }
                 )
             offset += len(rows)

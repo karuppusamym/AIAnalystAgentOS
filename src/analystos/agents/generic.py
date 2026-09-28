@@ -188,12 +188,13 @@ def execute(ctx: RunContext, agent: CapabilityManifest, allowed: dict[str, Capab
 
 def propose(ctx: RunContext, agent: CapabilityManifest, spec: AgentBody, allowed: dict[str, CapabilityManifest],
             state: Session, remaining: int) -> Proposal | None:
-    payload = {"role": spec.role, "goal": spec.goal, "objective": ctx.run.objective,
-               "scope": {"assets": list(ctx.scope.assets)},
-               "capabilities": [{"id": m.id, "summary": m.summary, "input_schema": m.input_schema} for m in allowed.values()],
-               "history": [{k: r[k] for k in ("capability", "input", "status", "reason", "summary")} for r in state.records],
+    # Role, goal, objective, scope and capability schemas are the same every round: the cached prefix.
+    static = {"role": spec.role, "goal": spec.goal, "objective": ctx.run.objective,
+              "scope": {"assets": list(ctx.scope.assets)},
+              "capabilities": [{"id": m.id, "summary": m.summary, "input_schema": m.input_schema} for m in allowed.values()]}
+    payload = {"history": [{k: r[k] for k in ("capability", "input", "status", "reason", "summary")} for r in state.records],
                "remaining_rounds": remaining}
-    data, _ = llm_json(ctx, spec.model_purpose, "agent_actions.v1", payload)
+    data, _ = llm_json(ctx, spec.model_purpose, "agent_actions.v1", payload, stable=static)
     if not isinstance(data, dict):
         return None
     actions = data.get("actions") if isinstance(data.get("actions"), list) else []

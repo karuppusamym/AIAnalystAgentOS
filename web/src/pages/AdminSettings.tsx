@@ -3,9 +3,9 @@
  * refuses non-admins, and the Admin page does not render these for them.
  */
 import { useId, useMemo, useState } from "react";
-import { api, type LLMMode, type PlatformSettings, type RungSpend, type SettingsDocument, type SettingsVersion } from "../api";
+import { api, type LLMMode, type PlatformSettings, type RungSpend, type SettingsDocument, type SettingsVersion, type TokenSavings } from "../api";
 import { Card, EmptyState, ErrorBox, Field, Loading, Notice, Stat, StateView, StatusBadge, Tag, Value } from "../components/ui";
-import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
+import { fmtDate, fmtNumber, fmtPct, fmtUsd } from "../lib/format";
 import { useAction, useAsync, type AsyncState } from "../lib/hooks";
 import { ModelReadiness } from "../components/ModelReadiness";
 import {
@@ -364,6 +364,10 @@ export function PromptsView() {
 
 export const SAVINGS_DAYS = [7, 30, 90, 365];
 
+function contextHits(c: NonNullable<TokenSavings["context_cache"]>): number {
+  return Object.values(c.by_kind).flatMap((byPurpose) => Object.values(byPurpose)).reduce((n, x) => n + (x.hits ?? 0), 0);
+}
+
 export function TokenSavingsView() {
   const [days, setDays] = useState(30);
   const s = useAsync(() => api.tokenSavings(days), [days]);
@@ -400,6 +404,16 @@ export function TokenSavingsView() {
             <Stat label="Cache hits" value={<Value value={t.cache_hits} format="int" />} />
             <Stat label="Deterministic skips" value={<Value value={t.deterministic_skips} format="int" />} />
             <Stat label="Refused (oversize)" value={<Value value={t.refused} format="int" />} />
+            {t.cached_input_tokens !== undefined && (
+              <Stat label="Prompt-cache tokens" value={<Value value={t.cached_input_tokens} format="int" />}
+                hint={t.cached_input_share != null
+                  ? `${fmtPct(t.cached_input_share)} of input served from the provider's cache${t.cached_input_saved_usd ? `, saving ${fmtUsd(t.cached_input_saved_usd)}` : ""}`
+                  : "Input served from the provider's cache"} />
+            )}
+            {s.data?.context_cache && (
+              <Stat label="Context reused" value={<Value value={contextHits(s.data.context_cache)} format="int" />}
+                hint={`times a compiled context or retrieval was reused instead of rebuilt${s.data.context_cache.shared ? " (shared across workers)" : " (this process)"}`} />
+            )}
           </div>
           <Card title="By purpose">
             {rows.length === 0 ? <EmptyState title="No model activity in this period" /> : (

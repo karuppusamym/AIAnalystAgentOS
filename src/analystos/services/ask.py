@@ -70,6 +70,7 @@ from analystos.governance.policy import (
 AGING_AFTER = timedelta(hours=24)
 STALE_AFTER = timedelta(days=7)
 PROMOTE_TARGETS = ("verified_query", "metric", "monitor", "dashboard", "investigate")
+MODES = ("quick", "analyst")
 DASHBOARD_ACTION = "ask.add_to_dashboard"
 NEW_THREAD_TITLE = "New question"
 
@@ -392,22 +393,51 @@ def _finish(out: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
         return "needs_input", refusal("needs_input", out.get("explanation") or "", missing=out.get("missing") or [],
                                       verified_query=out.get("verified_query"), parameters=out.get("parameters") or {})
     if status == "clarify":
+        extra = {k: out[k] for k in ("assumption", "clarify_step") if out.get(k) is not None}  # analyst mode
         return "clarify", refusal("clarify", out.get("explanation") or "", missing=out.get("missing") or [],
-                                  suggestions=list(out.get("suggestions") or []))
+                                  suggestions=list(out.get("suggestions") or []), **extra)
     return "refused", out.get("refusal") or refusal("failed", "The question could not be answered.")
+
+
+def _step_provenance(session: Session, workspace_id: str, entry: dict[str, Any]) -> dict[str, Any]:
+    return provenance(session, workspace_id, {**entry, "attempts": []})
+
+
+def _analysis_provenance(session: Session, workspace_id: str, out: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    """The headline step's provenance with the tables of every answered step, so staleness and "why this
+    number" see each table the analysis read; each answered step keeps its own provenance too."""
+    prov = provenance(session, workspace_id, out)
+    seen = {a["asset"] for a in prov["assets"]}
+    for entry in analysis.get("steps") or []:
+        if entry.get("status") != "answered" or not entry.get("result"):
+            continue
+        entry["provenance"] = _step_provenance(session, workspace_id, entry)
+        for a in entry["provenance"]["assets"]:
+            if a["asset"] not in seen:
+                seen.add(a["asset"])
+                prov["assets"].append(a)
+    prov["mode"] = "analyst"
+    return prov
 
 
 @scoped_loader
 def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
                   on_stage: Callable[[dict[str, Any]], None] | None = None,
-                  ask_fn: Callable[..., dict[str, Any]] | None = None) -> dict[str, Any]:
+                  ask_fn: Callable[..., dict[str, Any]] | None = None, mode: str = "quick") -> dict[str, Any]:
     """Ask one question in a thread; returns the persisted turn. Errors of the Ask path become the
-    turn's refusal (one kind each, with a remedy); only an unknown thread or empty question raise."""
+    turn's refusal (one kind each, with a remedy); only an unknown thread or empty question raise.
+
+    `mode="analyst"` plans the question into at most four steps, runs each one through the same
+    single-question Ask (`ask_fn`, default `agents.sql_agent.ask`), and persists the plan, per-step
+    results, facts, checks and the cited synthesis as `analysis` (agents/analyst.py); the turn's
+    sql/result/chart are the headline step's."""
     from analystos.agents.sql_agent import ask as sql_ask
 
     question = (question or "").strip()
     if not question:
         raise InvalidInput("ask a question")
+    if mode not in MODES:
+        raise InvalidInput(f"mode must be one of {', '.join(MODES)}")
     started = time.perf_counter()
     with session_scope() as s:
         thread = _thread_for(s, s.merge(user), thread_id)
@@ -434,6 +464,11 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
         ctx.turn_id, ctx.thread_id, ctx.on_stage = turn_id, thread_id, stage
         if not ctx.scope.assets:
             out = {"status": "refused", "refusal": refusal("no_scope", "No selected, ready tables are in your scope.")}
+        elif mode == "analyst":
+            from analystos.agents import analyst
+
+            out = analyst.run(ctx, question, parameters=parameters, ask_fn=ask_fn or sql_ask, finish=_finish,
+                              refuse=refusal_for)
         else:
             out = (ask_fn or sql_ask)(ctx, question, parameters=parameters)
     except AnalystOSError as exc:
@@ -452,14 +487,41 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
         turn.model = out.get("model")
         turn.attempts = list(out.get("attempts") or [])
         turn.decisions = list(out.get("decisions") or [])
-        turn.provenance = provenance(s, workspace_id, out) if status == "answered" else {}
+        analysis = out.get("analysis") if isinstance(out.get("analysis"), dict) else None
+        if analysis is not None and status == "answered":
+            turn.provenance = _analysis_provenance(s, workspace_id, out, analysis)
+        else:
+            turn.provenance = provenance(s, workspace_id, out) if status == "answered" else {}
+        turn.analysis = analysis
         turn.stages = stages
         turn.latency_ms = int((time.perf_counter() - started) * 1000)
         emit(workspace_id, "ask.answered", {"thread_id": thread_id, "turn_id": turn_id, "status": status,
-                                            "answered_by": turn.answered_by, "refusal": (refused or {}).get("kind")},
+                                            "answered_by": turn.answered_by, "refusal": (refused or {}).get("kind"),
+                                            "mode": mode, "steps": len((analysis or {}).get("steps") or []) or None},
              actor=f"user:{user.id}", session=s)
         s.flush()
-        return turn_out(s, turn)
+        if status != "answered":
+            _suggest_terms(s, workspace_id, turn)
+        out_turn = turn_out(s, turn)
+    if status == "answered":
+        from analystos.services.steps import record_quietly
+
+        record_quietly("ask_thread", workspace_id, thread_id, user.id)
+    return out_turn
+
+
+def _suggest_terms(session: Session, workspace_id: str, turn: AskTurn) -> None:
+    """Words of an unanswered question that match nothing known become "Define X?" glossary drafts for a
+    person (knowledge/glossary_scan.py; rules only, a few at most). Never fails the turn."""
+    from analystos.knowledge.glossary_scan import from_ask_turn
+
+    try:
+        with session.begin_nested():
+            from_ask_turn(session, workspace_id, turn)
+    except Exception:  # noqa: BLE001 - a suggestion is best effort; the answer (or refusal) stands
+        import logging
+
+        logging.getLogger(__name__).warning("glossary suggestion after ask turn %s failed", turn.id, exc_info=True)
 
 
 def _sse(event: str, data: Any) -> str:
@@ -467,7 +529,8 @@ def _sse(event: str, data: Any) -> str:
 
 
 async def stream_turn(user: User, thread_id: str, question: str, parameters: dict[str, Any] | None = None, *,
-                      ask: Callable[..., dict[str, Any]] = ask_in_thread, guard: StreamGuard | None = None) -> AsyncIterator[str]:
+                      ask: Callable[..., dict[str, Any]] = ask_in_thread, guard: StreamGuard | None = None,
+                      mode: str = "quick") -> AsyncIterator[str]:
     """SSE frames for one Ask turn: `stage` per plain-language step as it happens, then `turn` (the
     persisted turn) or `error`, then `end`. The Ask itself runs in a worker thread. With a guard the
     caller is re-authorized before every frame and while waiting: an expired token or lost access
@@ -484,7 +547,9 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
         verdict = await guard.verdict(payload=payload) if guard is not None else None
         return terminal_frame(*verdict) if verdict is not None else None
 
-    task = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: ask(user, thread_id, question, parameters, on_stage=on_stage)))
+    extra = {"mode": mode} if mode != "quick" else {}
+    task = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: ask(user, thread_id, question, parameters, on_stage=on_stage,
+                                                                      **extra)))
     getter: asyncio.Future | None = None
     try:
         while True:
@@ -595,6 +660,128 @@ def rerun_turn(user: User, turn_id: str, sql: str | None = None) -> dict[str, An
     with session_scope() as session:
         link(session, result["workspace_id"], ("ask_turn", result["id"]), "derived_from", ("ask_turn", turn_id))
     return result
+
+
+# ------------------------------------------------------------------------------ analyst mode: steps
+def _analysis_of(turn: AskTurn) -> dict[str, Any]:
+    if not isinstance(turn.analysis, dict):
+        raise InvalidInput("This question was answered in quick mode; it has no analysis steps.")
+    return turn.analysis
+
+
+def _entry(analysis: dict[str, Any], n: int) -> dict[str, Any]:
+    entry = next((e for e in analysis.get("steps") or [] if e.get("n") == n), None)
+    if entry is None:
+        raise NotFound(f"step {n} not found in this analysis")
+    return entry
+
+
+@scoped_loader
+def rerun_step(user: User, turn_id: str, n: int, sql: str | None = None) -> dict[str, Any]:
+    """Re-run one analyst step with its saved or edited SQL through the gateway, with the current access
+    and Ask budget checks. The step's facts and checks are recomputed in place (the previous headline
+    value feeds the magnitude check), the synthesis is marked `stale` until re-synthesized, and the turn's
+    sql/result/chart follow the headline step. A rerun answer is labelled ad hoc: it was not compiled."""
+    import copy
+
+    from analystos.agents import analyst
+    from analystos.agents.sql_agent import _authorize_ask, _check_budget, _result
+    from analystos.governance.budgets import ASK_PURPOSE, ask_actor
+
+    with session_scope() as s:
+        turn = _turn_for(s, s.merge(user), turn_id)
+        analysis = _analysis_of(turn)
+        if turn.status != "answered":
+            raise InvalidInput("Only an answered analysis can have a step rerun.")
+        old = copy.deepcopy(_entry(analysis, n))
+        ws_id, thread_id = turn.workspace_id, turn.thread_id
+    statement = sql if sql is not None else old.get("sql")
+    if not statement or not statement.strip():
+        raise InvalidInput("SQL cannot be empty." if sql is not None else "This step has no SQL to rerun: send the SQL to run.")
+    edited = sql is not None and sql != old.get("sql")
+    with session_scope() as s:
+        ctx = adhoc_context(s, user, ws_id)
+    ctx.turn_id, ctx.thread_id = turn_id, thread_id
+    _authorize_ask(ctx)
+    _check_budget(ctx)
+    result = _result(ctx.services.gateway.execute(ctx.scope, statement, actor=ask_actor(user.id), purpose=ASK_PURPOSE,
+                                                  run_id=None, task_id=turn_id, use_cache=False))
+    dialect = next(iter(ctx.scope.source_dialects.values()), "postgres")
+    at = utcnow().isoformat()
+    entry = analyst.rerun_entry(old, statement, result, dialect, edited=edited, at=at)
+    with session_scope() as s:
+        turn = s.get(AskTurn, turn_id, with_for_update=True)
+        analysis = copy.deepcopy(turn.analysis)
+        analysis["steps"] = [entry if e.get("n") == n else e for e in analysis["steps"]]
+        if analysis.get("synthesis"):
+            stale = sorted(set(analysis["synthesis"].get("stale_steps") or []) | {n})
+            analysis["synthesis"] = {**analysis["synthesis"], "stale": True, "stale_since": at, "stale_steps": stale}
+        head = analysis.get("headline_step")
+        if head == n:
+            turn.sql, turn.result, turn.chart = statement, result, entry.get("chart")
+            turn.answered_by, turn.model = entry["answered_by"], None
+        headline = next(e for e in analysis["steps"] if e.get("n") == head)
+        mirror = {**headline, "result": turn.result, "attempts": []}
+        turn.provenance = _analysis_provenance(s, ws_id, mirror, analysis)
+        turn.analysis = analysis
+        emit(ws_id, "ask.step_rerun", {"thread_id": thread_id, "turn_id": turn_id, "step": n, "edited": edited,
+                                       "query_id": result.get("query_id")}, actor=f"user:{user.id}", session=s)
+        audit(f"user:{user.id}", "ask.step_rerun", workspace_id=ws_id, target=turn_id,
+              details={"step": n, "edited": edited, "query_id": result.get("query_id"), "sql": statement[:2000]}, session=s)
+        s.flush()
+        return turn_out(s, turn)
+
+
+@scoped_loader
+def resynthesize(user: User, turn_id: str) -> dict[str, Any]:
+    """Write the synthesis again from the steps' current facts (after a step rerun): the same template
+    path, and the synthesis model only where its purpose allows and its numbers bind."""
+    import copy
+
+    from analystos.agents import analyst
+
+    with session_scope() as s:
+        turn = _turn_for(s, s.merge(user), turn_id)
+        analysis = copy.deepcopy(_analysis_of(turn))
+        if turn.status != "answered" or not analysis.get("headline_step"):
+            raise InvalidInput("Only an answered analysis can be synthesized.")
+        ws_id, thread_id, question = turn.workspace_id, turn.thread_id, turn.question
+    with session_scope() as s:
+        ctx = adhoc_context(s, user, ws_id)
+    ctx.turn_id, ctx.thread_id = turn_id, thread_id
+    synthesis = analyst.synthesize(ctx, question, analysis["plan"], analysis["steps"], analysis["headline_step"])
+    with session_scope() as s:
+        turn = s.get(AskTurn, turn_id, with_for_update=True)
+        current = copy.deepcopy(turn.analysis)
+        current["synthesis"] = {**synthesis, "synthesized_at": utcnow().isoformat()}
+        turn.analysis = current
+        turn.explanation = synthesis["text"]
+        s.flush()
+        return turn_out(s, turn)
+
+
+def why_step(session: Session, user: User, turn_id: str, n: int, *, number: str | None = None, column: str | None = None,
+             row: int | None = None) -> dict[str, Any]:
+    """Why this number, for one analyst step: the headline step is the turn itself; another step is
+    explained from its own stored result and provenance (its first 50 rows)."""
+    from types import SimpleNamespace
+
+    from analystos.evidence.why import explain_ask_turn
+
+    turn = _turn_for(session, user, turn_id)
+    analysis = _analysis_of(turn)
+    entry = _entry(analysis, n)
+    if entry.get("status") != "answered" or not entry.get("result"):
+        raise NotFound(f"step {n} has no answer to explain ({entry.get('status')})")
+    if analysis.get("headline_step") == n:
+        out = explain_ask_turn(session, turn, number=number, column=column, row=row)
+    else:
+        proxy = SimpleNamespace(id=f"{turn.id}:s{n}", thread_id=turn.thread_id, question=entry["question"],
+                                answered_by=entry.get("answered_by"), provenance=entry.get("provenance") or {},
+                                status="answered", result=entry["result"], workspace_id=turn.workspace_id, sql=entry.get("sql"))
+        out = explain_ask_turn(session, proxy, number=number, column=column, row=row)
+    out["subject"] = {**out["subject"], "id": turn.id, "step": n, "step_question": entry["question"]}
+    return out
 
 
 def explain_sql(session: Session, user: User, workspace_id: str, sql: str, max_rows: int | None = None) -> dict[str, Any]:

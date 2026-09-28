@@ -841,10 +841,10 @@ def _ingested(session: Session, container_type: str, container_id: str) -> dict[
 
 
 def ingest_ask_thread(user: User, workspace_id: str, thread_id: str) -> dict[str, Any]:
-    """Each answered turn becomes a query step (version 1 = the recorded answer, self-checked on its stored
-    result; no query is re-run). Idempotent: turns already ingested are skipped."""
+    """Each answered turn becomes a query step (a step-by-step answer, one per answered step): version 1 =
+    the recorded answer, self-checked on its stored result; no query is re-run. Idempotent: turns already
+    ingested are skipped."""
     from analystos.db.models import AskTurn
-    from analystos.evidence.verification import UNKNOWABLE, Dependency, current_version
 
     actor = f"user:{user.id}"
     with session_scope() as s:
@@ -853,31 +853,68 @@ def ingest_ask_thread(user: User, workspace_id: str, thread_id: str) -> dict[str
         done = _ingested(s, "ask_thread", thread_id)
         for turn in s.scalars(select(AskTurn).where(AskTurn.thread_id == thread_id, AskTurn.status == "answered")
                               .order_by(AskTurn.seq)):
-            if turn.id in done or not turn.sql:
-                continue
-            spec = {"sql": turn.sql}
-            step, ver = add_step(s, workspace_id=workspace_id, branch=branch, kind="query", title=turn.question[:300],
-                                 spec=spec, depends_on=[], origin={"type": "ask_turn", "id": turn.id}, actor=actor,
-                                 chart_spec=turn.chart, reason="ingested")
-            res = dict(turn.result or {})
-            table = {k: res.get(k) for k in ("columns", "rows", "row_count", "truncated", "result_hash")}
-            obs = selfcheck.Observation(sql=turn.sql, columns=list(res.get("columns") or []), rows=list(res.get("rows") or []),
-                                        row_count=res.get("row_count"), truncated=bool(res.get("truncated")),
-                                        relationships=relationships(s, workspace_id))
-            results = [selfcheck.empty_result(obs), selfcheck.truncation(obs), selfcheck.grouping(obs), selfcheck.fanout(obs)]
-            checks = [StepCheck(check=r.check, passed=r.passed, severity=r.severity if not r.passed else "info",
-                                detail=r.detail, evidence=r.evidence).model_dump(mode="json") for r in results]
-            ver.receipts = [{"kind": "query", "role": "primary", "query_id": res.get("query_id"), "sql": turn.sql,
-                             "result_hash": res.get("result_hash"), "rows": res.get("row_count"), "ask_turn_id": turn.id,
-                             "referenced_assets": list(res.get("referenced_assets") or [])}]
-            ver.checks, ver.status = checks, "ok" if selfcheck.passed(results) else "flagged"
-            ver.result_snapshot = _save_snapshot(s, step, ver, {**table, "step_id": step.id, "version": 1}, actor)
-            ver.finished_at, step.status = utcnow(), ver.status
-            policy = current_version(s, "policy", workspace_id)
-            _record_copy(s, step, ver, verdict="verified" if ver.status == "ok" else "failed_verification", checks=checks,
-                         extra=[Dependency("policy", workspace_id, policy)] if policy not in (None, UNKNOWABLE) else [])
-            _link(s, workspace_id, ("ask_turn", turn.id), "recorded_as", ("step", step.id))
+            for origin_id, title, sql, chart, result in _turn_queries(turn):
+                if origin_id in done:
+                    continue
+                _ingest_query(s, workspace_id, branch, actor, turn, origin_id, title, sql, chart, result)
         return thread(s, branch)
+
+
+def _turn_queries(turn: Any) -> list[tuple[str, str, str, Any, dict[str, Any]]]:
+    """The queries an answered turn ran: one for a quick answer, one per answered step of a step-by-step
+    (analyst) answer, so no step of it is missing from the Data Thread."""
+    steps = [st for st in ((turn.analysis or {}).get("steps") or []) if st.get("status") == "answered" and st.get("sql")]
+    if steps:
+        return [(f"{turn.id}:step{st['n']}", f"{turn.question} — step {st['n']}: {st.get('goal') or st.get('question')}"[:300],
+                 st["sql"], st.get("chart"), dict(st.get("result") or {})) for st in steps]
+    return [(turn.id, turn.question[:300], turn.sql, turn.chart, dict(turn.result or {}))] if turn.sql else []
+
+
+def _ingest_query(s: Session, workspace_id: str, branch: StepBranch, actor: str, turn: Any, origin_id: str, title: str,
+                  sql: str, chart: Any, res: dict[str, Any]) -> None:
+    from analystos.evidence.verification import UNKNOWABLE, Dependency, current_version
+
+    spec = {"sql": sql}
+    step, ver = add_step(s, workspace_id=workspace_id, branch=branch, kind="query", title=title,
+                         spec=spec, depends_on=[], origin={"type": "ask_turn", "id": origin_id}, actor=actor,
+                         chart_spec=chart if isinstance(chart, dict) else None, reason="ingested")
+    table = {k: res.get(k) for k in ("columns", "rows", "row_count", "truncated", "result_hash")}
+    obs = selfcheck.Observation(sql=sql, columns=list(res.get("columns") or []), rows=list(res.get("rows") or []),
+                                row_count=res.get("row_count"), truncated=bool(res.get("truncated")),
+                                relationships=relationships(s, workspace_id))
+    results = [selfcheck.empty_result(obs), selfcheck.truncation(obs), selfcheck.grouping(obs), selfcheck.fanout(obs)]
+    checks = [StepCheck(check=r.check, passed=r.passed, severity=r.severity if not r.passed else "info",
+                        detail=r.detail, evidence=r.evidence).model_dump(mode="json") for r in results]
+    ver.receipts = [{"kind": "query", "role": "primary", "query_id": res.get("query_id"), "sql": sql,
+                     "result_hash": res.get("result_hash"), "rows": res.get("row_count"), "ask_turn_id": turn.id,
+                     "referenced_assets": list(res.get("referenced_assets") or [])}]
+    ver.checks, ver.status = checks, "ok" if selfcheck.passed(results) else "flagged"
+    ver.result_snapshot = _save_snapshot(s, step, ver, {**table, "step_id": step.id, "version": 1}, actor)
+    ver.finished_at, step.status = utcnow(), ver.status
+    policy = current_version(s, "policy", workspace_id)
+    _record_copy(s, step, ver, verdict="verified" if ver.status == "ok" else "failed_verification", checks=checks,
+                 extra=[Dependency("policy", workspace_id, policy)] if policy not in (None, UNKNOWABLE) else [])
+    _link(s, workspace_id, ("ask_turn", turn.id), "recorded_as", ("step", step.id))
+
+
+def record_quietly(container_type: str, workspace_id: str, container_id: str, user_id: str | None) -> None:
+    """Record a finished run or an answered Ask thread as Data Thread steps as soon as it exists, as the
+    person who asked, so the thread is never empty or behind (idempotent; a failure is logged, never
+    raised into the run or the answer)."""
+    from analystos.core.logging import get_logger
+
+    try:
+        with session_scope() as s:
+            user = s.get(User, user_id) if user_id else None
+            if user is None:
+                return
+            s.expunge(user)
+        if container_type == "run":
+            ingest_run(user, workspace_id, container_id)
+        else:
+            ingest_ask_thread(user, workspace_id, container_id)
+    except Exception as exc:  # noqa: BLE001 - recording is a convenience; the run/answer stands without it
+        get_logger(__name__).warning("recording %s %s as steps failed: %s", container_type, container_id, exc)
 
 
 def ingest_run(user: User, workspace_id: str, run_id: str) -> dict[str, Any]:

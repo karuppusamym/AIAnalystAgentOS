@@ -24,8 +24,10 @@ the primary ones (glossary, business rules, metrics), each capped at `supplement
 budget and given back first, so memory can never crowd out a glossary term.
 
 The output is split for prompt caching (P4-T04): `header` is stable per workspace (workspace,
-domain packs, dialects) and goes right after the static system text; `body` is the volatile part
-and goes last. Selection is pure (`compile_context`); `load_knowledge` is the only DB access.
+domain packs, dialects); the body keys listed in `stable` (objective, pinned context, catalog,
+knowledge) are stable for the run and are rendered as compact sorted text (`render_stable`) into the
+cached preamble right after the static system text; the rest of `body` is the volatile part and
+goes last. Selection is pure (`compile_context`); `load_knowledge` is the only DB access.
 """
 from __future__ import annotations
 
@@ -104,6 +106,8 @@ class KnowledgeItem:
     retrieval_rank: int | None = None  # 1-based rank in the index's fused result list
     lexical_share: float | None = None
     via: str | None = None  # reached by one hop from this path
+    synonyms: tuple[str, ...] = ()  # scored with the text, rendered once as `aka:`
+    label: str | None = None  # display name / type shown next to the name (metrics)
 
 
 @dataclass(frozen=True)
@@ -125,10 +129,22 @@ class CompiledContext:
     budget_chars: int = 0
     mandatory_chars: int = 0
     refused: str | None = None  # set by callers that turn ContextOverBudget into a refusal
+    # Keys of `body` that are stable for the run or thread (objective, pinned context, catalog, knowledge):
+    # `llm_json` renders them as the cached preamble; the other keys are the volatile part sent last.
+    stable: list[str] = field(default_factory=list)
 
     @property
     def chars(self) -> int:
         return (len(compact(self.header)) if self.header else 0) + len(compact(self.body))
+
+    def to_dict(self) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CompiledContext:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
     def summary(self) -> dict[str, Any]:
         """What the call record and the UI show as "context used"."""
@@ -143,7 +159,7 @@ def item_score(item: KnowledgeItem, query: set[str], in_scope_columns: set[str])
     if not query:
         return 0.0
     name_terms = terms(item.name)
-    body_terms = terms(item.text)
+    body_terms = terms(item.text) | terms(" ".join(item.synonyms))
     hit = len(query & name_terms) * 2 + len(query & (body_terms - name_terms))
     score = min(1.0, hit / len(query))
     # mapping bonus only for a mapped in-scope column the query is about (a mapping alone is not relevance)
@@ -184,7 +200,7 @@ def _col_key_sort(table: str, entry: Any, query: set[str], boost: set[tuple[str 
     return -_col_relevance(table, entry, query, boost), _SEMANTIC_PRIORITY.get(semantic or "", 4), ordinal
 
 
-_STATS = ("distinct", "null_rate", "values")
+_STATS = ("distinct", "null_rate", "values", "has_blanks")
 
 
 def _round(value: Any) -> Any:
@@ -203,13 +219,138 @@ def _render_column(entry: Any, detail: str) -> Any:
     if detail == "profile":
         return {k: _round(v) for k, v in entry.items() if v is not None}
     out = {"name": entry.get("name"), "semantic_type": entry.get("semantic_type") or entry.get("type")}
+    if entry.get("role"):
+        out["role"] = entry["role"]
     if entry.get("meaning"):
         out["meaning"] = entry["meaning"]
     if detail == "stats":
         out.update({k: entry[k] for k in _STATS if entry.get(k) is not None})
-        if out["semantic_type"] == "datetime":
+        if out["semantic_type"] in ("datetime", "numeric"):  # ranges: bucket edges and periods need them
             out.update({k: entry[k] for k in ("min", "max") if entry.get(k) is not None})
     return out
+
+
+# ------------------------------------------------------------------------------------ prompt text
+# The run-stable part of a prompt is rendered as sorted text lines, not JSON: JSON repeats every key
+# for every column, and sorted names keep the text byte-identical from call to call (prefix caching).
+def _short(value: Any) -> str:
+    """A profile value as prompt text: floats to 4 significant digits, timestamps to their date."""
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    text = str(value)
+    if len(text) > 10 and text[4:5] == "-" and text[10:11] in ("T", " "):
+        return text[:10]
+    return text
+
+
+def _column_line(entry: Any) -> str:
+    if not isinstance(entry, dict):
+        return f"  {entry}"
+    sem = entry.get("semantic_type")
+    physical = entry.get("type")
+    kind = ", ".join(x for x in (physical if physical and physical != sem else None, sem) if x)
+    parts = [f"  {entry.get('name')}" + (f" ({kind})" if kind else "")]
+    if entry.get("role") and entry.get("role") != sem:
+        parts.append(str(entry["role"]))
+    if entry.get("values"):
+        parts.append("values=[" + "|".join(_short(v) for v in entry["values"]) + "]")
+    if entry.get("has_blanks"):
+        parts.append("has_blanks")
+    if entry.get("null_rate"):
+        parts.append(f"nulls={float(entry['null_rate']):.0%}" if float(entry["null_rate"]) >= 0.01 else "nulls<1%")
+    if entry.get("distinct") is not None and sem not in ("boolean", "datetime"):  # a range says more for time
+        parts.append(f"distinct={entry['distinct']}")
+    if entry.get("min") is not None and entry.get("max") is not None:
+        parts.append(f"range={_short(entry['min'])}..{_short(entry['max'])}")
+    for k in ("mean", "p50"):
+        if entry.get(k) is not None:
+            parts.append(f"{k}={_short(entry[k])}")
+    if entry.get("patterns"):
+        parts.append("patterns=" + "|".join(str(p) for p in list(entry["patterns"])[:3]))
+    line = " ".join(parts)
+    return line + (f" — {entry['meaning']}" if entry.get("meaning") else "")
+
+
+def render_catalog(tables: list[dict[str, Any]], omitted: Iterable[dict[str, Any]] = ()) -> str:
+    """`TABLE <fq> [<role>, grain: <grain>, rows≈N] — <description>` then one line per column, tables and
+    columns sorted by name. Every cap says what it dropped."""
+    dropped: dict[str, int] = {}
+    not_sent: list[str] = []
+    for o in omitted:
+        if o.get("section") != "catalog":
+            continue
+        if o.get("columns"):
+            dropped[str(o.get("asset"))] = dropped.get(str(o.get("asset")), 0) + len(o["columns"])
+        elif not o.get("detail"):
+            not_sent.append(str(o.get("asset")))
+    lines = []
+    for t in sorted(tables, key=lambda t: str(t.get("asset"))):
+        tags = [str(t["role"])] if t.get("role") else []
+        if t.get("grain"):
+            tags.append(f"grain: {t['grain']}")
+        if t.get("row_count") is not None:
+            tags.append(f"rows≈{int(t['row_count']):,}")
+        about = " — ".join(x for x in (t.get("business_name"), t.get("description")) if x)
+        lines.append(f"TABLE {t.get('asset')}" + (f" [{', '.join(tags)}]" if tags else "") + (f" — {about}" if about else ""))
+        cols = t.get("columns") or []
+        if cols and all(not isinstance(c, dict) for c in cols):
+            lines.append("  columns: " + ", ".join(sorted(str(c) for c in cols)))
+        else:
+            lines.extend(_column_line(c) for c in sorted(cols, key=lambda c: str(c.get("name") if isinstance(c, dict) else c)))
+        if dropped.get(str(t.get("asset"))):
+            lines.append(f"  … {dropped[str(t.get('asset'))]} more columns not shown")
+    if not_sent:
+        lines.append(f"… {len(not_sent)} more tables not shown: {', '.join(sorted(set(not_sent)))}")
+    return "\n".join(lines)
+
+
+def _knowledge_line(item: Any) -> str:
+    if not isinstance(item, dict):
+        return f"- {item}"
+    head = str(item.get("name") or "")
+    if item.get("label"):
+        head += f" ({item['label']})"
+    if item.get("aka"):
+        head += " aka: " + ", ".join(item["aka"])
+    line = f"- {head} — {item.get('text') or ''}"
+    if item.get("columns"):
+        line += f" [columns: {', '.join(item['columns'])}]"
+    if item.get("trusted") is False:
+        line += " (unreviewed)"
+    return line
+
+
+def render_stable(header: dict[str, Any] | None, stable: dict[str, Any], omitted: Iterable[dict[str, Any]] = ()) -> str:
+    """The cached preamble: workspace header, objective, pinned analysis context, catalog and knowledge
+    sections as text; catalog and knowledge (crawled or written text) inside <untrusted_context>."""
+    out: list[str] = []
+    header = header or {}
+    head = [f"Workspace: {header['workspace']}"] if header.get("workspace") else []
+    if header.get("domain_packs"):
+        head.append("domain packs: " + ", ".join(header["domain_packs"]))
+    if header.get("dialects"):
+        head.append("SQL dialect: " + ", ".join(header["dialects"]))
+    if head:
+        out.append(" · ".join(head))
+    data: list[str] = []
+    for key, value in stable.items():
+        if key == "objective":
+            out.append(f"OBJECTIVE: {value}")
+        elif key == "analysis_context" and isinstance(value, dict):
+            ctx = "; ".join(f"{k.replace('_', ' ')}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
+                            for k, v in value.items() if v not in (None, "", []))
+            out.append(f"ANALYSIS CONTEXT (pinned): {ctx}")
+        elif key == "catalog" and isinstance(value, list):
+            data.append("CATALOG\n" + render_catalog(value, omitted))
+        elif key in KNOWLEDGE_SECTIONS:
+            title = key.replace("_", " ").upper()
+            data.append(f"{title}: {NO_MATCH}" if value == NO_MATCH or not value else
+                        title + "\n" + "\n".join(_knowledge_line(i) for i in value))
+        else:
+            out.append(f"{key.replace('_', ' ').upper()}: {compact(value)}")
+    if data:
+        out.append("<untrusted_context>\n" + "\n".join(data) + "\n</untrusted_context>")
+    return "\n".join(out)
 
 
 def excerpt(text: str, limit: int) -> str:
@@ -317,12 +458,17 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
 
     # catalog: rank tables and columns, cap per profile; the names-only form is mandatory
     tables = _select_tables(catalog, query, focus, boost, profile, reference_text, omitted, no_match)
+    # A SQL purpose whose question names no table gets every authorized table by name only (with its
+    # role and size): the model can name the table, or the Ask ladder clarifies. Profiling every
+    # table would send the whole catalog for a question about none of it.
+    names_only = profile.referenced_only and "catalog" in no_match
     minimal: list[dict[str, Any]] = []
     full: list[dict[str, Any]] = []
     for t, cols in tables:
-        head = {k: t[k] for k in ("asset", "business_name", "row_count") if t.get(k) is not None}
+        head = {k: t[k] for k in ("asset", "business_name", "role", "row_count") if t.get(k) is not None}
+        more = {k: t[k] for k in ("description", "grain") if t.get(k)}
         minimal.append({**head, "columns": [_render_column(c, "names") for c in cols]})
-        full.append({**head, "columns": [_render_column(c, profile.catalog_detail) for c in cols]})
+        full.append({**head, **more, "columns": [_render_column(c, profile.catalog_detail) for c in cols]})
     if tables:
         body["catalog"] = minimal
     mandatory = (_size(header) if header else 0) + _size(body)
@@ -337,7 +483,9 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
 
     # upgrade tables to the profile's detail, most relevant first, while they fit
     for i, (t, _) in enumerate(tables):
-        if full[i] != minimal[i]:
+        if names_only and full[i] != minimal[i]:
+            omitted.append({"section": "catalog", "asset": t.get("asset"), "detail": "no table referenced (names only sent)"})
+        elif full[i] != minimal[i]:
             body["catalog"][i] = full[i]
             if used() > budget:
                 body["catalog"][i] = minimal[i]
@@ -363,6 +511,10 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
         for n, r in enumerate(ranked):
             item = r.item
             rendered = {"id": item.id, "name": item.name, "text": focused_excerpt(item.text, focus, profile.item_chars)}
+            if item.label:
+                rendered["label"] = item.label
+            if item.synonyms:
+                rendered["aka"] = list(item.synonyms)[:6]
             if item.mapped_columns:
                 rendered["columns"] = list(item.mapped_columns)[:8]
             if not item.trusted:
@@ -393,9 +545,15 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
         # the omitted note itself must fit: give back the lowest-ranked knowledge items until it does
         while used() > budget and _drop_last_knowledge(body, profile, receipts, omitted):
             body["omitted"] = _omitted_for_model(omitted)
+    stable = [k for k in body if k in STABLE_KEYS or k in KNOWLEDGE_SECTIONS]
+    body = {**{k: body[k] for k in stable}, **{k: v for k, v in body.items() if k not in stable}}  # stable first
     compiled = CompiledContext(purpose=purpose, header=header, body=body, receipts=receipts, omitted=omitted,
-                               no_match=no_match, budget_chars=budget, mandatory_chars=mandatory)
+                               no_match=no_match, budget_chars=budget, mandatory_chars=mandatory, stable=stable)
     return compiled
+
+
+# Body keys that do not change within a run or Ask thread (with the catalog and knowledge sections).
+STABLE_KEYS = ("objective", "analysis_context", "catalog")
 
 
 def _select_tables(catalog: list[dict[str, Any]], query: set[str], focus: set[str], boost: set[tuple[str | None, str]],
@@ -519,12 +677,15 @@ def load_knowledge(session: Any, workspace_id: str, sections: Iterable[str], *, 
         if not query:
             entries += pack_entries(session, workspace_id, kinds=[kind])[:per_kind]
         for e in entries:
-            out.append(KnowledgeItem(id=e.id, section=KIND_SECTIONS[kind], name=e.name,
-                                     text=" ".join([e.body or "", *(f"({s})" for s in e.synonyms)]),
+            out.append(KnowledgeItem(id=e.id, section=KIND_SECTIONS[kind], name=e.name, text=e.body or "",
                                      source=e.origin or "user", mapped_columns=tuple(e.mapped_columns),
-                                     trusted=bool(e.trusted), document_id=e.pack_id and e.id, path=e.path, sha256=e.sha256))
+                                     trusted=bool(e.trusted), document_id=e.pack_id and e.id, path=e.path, sha256=e.sha256,
+                                     synonyms=tuple(str(s) for s in e.synonyms or ())))
     if query and kinds:
-        out.extend(pack_section_items(session, workspace_id, query, kinds, candidates=candidates))
+        from analystos.knowledge.entries import applicable_domain_packs, in_applicable_packs
+
+        out.extend(in_applicable_packs(pack_section_items(session, workspace_id, query, kinds, candidates=candidates),
+                                       applicable_domain_packs(session, workspace_id), origin_of=lambda i: i.source))
     if "external" in wanted:
         out.extend(external_items(external if external is not None else _run_external(session, workspace_id, run_id)))
     if "prior_findings" in wanted:
@@ -579,7 +740,7 @@ def pack_section_items(session: Any, workspace_id: str, query: str, kinds: Itera
         origin = str(x.get("origin") or (f"pack:{x['domain_pack']}" if x.get("domain_pack") else f"okf:{h.pack_slug}"))
         out.append(KnowledgeItem(
             id=f"{h.document_id}#{h.anchor}", section=KIND_SECTIONS.get(h.kind, "glossary"), name=name[:300],
-            text=" ".join([h.text or "", *(f"({s})" for s in synonyms)]),
+            text=h.text or "", synonyms=tuple(synonyms), label=str(x.get("display_name") or "") or None,
             source=origin, mapped_columns=tuple(str(c) for c in x.get("mapped_columns") or [] if isinstance(c, str)),
             trusted=bool(trusted), document_id=h.document_id, path=h.path, anchor=h.anchor, sha256=h.document_sha256,
             section_sha256=h.section_sha256, retrieval_rank=rank, lexical_share=h.lexical_share, via=h.via))
@@ -624,4 +785,4 @@ def _run_external(session: Any, workspace_id: str, run_id: str | None) -> list[d
 
 __all__ = ["KIND_SECTIONS", "NO_MATCH", "PRIMARY_SECTIONS", "SUPPLEMENTARY_SECTIONS", "CompiledContext", "KnowledgeItem",
            "RankedItem", "compile_context", "excerpt", "external_items", "focused_excerpt", "item_score", "load_knowledge",
-           "pack_section_items", "rank_items", "terms"]
+           "pack_section_items", "rank_items", "render_catalog", "render_stable", "terms"]

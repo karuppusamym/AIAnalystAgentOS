@@ -47,3 +47,34 @@ describe("model health (admin)", () => {
     expect(REFUSAL_VIEWS.spend_cap.action).toBe("explain");
   });
 });
+
+describe("spend counters and repeated key messages", () => {
+  function withHealth(over: Record<string, unknown>) {
+    const body = { ...MODEL_HEALTH, ...over };
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }
+
+  it("lite profile: no Redis but Postgres proves the caps, so billable calls are not reported as paused", async () => {
+    session.set("tok", USER);
+    withHealth({ counters_available: false, spend_counters: { store: "postgres", available: true } });
+    render(<ModelHealthPanel />);
+    await screen.findAllByText(/Spend today/);
+    expect(screen.queryByText(/billable model calls are paused/)).toBeNull();
+  });
+
+  it("warns, naming the store, when the store that proves the caps is down", async () => {
+    session.set("tok", USER);
+    withHealth({ counters_available: true, spend_counters: { store: "postgres", available: false } });
+    render(<ModelHealthPanel />);
+    expect(await screen.findByText(/Spend counters \(postgres\) are unavailable/)).toBeTruthy();
+  });
+
+  it("two providers missing the same key show one message", async () => {
+    session.set("tok", USER);
+    const message = "No API key in this process — set OPENROUTER_API_KEY for the api and worker containers and restart them.";
+    withHealth({ providers: MODEL_HEALTH.providers.map((p) => ({ ...p, message, key_present: false })) });
+    render(<ModelHealthPanel />);
+    expect(await screen.findAllByText(message)).toHaveLength(1);
+  });
+});

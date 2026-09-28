@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type CatalogAsset, type Insight, type Run, type Source, type WorkspaceDetail } from "../api";
 import { BriefSummary } from "../components/Brief";
+import { DataShapeCard } from "../components/DataShape";
+import { WelcomeCard } from "../components/Guide";
+import { useTour } from "../components/Tour";
 import { StartWorkButton } from "../components/StartWork";
 import { WorkModesSettings } from "../components/WorkModes";
 import { Card, ErrorBox, Field, Loading, Notice, PageHeader, Stat, Value } from "../components/ui";
@@ -66,11 +69,13 @@ export function WorkspaceHomePage() {
         actions={firstRun ? undefined : <StartWorkButton wsId={wsId} />} />
       <ErrorBox error={runs.error ?? sources.error} onRetry={() => { void runs.reload(); void sources.reload(); }} />
       {runs.data === undefined && !runs.error && <Loading />}
+      {runs.data && runs.data.length > 0 && <WelcomeCard wsId={wsId} />}
       {firstRun && <FirstRun ws={w} sources={sources} onChanged={ws.reload} />}
       {runs.data && runs.data.length > 0 && (
         <>
           <NeedsYou wsId={wsId} runs={runs.data} sources={sources.data} />
           <AtAGlance ws={w} runs={runs.data} />
+          <DataShapeCard wsId={wsId} role={w.role} />
         </>
       )}
       {w.role === "owner" && !!runs.data?.length && <WorkModesSettings wsId={wsId} collapsed />}
@@ -80,6 +85,7 @@ export function WorkspaceHomePage() {
 
 function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: AsyncState<Source[]>; onChanged: () => void }) {
   const catalog = useAsync(() => api.catalog(ws.id), [ws.id]);
+  const tour = useTour();
   if (!sources.data || (!catalog.data && !catalog.error)) return <Loading />;
   const steps = firstRunSteps({ sources: sources.data, catalog: catalog.data ?? [], objective: ws.objective ?? "", runs: [] });
   const next = nextStep(steps);
@@ -92,7 +98,9 @@ function FirstRun({ ws, sources, onChanged }: { ws: WorkspaceDetail; sources: As
   };
   return (
     <Card title="Get started">
-      <p className="muted small">Pick up where you left off: each step is checked against what is already in the workspace.</p>
+      <p className="muted small">Pick up where you left off: each step is checked against what is already in the workspace.{" "}
+        <button type="button" className="btn-link" onClick={() => tour.start("platform", ws.id)}>New here? Take the 2-minute tour</button>
+      </p>
       <ol className="checklist" aria-label="Getting started">
         {steps.map((s, k) => {
           const isNext = s.id === next?.id;
@@ -165,6 +173,7 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
   const alerts = useAsync(() => api.listAlerts(wsId, "open"), [wsId]);
   const insights = useAsync(() => api.listInsights(wsId), [wsId]);
   const questions = useAsync(() => api.relationshipCandidates(wsId, "pending"), [wsId]);
+  const knowledge = useAsync(() => api.suggestionSummary(wsId), [wsId]);
   const staleBefore = Date.now() - STALE_AFTER_DAYS * 86_400_000;
   const stale = sources?.filter((s) => s.last_error || !s.last_discovered_at || Date.parse(s.last_discovered_at) < staleBefore);
   const needs: Need[] = [
@@ -176,10 +185,12 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
       href: to.investigations(wsId), hint: "Paused or asking a question" },
     { id: "questions", label: "Open data questions", count: count(questions), error: questions.error, href: to.data(wsId, "definitions"),
       hint: "Measured joins to confirm" },
+    { id: "meaning", label: "Questions about your data", count: knowledge.error || !knowledge.data ? undefined : knowledge.data.questions,
+      error: knowledge.error, href: to.data(wsId, "review"), hint: meaningHint(knowledge.data?.questions) },
     { id: "stale", label: "Stale sources", count: stale?.length, href: to.sources(wsId), hint: `Not checked in ${STALE_AFTER_DAYS} days, or failing` },
   ];
   const shown = needs.filter((n) => n.count === undefined || n.count > 0);
-  const loading = [approvals, alerts, insights, questions].some((s) => s.loading && !s.data && !s.error);
+  const loading = [approvals, alerts, insights, questions, knowledge].some((s) => s.loading && !s.data && !s.error);
   return (
     <Card title="What needs you">
       {!loading && shown.length === 0 && <Notice tone="success">Nothing needs you right now.</Notice>}
@@ -192,6 +203,12 @@ function NeedsYou({ wsId, runs, sources }: { wsId: string; runs: Run[]; sources:
       </div>
     </Card>
   );
+}
+
+/** Glossary terms and descriptions only a person can give: good answers are what every later answer stands on. */
+export function meaningHint(n: number | undefined): string {
+  if (n === undefined) return "Glossary terms and descriptions to confirm";
+  return `${n} ${n === 1 ? "question" : "questions"} about your data ${n === 1 ? "needs" : "need"} an answer`;
 }
 
 /** Counters and cost: secondary, collapsed. */

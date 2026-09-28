@@ -16,7 +16,7 @@ from analystos.gateway.types import QueryResult
 WS = "ws_steps"
 EXTRA_TABLES = ("relationship", "recipe", "recipe_run", "ask_thread", "ask_turn", "experiment", "context_entry",
                 "workspace_brief", "readiness_assessment", "step_branch", "analysis_step", "analysis_step_version",
-                "step_pin", "notebook")
+                "step_pin", "notebook", "knowledge_pack", "knowledge_document")
 
 
 class FakeRuntime:

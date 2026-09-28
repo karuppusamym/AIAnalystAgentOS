@@ -13,6 +13,8 @@ from analystos.api.request_id import RequestIdMiddleware, current, envelope
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
 from analystos.api.routers import ask as ask_router
 from analystos.api.routers import builds as builds_router
+from analystos.api.routers import context_export as context_export_router
+from analystos.api.routers import data_shape as data_shape_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
@@ -21,6 +23,7 @@ from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import ml as ml_router
 from analystos.api.routers import pilot as pilot_router
 from analystos.api.routers import pipelines as pipelines_router
+from analystos.api.routers import process as process_router
 from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
 from analystos.api.routers import semantic as semantic_router
@@ -85,6 +88,7 @@ app.include_router(decisions_router.router)
 app.include_router(builds_router.router)
 app.include_router(ask_router.router)
 app.include_router(knowledge_router.router)
+app.include_router(context_export_router.router)  # download and inspect the workspace context (Stream D)
 app.include_router(evidence_router.router)
 app.include_router(definitions_router.router)
 app.include_router(work_orders_router.router)
@@ -95,6 +99,8 @@ app.include_router(pipelines_router.router)
 app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
 app.include_router(ml_router.router)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
+app.include_router(process_router.router)  # process and task mining over event logs
+app.include_router(data_shape_router.router)  # what the selected tables are good for (patterns, next steps)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 

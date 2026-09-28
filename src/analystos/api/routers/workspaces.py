@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -65,6 +65,16 @@ class SourceIn(BaseModel):
     name: str
     config: dict = {}
     secret_ref: str | None = None
+
+
+class SourceUpdateIn(BaseModel):
+    """Only the fields sent change. The kind cannot change here (add a new source instead). Send
+    `clear_secret_ref: true` to remove a secret reference; `secret_ref` on its own only sets one."""
+
+    name: str | None = None
+    config: dict | None = None
+    secret_ref: str | None = None
+    clear_secret_ref: bool = False
 
 
 class Selection(BaseModel):
@@ -213,14 +223,36 @@ def list_sources(workspace_id: str, user: User = Depends(current_user), session:
     return rows(session.scalars(select(Source).where(Source.workspace_id == workspace_id).order_by(Source.created_at)))
 
 
+@router.patch("/workspaces/{workspace_id}/sources/{source_id}")
+def edit_source(workspace_id: str, source_id: str, body: SourceUpdateIn, user: User = Depends(current_user),
+                session: Session = Depends(db, scope="function")):
+    """Rename a source or correct its connection (host, port, tables, other config, secret reference). The
+    kind cannot change; add a new source for a different connector. Changing the connection marks the
+    source `registered` again so the catalog shows it has not been checked against it yet."""
+    kwargs: dict = {}
+    if body.name is not None:
+        kwargs["name"] = body.name
+    if body.config is not None:
+        kwargs["config"] = body.config
+    if body.clear_secret_ref:
+        kwargs["clear_secret_ref"] = True
+    elif body.secret_ref is not None:
+        kwargs["secret_ref"] = body.secret_ref
+    src = source_svc.update_source(session, user, workspace_id, source_id, **kwargs)
+    session.flush()
+    return row(src)
+
+
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/discover")
 def discover(workspace_id: str, source_id: str, user: User = Depends(current_user)):
     return source_svc.discover_source(user, source_id, workspace_id)
 
 
 @router.put("/workspaces/{workspace_id}/sources/{source_id}/selection")
-def select_assets(workspace_id: str, source_id: str, body: Selection, user: User = Depends(current_user)):
-    return source_svc.select_assets(user, source_id, body.assets, workspace_id)
+def select_assets(workspace_id: str, source_id: str, body: Selection, background: BackgroundTasks,
+                  user: User = Depends(current_user)):
+    # newly selected tables are profiled by a background crawl (the same mechanism as POST .../crawl)
+    return source_svc.select_assets(user, source_id, body.assets, workspace_id, schedule=background.add_task)
 
 
 @router.post("/workspaces/{workspace_id}/sources/{source_id}/ingest")

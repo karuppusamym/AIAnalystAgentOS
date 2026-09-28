@@ -23,5 +23,8 @@ export default defineConfig({
     globals: false,
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["src/test/setup.ts"],
+    // Journey tests render whole screens and wait up to 4 s per step (setup.ts); under a loaded full run the 5 s
+    // default cut multi-step journeys short. A longer ceiling changes no assertion.
+    testTimeout: 15000,
   },
 });

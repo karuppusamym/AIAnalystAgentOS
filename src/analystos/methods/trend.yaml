@@ -1,7 +1,7 @@
 apiVersion: analystos/v1
 kind: Method
 id: method.trend
-version: 1.0.0
+version: 1.1.0
 summary: Volume or numeric outcome over time -> linear trend + change point (+ Mann-Kendall / Theil-Sen)
 entry: python:analystos.methods.trend:Trend
 determinism: deterministic

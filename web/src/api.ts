@@ -757,6 +757,88 @@ export interface AskTurn {
   latency_ms: number;
   created_at: string;
   staleness: AskStaleness;
+  /** Analyst mode only (null for a quick answer): the plan, the steps and the synthesis. */
+  analysis?: AskAnalysis | null;
+}
+
+export type AskMode = "quick" | "analyst";
+
+export interface AnalystMeasureFact {
+  column: string; count: number; total?: number | null; avg?: number | null; min?: number | null; min_label?: string | null;
+  max?: number | null; max_label?: string | null; pre_aggregated?: boolean;
+}
+
+export interface AnalystStep {
+  n: number;
+  kind?: string;
+  goal: string;
+  question: string;
+  status: "answered" | "clarify" | "needs_input" | "refused" | "skipped" | string;
+  answered_by?: string | null;
+  governance?: string | null;
+  sql?: string | null;
+  explanation?: string | null;
+  chart?: ChartHint;
+  result?: QueryResult | null;
+  facts?: { row_count?: number; truncated?: boolean; measures?: AnalystMeasureFact[]; statements?: string[]; [k: string]: unknown } | null;
+  series?: {
+    time_column: string; column: string; points: number; first_period?: string; last_period?: string; direction?: string;
+    slope_per_period?: number | null; slope_share_of_mean?: number | null; anomalies?: { period: string; value: number; z: number; direction: string }[];
+    missing_periods?: string[]; warnings?: string[];
+  } | null;
+  comparison?: { previous?: number | null; current?: number | null; change?: number | null; pct_change?: number | null;
+    previous_period?: string; current_period?: string; [k: string]: unknown } | null;
+  drivers?: {
+    members: number;
+    drivers: { member: string; previous: number; current: number; change: number; pct_change: number | null; share_of_change: number | null }[];
+    offsets: { member: string; previous: number; current: number; change: number; pct_change: number | null; share_of_change: number | null }[];
+    appeared?: string[]; disappeared?: string[];
+  } | null;
+  checks?: { code: string; status: "pass" | "suspect" | string; note: string }[];
+  refusal?: AskRefusal | null;
+  note?: string;
+  rerun?: { at: string; edited: boolean } | null;
+}
+
+export interface AskAnalysis {
+  mode: "analyst";
+  plan: { approach: string; origin: "rules" | "model" | string; assumptions?: string[]; steps: { n: number; goal: string; question: string }[] };
+  steps: AnalystStep[];
+  synthesis: {
+    text: string; answer?: string; evidence?: { step: number; text: string }[]; caveats?: string[]; citations?: number[];
+    origin: "template" | "model" | string; rejected?: string | null; stale?: boolean; stale_steps?: number[];
+  };
+  follow_ups: string[];
+  headline_step: number;
+}
+
+export interface SuggestedTable {
+  asset_id: string; fq: string; name: string; business_name: string | null; role: string | null; entity: string | null; grain: string | null;
+  primary_key: { columns: string[]; evidence: "approved" | "declared" | "measured_unique" | "profile_unique" | "none" | string; unique: boolean | null };
+  time_column: string | null; measures: string[]; dimensions: string[]; confidence: number | null; issues: { code: string; message: string }[];
+}
+
+export interface SuggestedRelationship {
+  from: { asset_id: string; fq: string; columns: string[] }; to: { asset_id: string; fq: string; columns: string[] };
+  cardinality: string; status: "validated" | "pending" | "proposed" | string; confidence: number | null; evidence: Dict;
+  candidate_id: string | null; relationship_id?: string | null;
+}
+
+export interface ModelSuggestion {
+  generated_at: string;
+  tables: SuggestedTable[];
+  relationships: SuggestedRelationship[];
+  metrics: { name: string; label: string; expression: string; table_fq: string; reason: string }[];
+  star_schemas: { fact: string; dimensions: string[] }[];
+  issues: { code: string; message: string; asset_id?: string | null }[];
+  summary: { tables: number; facts: number; dimensions: number; relationships_validated: number; relationships_pending: number; keys_measured: number };
+}
+
+export interface ModelValidation {
+  tables: { asset_id: string; rows: number; distinct_keys: number; unique: boolean }[];
+  joins: { from: string; to: string; from_columns: string[]; to_columns: string[]; rows_before: number; rows_after: number; fans_out: boolean }[];
+  queries: number;
+  skipped: { kind: string; reason: string; [k: string]: unknown }[];
 }
 
 export interface AskThread {
@@ -955,6 +1037,83 @@ export interface ReviewResult {
   approved: { id: string; path: string | null; catalog?: string }[];
   rejected: { id: string; path: string | null; catalog?: string }[];
   errors: { id: string; error: string; [k: string]: unknown }[];
+}
+
+/** Stream D: the workspace context as one download (OKF zip, versioned JSON, or one Markdown file). */
+export type ContextExportFormat = "okf" | "json" | "markdown";
+
+export interface ContextPurpose {
+  purpose: string;
+  label: string;
+  description: string;
+}
+
+export interface ContextPreviewSection {
+  name: string;
+  part: "stable" | "volatile";
+  items: number;
+  chars: number;
+  no_match: boolean;
+}
+
+/** What one model purpose's prompt would carry (GET /context/preview); no model is called. */
+export interface ContextPreview {
+  purpose: string;
+  label: string;
+  question: string;
+  scope: { assets: string[]; source_ids: string[]; denied_columns: number; source_id: string | null };
+  system_prompt: string;
+  system_text: string;
+  preamble_text: string;
+  volatile_text: string;
+  stable_keys: string[];
+  omitted: Dict[];
+  no_match: string[];
+  refused: string | null;
+  trimmed: boolean;
+  receipts: number;
+  estimated_tokens: { stable: number; volatile: number; total: number };
+  budget_chars: number;
+  cache: { key: string | null; kind: string; hit: boolean; shared: boolean; enabled: boolean; ttl_seconds: number };
+  knowledge_version: string | null;
+  sections: ContextPreviewSection[];
+}
+
+export interface ContextCacheCounts {
+  hits: number;
+  misses: number;
+  chars_reused: number;
+}
+
+/** The workspace's shared context cache (GET /context/cache, editor). */
+export interface ContextCacheStats {
+  workspace_id: string;
+  shared: boolean;
+  enabled: boolean;
+  ttl_seconds: number;
+  entries: Record<string, number>;
+  total_entries: number;
+  by_kind: Record<string, Record<string, ContextCacheCounts>>;
+  totals: ContextCacheCounts;
+}
+
+/** `POST …/knowledge/glossary/scan`: what one glossary scan queued (Stream E). */
+export interface GlossaryScanResult {
+  glossary_terms: number;
+  description_questions: number;
+  candidates: number;
+  by_rule: Record<string, number>;
+  skipped_known: number;
+  skipped_decided: number;
+  assets: number;
+  model: { called: boolean; filled: number; skipped?: string };
+}
+
+/** Pending review drafts per kind; `questions` = glossary terms and descriptions a person should answer. */
+export interface SuggestionSummary {
+  pending: Record<string, number>;
+  questions: number;
+  total: number;
 }
 
 export interface KnowledgeImportReport {
@@ -1165,6 +1324,8 @@ export interface Health {
 export interface ModelHealth {
   checked_at: string;
   counters_available: boolean;
+  /** The store that proves hard spend caps: Redis, or Postgres in the lite profile. False = billable calls are refused. */
+  spend_counters?: { store: string; available: boolean };
   spend_today: { usd: number; cap_usd: number | null; source: "counter" | "database"; fraction: number | null;
     alert_fraction: number; resets_at: string };
   providers: ProviderHealth[];
@@ -1654,6 +1815,7 @@ export interface SourceKindInfo {
 
 /** Request body of POST …/sources (generated). */
 export type SourceInput = Schemas["SourceIn"];
+export type SourceUpdatePatch = Schemas["SourceUpdateIn"];
 
 export interface RetypedColumn {
   name: string;
@@ -1743,9 +1905,49 @@ export interface GlossaryLink {
   reason?: string;
 }
 
+/** A column profile as measured by the crawler (skills/profiling.py); sensitive columns arrive without values. */
+export interface MeasuredProfile {
+  type_family?: string;
+  semantic_type?: string;
+  non_null?: number;
+  null_rate?: number;
+  distinct?: number;
+  distinct_ratio?: number;
+  min?: unknown;
+  max?: unknown;
+  mean?: number | null;
+  stddev?: number | null;
+  percentiles?: Record<string, number | null>;
+  true_count?: number | null;
+  avg_length?: number | null;
+  max_length?: number | null;
+  top_values?: { value: unknown; count: number; share?: number | null }[];
+  histogram?: { bin: number; low: number; high: number; count: number }[];
+  monthly_counts?: { month: string; count: number }[];
+  outliers?: { low_count?: number; high_count?: number; low_fence?: number; high_fence?: number };
+  values?: unknown[];
+  values_complete?: boolean;
+  has_blanks?: boolean;
+  patterns?: { mask: string; share: number }[];
+  [k: string]: unknown;
+}
+
+export interface ProfileMeta {
+  profiled_at?: string | null;
+  rows_profiled?: number | null;
+  source?: "full" | "snapshot" | string;
+  truncated?: boolean;
+  sampled?: boolean;
+  reused?: boolean;
+  [k: string]: unknown;
+}
+
 export interface CatalogColumn {
   name: string;
   data_type: string;
+  semantic_type?: string | null;
+  is_key?: boolean;
+  profile?: MeasuredProfile | null;
   business_name: string | null;
   description: string | null;
   tags: string[];
@@ -1776,6 +1978,10 @@ export interface CatalogAsset {
   grain: string | null;
   confidence: number | null;
   last_crawled_at: string | null;
+  entity?: string | null;
+  time_column?: string | null;
+  profile_meta?: ProfileMeta | null;
+  snapshot?: Dict | null;
   columns: CatalogColumn[];
 }
 
@@ -1896,8 +2102,15 @@ export interface TokenSavings {
     deterministic_skips: number;
     refused: number;
     saved_share: number;
+    /** Input tokens the provider served from its prompt cache (billed at a discount). */
+    input_tokens?: number;
+    cached_input_tokens?: number;
+    cached_input_share?: number | null;
+    cached_input_saved_usd?: number | null;
   };
   by_purpose: Record<string, TokenSavingsRow>;
+  /** Compiled context and knowledge retrieval reused instead of rebuilt, per kind and purpose. */
+  context_cache?: { shared: boolean; by_kind: Record<string, Record<string, { hits: number; misses: number; chars_reused: number }>> } | null;
   /** Optional until the ladder records `answered_by` per call (spec v3 §4.1). */
   by_rung?: Record<string, RungSpend> | null;
   by_model?: Record<string, RungSpend> | null;
@@ -3059,6 +3272,10 @@ export const api = {
   listSources: (ws: string) => get("/api/workspaces/{workspace_id}/sources", { path: W(ws) }) as Promise<Source[]>,
   addSource: (ws: string, body: SourceInput) =>
     post("/api/workspaces/{workspace_id}/sources", { path: W(ws), body }) as Promise<Source>,
+  /** Rename a source or correct its connection (host, tables, other config, secret reference); only the
+    * fields sent change. The kind cannot change — add a new source for a different connector. */
+  updateSource: (ws: string, sourceId: string, body: SourceUpdatePatch) =>
+    patch("/api/workspaces/{workspace_id}/sources/{source_id}", { path: { workspace_id: ws, source_id: sourceId }, body }) as Promise<Source>,
   sourceKinds: () => get("/api/source-kinds", {}) as Promise<SourceKindInfo[]>,
   discover: (ws: string, sourceId: string) =>
     post("/api/workspaces/{workspace_id}/sources/{source_id}/discover", { path: { workspace_id: ws, source_id: sourceId } }) as Promise<DiscoverResponse>,
@@ -3259,6 +3476,19 @@ export const api = {
   measureRelationship: (ws: string, id: string) =>
     post("/api/workspaces/{workspace_id}/semantic/relationships/candidates/{candidate_id}/measure",
       { path: { workspace_id: ws, candidate_id: id } }) as Promise<RelationshipCandidate>,
+  /** The data model suggested from the catalog, keys and measured joins (deterministic, no model). */
+  modelSuggestion: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/semantic/model/suggestion", { path: W(ws) }) as Promise<ModelSuggestion>,
+  /** Measure key uniqueness and join fan-out through the gateway, as the caller (bounded). */
+  validateModelSuggestion: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/model/suggestion/validate", { path: W(ws) }) as Promise<ModelValidation>,
+  /** Turn the suggestion into a proposed model version and queue its joins for review; a different person approves. */
+  proposeModelSuggestion: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/model/suggestion/propose", { path: W(ws) }) as
+      Promise<{ model_version: number | null; status: "proposed" | "unchanged" | string; candidates_queued: number }>,
+  /** Measure relationship candidates (single-column and composite) and queue them for review. */
+  discoverRelationships: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/semantic/relationships/discover", { path: W(ws), body: {} }) as Promise<RelationshipCandidate[]>,
   semanticModelDiff: (ws: string, version?: number) =>
     get("/api/workspaces/{workspace_id}/semantic/model/diff", { path: W(ws), query: { version } }) as Promise<SemanticModelDiff>,
   decideSemanticModel: (ws: string, version: number, decision: "approve" | "reject", reason?: string) =>
@@ -3331,6 +3561,10 @@ export const api = {
     get("/api/workspaces/{workspace_id}/knowledge/suggestions", { path: W(ws), query: { status } }) as Promise<KnowledgeSuggestion[]>,
   reviewSuggestions: (ws: string, decisions: ReviewDecisionBody[]) =>
     post("/api/workspaces/{workspace_id}/knowledge/suggestions/review", { path: W(ws), body: { decisions } }) as Promise<ReviewResult>,
+  suggestionSummary: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/knowledge/suggestions/summary", { path: W(ws) }) as Promise<SuggestionSummary>,
+  glossaryScan: (ws: string, body: { use_model?: boolean; include_ask?: boolean; include_descriptions?: boolean } = {}) =>
+    post("/api/workspaces/{workspace_id}/knowledge/glossary/scan", { path: W(ws), body }) as Promise<GlossaryScanResult>,
   importKnowledge: (ws: string, file: File, slug: string) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -3347,6 +3581,20 @@ export const api = {
       Promise<{ revision: number; commit: string; remote: string; branch: string }>,
   knowledgeGraph: (ws: string) => get("/api/workspaces/{workspace_id}/knowledge/graph", { path: W(ws) }) as Promise<KnowledgeGraph>,
 
+  // workspace context: download it, see what the agents see, and its shared cache (Stream D)
+  exportContext: (ws: string, format: ContextExportFormat, sourceId?: string | null) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/context/export", { path: W(ws), query: { format, source_id: sourceId || undefined } }),
+      `context.${format === "okf" ? "okf.zip" : format === "json" ? "json" : "md"}`),
+  contextPurposes: (ws: string) => get("/api/workspaces/{workspace_id}/context/purposes", { path: W(ws) }) as Promise<ContextPurpose[]>,
+  contextPreview: (ws: string, purpose: string, question?: string, sourceId?: string | null) =>
+    get("/api/workspaces/{workspace_id}/context/preview", { path: W(ws), query: { purpose, question: question || undefined,
+      source_id: sourceId || undefined } }) as Promise<ContextPreview>,
+  downloadContextPreview: (ws: string, purpose: string, question?: string, sourceId?: string | null) =>
+    downloadFile(apiPath("get", "/api/workspaces/{workspace_id}/context/preview", { path: W(ws), query: { purpose, question: question || undefined,
+      source_id: sourceId || undefined, download: true } }), `context-preview-${purpose}.txt`),
+  contextCache: (ws: string) => get("/api/workspaces/{workspace_id}/context/cache", { path: W(ws) }) as Promise<ContextCacheStats>,
+  clearContextCache: (ws: string) => del("/api/workspaces/{workspace_id}/context/cache", { path: W(ws) }) as Promise<{ cleared: number }>,
+
   // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
   publishDashboard: (artifactId: string) =>
     post("/api/artifacts/{artifact_id}/publish", { path: { artifact_id: artifactId } }) as Promise<Approval>,
@@ -3359,9 +3607,14 @@ export const api = {
   askThread: (id: string) => get("/api/ask/threads/{thread_id}", { path: { thread_id: id } }) as Promise<AskThreadDetail>,
   patchAskThread: (id: string, body: Schemas["AskThreadPatch"]) =>
     patch("/api/ask/threads/{thread_id}", { path: { thread_id: id }, body }) as Promise<AskThread>,
-  askTurn: (threadId: string, question: string, parameters?: Dict) =>
-    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null } }) as
+  askTurn: (threadId: string, question: string, parameters?: Dict, mode: AskMode = "quick") =>
+    post("/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId }, body: { question, parameters: parameters ?? null, mode } }) as
       Promise<AskTurn>,
+  /** Analyst mode: re-run one step (edited SQL, or its saved SQL) through the gateway; the synthesis becomes stale. */
+  rerunAskStep: (turnId: string, step: number, sql?: string) =>
+    post("/api/ask/turns/{turn_id}/steps/{n}/rerun", { path: { turn_id: turnId, n: step }, body: sql ? { sql } : {} }) as Promise<AskTurn>,
+  /** Analyst mode: rewrite the answer from the steps' current facts. */
+  resynthesizeAsk: (turnId: string) => post("/api/ask/turns/{turn_id}/synthesize", { path: { turn_id: turnId } }) as Promise<AskTurn>,
   askInspector: (turnId: string) => get("/api/ask/turns/{turn_id}/inspector", { path: { turn_id: turnId } }) as Promise<AskInspector>,
   rerunAsk: (turnId: string, sql?: string) => request<AskTurn>("POST", `/api/ask/turns/${encodeURIComponent(turnId)}/rerun`, { sql }),
   scheduleAsk: (turnId: string, body: { name: string; cron: string; timezone: string; approval_id?: string }) =>
@@ -3478,7 +3731,60 @@ export const api = {
     get("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws) }) as Promise<WriterDestination[]>,
   designateDestination: (ws: string, body: Schemas["DestinationIn"]) =>
     post("/api/workspaces/{workspace_id}/writer-destinations", { path: W(ws), body }) as Promise<WriterDestination>,
+
+  // process and task mining (Work → Process)
+  processCandidates: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/process/candidates", { path: W(ws) }) as Promise<{ version: string; candidates: ProcessCandidate[] }>,
+  analyzeProcess: (ws: string, body: ProcessAnalyzeInput) =>
+    post("/api/workspaces/{workspace_id}/process/analyze", { path: W(ws), body }) as Promise<ProcessAnalysis>,
+  processAnalyses: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/process/analyses", { path: W(ws) }) as Promise<SavedProcessAnalysis[]>,
+  /** Turn an event log into the workspace tables `<log>_cases` and `<log>_transitions` for Ask, investigations and dashboards. */
+  buildProcessTables: (ws: string, body: Schemas["ProcessTablesIn"]) =>
+    post("/api/workspaces/{workspace_id}/process/tables", { path: W(ws), body }) as Promise<ProcessTablesResult>,
+
+  // what the selected tables are good for (Overview card)
+  dataShape: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/data-shape", { path: W(ws) }) as Promise<DataShape>,
+  markDataShape: (ws: string, body: Schemas["ShapeMarkIn"]) =>
+    post("/api/workspaces/{workspace_id}/data-shape/mark", { path: W(ws), body }),
+  proposeDataShape: (ws: string) =>
+    post("/api/workspaces/{workspace_id}/data-shape/propose", { path: W(ws) }) as Promise<DataShapeProposal>,
 };
+
+/** api/routers/data_shape.py: the patterns of the selected tables, from the catalog's own measurements. */
+export type ShapeKind = "event_log" | "time_series" | "ml_candidate" | "fact" | "dimension" | "bridge" | "reference";
+export interface ShapePattern {
+  kind: ShapeKind;
+  confidence: number;
+  reasons: string[];
+  detail: Record<string, unknown>;
+  next_step: { action: "process_analysis" | "investigation" | "experiment" | "ask"; label: string } | null;
+  origin: "rules" | "model";
+  state: "suggested" | "proposed" | "confirmed";
+}
+export interface ShapeTable {
+  asset_id: string; fq: string; name: string; business_name: string | null; role: string; row_count: number | null;
+  patterns: ShapePattern[]; unexplained: boolean;
+}
+export interface DataShape {
+  version: string;
+  workspace: { kind: string; label: string; reasons: string[]; tables: string[] }[];
+  tables: ShapeTable[];
+  summary: Partial<Record<ShapeKind, number>>;
+  generated_at: string;
+}
+export interface DataShapeProposal { called: boolean; considered: number; proposed: number; rejected: { table: string; why: string }[]; skipped?: string }
+
+export interface ProcessTablesResult {
+  source_id: string;
+  event_log: { asset_id: string; fq: string };
+  tables: { kind: "cases" | "transitions" | string; name: string; fq: string; asset_id: string; rows: number | null; business_name: string | null }[];
+  segments: { segment: string | null; cases: number; expected_path: string[]; expected_path_source: string }[];
+  cases: number;
+  transitions: number;
+  truncated: boolean;
+}
 
 // ----------------------------------------------------------------------------------- run events (SSE)
 export interface EventStreamHandle {
@@ -3606,13 +3912,13 @@ export function subscribeRunEvents(ws: string, run: string, cb: EventStreamCallb
  * event, a non-2xx status or a stream that ends without the answer.
  */
 export async function streamAskTurn(threadId: string, question: string, parameters: Dict | undefined, cb: AskStreamCallbacks,
-  signal?: AbortSignal): Promise<AskTurn> {
+  signal?: AbortSignal, mode: AskMode = "quick"): Promise<AskTurn> {
   let turn: AskTurn | null = null;
   let failure: ApiError | null = null;
   try {
     await readSSE({
       url: API_BASE + apiPath("post", "/api/ask/threads/{thread_id}/turns", { path: { thread_id: threadId } }),
-      method: "POST", body: { question, parameters: parameters ?? null }, headers: authHeaders(),
+      method: "POST", body: { question, parameters: parameters ?? null, mode }, headers: authHeaders(),
       signal: signal ?? new AbortController().signal,
       onMessage: (m) => {
         let data: unknown = null;
@@ -3641,4 +3947,97 @@ export async function streamAskTurn(threadId: string, question: string, paramete
   if (failure) throw failure;
   if (!turn) throw new ApiError(0, "stream_incomplete", "The answer stream ended before the answer arrived");
   return turn;
+}
+
+// ----------------------------------------------------------------------------------- process mining
+/** api/routers/process.py: an event log detected in the catalog, with the suggested mapping. */
+export interface ProcessMapping {
+  case_column: string;
+  activity_column: string;
+  timestamp_column: string;
+  resource_column: string | null;
+}
+export interface ProcessSegmentValue {
+  value: string | number | boolean;
+  count?: number | null;
+  label?: string | null;
+  reference_path?: string[] | null;
+}
+export interface ProcessCandidate {
+  asset_id: string;
+  asset: string;
+  name: string;
+  business_name: string | null;
+  row_count: number | null;
+  role: string | null;
+  declared_by: string | null;
+  mapping: ProcessMapping;
+  segments: { column: string; values: ProcessSegmentValue[] }[];
+  score: number;
+  reasons: string[];
+  columns: string[];
+}
+export type ProcessAnalyzeInput = Schemas["ProcessAnalyzeIn"];
+export interface ProcessEdge {
+  source: string; target: string; count: number; cases: number;
+  median_hours: number | null; p90_hours: number | null; mean_hours?: number | null;
+}
+export interface ProcessVariant {
+  rank: number; activities: string[]; steps: number; cases: number; share: number; median_hours: number | null; happy_path: boolean;
+}
+export interface ProcessDeviation { kind: "missing" | "extra" | "out_of_order"; activity: string; cases: number; share: number; sentence: string }
+/** skills/process_mining.py `analyze_cases` + the router's provenance (version "process-mining/1"). */
+export interface ProcessAnalysis {
+  version: string;
+  title: string;
+  asset: { id: string; fq: string; name: string; business_name: string | null };
+  mapping: ProcessMapping;
+  filters: { column: string; op: string; value?: unknown; values?: unknown[] }[];
+  segment: string | number | boolean | null;
+  summary: {
+    cases: number; events: number; activities: number; variants: number; mean_events_per_case: number;
+    start: string; end: string; median_hours: number | null; p90_hours: number | null;
+    rework_share: number; cancelled_share: number; fitness: number; handover_share: number;
+  };
+  highlights: string[];
+  activities: { activity: string; events: number; cases: number; starts: number; ends: number }[];
+  edges: ProcessEdge[];
+  variants: { total: number; top: ProcessVariant[]; other_cases: number; other_share: number; happy_path_rank: number | null };
+  throughput: {
+    cases: number; median_hours: number | null; p90_hours: number | null; mean_hours: number | null;
+    histogram: { label: string; from_hours: number; to_hours: number | null; cases: number }[];
+    by_end_activity: { activity: string; cases: number; median_hours: number | null; p90_hours: number | null }[];
+  };
+  bottlenecks: (ProcessEdge & { weight_hours: number; sentence: string })[];
+  rework: { cases: number; share: number; activities: { activity: string; cases: number; share: number; extra_events: number }[] };
+  cancellations: {
+    activities: string[]; cases: number; share: number; median_hours_to_cancel: number | null;
+    after: { activity: string; cases: number; share: number }[]; by_resource: { resource: string; cases: number }[];
+  };
+  conformance: {
+    reference: string[]; source: string; completed_cases: number; conforming_cases: number; fitness: number;
+    excluded: { open: number; cancelled: number }; deviations: ProcessDeviation[];
+    deviating_variants: { activities: string[]; cases: number; missing: string[]; extra: string[]; out_of_order: string[] }[];
+  };
+  handovers: {
+    cases_with_handover: number; share: number;
+    pairs: { source: string; target: string; count: number; cases: number }[];
+    ping_pong: { a: string; b: string; cases: number }[];
+    resources: { resource: string; events: number; cases: number; handovers_out: number; handovers_in: number }[];
+  };
+  provenance: {
+    queries: string[]; sql: string; dialect: string; computed_at: string; method: string;
+    coverage: { events_read: number; pages: number; page_rows: number; max_events: number; truncated: boolean; split_case: boolean; note: string };
+  };
+  artifact?: { id: string; name: string; version: number };
+}
+export interface SavedProcessAnalysis {
+  id: string; name: string; version: number; created_at: string | null; updated_at: string | null;
+  asset: ProcessAnalysis["asset"] | null; segment: ProcessAnalysis["segment"]; mapping: ProcessMapping | null;
+  summary: ProcessAnalysis["summary"] | null;
+}
+
+/** Whether billable model calls are refused because no store can prove the spend caps (Redis, or Postgres in lite). */
+export function spendCountersDown(h: { counters_available: boolean; spend_counters?: { available: boolean } }): boolean {
+  return h.spend_counters ? !h.spend_counters.available : !h.counters_available;
 }

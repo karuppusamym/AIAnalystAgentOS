@@ -1,16 +1,22 @@
 import { useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { to } from "../routes";
-import { api, type Asset, type DiscoveredAsset, type Source, type SourceColumn } from "../api";
+import { api, type Asset, type Dict, type DiscoveredAsset, type Source, type SourceColumn, type SourceUpdatePatch } from "../api";
 import { CrawlPanel } from "../components/CrawlPanel";
-import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
+import { Card, EmptyState, ErrorBox, Field, Loading, Notice, PageHeader, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
 import { crawlStatsSummary } from "../lib/crawls";
 import { fmtDate, fmtNumber, fmtPct, fmtValue } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import {
   NUMBER_FIELDS, buildSourceConfig, defaultKind, executionModeText, fieldHint, fieldLabel, groupKinds, suggestedSecretRef,
-  validateSourceForm, type SourceFormErrors,
+  validateSourceForm, valuesFromConfig, type SourceFormErrors,
 } from "../lib/sourceKinds";
+
+/** Same key/value pairs regardless of key order (source config has no nested objects). */
+function configEqual(a: Dict, b: Dict): boolean {
+  const norm = (x: Dict) => JSON.stringify(Object.keys(x).sort().map((k) => [k, x[k]]));
+  return norm(a) === norm(b);
+}
 const TOGGLE_TAGS = ["pii", "restricted", "sensitive"] as const;
 
 export function SourcesPage() {
@@ -30,17 +36,20 @@ export function SourcesPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Sources & crawls"
-        subtitle={<>Connect sources, crawl their metadata, select what agents may analyse, and tag sensitive columns. Curate descriptions in the <Link to={to.catalog(wsId)}>Catalog</Link>.</>}
+      <PageHeader title="Sources"
+        subtitle={<>Connect a database, warehouse, application or files; choose the tables AnalystOS may read; each crawl profiles them and
+          detects changes. What the data means is curated in the <Link to={to.catalog(wsId)}>Catalog</Link>.</>}
         actions={<button type="button" className="btn btn-primary" onClick={() => setShowAdd((s) => !s)}>{showAdd ? "Close" : "Add source"}</button>} />
       {showAdd && <AddSource wsId={wsId} onAdded={() => { setShowAdd(false); reloadAll(); }} />}
       <ErrorBox error={sources.error} onRetry={sources.reload} />
       {sources.loading && !sources.data && <Loading />}
       {sources.data?.length === 0 && <EmptyState title="No sources yet">Add a database, warehouse, file or ServiceNow instance.</EmptyState>}
-      {sources.data?.map((s) => (
-        <SourceCard key={s.id} wsId={wsId} source={s} assets={(assets.data ?? []).filter((a) => a.source_id === s.id)}
-          onChanged={reloadAll} onOpenAsset={setActiveAsset} activeAsset={activeAsset} />
-      ))}
+      <div className="stack" data-tour="source-list">
+        {sources.data?.map((s) => (
+          <SourceCard key={s.id} wsId={wsId} source={s} assets={(assets.data ?? []).filter((a) => a.source_id === s.id)}
+            onChanged={reloadAll} onOpenAsset={setActiveAsset} activeAsset={activeAsset} />
+        ))}
+      </div>
       {asset && <AssetDetail asset={asset} onTagged={(col) => assets.setData((prev) => prev?.map((a) => a.id !== asset.id ? a : {
         ...a, columns: a.columns.map((c) => (c.name === col.name ? { ...c, tags: col.tags } : c)),
       }))} onClose={() => setActiveAsset(null)} />}
@@ -71,9 +80,10 @@ export function SourcesPage() {
   );
 }
 
-function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset }: {
+export function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset }: {
   wsId: string; source: Source; assets: Asset[]; onChanged: () => void; onOpenAsset: (id: string) => void; activeAsset: string | null;
 }) {
+  const [editing, setEditing] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredAsset[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(assets.filter((a) => a.selected).map((a) => a.name)));
   const [dirty, setDirty] = useState(false);
@@ -129,12 +139,20 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
     <Card title={<>{source.name} <span className="muted small">· {source.kind} · {source.execution_mode}</span></>}
       actions={<>
         <StatusBadge status={source.status} />
+        {!editing && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(true)}>Edit</button>}
         <button type="button" className="btn btn-sm" onClick={discover} disabled={discoverAct.busy}>{discoverAct.busy ? "Discovering…" : "Discover"}</button>
       </>}>
-      <p className="muted small">
-        {source.secret_ref ? <>Secret: <code>{source.secret_ref}</code> · </> : null}
-        Last discovered {fmtDate(source.last_discovered_at)}{source.staging_schema ? <> · staging schema <code>{source.staging_schema}</code></> : null}
-      </p>
+      {editing && <EditSource wsId={wsId} source={source} onClose={() => setEditing(false)}
+        onSaved={() => { setEditing(false); onChanged(); }} />}
+      <p className="muted small">Last discovered {fmtDate(source.last_discovered_at)}</p>
+      {(source.secret_ref || source.staging_schema) && (
+        <TechnicalDetails label="Connection details">
+          <p className="small">
+            {source.secret_ref ? <>Credentials read from <code>{source.secret_ref}</code> (never stored). </> : null}
+            {source.staging_schema ? <>Staged copy in schema <code>{source.staging_schema}</code>.</> : null}
+          </p>
+        </TechnicalDetails>
+      )}
       {source.last_error && <Notice tone="danger">{source.last_error}</Notice>}
       <ErrorBox error={discoverAct.error ?? selectAct.error} />
       {result && <Notice tone="success">{result}</Notice>}
@@ -169,6 +187,100 @@ function SourceCard({ wsId, source, assets, onChanged, onOpenAsset, activeAsset 
         </>
       )}
       <CrawlPanel wsId={wsId} source={source} refreshKey={crawlKey} onFinished={onChanged} />
+    </Card>
+  );
+}
+
+/**
+ * Rename a source or correct its connection: host, port, tables and other connection fields, and the
+ * secret reference. Only the fields actually changed are sent (the server rejects an edit with nothing
+ * to change). The kind is fixed here — a different kind is a different connector, so it needs a new
+ * source; move table selection over afterward.
+ */
+function EditSource({ wsId, source, onClose, onSaved }: { wsId: string; source: Source; onClose: () => void; onSaved: () => void }) {
+  const id = useId();
+  const kinds = useAsync(() => api.sourceKinds(), []);
+  const kind = kinds.data?.find((k) => k.kind === source.kind) ?? null;
+  const [name, setName] = useState(source.name);
+  const [values, setValues] = useState<Record<string, string> | null>(null);
+  const [secretRef, setSecretRef] = useState(source.secret_ref ?? "");
+  const [errors, setErrors] = useState<SourceFormErrors>({});
+  const act = useAction();
+
+  // Seed the form from the source's own config once the kind spec (which fields it has) is known.
+  if (kind && values === null) setValues(valuesFromConfig(kind, source.config));
+
+  const setValue = (f: string, v: string) => setValues((prev) => ({ ...prev, [f]: v }));
+  const err = (k: string) => errors[k] && <div className="field-error" role="alert">{errors[k]}</div>;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!kind || !values) return;
+    const errs = validateSourceForm(kind, name, values, kind.secret_field ? secretRef : "");
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+    const patch: SourceUpdatePatch = {};
+    if (name.trim() !== source.name) patch.name = name.trim();
+    const config = buildSourceConfig(kind, values);
+    if (!configEqual(config, source.config)) patch.config = config;
+    const ref = secretRef.trim();
+    if (kind.secret_field && ref !== (source.secret_ref ?? "")) {
+      if (ref) patch.secret_ref = ref;
+      else patch.clear_secret_ref = true;
+    }
+    if (Object.keys(patch).length === 0) {
+      setErrors({ name: "Nothing changed yet." });
+      return;
+    }
+    const ok = await act.run(() => api.updateSource(wsId, source.id, patch));
+    if (ok) onSaved();
+  };
+
+  const fieldInput = (f: string, required: boolean) => (
+    <Field key={f} label={`${fieldLabel(f)}${required ? " *" : ""}`} htmlFor={`${id}-${f}`} hint={fieldHint(f)}>
+      <input id={`${id}-${f}`} value={values?.[f] ?? ""} onChange={(e) => setValue(f, e.target.value)} aria-invalid={!!errors[f]}
+        aria-required={required || undefined} inputMode={NUMBER_FIELDS.has(f) ? "numeric" : undefined} autoComplete="off" spellCheck={false} />
+      {err(f)}
+    </Field>
+  );
+
+  return (
+    <Card title="Edit source" className="edit-source">
+      <ErrorBox error={kinds.error} onRetry={kinds.reload} />
+      {kinds.loading && !kind && <Loading label="Loading connection fields…" />}
+      {kind && values && (
+        <form className="form" onSubmit={submit} noValidate aria-label={`Edit ${source.name}`}>
+          <Notice tone="info">
+            Kind: {kind.label} · dialect <code>{kind.dialect}</code>. To connect with a different kind, add a new source instead.
+            {source.status !== "registered" && <> Changing the connection here marks it <strong>registered</strong> again until you discover it.</>}
+          </Notice>
+          <Field label="Name *" htmlFor={`${id}-name`}>
+            <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!errors.name} />
+            {err("name")}
+          </Field>
+          {kind.required.length > 0 && <div className="form-row">{kind.required.map((f) => fieldInput(f, true))}</div>}
+          {kind.optional.length > 0 && (
+            <details className="optional-fields">
+              <summary className="small">Optional settings ({kind.optional.length})</summary>
+              <div className="form-row">{kind.optional.map((f) => fieldInput(f, false))}</div>
+            </details>
+          )}
+          {kind.secret_field ? (
+            <Field label={`Secret reference (${kind.secret_field})`} htmlFor={`${id}-secret`}
+              hint={<>A reference, never the secret itself: <code>env:NAME</code> or <code>file:/path</code>. Clear it to remove the reference
+                (refused if this kind needs one).</>}>
+              <input id={`${id}-secret`} value={secretRef} onChange={(e) => setSecretRef(e.target.value)} placeholder="env:NAME"
+                autoComplete="off" spellCheck={false} aria-invalid={!!errors.secret_ref} />
+              {err("secret_ref")}
+            </Field>
+          ) : <p className="muted small">This kind needs no credential.</p>}
+          <ErrorBox error={act.error} />
+          <div className="form-actions">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={act.busy}>{act.busy ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
+      )}
     </Card>
   );
 }

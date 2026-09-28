@@ -15,6 +15,10 @@ Invariants (CLAUDE.md, crawler): a draft never overwrites a document the queue d
 or imported content): proposing is skipped and approving is refused. A catalog description is
 changed only while it is still a model or rule placeholder: reviewed, user and source-system text
 wins. A draft for a subject supersedes that subject's older pending drafts.
+
+Two kinds come from the glossary scan (knowledge/glossary_scan.py) and are applied outside the pack:
+an approved `glossary_term` becomes a trusted workspace glossary entry, an answered
+`description_question` becomes catalog text (a person's words: origin `user`).
 """
 from __future__ import annotations
 
@@ -41,8 +45,16 @@ KIND_SPEC: dict[str, tuple[str, str, str]] = {
     "negative": ("Negative Knowledge", "negative", "negative"),
     "attested_computation": (attested.TYPE, "findings", attested.KIND),
     "table_description": ("Table", "catalog", "table"),
+    "column_description": ("Column", "catalog/columns", "column"),
+    "domain_candidate": ("Note", "notes", "note"),
+    # Stream E (knowledge/glossary_scan.py): approval writes a glossary entry or catalog text, not a pack file.
+    "glossary_term": ("Glossary Term", "glossary", "term"),
+    "description_question": ("Note", "notes", "note"),
 }
-PRIMARY_FIELD = {"attested_computation": "statement", "table_description": "description"}
+PRIMARY_FIELD = {"attested_computation": "statement", "table_description": "description",
+                 "column_description": "description", "description_question": "question"}
+# Kinds whose approval is applied outside the pack (a glossary entry, catalog text): no pack document.
+APPLIED_KINDS = ("glossary_term", "description_question")
 STATUSES = ("pending", "approved", "rejected", "superseded")
 ACTIONS = ("approve", "edit", "reject")
 REVIEW_KEY = "review"  # `analystos.review` marks a document the queue wrote (and may replace)
@@ -70,7 +82,7 @@ def content_hash(kind: str, subject: str, title: str, fields: dict[str, Any]) ->
 
 def default_path(kind: str, title: str, subject: str) -> str:
     folder = KIND_SPEC[kind][1]
-    if kind in ("attested_computation", "table_description"):
+    if kind in ("attested_computation", "table_description", "column_description"):
         return f"{folder}/{slugify(subject.split(':', 1)[-1], 120)}.md"
     return f"{folder}/{slugify(title)}.md"
 
@@ -210,10 +222,18 @@ def render(row: KnowledgeSuggestion, fields: dict[str, Any], user_id: str, at: s
                           "generated": {"by": row.proposed_by}, "tags": sorted({doc_kind, "reviewed"})}
     if first_sentence(text):
         fm["description"] = first_sentence(text)
-    if row.kind == "table_description":
+    if row.kind in ("table_description", "column_description"):
         heading = "Description"
         if _value(fields, "business_name"):
             ext["business_name"] = str(_value(fields, "business_name"))
+    elif row.kind == "domain_candidate":
+        heading = "Proposed domain"
+        domain = str(_value(fields, "domain") or "")
+        ext["candidate_domain"] = domain
+        keyword = str(_value(fields, "keyword") or "")
+        ext["domain_keyword"] = keyword
+        text = (f"Reviewed domain: {domain}. Keyword: {keyword}.\n\nReason: {text.strip()}\n\n"
+                "The keyword is available to this workspace on its next full crawl.")
     else:
         heading = KIND_HEADINGS.get(doc_kind, "Note" if doc_kind == "note" else "Definition")
     return okf.render_document(fm, f"# {heading}\n\n{text.strip()}").encode()
@@ -223,9 +243,19 @@ def negative_path(row: KnowledgeSuggestion) -> str:
     return f"negative/{slugify(row.kind)}-{slugify(row.subject.split(':', 1)[-1] or row.title, 80)}-{row.content_hash[:8]}.md"
 
 
+def _writes_negative(row: KnowledgeSuggestion) -> bool:
+    """A rejection is negative knowledge when something was proposed: not for a negative draft, a skipped
+    description question, or a glossary skeleton nobody defined (there is no claim to reject)."""
+    if row.kind in ("negative", "description_question"):
+        return False
+    return not (row.kind == "glossary_term" and _value(row.fields or {}, "placeholder"))
+
+
 def render_negative(row: KnowledgeSuggestion, user_id: str, at: str, reason: str | None) -> bytes:
     """A rejection as knowledge: what was proposed, that a human rejected it, and why."""
     text = str(_value(row.fields or {}, primary_field(row.kind)) or "")
+    if row.kind == "domain_candidate":
+        text = f"domain {_value(row.fields or {}, 'domain')}: {text}"
     ext = {"kind": "negative", "origin": f"review:{row.origin}", "trusted": True,
            REVIEW_KEY: _review_block(row, row.fields or {}, user_id, "rejected"), "rejected_kind": row.kind}
     fm = {"type": "Negative Knowledge", "title": f"Rejected: {row.title}"[:300], "status": "stable", "analystos": ext,
@@ -246,10 +276,102 @@ def _asset(session: Session, row: KnowledgeSuggestion) -> SourceAsset | None:
     return a if a is not None and a.workspace_id == row.workspace_id else None
 
 
+def reviewed_domain_keywords(session: Session, workspace_id: str) -> dict[str, frozenset[str]]:
+    """Read current reviewed rules, not stale suggestions or model proposals, from this workspace's pack."""
+    from analystos.skills.catalog import domain_keywords
+
+    words: dict[str, set[str]] = {}
+    known = domain_keywords()
+    pack = store.workspace_pack(session, workspace_id, create=False)
+    if pack is None:
+        return {}
+    docs = session.scalars(select(KnowledgeDocument).where(KnowledgeDocument.pack_id == pack.id,
+                                                          KnowledgeDocument.workspace_id == workspace_id,
+                                                          KnowledgeDocument.kind == "note",
+                                                          KnowledgeDocument.status == "stable",
+                                                          KnowledgeDocument.trust_tier == "human-reviewed"))
+    for doc in docs:
+        ext = (doc.frontmatter or {}).get("analystos") or {}
+        review = ext.get(REVIEW_KEY) if isinstance(ext, dict) else None
+        if not isinstance(review, dict) or review.get("decision") != "approved":
+            continue
+        if not str(review.get("suggestion_id") or "").startswith("ksug_"):
+            continue
+        domain, keyword = ext.get("candidate_domain"), ext.get("domain_keyword")
+        if domain in known and isinstance(keyword, str) and keyword.isascii() and keyword.isalnum() \
+                and keyword.islower() and len(keyword) >= 3:
+            words.setdefault(domain, set()).add(keyword)
+    return {domain: frozenset(items) for domain, items in words.items()}
+
+
+def _domain_keyword_error(session: Session, row: KnowledgeSuggestion, fields: dict[str, Any]) -> str | None:
+    from analystos.db.models import SourceColumn
+    from analystos.services.crawler import safe_for_domain_assist
+    from analystos.skills.catalog import domain_keywords, split_tokens
+
+    domain = str(_value(fields, "domain") or "")
+    if domain not in domain_keywords() or domain == "generic":
+        return "unknown_domain"
+    keyword_field = fields.get("keyword") or {}
+    keyword = str(_value(fields, "keyword") or "").strip().lower()
+    if (not keyword or keyword_field.get("provenance", {}).get("source") != "human"
+            or len(keyword) < 3 or not keyword.isascii() or not keyword.isalnum()):
+        return "reviewed_keyword_required"
+    asset = _asset(session, row)
+    if asset is None:
+        return "asset_not_found"
+    tokens = set(split_tokens(asset.name))
+    tokens.update(t for col in session.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset.id))
+                  if safe_for_domain_assist(col) for t in split_tokens(col.name))
+    if keyword not in tokens:
+        return "keyword_not_in_safe_metadata"
+    if any(keyword in kws for dom, kws in domain_keywords().items() if dom != domain):
+        return "keyword_conflicts_with_domain"
+    if any(keyword in kws for dom, kws in reviewed_domain_keywords(session, row.workspace_id).items() if dom != domain):
+        return "keyword_conflicts_with_domain"
+    return None
+
+
+def _clear_draft(a: SourceAsset, row: KnowledgeSuggestion) -> None:
+    """The asset's pointer to a pending model draft goes when that draft is decided."""
+    draft = (a.semantics or {}).get("model_description_draft")
+    if isinstance(draft, dict) and draft.get("suggestion_id") == row.id:
+        a.semantics = {k: v for k, v in (a.semantics or {}).items() if k != "model_description_draft"}
+
+
+def _column(session: Session, row: KnowledgeSuggestion) -> Any:
+    from analystos.db.models import SourceColumn
+
+    ref = _subject_ref(row.subject)
+    if not ref or ref[0] != "column" or ":" not in ref[1]:
+        return None
+    asset_id, _, name = ref[1].partition(":")
+    a = session.get(SourceAsset, asset_id)
+    if a is None or a.workspace_id != row.workspace_id:
+        return None
+    return session.scalar(select(SourceColumn).where(SourceColumn.asset_id == asset_id, SourceColumn.name == name))
+
+
+def _apply_column_description(session: Session, row: KnowledgeSuggestion, fields: dict[str, Any]) -> str:
+    """An approved column draft becomes catalog text unless a person or the source already wrote one."""
+    c = _column(session, row)
+    if c is None:
+        return "column not found: pack only"
+    if c.description_origin in ("user", "source"):
+        return "catalog kept: owner or source description"
+    edited = ((fields.get("description") or {}).get("provenance") or {}).get("source") == "human"
+    c.description, c.description_origin = str(_value(fields, "description") or ""), "user" if edited else "model"
+    bn = _value(fields, "business_name")
+    if bn and c.business_name_origin in (None, "rule", "model"):
+        c.business_name, c.business_name_origin = str(bn)[:200], "model"
+    return "catalog updated"
+
+
 def _apply_description(session: Session, row: KnowledgeSuggestion, fields: dict[str, Any]) -> str:
     a = _asset(session, row)
     if a is None:
         return "asset not found: pack only"
+    _clear_draft(a, row)
     text = str(_value(fields, "description") or "")
     if (a.reviewed or a.description_origin in ("user", "source")) and _norm(a.description) != _norm(text):
         return "catalog kept: reviewed or owner description"
@@ -262,9 +384,11 @@ def _apply_description(session: Session, row: KnowledgeSuggestion, fields: dict[
 
 
 def _revert_description(session: Session, row: KnowledgeSuggestion) -> str:
+    """Model drafts are no longer applied before review; this restores text an older crawler version applied."""
     a = _asset(session, row)
     if a is None:
         return "asset not found"
+    _clear_draft(a, row)
     f = (row.fields or {}).get("description") or {}
     if a.reviewed or a.description_origin != "model" or _norm(a.description) != _norm(f.get("value")):
         return "catalog unchanged"
@@ -288,6 +412,7 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
     decided: list[tuple[KnowledgeSuggestion, str, str | None]] = []
     errors: list[dict[str, Any]] = []
     seen: set[str] = set()
+    batch_keywords: dict[str, str] = {}
     for d in decisions:
         sid, action = str(d.get("id") or ""), str(d.get("action") or "")
         row = session.get(KnowledgeSuggestion, sid)
@@ -302,7 +427,7 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
             continue
         seen.add(sid)
         if action == "reject":
-            if row.kind != "negative":  # rejecting a negative draft just drops it
+            if _writes_negative(row):  # rejecting a negative draft (or skipping a question) just drops it
                 files[negative_path(row)] = render_negative(row, user.id, at, d.get("reason"))
             decided.append((row, "rejected", _revert_description(session, row) if row.kind == "table_description" else None))
             row.reason = str(d["reason"])[:2000] if d.get("reason") else None
@@ -315,6 +440,32 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
         if not str(_value(fields, primary_field(row.kind)) or "").strip():
             errors.append({"id": sid, "error": "empty", "field": primary_field(row.kind)})
             continue
+        if row.kind == "domain_candidate":
+            problem = _domain_keyword_error(session, row, fields)
+            if not problem:
+                keyword = str(_value(fields, "keyword")).strip().lower()
+                domain = str(_value(fields, "domain"))
+                if batch_keywords.get(keyword, domain) != domain:
+                    problem = "keyword_conflicts_with_domain"
+                else:
+                    fields["keyword"] = {**fields["keyword"], "value": keyword}
+            if problem:
+                errors.append({"id": sid, "error": problem})
+                continue
+        if row.kind in APPLIED_KINDS:
+            from analystos.knowledge import glossary_scan
+
+            glossary = row.kind == "glossary_term"
+            problem = glossary_scan.term_error(fields) if glossary else glossary_scan.answer_error(fields)
+            if problem:
+                errors.append({"id": sid, "error": problem})
+                continue
+            note = (glossary_scan.apply_glossary_term if glossary else glossary_scan.apply_description_answer)(
+                session, row, fields, user)
+            if action == "edit":
+                row.fields = fields
+            decided.append((row, "approved", note))
+            continue
         if row.kind == "attested_computation" and attested.missing(_value(fields, "computation") or {}):
             errors.append({"id": sid, "error": "incomplete_computation", "missing": attested.missing(_value(fields, "computation") or {})})
             continue
@@ -322,7 +473,9 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
             errors.append({"id": sid, "error": "owner_content_exists", "path": row.path})
             continue
         files[row.path] = render(row, fields, user.id, at)
-        note = _apply_description(session, row, fields) if row.kind == "table_description" else None
+        if row.kind == "domain_candidate":
+            batch_keywords[str(_value(fields, "keyword"))] = str(_value(fields, "domain"))
+        note = _apply_description(session, row, fields) if row.kind == "table_description" else             _apply_column_description(session, row, fields) if row.kind == "column_description" else None
         if action == "edit":
             row.fields = fields
         decided.append((row, "approved", note))
@@ -338,7 +491,14 @@ def review(session: Session, workspace_id: str, user: Any, decisions: list[dict[
     out: dict[str, list[dict[str, Any]]] = {"approved": [], "rejected": []}
     for row, status, note in decided:
         row.status, row.decided_by, row.decided_at, row.revision = status, user.id, now, revision
-        path = row.path if status == "approved" else (negative_path(row) if row.kind != "negative" else None)
+        if status == "approved":
+            path = None if row.kind in APPLIED_KINDS else row.path
+        else:
+            path = negative_path(row) if negative_path(row) in files else None
+        if row.kind in ("table_description", "column_description"):
+            from analystos.knowledge.glossary_scan import close_questions_for
+
+            close_questions_for(session, workspace_id, row.subject, row.id)
         out[status].append({"id": row.id, "path": path,
                             **({"catalog": note} if note else {})})
         audit(f"user:{user.id}", f"knowledge.suggestion.{status}", workspace_id=workspace_id, target=row.id,

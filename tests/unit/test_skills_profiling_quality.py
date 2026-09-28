@@ -64,6 +64,20 @@ def test_profile_query_budget(profile):
     assert d["n_queries"] == profile.n_queries and d["columns"][0]["name"] == "sys_id"
 
 
+def test_sensitive_profiles_never_query_value_distributions(duck):
+    duck.calls.clear()
+    columns = [{**c, "sensitive": c["name"] in {"priority", "noise_value", "opened_at"}}
+               for c in INCIDENT_COLUMNS]
+    profile = profile_asset(duck, "itsm.incident", columns)
+    by_name = {c.name: c for c in profile.columns}
+    assert by_name["priority"].distinct > 0 and by_name["priority"].top_values == []
+    assert by_name["noise_value"].histogram == [] and by_name["noise_value"].percentiles == {}
+    assert by_name["opened_at"].monthly_counts == [] and by_name["opened_at"].min is None
+    assert not any(c["purpose"] == "profile.top_values.priority" for c in duck.calls)
+    assert not any(c["purpose"] == "profile.monthly.opened_at" for c in duck.calls)
+    assert "noise_value" not in next(c["sql"] for c in duck.calls if c["purpose"] == "profile.histograms")
+
+
 def test_histogram_rows_come_back_in_one_order(profile, duck):
     # A parallel engine (DuckDB) emits GROUP BY groups in any order; the recorded result hash must not
     # change between identical runs (DEX-001), so the statement orders its rows.
@@ -73,9 +87,23 @@ def test_histogram_rows_come_back_in_one_order(profile, duck):
 
 
 def test_candidate_keys_detect_duplicates(profile):
-    keys = {k["column"]: k for k in profile.candidate_keys}
-    assert keys["sys_id"]["unique"] is True
+    keys = {k["column"]: k for k in profile.candidate_keys if len(k["columns"]) == 1}
+    assert keys["sys_id"]["unique"] is True and keys["sys_id"]["columns"] == ["sys_id"]
     assert keys["number"]["unique"] is False and keys["number"]["duplicate_rows"] == 4
+    # two declared key columns are one composite key; a profile cannot count its tuples, so it is not "unique"
+    (composite,) = [k for k in profile.candidate_keys if len(k["columns"]) > 1]
+    assert composite["columns"] == ["sys_id", "number"] and composite["unique"] is None
+    assert composite["evidence"] == "declared" and not keys["number"]["declared"]
+
+
+def test_profile_enumerates_small_text_columns_and_blanks(duck):
+    prof = profile_asset(duck, "itsm.incident", INCIDENT_COLUMNS, sensitive={"company"})
+    c = {p.name: p for p in prof.columns}
+    assert c["priority"].values_complete and sorted(c["priority"].values) == sorted(
+        v["value"] for v in c["priority"].top_values) and len(c["priority"].values) == c["priority"].distinct
+    assert not c["company"].values_complete and c["company"].values == []  # sensitive: never enumerated
+    assert c["u_legacy_code"].has_blanks and c["resolved_at"].has_blanks and not c["sys_id"].has_blanks
+    assert c["noise_value"].values == [] and not c["noise_value"].values_complete  # numeric: no enumeration
 
 
 def test_quality_detects_planted_issues(duck, profile):

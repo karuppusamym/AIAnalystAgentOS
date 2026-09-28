@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  ApiError, api, errorMessage, streamAskTurn, type AskInspector, type AskPromotion, type AskStage, type AskThreadDetail, type AskTurn,
+  ApiError, api, errorMessage, streamAskTurn, type AskInspector, type AskMode, type AskPromotion, type AskStage, type AskThreadDetail, type AskTurn,
   type ChartHint, type Dict, type QueryResult, type SqlExplanation,
 } from "../api";
+import { AnalystAnswer } from "../components/AnalystAnswer";
 import { ChartView } from "../components/Chart";
 import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
@@ -16,6 +17,7 @@ import {
 import { guessChart } from "../lib/charts";
 import { fmtDate, fmtMs, fmtNumber, fmtUsd } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
+import { exampleSql, starterQuestions } from "../lib/starters";
 import { to } from "../routes";
 
 /** Reorder a result so the hinted x / y columns come first (chart builders read columns 0 and 1). */
@@ -293,10 +295,11 @@ function ScheduleAnswer({ turn }: { turn: AskTurn }) {
   </div>;
 }
 
-function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun }: {
+function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, onExplain, onRetry, onRecorded, onAsk, onRerun, onRerunStep,
+  onResynthesize }: {
   turn: AskTurn; selected: boolean; onSelect: () => void; busy: boolean; onParameters: (p: Dict) => void; onRephrase: () => void;
   onExplain: (sql: string) => void; onRetry: () => void; onRecorded: (p: AskPromotion) => void; onAsk: (q: string) => void;
-  onRerun: (sql?: string) => void;
+  onRerun: (sql?: string) => void; onRerunStep: (n: number, sql?: string) => void; onResynthesize: () => void;
 }) {
   const { wsId = "" } = useParams();
   const [editing, setEditing] = useState(false);
@@ -304,10 +307,12 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
   return (
     <article className={`ask-turn ${selected ? "ask-turn-selected" : ""}`} aria-label={`Question ${turn.seq}`}>
       <header className="ask-question">
-        <p><strong>{turn.question}</strong></p>
+        <p><strong>{turn.question}</strong>{turn.analysis && <span className="tag tag-info analyst-tag">step by step</span>}</p>
         <button type="button" className="btn btn-xs btn-ghost" aria-pressed={selected} onClick={onSelect}>Inspect</button>
       </header>
-      {turn.status === "answered" && turn.result ? (
+      {turn.status === "answered" && turn.analysis ? (
+        <AnalystAnswer turn={turn} busy={busy} onRerunStep={onRerunStep} onResynthesize={onResynthesize} onAsk={onAsk} />
+      ) : turn.status === "answered" && turn.result ? (
         <div className="stack">
           <Pills label="Provenance" pills={[...provenancePills(turn), stalenessPill(turn.staleness)]} />
           {turn.explanation && <p>{turn.explanation}</p>}
@@ -342,6 +347,12 @@ function TurnView({ turn, selected, onSelect, busy, onParameters, onRephrase, on
       ) : (
         <>
           <RefusalState turn={turn} ws={wsId} busy={busy} onParameters={onParameters} onRephrase={onRephrase} onExplain={onExplain} onRetry={onRetry} />
+          {typeof turn.refusal?.details?.assumption === "string" && (
+            <button type="button" className="btn btn-sm" disabled={busy}
+              onClick={() => onAsk(`${turn.question}\n\nProceed with this assumption: ${turn.refusal!.details!.assumption as string}`)}>
+              Go ahead assuming {turn.refusal.details.assumption as string}
+            </button>
+          )}
           <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
         </>
       )}
@@ -454,7 +465,7 @@ function Inspector({ turn }: { turn: AskTurn }) {
 // ------------------------------------------------------------------------------------ page
 export function AskPage() {
   const { wsId = "" } = useParams();
-  const assets = useAsync(() => api.listAssets(wsId), [wsId]);
+  const assets = useAsync(() => api.catalog(wsId), [wsId]);
   const [params, setParams] = useSearchParams();
   const threadId = params.get("thread");
   const [search, setSearch] = useState("");
@@ -476,15 +487,8 @@ export function AskPage() {
   const [running, setRunning] = useState(false);
   const [explain, setExplain] = useState<SqlExplanation | null>(null);
   const [explaining, setExplaining] = useState(false);
-  const incident = assets.data?.find((a) => a.selected && a.name.toLowerCase() === "incident");
-  const incidentColumns = new Set(incident?.columns.map((c) => c.name) ?? []);
-  const sqlExamples = incident ? [
-    { label: "Count incidents", sql: `SELECT COUNT(*) AS incident_count FROM ${incident.fq}` },
-    ...(incidentColumns.has("priority") ? [{ label: "Incidents by priority", sql: `SELECT priority, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY priority ORDER BY incident_count DESC` }] : []),
-    ...(incidentColumns.has("made_sla") ? [{ label: "SLA outcome", sql: `SELECT made_sla, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY made_sla ORDER BY incident_count DESC` }] : []),
-    ...(incidentColumns.has("assignment_group_name") ? [{ label: "Top assignment groups", sql: `SELECT assignment_group_name, COUNT(*) AS incident_count FROM ${incident.fq} GROUP BY assignment_group_name ORDER BY incident_count DESC LIMIT 10` }] : []),
-    ...(incidentColumns.has("reopen_count") ? [{ label: "Reopened incidents", sql: `SELECT COUNT(*) AS reopened_incidents FROM ${incident.fq} WHERE reopen_count > 0` }] : []),
-  ] : [];
+  const sqlExamples = exampleSql(assets.data ?? []);
+  const starters = starterQuestions(assets.data ?? []);
 
   useEffect(() => {
     let stale = false;
@@ -505,6 +509,26 @@ export function AskPage() {
   const selectedTurn = useMemo(() => thread?.turns.find((t) => t.id === selected) ?? null, [thread, selected]);
   const groups = useMemo(() => groupThreads(threads.data ?? []), [threads.data]);
 
+  const [mode, setMode] = useState<AskMode>(() => {
+    try {
+      return window.localStorage.getItem("analystos.ask.mode") === "analyst" ? "analyst" : "quick";
+    } catch {
+      return "quick";
+    }
+  });
+  const chooseMode = (m: AskMode) => {
+    setMode(m);
+    try { window.localStorage.setItem("analystos.ask.mode", m); } catch { /* remembered for this tab only */ }
+  };
+
+  const replaceTurn = (turn: AskTurn) =>
+    setThread((t) => (t ? { ...t, turns: t.turns.map((x) => (x.id === turn.id ? turn : x)) } : t));
+  const stepAction = async (fn: () => Promise<AskTurn>) => {
+    setAsking(true);
+    setAskErr(null);
+    try { replaceTurn(await fn()); } catch (err) { setAskErr(err); } finally { setAsking(false); }
+  };
+
   const ask = async (text: string, parameters?: Dict) => {
     const q = text.trim();
     if (!q) return;
@@ -519,7 +543,7 @@ export function AskPage() {
         setThread(current);
         setParams((prev) => { const n = new URLSearchParams(prev); n.set("thread", current!.id); return n; }, { replace: true });
       }
-      const turn = await streamAskTurn(current.id, q, parameters, { onStage: (s) => setLive((xs) => [...xs, s]) });
+      const turn = await streamAskTurn(current.id, q, parameters, { onStage: (s) => setLive((xs) => [...xs, s]) }, undefined, mode);
       setThread((t) => (t ? { ...t, title: t.turns.length ? t.title : q, turns: [...t.turns, turn] } : t));
       setSelected(turn.id);
       setQuestion("");
@@ -589,7 +613,7 @@ export function AskPage() {
     <div className="page">
       <PageHeader title="Ask" subtitle="Questions answered from governed data: verified answers first, generated SQL only through the same gateway as every investigation." />
       <div className="ask-layout">
-        <nav className="card ask-threads" aria-label="Threads">
+        <nav className="card ask-threads" aria-label="Threads" data-tour="ask-threads">
           <div className="card-body stack">
             <button type="button" className="btn btn-sm" onClick={() => openThread(null)}>New thread</button>
             <Field label="Search threads" htmlFor="ask-search">
@@ -624,7 +648,9 @@ export function AskPage() {
                 <TurnView key={t.id} turn={t} selected={t.id === selected} onSelect={() => setSelected(t.id)} busy={asking}
                   onParameters={(p) => void ask(t.question, p)} onRephrase={() => { setQuestion(t.question); questionRef.current?.focus(); }}
                   onExplain={explainSql} onRetry={() => void ask(t.question, t.parameters)} onRecorded={(p) => recordPromotion(t.id, p)} onAsk={(q) => void ask(q)}
-                  onRerun={(statement) => void rerun(t.id, statement)} />
+                  onRerun={(statement) => void rerun(t.id, statement)}
+                  onRerunStep={(n, statement) => void stepAction(() => api.rerunAskStep(t.id, n, statement))}
+                  onResynthesize={() => void stepAction(() => api.resynthesizeAsk(t.id))} />
               ))}
               {pending && (
                 <article className="ask-turn" aria-label="Question in progress" aria-busy="true">
@@ -632,13 +658,30 @@ export function AskPage() {
                   {live.length ? <Stages stages={live} live /> : <Loading label="Starting…" />}
                 </article>
               )}
-              <form className="form" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
+              {!thread?.turns.length && !pending && starters.length > 0 && (
+                <div className="starter-questions">
+                  <p className="small muted">Try asking — built from your tables, no model involved:</p>
+                  <div className="chip-row" aria-label="Suggested questions">
+                    {starters.map((q) => (
+                      <button key={q} type="button" className="btn btn-sm" disabled={asking} onClick={() => void ask(q)}>{q}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <form className="form" data-tour="ask-box" onSubmit={(e) => { e.preventDefault(); void ask(question); }}>
                 <Field label="Question" htmlFor="ask-q">
                   <textarea id="ask-q" ref={questionRef} rows={2} value={question} onChange={(e) => setQuestion(e.target.value)} required
-                    placeholder="How many P1 incidents were opened per month this year?"
+                    placeholder={starters[1] ?? starters[0] ?? "What would you like to know about your data?"}
                     onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit(); }} />
                 </Field>
-                <div className="form-actions">
+                <div className="form-actions ask-actions">
+                  <div className="seg" role="radiogroup" aria-label="How to answer">
+                    {(["quick", "analyst"] as const).map((m) => (
+                      <button key={m} type="button" role="radio" aria-checked={mode === m} className={`seg-btn ${mode === m ? "active" : ""}`}
+                        title={m === "quick" ? "One query, the fastest answer" : "Up to four steps: totals, breakdowns, trends and drivers, then a cited answer"}
+                        onClick={() => chooseMode(m)}>{m === "quick" ? "Quick answer" : "Step by step"}</button>
+                    ))}
+                  </div>
                   <button type="submit" className="btn btn-primary" disabled={asking || !question.trim()}>{asking ? "Thinking…" : "Ask"}</button>
                 </div>
               </form>
@@ -655,7 +698,7 @@ export function AskPage() {
             <form className="form" onSubmit={submitSql}>
               <Field label="SQL (read-only)" htmlFor="sql" hint="Paste SQL and Explain it first: the validator and the source's plan, nothing executed. Run uses the same gateway, scope and audit as the agents.">
                 <textarea id="sql" ref={consoleRef} className="mono" rows={6} value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} required
-                  placeholder="SELECT priority, COUNT(*) FROM src_xxx.incident GROUP BY 1 ORDER BY 2 DESC"
+                  placeholder={sqlExamples[1]?.sql ?? sqlExamples[0]?.sql ?? "SELECT … FROM schema.table"}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit(); }} />
               </Field>
               <div className="form-actions">
