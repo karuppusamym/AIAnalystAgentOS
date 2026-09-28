@@ -20,8 +20,9 @@ from analystos.api.deps import current_user, db
 from analystos.artifacts.registry import link, save_artifact
 from analystos.core.errors import Forbidden, InvalidInput, NotFound
 from analystos.core.ids import utcnow
-from analystos.db.models import Artifact, SourceAsset, SourceColumn, User
+from analystos.db.models import Artifact, Source, SourceAsset, SourceColumn, User
 from analystos.governance.policy import require_role
+from analystos.services.process_tables import DERIVED_SOURCE_NAME
 from analystos.services.process_tables import allowed_columns as _allowed_columns
 from analystos.services.process_tables import in_scope as _in_scope
 from analystos.services.process_tables import segment_values as _segment_values
@@ -64,6 +65,9 @@ def candidates(workspace_id: str, user: User = Depends(current_user), session: S
     from analystos.runtime.context import default_gateway
 
     scope, assets = _in_scope(session, user, workspace_id)
+    derived = set(session.scalars(select(Source.id).where(Source.workspace_id == workspace_id, Source.name == DERIVED_SOURCE_NAME,
+                                                          Source.kind == "csv")))
+    assets = [a for a in assets if a.source_id not in derived]  # the case / transition tables built from a log are not logs
     declared = pm.declared_event_logs()
     cols_by = {}
     for c in session.scalars(select(SourceColumn).where(SourceColumn.asset_id.in_([a.id for a in assets]))

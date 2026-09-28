@@ -267,6 +267,9 @@ def test_the_event_log_becomes_profiled_described_tables_of_the_workspace(api, w
                      json={"asset_id": process_tables["event_log"]["asset_id"], "case_column": "task_sys_id",
                            "activity_column": "activity", "timestamp_column": "activity_at",
                            "resource_column": "assignment_group"}).json()
+    # the derived tables are not offered as event logs themselves
+    offered = {c["name"] for c in api.get(f"/api/workspaces/{world['ws']}/process/candidates").json()["candidates"]}
+    assert "u_task_activity" in offered and not offered & {"u_task_activity_cases", "u_task_activity_transitions"}
     assert again["source_id"] == process_tables["source_id"] and [x["fq"] for x in again["tables"]] == [x["fq"] for x in process_tables["tables"]]
 
 
