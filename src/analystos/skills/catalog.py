@@ -716,12 +716,30 @@ def _after_today(v: Any, today: str | None = None) -> bool:
     return len(day) == 10 and day > (today or datetime.now(UTC).strftime("%Y-%m-%d"))
 
 
+_YES = {"yes", "y", "true", "t"}
+_NO = {"no", "n", "false", "f"}
+
+
+def yes_no_flag(profile: dict[str, Any] | None) -> str | None:
+    """A text column whose complete values are one yes and one no word ("Yes"/"No", "Y"/"N") is a flag; returns the
+    value that means yes, else None."""
+    p = profile or {}
+    values = [str(v) for v in p.get("values") or []] if p.get("values_complete") else []
+    if len(values) != 2:
+        return None
+    yes = [v for v in values if v.strip().lower() in _YES]
+    no = [v for v in values if v.strip().lower() in _NO]
+    return yes[0] if len(yes) == 1 and len(no) == 1 else None
+
+
 def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = None, references: str | None = None,
-                    sensitive: bool = False, entity: str = "record", today: str | None = None) -> str:
+                    sensitive: bool = False, entity: str = "record", today: str | None = None,
+                    values_allowed: bool = True) -> str:
     """One plain sentence: what the column means (rule role, unit, reference) and what the profile measured
     (always present or missing in N% of rows, unique per row or nearly unique with repeats counted, N distinct
     values or the complete short list of values, numeric/date range with future dates called out, share true).
-    Values and ranges are never stated for a sensitive column."""
+    Values and ranges are never stated for a sensitive column; the list of values only with `values_allowed` (the
+    text reaches prompts and knowledge documents, so it follows the workspace's data-samples policy)."""
     role = str(sem.get("semantic_role") or "unknown")
     unit = sem.get("unit")
     if role == "foreign_key":
@@ -755,7 +773,7 @@ def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = Non
                 repeats = non_null - distinct
                 facts.append(f"nearly unique: {repeats:,} value{'s' if repeats != 1 else ''} repeat{'' if repeats != 1 else 's'} "
                              f"(check for duplicates)")
-            elif not sensitive and p.get("values_complete") and p.get("values") \
+            elif not sensitive and values_allowed and p.get("values_complete") and p.get("values") \
                     and len(p["values"]) <= ENUM_IN_DESCRIPTION:
                 facts.append("one of " + ", ".join(str(v) for v in p["values"]))
             else:
@@ -771,6 +789,11 @@ def describe_column(sem: dict[str, Any], *, profile: dict[str, Any] | None = Non
                 facts.append(f"from {_num_text(lo)} to {_num_text(hi)}" if lo != hi else f"always {_num_text(lo)}")
             if role == "flag" and isinstance(p.get("true_count"), int) and non_null:
                 facts.append(f"true in {_pct(p['true_count'] / non_null)} of non-empty rows")
+            elif role == "flag" and sem.get("flag_true") and p.get("top_values"):
+                yes = next((t.get("count") for t in p["top_values"] if isinstance(t, dict)
+                            and str(t.get("value")) == str(sem["flag_true"])), None)
+                if isinstance(yes, int) and non_null:
+                    facts.append(f"yes in {_pct(yes / non_null)} of non-empty rows")
     return meaning + ("; " + "; ".join(facts) if facts else "") + "."
 
 

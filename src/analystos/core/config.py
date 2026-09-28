@@ -23,6 +23,30 @@ def _installed(module: str) -> bool:
         return False
 
 
+_LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
+_COMPOSE_SERVICES = {"redis_url": "redis", "superset_url": "superset", "servicenow_mock_url": "servicenow-mock",
+                     "temporal_address": "temporal"}
+
+
+def _to_service(url: str, service: str) -> str:
+    """`redis://localhost:6379/0` -> `redis://redis:6379/0` (also `localhost:7233`); any other host is kept."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    if "://" not in url:
+        host, _, port = url.rpartition(":")
+        return f"{service}:{port}" if host in _LOOPBACK else url
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:  # not a URL we can read: leave it for the component that uses it to report
+        return url
+    if parts.hostname not in _LOOPBACK:
+        return url
+    netloc = parts.netloc.rsplit("@", 1)
+    hostport = service + (f":{port}" if port else "")
+    return urlunsplit(parts._replace(netloc=(netloc[0] + "@" + hostport) if len(netloc) == 2 else hostport))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ANALYSTOS_", env_file=".env", extra="ignore")
 
@@ -219,6 +243,26 @@ class Settings(BaseSettings):
     mcp_private_hosts: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     http_tool_timeout_seconds: float = 30.0
     http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
+
+    # Set by compose.yaml: this process runs in a compose container, where `localhost` is the container itself.
+    in_container: bool = False
+
+    @model_validator(mode="after")
+    def _container_hosts(self) -> Settings:
+        """A `.env` written for running on the host (`redis://localhost:6379`) is also read by compose, and inside a
+        container its loopback URLs reach nothing: Redis looked down (billable model calls paused, fail closed) and
+        Superset unreachable. In a compose container a loopback host names the compose service that provides it."""
+        for field in ("redis_url", "superset_url", "superset_public_url", "servicenow_mock_url", "web_url"):
+            value = getattr(self, field, None)
+            if isinstance(value, str) and len(value.split()) > 1:  # "http://host:8088   (a note)": a URL has no spaces
+                setattr(self, field, value.split()[0])
+        if not self.in_container:
+            return self
+        for field, service in _COMPOSE_SERVICES.items():
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, _to_service(value, service))
+        return self
 
     @model_validator(mode="after")
     def _profile_defaults(self) -> Settings:

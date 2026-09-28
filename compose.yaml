@@ -23,6 +23,9 @@ name: analystos
 x-app-env: &app-env
   # Profile defaults (core/config.py): lite = local orchestrator, no Redis, no Superset.
   ANALYSTOS_PROFILE: ${ANALYSTOS_PROFILE:-lite}
+  # A host `.env` (redis://localhost:6379) is read here too; in a container localhost is the container itself, so
+  # loopback service URLs are mapped to the compose services (core/config.py `_container_hosts`).
+  ANALYSTOS_IN_CONTAINER: "true"
   ANALYSTOS_ORCHESTRATOR: ${ANALYSTOS_ORCHESTRATOR:-local}
   ANALYSTOS_REDIS_URL: ${ANALYSTOS_REDIS_URL:-}
   ANALYSTOS_SUPERSET_URL: ${ANALYSTOS_SUPERSET_URL:-}

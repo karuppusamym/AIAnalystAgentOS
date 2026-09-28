@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -165,6 +167,10 @@ def load_packs(packs_dir: Path | None = None, *, entry_points: bool = True) -> l
 _lock = threading.Lock()
 _installed: list[DomainPack] | None = None
 _hints: Hints | None = None
+# The packs `hints()` merges inside `only(...)`: a workspace's applicable packs, so one domain's keys, entities and
+# event words (a vendor surrogate key, a ticket entity) do not shape another workspace's catalog, joins or questions.
+_ACTIVE: ContextVar[tuple[str, ...] | None] = ContextVar("aos_active_domain_packs", default=None)
+_scoped: dict[tuple[str, ...], Hints] = {}
 
 
 def installed() -> list[DomainPack]:
@@ -180,6 +186,7 @@ def reset() -> None:
     global _installed, _hints
     with _lock:
         _installed, _hints = None, None
+        _scoped.clear()
 
 
 def merge_hints(packs: Iterable[DomainPack]) -> Hints:
@@ -208,12 +215,47 @@ def merge_hints(packs: Iterable[DomainPack]) -> Hints:
 
 
 def hints() -> Hints:
+    """Hints of the installed packs, or only of the packs `only(...)` names for the current work."""
     global _hints
     packs = installed()
+    active = _ACTIVE.get()
     with _lock:
+        if active is not None:
+            if active not in _scoped:
+                _scoped[active] = merge_hints([p for p in packs if p.id in active])
+            return _scoped[active]
         if _hints is None:
             _hints = merge_hints(packs)
         return _hints
+
+
+@contextmanager
+def only(packs: Iterable[DomainPack] | None) -> Iterator[None]:
+    """Within the block, `hints()` merges only `packs` (None: every installed pack, as outside a block)."""
+    token = _ACTIVE.set(None if packs is None else tuple(sorted(p.id for p in packs)))
+    try:
+        yield
+    finally:
+        _ACTIVE.reset(token)
+
+
+def for_workspace(session: Any, workspace_id: str) -> list[DomainPack] | None:
+    """The packs that fit a workspace: its policy's `domain_packs` when set, else those whose `applies_when` match its
+    selected tables and columns (possibly none). None when nothing is selected yet: the domain is not known."""
+    from sqlalchemy import select
+
+    from analystos.db.models import SourceAsset, SourceColumn
+    from analystos.governance.policy import get_workspace, load_policy
+
+    explicit = getattr(load_policy(session, get_workspace(session, workspace_id)), "domain_packs", None)
+    if explicit is not None:
+        return enabled_for([], [], explicit)
+    assets = list(session.execute(select(SourceAsset.id, SourceAsset.name).where(
+        SourceAsset.workspace_id == workspace_id, SourceAsset.selected.is_(True), SourceAsset.lifecycle == "active")))
+    if not assets:
+        return None
+    columns = [c for (c,) in session.execute(select(SourceColumn.name).where(SourceColumn.asset_id.in_([a.id for a in assets])))]
+    return enabled_for([a.name for a in assets], columns)
 
 
 # ------------------------------------------------------------------------------------ enablement

@@ -465,7 +465,8 @@ def compile_context(purpose: str, profile: PurposeProfile, *, objective: str, re
     minimal: list[dict[str, Any]] = []
     full: list[dict[str, Any]] = []
     for t, cols in tables:
-        head = {k: t[k] for k in ("asset", "business_name", "role", "row_count") if t.get(k) is not None}
+        # the key and the validated joins are how a model writes a correct join: small, so always sent
+        head = {k: t[k] for k in ("asset", "business_name", "role", "row_count", "key", "joins") if t.get(k)}
         more = {k: t[k] for k in ("description", "grain") if t.get(k)}
         minimal.append({**head, "columns": [_render_column(c, "names") for c in cols]})
         full.append({**head, **more, "columns": [_render_column(c, profile.catalog_detail) for c in cols]})
@@ -576,8 +577,14 @@ def _select_tables(catalog: list[dict[str, Any]], query: set[str], focus: set[st
     if profile.referenced_only and ranked:
         hits = [r for r in ranked if r[3] > 0]
         if hits:
+            # a table a referenced one joins to comes along ("revenue by customer segment" names orders only; the
+            # segment lives on customers): one hop along validated joins, nothing further
+            named = {r[1].get("asset") for r in hits}
+            linked = {str(j.get("references") or "").rsplit(".", 1)[0] for r in hits for j in r[1].get("joins") or []
+                      if isinstance(j, dict)}
+            hits += [r for r in ranked if r[3] <= 0 and r[1].get("asset") in linked - named]
             for r in ranked:
-                if r[3] <= 0:
+                if r[3] <= 0 and r[1].get("asset") not in linked:
                     omitted.append({"section": "catalog", "asset": r[1].get("asset"), "reason": "not referenced"})
             ranked = hits
         else:

@@ -93,7 +93,22 @@ def governance_review(ctx: RunContext, bundle: PublishBundle) -> dict:
 
 def request_publication(ctx: RunContext) -> dict:
     destination = choose_destination(ctx)
-    bundle = build_bundle(ctx, destination)
+    try:
+        bundle = build_bundle(ctx, destination)
+    except PolicyDenied as exc:
+        unapproved = (exc.details or {}).get("unapproved_metrics")
+        if not unapproved:
+            raise
+        # The analysis stands (findings verified, report and thread available); only publication waits for a person
+        # to approve the KPIs. Nothing is published: no approval is requested, so the publish step is skipped.
+        ctx.say(f"Not published: {len(unapproved)} KPI(s) are not approved yet ({', '.join(unapproved)}). An approver "
+                "approves them in the approvals inbox (semantic metrics), then the analysis is re-run to publish.",
+                kind="decision")
+        with session_scope() as s:
+            run = s.get(AnalysisRun, ctx.run.id)
+            run.summary = {**(run.summary or {}), "publication_blocked": {
+                "reason": "unapproved_metrics", "metrics": list(unapproved), "remedy": (exc.details or {}).get("remedy")}}
+        return {"approval_id": None, "blocked": "unapproved_metrics", "metrics": list(unapproved)}
     review = governance_review(ctx, bundle)
     if not review["ok"]:
         ctx.say("Governance blocked publication: " + "; ".join(review["problems"][:5]), kind="decision")

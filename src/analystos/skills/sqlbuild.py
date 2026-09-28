@@ -544,15 +544,29 @@ def median(e: exp.Expression) -> exp.Expression:
 AGGREGATES = ("count", "sum", "avg", "median")
 
 
+def _qualified(e: exp.Expression, table_alias: str) -> exp.Expression:
+    return e.transform(lambda n: exp.Column(this=n.this, table=ident(table_alias))
+                       if isinstance(n, exp.Column) and not n.table else n)
+
+
 def aggregate_query(asset: str, dialect: str, *, dimensions: list[tuple[str, Derivation]],
                     measure: tuple[str, str, Derivation | None], order: str = "dimensions",
-                    limit: int | None = None) -> str:
+                    limit: int | None = None, joins: list[tuple[str, str, str, str]] | None = None,
+                    dimension_tables: dict[str, str] | None = None) -> str:
     """One grouped aggregate over one table, for Ask's rules rung: ``SELECT <dims>, <AGG>(<measure>)
     FROM <asset> GROUP BY <dims>``, ordered by the dimensions (a series reads in time order) or by
     the measure descending then the dimensions (`order="measure_desc"`, a ranking; ties are broken
     by the dimensions so `limit` is deterministic). `measure` is (alias, aggregate, derivation);
-    COUNT(*) takes no derivation. Identifiers are quoted and every expression is a sqlglot node."""
+    COUNT(*) takes no derivation. Identifiers are quoted and every expression is a sqlglot node.
+
+    `joins` adds ``LEFT JOIN <target> <alias> ON t.<from> = <alias>.<to>`` per (alias, target, from, to): the caller
+    passes only many-to-one joins to a unique key, so rows are neither multiplied nor dropped and the aggregate
+    still counts the base table. `dimension_tables` names the join alias a dimension is read from (default the base
+    table, aliased `t` when there are joins)."""
     dialect = _check_dialect(dialect)
+    if joins:
+        return _joined_aggregate(asset, dialect, dimensions=dimensions, measure=measure, order=order, limit=limit,
+                                 joins=joins, dimension_tables=dimension_tables or {})
     alias, agg, d = measure
     if agg not in AGGREGATES:
         raise InvalidInput(f"unsupported aggregate {agg!r}; expected one of {AGGREGATES}")
@@ -570,6 +584,48 @@ def aggregate_query(asset: str, dialect: str, *, dimensions: list[tuple[str, Der
             m = (exp.Sum if agg == "sum" else exp.Avg)(this=value)
     cols = [(a, derive(dd, dialect)) for a, dd in dimensions]
     q = exp.select(*[e.as_(ident(a)) for a, e in cols], m.as_(ident(alias))).from_(table(asset))
+    if cols:
+        q = q.group_by(*[e.copy() for _, e in cols])
+    dims_order = [exp.Ordered(this=col(a), nulls_first=dialect == "tsql") for a, _ in cols]
+    if order == "measure_desc":
+        q = q.order_by(exp.Ordered(this=col(alias), desc=True), *dims_order)
+    elif dims_order:
+        q = q.order_by(*dims_order)
+    if limit is not None:
+        q = q.limit(int(limit))
+    return q.sql(dialect=dialect)
+
+
+BASE_ALIAS = "t"
+
+
+def _joined_aggregate(asset: str, dialect: str, *, dimensions: list[tuple[str, Derivation]],
+                      measure: tuple[str, str, Derivation | None], order: str, limit: int | None,
+                      joins: list[tuple[str, str, str, str]], dimension_tables: dict[str, str]) -> str:
+    alias, agg, d = measure
+    if agg not in AGGREGATES:
+        raise InvalidInput(f"unsupported aggregate {agg!r}; expected one of {AGGREGATES}")
+    aliases = {BASE_ALIAS} | {j[0] for j in joins}
+    if len(aliases) != len(joins) + 1 or any(v not in aliases for v in dimension_tables.values()):
+        raise InvalidInput("join aliases must be distinct and name the tables the dimensions come from")
+    if agg == "count":
+        m: exp.Expression = count_star()
+    else:
+        if d is None:
+            raise InvalidInput(f"{agg} needs a column")
+        value = _qualified(derive(d, dialect), BASE_ALIAS)
+        if agg == "median":
+            if dialect == "tsql":
+                raise InvalidInput("median is a window function on tsql; not supported in a grouped aggregate")
+            m = percentile_cont(value, 0.5, dialect)
+        else:
+            m = (exp.Sum if agg == "sum" else exp.Avg)(this=value)
+    cols = [(a, _qualified(derive(dd, dialect), dimension_tables.get(a, BASE_ALIAS))) for a, dd in dimensions]
+    q = exp.select(*[e.as_(ident(a)) for a, e in cols], m.as_(ident(alias))).from_(table(asset, BASE_ALIAS))
+    for j_alias, target, from_col, to_col in joins:
+        on = exp.EQ(this=exp.Column(this=ident(from_col), table=ident(BASE_ALIAS)),
+                    expression=exp.Column(this=ident(to_col), table=ident(j_alias)))
+        q = q.join(table(target, j_alias), on=on, join_type="left")
     if cols:
         q = q.group_by(*[e.copy() for _, e in cols])
     dims_order = [exp.Ordered(this=col(a), nulls_first=dialect == "tsql") for a, _ in cols]

@@ -237,21 +237,52 @@ def candidate_metrics(tables: list[dict[str, Any]], cols: dict[str, list[SourceC
         for m in t["measures"]:
             sem = by_name[m].semantics or {}
             role, unit = sem.get("semantic_role"), sem.get("unit")
-            agg = "AVG" if role in ("percent", "duration") else "SUM"
+            per_unit = _is_per_unit(m)
+            agg = "AVG" if role in ("percent", "duration") or per_unit else "SUM"
             label = (sem.get("business_name") or by_name[m].business_name or m).strip()
-            why = f"{role} column" + (f" in {unit}" if unit else "") + (" (averaged: a rate or duration does not add up)"
-                                                                          if agg == "AVG" else " (additive)")
+            why = f"{role} column" + (f" in {unit}" if unit else "") + (
+                " (averaged: a price per unit does not add up)" if per_unit else
+                " (averaged: a rate or duration does not add up)" if agg == "AVG" else " (additive)")
             out.append({"name": _ident(f"{agg.lower()}_{m}"), "label": f"{'Average' if agg == 'AVG' else 'Total'} {label}",
                         "expression": f"{agg}({m})", "table_fq": t["fq"], "reason": why})
-        # a yes/no flag of the record (`is_late`, `active`) is read as a rate: the share of records where it holds
+        # quantity x price per unit is the record's value (revenue, cost): the one product worth adding up
+        qty = [m for m in t["measures"] if _tokens(m) & _QUANTITY_TOKENS]
+        price = [m for m in t["measures"] if _is_per_unit(m) and (by_name[m].semantics or {}).get("semantic_role") == "amount"]
+        if len(qty) == 1 and len(price) == 1:
+            out.append({"name": _ident(f"total_{qty[0]}_x_{price[0]}"), "label": "Total value (quantity x unit price)",
+                        "expression": f"SUM({qty[0]} * {price[0]})", "table_fq": t["fq"],
+                        "reason": f"{qty[0]} times {price[0]} per record, added up (revenue or cost)"})
+        # a yes/no flag of the record (`is_late`, `active`, "Returned": Yes/No) is read as a rate: the share of
+        # records where it holds
         for c in cols.get(t["asset_id"], []):
-            if normalize_type(c.data_type) != "boolean" or c.is_key or column_is_sensitive(c.tags, c.semantics):
+            sem = c.semantics or {}
+            if c.is_key or column_is_sensitive(c.tags, c.semantics):
+                continue
+            if normalize_type(c.data_type) == "boolean":
+                test = c.name
+            elif sem.get("semantic_role") == "flag" and sem.get("flag_true"):
+                test = f"{c.name} = '{str(sem['flag_true']).replace(chr(39), chr(39) * 2)}'"
+            else:
                 continue
             label = (c.business_name or c.name.replace("_", " ")).strip()
             out.append({"name": _ident(f"share_{c.name}"), "label": f"Share of {entity} records: {label}",
-                        "expression": f"AVG(CASE WHEN {c.name} THEN 1.0 ELSE 0.0 END)", "format": "percent",
+                        "expression": f"AVG(CASE WHEN {test} THEN 1.0 ELSE 0.0 END)", "format": "percent",
                         "table_fq": t["fq"], "reason": "yes/no flag of the record (a rate between 0 and 1)"})
     return out
+
+
+_PER_UNIT_TOKENS = {"price", "rate", "fee", "tariff"}
+_QUANTITY_TOKENS = {"quantity", "qty", "units", "volume"}
+
+
+def _tokens(name: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", name.lower()) if t}
+
+
+def _is_per_unit(name: str) -> bool:
+    """`unit_price`, `list_price`, `hourly_rate`: an amount per unit, averaged rather than summed."""
+    tokens = _tokens(name)
+    return bool(tokens & _PER_UNIT_TOKENS) or ("unit" in tokens and "cost" in tokens)
 
 
 def suggest(session: Session, workspace_id: str) -> dict[str, Any]:
