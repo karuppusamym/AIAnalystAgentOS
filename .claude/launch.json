@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev", "--", "--port", "5179", "--strictPort"],
+      "port": 5179
+    },
+    {
+      "name": "web-live-v",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev", "--", "--port", "5181", "--strictPort"],
+      "env": { "ANALYSTOS_API_URL": "http://localhost:8013" },
+      "port": 5181
+    }
+  ]
+}
