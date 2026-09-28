@@ -205,7 +205,9 @@ def test_demo_seed_builds_the_process_mining_workspace_through_the_api(api, worl
         return user
 
     admin, analyst = as_user("admin@analystos.local"), as_user("analyst@analystos.local")
-    wid = seed.ensure_process_workspace(admin, analyst, servicenow_url)
+    approver = as_user("approver@analystos.local")
+    # the investigation on the process tables has its own test (test_an_investigation_runs_on_the_process_tables)
+    wid = seed.ensure_process_workspace(admin, analyst, approver, servicenow_url, timeout=60, investigate=False)
     saved = analyst.get(f"/api/workspaces/{wid}/process/analyses")
     wanted = seed.process_demo()["process"]["analyses"]
     assert sorted(a["name"] for a in saved) == sorted(a["name"] for a in wanted)
@@ -213,6 +215,9 @@ def test_demo_seed_builds_the_process_mining_workspace_through_the_api(api, worl
     assert by_segment["change_request"]["summary"]["fitness"] < 1.0
     outputs = analyst.get(f"/api/workspaces/{wid}/artifacts", params={"type": "process_analysis"})
     assert len(outputs) == len(wanted)
+    tables = next(s for s in analyst.get(f"/api/workspaces/{wid}/sources") if s["name"] == "Process mining tables")
+    names = {a["name"] for a in analyst.get(f"/api/workspaces/{wid}/catalog") if a["source_id"] == tables["id"] and a["selected"]}
+    assert names == {"u_task_activity_cases", "u_task_activity_transitions"}
 
     writes: list[str] = []
     for u in (admin, analyst):
@@ -224,7 +229,7 @@ def test_demo_seed_builds_the_process_mining_workspace_through_the_api(api, worl
             return _original(method, path, body, **kw)
 
         u.call = spy  # type: ignore[method-assign]
-    assert seed.ensure_process_workspace(admin, analyst, servicenow_url) == wid
+    assert seed.ensure_process_workspace(admin, analyst, approver, servicenow_url, timeout=60, investigate=False) == wid
     assert writes == []
 
 
