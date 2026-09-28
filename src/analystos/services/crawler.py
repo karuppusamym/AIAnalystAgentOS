@@ -321,7 +321,20 @@ def run_crawl(crawl_id: str, user_id: str) -> dict[str, Any]:
         log.exception("crawl %s failed", crawl_id)
         _fail(crawl_id, f"{type(exc).__name__}: {exc}")
         raise
+    _refresh_brief(run.workspace_id)
     return stats
+
+
+def _refresh_brief(workspace_id: str) -> None:
+    """The brief's suggestions (grain, entity, keys, event time) follow the catalog this crawl just measured; a
+    person's decisions are kept (services/brief.refresh). Best effort: a crawl never fails on it."""
+    from analystos.services import brief
+
+    try:
+        with session_scope() as s:
+            brief.refresh(s, None, workspace_id)
+    except Exception:  # noqa: BLE001
+        log.warning("brief refresh after the crawl failed for %s", workspace_id, exc_info=True)
 
 
 def run_quietly(crawl_id: str, user_id: str) -> None:

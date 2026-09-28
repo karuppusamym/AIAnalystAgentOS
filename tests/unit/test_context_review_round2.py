@@ -51,3 +51,6 @@ def test_catalog_documents_are_titled_by_business_name():
                                        "business_name": "Configuration Item"}, [{"name": "name"}],
                                       source_id="src_1", source_name="ServiceNow")
     assert "title: Configuration Item (cmdb_ci)" in docs[crawl_docs.table_path("src_src_1.cmdb_ci")]
+    same = crawl_docs.table_documents({"schema_name": "s", "name": "orders", "id": "a2", "business_name": "Orders"},
+                                      [{"name": "id"}], source_id="src_1", source_name="Shop")
+    assert "title: Orders\n" in same[crawl_docs.table_path("s.orders")]

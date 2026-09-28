@@ -190,3 +190,13 @@ def test_memory_items_outside_the_callers_scope_are_withheld():
 def test_assertions_refuse_fields_outside_their_group():
     with pytest.raises(ValueError):
         Assertion(key="x", group="constraints", field="pii_access", value="allowed", origin="model")
+
+
+def test_a_suggestion_the_catalog_no_longer_supports_is_withdrawn(world):  # noqa: F811
+    assert "time_measures.event_time:sales.orders" in _by_key(_refresh(world["analyst"]))
+    with session_scope() as s:
+        a = s.scalars(select(SourceAsset).where(SourceAsset.name == "orders")).one()
+        a.semantics = {**(a.semantics or {}), "role": "dimension"}  # a dimension's timestamps are edit times
+    out = _refresh(world["analyst"])
+    assert "time_measures.event_time:sales.orders" in out["withdrawn"]
+    assert "time_measures.event_time:sales.orders" not in _by_key(out)

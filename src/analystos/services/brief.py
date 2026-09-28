@@ -318,7 +318,14 @@ def refresh(session: Session, user: User | None, workspace_id: str) -> dict[str,
     current = head(session, workspace_id)
     items = {a.key: a for a in assertions_of(current)}
     added, updated = [], []
-    for s in validate(session, workspace_id, derive(session, workspace_id)):
+    fresh = validate(session, workspace_id, derive(session, workspace_id))
+    # a system suggestion nobody decided on that the catalog no longer supports (a table became a dimension, a
+    # table left the selection) is withdrawn, not left as an open question
+    withdrawn = [k for k, a in items.items() if a.updated_by == "system:brief" and a.review_state == "suggested"
+                 and a.origin != "user" and k not in {s.key for s in fresh}]
+    for k in withdrawn:
+        items.pop(k)
+    for s in fresh:
         old = items.get(s.key)
         if old is None:
             items[s.key] = s
@@ -329,8 +336,9 @@ def refresh(session: Session, user: User | None, workspace_id: str) -> dict[str,
             items[s.key] = s.model_copy(update={"version": old.version + 1})
             updated.append(s.key)
     row, wrote = _write(session, workspace_id, list(items.values()), actor=f"user:{user.id}" if user else "system:brief",
-                        reason=f"suggestions refreshed: {len(added)} added, {len(updated)} updated", current=current)
-    return {**doc(row, workspace_id), "added": added, "updated": updated, "new_version": wrote}
+                        reason=f"suggestions refreshed: {len(added)} added, {len(updated)} updated, {len(withdrawn)} withdrawn",
+                        current=current)
+    return {**doc(row, workspace_id), "added": added, "updated": updated, "withdrawn": withdrawn, "new_version": wrote}
 
 
 def _state(a: Assertion) -> str:

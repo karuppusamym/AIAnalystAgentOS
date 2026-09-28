@@ -79,7 +79,7 @@ def table_documents(asset: Mapping[str, Any], columns: list[Mapping[str, Any]], 
         ext["synonyms"] = [str(asset["business_name"])]
     bn = str(asset.get("business_name") or "")
     # a reader (and retrieval) looks for "Orders", not `src_src_1.orders`; the resource keeps the qualified name
-    title = f"{bn} ({asset['name']})" if bn and bn.lower() != str(asset["name"]).lower() else fq
+    title = (f"{bn} ({asset['name']})" if bn.lower() != str(asset["name"]).lower() else bn) if bn else fq
     fm: dict[str, Any] = {"type": "Table", "title": title, "status": "deprecated" if asset.get("lifecycle") == "deprecated"
                           else ("stable" if reviewed else "draft"),
                           "tags": sorted(_tag(t) for t in tags), "generated": {"by": CRAWLER_ACTOR},
