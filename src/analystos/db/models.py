@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -30,6 +29,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from analystos.db.base import Base
+from analystos.db.vectors import Embedding, uses_pgvector
 
 EMBEDDING_DIM = 256
 # Knowledge-index vectors (P4-K10): the column is created at this dimension; `analystos knowledge
@@ -221,7 +221,7 @@ class ContextEntry(Base):
     mapped_columns: Mapped[list[str]] = mapped_column(JSON, default=list)  # "schema.table.column"
     origin: Mapped[str] = mapped_column(String(30), default="user")  # user | context2ai | agent
     trusted: Mapped[bool] = mapped_column(Boolean, default=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Embedding(EMBEDDING_DIM), nullable=True)
     created_at: Mapped[datetime] = _ts()
 
 
@@ -314,8 +314,9 @@ class KnowledgeSection(Base):
     __table_args__ = (
         UniqueConstraint("document_id", "anchor"),
         Index("ix_knowledge_section_tsv", "tsv", postgresql_using="gin"),
+        # The HNSW index exists only with pgvector; the `array` backend ranks in-process (db/vectors.py).
         Index("ix_knowledge_section_embedding_hnsw", "embedding", postgresql_using="hnsw",
-              postgresql_ops={"embedding": "vector_cosine_ops"}),
+              postgresql_ops={"embedding": "vector_cosine_ops"}).ddl_if(callable_=lambda *_a, **_k: uses_pgvector()),
     )
     id: Mapped[str] = mapped_column(String(40), primary_key=True)  # deterministic: document + anchor
     document_id: Mapped[str] = mapped_column(ForeignKey("knowledge_document.id", ondelete="CASCADE"), index=True)
@@ -328,7 +329,7 @@ class KnowledgeSection(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     search_text: Mapped[str] = mapped_column(Text, default="")
     tsv = mapped_column(TSVECTOR, Computed("to_tsvector('english', coalesce(search_text, ''))", persisted=True))
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(KNOWLEDGE_EMBEDDING_DIM), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Embedding(KNOWLEDGE_EMBEDDING_DIM), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 

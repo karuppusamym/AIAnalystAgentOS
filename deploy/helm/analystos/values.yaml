@@ -26,6 +26,9 @@ config:
   corsOrigins: https://analystos.example.com
   orchestrator: temporal
   graphEnabled: false                # Neo4j is an optional projection (spec v3 §8)
+  # Embedding storage (ADR-0007): pgvector, or `array` (real[], no extension) for a Postgres where the
+  # `vector` extension cannot be installed. Choose before the first migration; `analystos knowledge reembed` converts.
+  vectorBackend: pgvector            # pgvector | array
   # Python sandbox (python.execute) isolation, P4-02. `process` (default): every child gets fresh
   # mount/network/PID/IPC/UTS namespaces inside the worker pod (the pod is the outer container): no
   # network, read-only root with a tmpfs scratch, private /proc, rlimits incl. processes, no capabilities.

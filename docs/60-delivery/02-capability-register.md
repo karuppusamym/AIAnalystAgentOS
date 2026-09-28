@@ -596,3 +596,9 @@ against a live API, worker and database built from the merged tree.
 | P8-03 token economy (2026-09-27) | `agents/common.py`, `context/{compiler,cache,service}.py`, `llm/{router,cache,config}.py`, `agents/{investigator,critic,insight,generic,sql_agent}.py`, `api/routers/admin.py` | `test_token_economy.py`, `test_context_economy.py` | `evidence/2026-09-27-token-economy.md`: −31% sent tokens, stable prefix 15% → 66% (fake transport) |
 | P8-04 Ask analyst mode (2026-09-27) | `agents/analyst.py`, `skills/result_facts.py`, `services/ask.py`, `api/routers/ask.py`, migration 0045, `web/src/components/AnalystAnswer.tsx` | `test_analyst_mode.py`, `test_ask_analyst_mode.py`, `analystAnswer.test.tsx` | Behaviour re-implemented from the AgentSwarms AI Analyst (no code copied); no model output reaches a number without binding |
 | P8-05 guidance (2026-09-27) | `web/src/components/{Guide,Tour}.tsx`, `web/src/lib/{guide,starters,methods}.ts`, `agents/ask_rules.py` | `guide.test.tsx`, `starters.test.ts`, `test_ask_rules.py` | Tours point only at anchors that exist (tested); starters answered by rules |
+
+## 2026-09-28 — P8-14 Postgres without pgvector
+
+| Row | Code | Coverage | Measured / limits |
+|---|---|---|---|
+| P8-14 vector backend | `db/vectors.py`, `db/models.py`, migrations 0001/0018, `knowledge/{index,cli}.py`, `context/service.py`, `core/config.py` (`vector_backend`), Helm `config.vectorBackend` | `test_vector_backends.py` (8); knowledge/context integration on both backends (32 passed, 1 skipped each) | `evidence/2026-09-28-vector-backend-array.md`: plain Postgres 16 migrates and seeds; rankings identical to pgvector on 10/10 questions; conversion both ways. Exact in-process scan: fine to thousands of sections |

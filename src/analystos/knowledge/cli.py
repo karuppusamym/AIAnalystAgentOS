@@ -49,8 +49,9 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="analystos knowledge")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("reindex", help="drop the knowledge index and rebuild it from the packs' head revisions")
-    sub.add_parser("status", help="index counts, HNSW index, embedding provider, packs")
-    r = sub.add_parser("reembed", help="re-embed every section with the configured (or given) provider")
+    sub.add_parser("status", help="index counts, vector backend and HNSW index, embedding provider, packs")
+    r = sub.add_parser("reembed", help="re-embed every section and entry with the configured (or given) provider; "
+                                         "also converts the columns after a change of ANALYSTOS_VECTOR_BACKEND")
     r.add_argument("--provider", choices=["hashing", "sentence_transformers", "auto"])
     r.add_argument("--dim", type=int)
     q = sub.add_parser("search", help="hybrid retrieval as a workspace sees it")
@@ -106,7 +107,9 @@ def main(argv: list[str]) -> int:
 
             settings = get_settings().model_copy(update={k: v for k, v in (("knowledge_embedding_provider", args.provider),
                                                                             ("knowledge_embedding_dim", args.dim)) if v})
-            _print(index.reembed(s, embeddings.configured(settings)))
+            from analystos.context.service import reembed_entries
+
+            _print({**index.reembed(s, embeddings.configured(settings)), "context_entries": reembed_entries(s)})
         elif args.cmd == "search":
             _print([h.as_dict() for h in index.retrieve(s, args.workspace, args.query, limit=args.limit)])
         elif args.cmd == "import":

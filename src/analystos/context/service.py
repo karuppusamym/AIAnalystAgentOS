@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from analystos.context.embeddings import embed
 from analystos.core.ids import new_id
 from analystos.core.logging import get_logger
-from analystos.db.models import ContextEntry, KnowledgeDocument, SourceAsset, SourceColumn
+from analystos.db import vectors
+from analystos.db.models import EMBEDDING_DIM, ContextEntry, KnowledgeDocument, SourceAsset, SourceColumn
 from analystos.graph.projection import neighborhood
 from analystos.skills.catalog import screen_for_prompt
 
@@ -42,12 +43,7 @@ def search(session: Session, workspace_id: str, query: str, *, limit: int = 8, k
     (hybrid index retrieval, scored by its vector similarity), best first."""
     from analystos.knowledge.index import retrieve
 
-    vec = embed(query)
-    stmt = select(ContextEntry, ContextEntry.embedding.cosine_distance(vec).label("dist")).where(
-        ContextEntry.workspace_id == workspace_id)
-    if kinds:
-        stmt = stmt.where(ContextEntry.kind.in_(kinds))
-    rows = session.execute(stmt.order_by("dist").limit(limit)).all()
+    rows = _nearest_entries(session, workspace_id, embed(query), kinds, limit)
     out = [{"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": e.synonyms,
             "mapped_columns": e.mapped_columns, "origin": e.origin, "score": round(1 - float(d), 4) if d is not None else 0.0}
            for e, d in rows]
@@ -61,6 +57,45 @@ def search(session: Session, workspace_id: str, query: str, *, limit: int = 8, k
             break
     out.sort(key=lambda r: (-r["score"], r["name"], r["id"]))
     return out[:limit]
+
+
+def _nearest_entries(session: Session, workspace_id: str, vec: list[float], kinds: list[str] | None,
+                     limit: int) -> list[tuple[ContextEntry, float | None]]:
+    """The workspace's entries nearest `vec`, entries without a vector last. pgvector orders in the
+    database; the array backend scores the workspace's entries in-process (db/vectors.py)."""
+    if vectors.uses_pgvector():
+        rows = session.execute(text(
+            "SELECT id, embedding <=> CAST(:q AS vector) AS d FROM context_entry WHERE workspace_id = :w"
+            + (" AND kind = ANY(:k)" if kinds else "") + " ORDER BY d NULLS LAST, id LIMIT :n"),
+            {"q": vectors.literal(vec), "w": workspace_id, "k": list(kinds or []), "n": limit}).all()
+        ranked = [(r.id, None if r.d is None else float(r.d)) for r in rows]
+    else:
+        stmt = select(ContextEntry.id, ContextEntry.embedding).where(ContextEntry.workspace_id == workspace_id)
+        if kinds:
+            stmt = stmt.where(ContextEntry.kind.in_(kinds))
+        candidates = session.execute(stmt).all()
+        ranked = [*vectors.rank(vec, [(r.id, r.embedding) for r in candidates], limit),
+                  *sorted((r.id, None) for r in candidates if r.embedding is None)][:limit]
+    entries = {e.id: e for e in session.scalars(select(ContextEntry).where(ContextEntry.id.in_([i for i, _ in ranked])))}
+    return [(entries[i], d) for i, d in ranked if i in entries]
+
+
+def reembed_entries(session: Session) -> dict[str, Any]:
+    """Recompute every workspace entry's vector, first retyping the column when the vector backend
+    changed (`analystos knowledge reembed` runs it with the index re-embed)."""
+    current = session.scalar(text("SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                                  "WHERE attrelid = 'context_entry'::regclass AND attname = 'embedding'"))
+    target = vectors.column_sql(EMBEDDING_DIM)
+    if current != target:
+        session.execute(text(f"ALTER TABLE context_entry ALTER COLUMN embedding TYPE {target} USING NULL"))
+        session.execute(text("DEALLOCATE ALL"))  # plans prepared against the old type fail after a retype
+    rows = session.execute(select(ContextEntry.id, ContextEntry.name, ContextEntry.body, ContextEntry.synonyms)).all()
+    if rows:
+        session.execute(text(f"UPDATE context_entry SET embedding = {vectors.cast(':e')} WHERE id = :id"),
+                        [{"id": r.id, "e": vectors.literal(embed(" ".join([r.name, r.body, *(r.synonyms or [])])))}
+                         for r in rows])
+    session.flush()
+    return {"column": {"from": current, "to": target}, "entries": len(rows)}
 
 
 def _hit_entry(session: Session, h: Any) -> dict[str, Any]:

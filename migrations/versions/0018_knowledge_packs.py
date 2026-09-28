@@ -22,8 +22,9 @@ import secrets
 import sqlalchemy as sa
 import yaml
 from alembic import op
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
+
+from analystos.db import vectors
 
 revision = "0018"
 down_revision = "0023"
@@ -123,15 +124,16 @@ def upgrade() -> None:
         sa.Column("search_text", sa.Text(), nullable=False, server_default=""),
         sa.Column("tsv", postgresql.TSVECTOR(),
                   sa.Computed("to_tsvector('english', coalesce(search_text, ''))", persisted=True)),
-        sa.Column("embedding", Vector(256), nullable=True),
+        sa.Column("embedding", vectors.column_type(256), nullable=True),
         sa.Column("embedding_model", sa.String(200), nullable=True),
         sa.UniqueConstraint("document_id", "anchor"),
     )
     for col in ("document_id", "pack_id", "workspace_id"):
         op.create_index(f"ix_knowledge_section_{col}", "knowledge_section", [col])
     op.create_index("ix_knowledge_section_tsv", "knowledge_section", ["tsv"], postgresql_using="gin")
-    op.create_index("ix_knowledge_section_embedding_hnsw", "knowledge_section", ["embedding"], postgresql_using="hnsw",
-                    postgresql_ops={"embedding": "vector_cosine_ops"})
+    if vectors.uses_pgvector():  # the array backend ranks in-process (db/vectors.py)
+        op.create_index("ix_knowledge_section_embedding_hnsw", "knowledge_section", ["embedding"], postgresql_using="hnsw",
+                        postgresql_ops={"embedding": "vector_cosine_ops"})
     op.create_table(
         "knowledge_link",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -262,8 +264,8 @@ def _restore_global_entries() -> None:
         vector = embed(" ".join([name, body, *synonyms])) if embed else None
         bind.execute(sa.text("INSERT INTO context_entry (id, workspace_id, kind, name, body, synonyms, mapped_columns, "
                              "origin, trusted, embedding) VALUES (:id, NULL, :k, :n, :b, CAST(:s AS jsonb), "
-                             "CAST(:m AS jsonb), :o, :t, CAST(:e AS vector))"),
+                             "CAST(:m AS jsonb), :o, :t, " + vectors.cast(":e") + ")"),
                      {"id": f"ctx_{secrets.token_hex(6)}", "k": ext["kind"], "n": name[:300], "b": body,
                       "s": json.dumps(synonyms), "m": json.dumps(list(ext.get("mapped_columns") or [])),
                       "o": str(ext.get("origin") or "user")[:30], "t": bool(ext.get("trusted", True)),
-                      "e": ("[" + ",".join(f"{x:.7g}" for x in vector) + "]") if vector else None})
+                      "e": vectors.literal(vector)})

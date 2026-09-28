@@ -119,8 +119,10 @@ def control_db(analytics_plane):
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"Postgres unavailable: {exc}")
     engine = create_engine(TEST_DB)
-    with engine.begin() as c:
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    from analystos.db import vectors
+
+    with engine.begin() as c:  # ANALYSTOS_VECTOR_BACKEND=array runs the suite on core Postgres
+        vectors.ensure_extension(c)
     from analystos.db import models  # noqa: F401
     from analystos.db.base import Base
 

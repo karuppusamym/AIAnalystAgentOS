@@ -157,6 +157,7 @@ seed, start and a completed local run
 | Outbound HTTP and MCP | `ANALYSTOS_HTTP_TOOL_ALLOWLIST`, `ANALYSTOS_OUTBOUND_PRIVATE_HOSTS`, `ANALYSTOS_MCP_PRIVATE_HOSTS` (default: loopback and RFC 1918 allowed for MCP servers only), `ANALYSTOS_HTTP_TOOL_TIMEOUT_SECONDS`, `ANALYSTOS_HTTP_TOOL_MAX_BYTES` |
 | Isolated compute pools (§5) | `ANALYSTOS_ISOLATED_POOLS`, `ANALYSTOS_ISOLATED_TRANSPORT`, `ANALYSTOS_WORKER_ARTIFACT_URL`, `ANALYSTOS_WORKER_TOKEN_SECRET` (API only; never give it to a worker) |
 | Knowledge embeddings | `ANALYSTOS_KNOWLEDGE_EMBEDDING_PROVIDER`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_MODEL`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_DIM`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_ALLOW_DOWNLOAD` |
+| Postgres without pgvector | `ANALYSTOS_VECTOR_BACKEND` (`pgvector` default, or `array`: `real[]` columns, no extension; [self-hosted runbook](03-self-hosted.md#postgres-without-pgvector)) |
 
 **Tier 3, advanced.** Defaults are right for almost every install.
 

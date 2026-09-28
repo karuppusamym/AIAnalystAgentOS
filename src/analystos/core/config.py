@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     knowledge_embedding_model: str = "BAAI/bge-small-en-v1.5"  # 384-d, ~130 MB; best of four on the K10 benchmark
     knowledge_embedding_dim: int | None = None  # None = the provider's native dimension (hashing: 256)
     knowledge_embedding_allow_download: bool = False
+    # Where embeddings live (db/vectors.py): `pgvector` (the `vector` extension, HNSW search in the
+    # database) or `array` (plain `real[]` columns, cosine ranked in-process) for a Postgres where
+    # extensions cannot be installed. Chosen at install; `analystos knowledge reembed` converts.
+    vector_backend: Literal["pgvector", "array"] = "pgvector"
     jwt_secret: str = Field(default="dev-only-change-me-please-32bytes!!")
     jwt_ttl_minutes: int = 12 * 60
     bootstrap_admin_email: str = "admin@analystos.local"

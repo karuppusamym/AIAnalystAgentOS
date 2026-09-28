@@ -19,7 +19,8 @@ Chart: [`deploy/helm/analystos`](../../deploy/helm/analystos). Tests: `tests/uni
 | NetworkPolicy | optional, forced on in air-gapped mode | DNS, the release's own pods and `airGapped.allowedEgressCidrs` only |
 | ELT worker pool | Deployment at `replicas: 0` | dbt Core is **not** in the app image; scale it up only with an image that has dbt (`ANALYSTOS_DBT_EXECUTABLE`) and the builder login in the Secret |
 
-Postgres (pgvector), Redis, Temporal and Superset are **external** (separate instances in production,
+Postgres (pgvector, or plain Postgres with `ANALYSTOS_VECTOR_BACKEND=array`: see
+[Postgres without pgvector](#postgres-without-pgvector)), Redis, Temporal and Superset are **external** (separate instances in production,
 spec v3 §8 "Database topology"). Pods run non-root (uid 10001), read-only root filesystem, all
 capabilities dropped, seccomp `RuntimeDefault`.
 
@@ -41,6 +42,24 @@ helm install analystos deploy/helm/analystos -f deploy/helm/analystos/values-ha.
 login) and the BuildGateway refuse to use it (`build login provisioning skipped: … development password`).
 
 In-flight workflows must be drained (or reach `continue_as_new`) before an upgrade that changes workflow code.
+
+### Postgres without pgvector
+
+The control-plane database uses pgvector for two small embedding columns (glossary entries and
+knowledge-pack sections). Where the `vector` extension cannot be installed (a managed or shared Postgres
+with an extension allow-list), set `ANALYSTOS_VECTOR_BACKEND=array` for the API, workers, scheduler **and**
+`analystos migrate`: the columns become `real[]`, no extension or HNSW index is created, and similarity is
+ranked in-process (exact cosine; same results as pgvector, measured in
+[the evidence](../60-delivery/evidence/2026-09-28-vector-backend-array.md)). Everything else (the gateway,
+sources, full-text search) is core Postgres already. Your organisation's databases connected as *sources*
+never need pgvector either way.
+
+* Choose the backend before `analystos migrate` on a new database. With the default (`pgvector`) on a
+  Postgres that lacks the extension, migrate stops and names this setting.
+* To move an existing database, set the new value everywhere and run `analystos knowledge reembed`
+  once: it retypes both columns, creates or drops the HNSW index and recomputes every vector.
+* The array backend reads every visible vector per query: fine for hundreds to a few thousand sections
+  (the shipped packs are well under that); use pgvector for a corpus in the hundreds of thousands.
 
 ## 2. Offline image bundle
 
