@@ -129,6 +129,37 @@ async def internal_error(request: Request, exc: Exception):
                         headers={"X-Request-ID": current(request) or ""})
 
 
+# The dependency checks answer within this, below the container probe's 3 s: a stopped optional
+# service (a DNS lookup of a removed compose host alone takes ~4 s) must read as "down", never make
+# the API itself look unhealthy. The worker check (it reads the Temporal result) gets what is left.
+HEALTH_DEADLINE_S = 2.0
+HEALTH_BUDGET_S = 2.5
+
+
+def _run_checks(checks: dict[str, dict], fns: list[tuple[str, object]], deadline_s: float | None = None) -> None:
+    """Run the checks concurrently; one with no answer by the deadline is reported down."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    deadline_s = HEALTH_DEADLINE_S if deadline_s is None else deadline_s
+
+    def timed(fn):
+        started = time.perf_counter()
+        try:
+            return {"ok": True, "ms": round((time.perf_counter() - started) * 1000), **(fn() or {})}
+        except Exception as exc:  # noqa: BLE001 - health never raises
+            return {"ok": False, "error": str(exc)[:200]}
+
+    pool = ThreadPoolExecutor(max_workers=len(fns), thread_name_prefix="health")
+    futures = {name: pool.submit(timed, fn) for name, fn in fns}
+    end = time.perf_counter() + deadline_s
+    for name, fut in futures.items():
+        try:
+            checks[name] = fut.result(timeout=max(0.0, end - time.perf_counter()))
+        except TimeoutError:
+            checks[name] = {"ok": False, "error": f"no answer within {deadline_s:g} s"}
+    pool.shutdown(wait=False)  # a check stuck in a DNS lookup finishes on its own; the answer does not wait
+
+
 @app.get("/api/health")
 def health():
     """Dependency health. Reports what is reachable; never claims readiness it cannot observe."""
@@ -137,15 +168,7 @@ def health():
     from analystos.db.base import get_engine
 
     checks: dict[str, dict] = {}
-
-    def check(name, fn):
-        started = time.perf_counter()
-        try:
-            detail = fn()
-            checks[name] = {"ok": True, "ms": round((time.perf_counter() - started) * 1000), **(detail or {})}
-        except Exception as exc:
-            checks[name] = {"ok": False, "error": str(exc)[:200]}
-
+    started = time.perf_counter()
     settings = get_settings()
 
     def pg():
@@ -201,9 +224,9 @@ def health():
             raise RuntimeError(f"no worker is polling {', '.join(st['missing'])}")
         return {"queues": st["queues"]}
 
-    for name, fn in (("postgres", pg), ("redis", redis_), ("neo4j", neo), ("temporal", temporal), ("worker", worker),
-                     ("superset", superset), ("models", models)):
-        check(name, fn)
+    _run_checks(checks, [("postgres", pg), ("redis", redis_), ("neo4j", neo), ("temporal", temporal),
+                         ("superset", superset), ("models", models)])
+    _run_checks(checks, [("worker", worker)], max(0.3, started + HEALTH_BUDGET_S - time.perf_counter()))
 
     # P4-02: the Python sandbox's isolation, as the gate sees it. Not ok = sandboxed code is refused
     # (or, in `off` mode, runs unisolated: development only).

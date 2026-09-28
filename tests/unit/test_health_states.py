@@ -102,3 +102,21 @@ def test_unreachable_superset_is_announced_when_publication_falls_back_to_previe
         test_connection=lambda: {"ok": False, "error": "Superset login failed: connection refused"}))
     assert publisher.choose_destination(ctx) == "preview"
     assert said and said[0][0] == "decision" and "Superset not reachable" in said[0][1] and "connection refused" in said[0][1]
+
+
+def test_a_hanging_optional_dependency_is_down_within_the_deadline(monkeypatch):
+    """A stopped Superset whose host no longer resolves (~4 s in Docker DNS) must not push the answer
+    past the container probe's 3 s: it reads as down and the API stays healthy."""
+    import httpx
+
+    settings = Settings(_env_file=None, profile="lite", superset_url="http://superset:8088")
+    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(app_module, "HEALTH_DEADLINE_S", 0.5)
+    monkeypatch.setattr(app_module, "HEALTH_BUDGET_S", 0.8)
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: time.sleep(5))
+    started = time.perf_counter()
+    body = TestClient(app_module.app).get("/api/health").json()
+    assert time.perf_counter() - started < 1.5  # the patched 0.5 s deadline, not the 5 s hang
+    assert body["checks"]["superset"]["state"] == "down" and "no answer within" in body["checks"]["superset"]["error"]
+    assert body["ok"] is body["checks"]["postgres"]["ok"]  # an optional outage never decides liveness
+    assert any(p["dependency"] == "superset" for p in body["problems"])
