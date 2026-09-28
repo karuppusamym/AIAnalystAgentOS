@@ -76,3 +76,21 @@ def test_pack_hints_can_be_scoped_to_the_packs_that_fit_the_data():
 def test_a_note_after_a_url_in_the_env_file_is_ignored():
     s = Settings(in_container=True, profile="standard", superset_url="http://localhost:8088   (docker compose --profile bi up -d)")
     assert s.superset_url == "http://superset:8088"
+
+
+def test_a_compared_value_that_differs_only_in_case_is_matched_to_the_data():
+    from analystos.skills.literals import check_literals
+
+    known = {"returned": {"No", "Yes"}}
+    out = check_literals("SELECT COUNT(*) FILTER (WHERE o.returned = 'yes') FROM s.orders o", "postgres", known)
+    assert out.rewrites == ["returned: 'yes' read as 'Yes'"] and "'Yes'" in out.sql
+    same = "SELECT COUNT(*) FROM s.orders WHERE returned = 'Yes' AND region = 'west'"
+    assert check_literals(same, "postgres", known).sql == same  # unknown columns and exact values are left alone
+
+
+def test_a_compared_value_the_column_never_holds_is_refused_for_repair():
+    from analystos.core.errors import SQLRejected
+    from analystos.skills.literals import check_literals
+
+    with pytest.raises(SQLRejected, match="'Y' is not a value of column returned"):
+        check_literals("SELECT 1 FROM s.orders WHERE returned IN ('Y')", "postgres", {"returned": {"No", "Yes"}})

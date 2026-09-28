@@ -221,6 +221,8 @@ def _render_column(entry: Any, detail: str) -> Any:
     out = {"name": entry.get("name"), "semantic_type": entry.get("semantic_type") or entry.get("type")}
     if entry.get("role"):
         out["role"] = entry["role"]
+    if entry.get("true_value"):  # how a Yes/No flag says yes: a comparison needs it
+        out["true_value"] = entry["true_value"]
     if entry.get("meaning"):
         out["meaning"] = entry["meaning"]
     if detail == "stats":

@@ -15,6 +15,7 @@ from analystos.agents.common import (
     compile_for,
     defer_compile,
     llm_json,
+    sensitive,
     task_output,
 )
 from analystos.artifacts.registry import link, save_artifact
@@ -27,6 +28,8 @@ from analystos.db.models import Hypothesis, Insight, Relationship, SourceAsset, 
 from analystos.governance.budgets import ASK_PURPOSE, ask_actor, check_ask_budget
 from analystos.llm.redaction import QUESTION_MODEL_INSTRUCTION, redact_question, restore_values, tokenize_values
 from analystos.runtime.context import RunContext
+from analystos.skills.catalog import normalize_type
+from analystos.skills.literals import check_literals
 
 
 def has_sql(data: Any) -> str | None:
@@ -624,10 +627,16 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
     sql = restore_values(str(data["sql"]), rq.values)
     escalated = False
     attempt = 0
+    known = _known_values(ctx)
     while True:
         if attempt:
             _check_budget(ctx)  # every attempt counts; over budget ends the loop (no repair)
         try:
+            checked = check_literals(sql, dialect, known)  # 'yes' where the data says 'Yes': fixed here, or repaired
+            if checked.rewrites:
+                sql = checked.sql
+                decisions.append({"kind": "literal_case", "value": checked.rewrites})
+                _stage(ctx, "check", "Matched the letter case of compared values to the data: " + "; ".join(checked.rewrites))
             _stage(ctx, "execute", "Running it through the query gateway (read-only, within your access)")
             result = ctx.services.gateway.execute(ctx.scope, sql, actor=ask_actor(ctx.user.id), purpose=ASK_PURPOSE,
                                                   run_id=None, task_id=None)
@@ -666,6 +675,25 @@ def _ask(ctx: RunContext, question: str, *, max_repairs: int = 2, parameters: di
                 raise
             sql = restore_values(str(fix["sql"]), rq.values)
             attempt += 1
+
+
+def _known_values(ctx: Any) -> dict[str, set[str]]:
+    """Column name -> the complete set of text values the profile measured, over the caller's tables (never a
+    sensitive or denied column): what `skills/literals.check_literals` holds model-written comparisons to."""
+    denied = set(getattr(ctx.scope, "denied_columns", None) or [])
+    out: dict[str, set[str]] = {}
+    try:
+        rows = asset_rows(ctx)
+    except Exception:  # noqa: BLE001 - no catalog: nothing to check against
+        return {}
+    for a, cols in rows:
+        fq = f"{a.schema_name}.{a.name}"
+        for c in cols:
+            p = c.profile or {}
+            if f"{fq}.{c.name}" in denied or sensitive(c) or not p.get("values_complete") or not p.get("values")                     or normalize_type(c.data_type) != "text":
+                continue
+            out.setdefault(c.name.lower(), set()).update(str(v) for v in p["values"])
+    return out
 
 
 def _generation_unavailable(outcome: Any) -> ModelUnavailable:

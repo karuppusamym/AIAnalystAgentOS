@@ -120,6 +120,8 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
             entry: dict[str, Any] = {"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type or p.get("semantic_type")}
             if sem.get("semantic_role"):
                 entry["role"] = sem["semantic_role"]
+            if sem.get("semantic_role") == "flag" and sem.get("flag_true") and not sensitive(c):
+                entry["true_value"] = str(sem["flag_true"])[:20]  # a Yes/No column's encoding, like a boolean type
             # Owner- and user-written text is as untrusted as crawled text here: screened at build (P7-20).
             # A model's unreviewed draft never reaches a prompt (knowledge/suggestions.py).
             draft = not sem.get("reviewed")
