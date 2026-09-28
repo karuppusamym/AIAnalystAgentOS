@@ -26,13 +26,14 @@ export function outputTypeOf(artifactType: string): OutputType | null {
   // ML experiment records (spec, split, trials, package, evaluation, card) live with their experiment in Work
   if (artifactType.startsWith("ml_")) return null;
   if (artifactType === "dashboard" || artifactType === "report" || artifactType === "dataset" || artifactType === "chart") return artifactType;
+  if (artifactType === "process_analysis") return "process";
   return "other";
 }
 
 export const OUTPUT_FILTERS: { id: OutputType; label: string }[] = [
   { id: "finding", label: "Findings" }, { id: "dashboard", label: "Dashboards" }, { id: "report", label: "Reports" },
   { id: "dataset", label: "Datasets" }, { id: "chart", label: "Charts" }, { id: "prepared", label: "Prepared data" },
-  { id: "model", label: "Models & scoring" }, { id: "table", label: "Managed tables" }, { id: "other", label: "Other" },
+  { id: "model", label: "Models & scoring" }, { id: "table", label: "Managed tables" }, { id: "process", label: "Process maps" }, { id: "other", label: "Other" },
 ];
 
 /** Output types shown as their own panel rather than as rows of the one list (models and their scoring runs). */
@@ -220,7 +221,7 @@ export function OutputsPage() {
 
 const TYPE_WORD: Record<OutputType, string> = {
   finding: "finding", dashboard: "dashboard", report: "report", dataset: "dataset", chart: "chart", prepared: "prepared data",
-  model: "model", table: "managed table", other: "",
+  model: "model", table: "managed table", process: "process map", other: "",
 };
 
 function OutputRow({ item: i, run }: { item: Item; run?: Run }) {
