@@ -108,7 +108,7 @@ def safe_for_domain_assist(column: SourceColumn) -> bool:
 
 
 # Asset semantics a re-derivation keeps: a model's description draft waits for review; a person's domain decision.
-KEPT_SEMANTICS = ("model_description_draft", "domain_reviewed", "renamed_from", "renamed_to")
+KEPT_SEMANTICS = ("model_description_draft", "domain_reviewed", "renamed_from", "renamed_to", "shape")
 RENAME_CARRY_SIMILARITY = 0.9  # at or above: curation moves to the renamed table; below: the old one only leaves scope
 
 
@@ -174,8 +174,7 @@ def persist_profile(s: Session, asset_id: str, profile: dict[str, Any], *, patte
         p = sanitize_column_profile(p, sensitive=sensitive)
         c.profile = {**p, **({"patterns": masks} if masks else {}), **({"references": refs} if refs else {})}
         c.semantic_type = p.get("semantic_type") or c.semantic_type
-        if (c.description_origin in (None, "rule") or not c.description) and c.description_origin not in ("source", "model", "user") \
-                and (c.semantics or {}).get("semantic_role"):
+        if _column_text_writable(c, a.name, a.source_name) and (c.semantics or {}).get("semantic_role"):
             c.description, c.description_origin = cat.describe_column(
                 c.semantics or {}, profile=c.profile, references=refs, sensitive=sensitive,
                 entity=str(sem.get("entity") or a.name)), "rule"
@@ -192,7 +191,7 @@ def persist_profile(s: Session, asset_id: str, profile: dict[str, Any], *, patte
                                                 reviewed_keywords=reviewed_keywords)
         if confirmed is not rule:
             a.semantics = {**sem, **confirmed.model_dump(exclude={"columns"})}
-        if _description_writable(a.description_origin, a.reviewed, a.description, a.name):
+        if _description_writable(a.description_origin, a.reviewed, a.description, a.name, a.source_name, a.business_name):
             a.description, a.description_origin = profiled_table_description(a, cols), "rule"
     return a
 
@@ -221,12 +220,26 @@ def _model_confidence(value: Any) -> float:
         return 0.5
 
 
-def _description_writable(origin: str | None, reviewed: bool, current: str | None, table_name: str) -> bool:
+def _description_writable(origin: str | None, reviewed: bool, current: str | None, table_name: str,
+                          *names: str | None) -> bool:
     """Rules may refresh their own text or fill an empty/placeholder one; never touch reviewed, user,
-    source-system or model descriptions."""
-    if reviewed or origin in ("user", "source", "model"):
+    source-system or model descriptions. Source text that only restates the name ("Vendor table orders (Orders)",
+    "Uploaded file orders.csv") is no description, so rules may replace it."""
+    if reviewed or origin in ("user", "model"):
         return False
+    if origin == "source":
+        return cat.restates_name(current, table_name, *names)
     return origin == "rule" or current is None or cat.is_placeholder_description(current, table_name=table_name)
+
+
+def _column_text_writable(col: SourceColumn, *names: str | None) -> bool:
+    """The column's description may take rule text: none yet, rule text, or source text that restates its name."""
+    origin = col.description_origin
+    if origin in ("user", "model"):
+        return False
+    if origin == "source":
+        return cat.restates_name(col.description, col.name, col.business_name, *names)
+    return True
 
 
 class _Log:
@@ -516,10 +529,12 @@ class _Crawl:
                 if not row.reviewed and row.business_name_origin not in ("user", "model"):
                     source_bn = cat.screen_text(d.business_name, max_chars=120) if d.business_name else ""
                     row.business_name, row.business_name_origin = (source_bn, "source") if source_bn else (table_sem.business_name, "rule")
-                source_desc = d.description if d.description and not cat.is_placeholder_description(d.description, table_name=d.name) else None
+                source_desc = d.description if d.description and not cat.is_placeholder_description(d.description, table_name=d.name) \
+                    and not cat.restates_name(d.description, d.name, d.source_name, d.business_name) else None
                 if source_desc and row.description_origin not in ("user", "model") and not row.reviewed:
                     row.description, row.description_origin = cat.screen_text(source_desc, max_chars=1000), "source"
-                elif _description_writable(row.description_origin, row.reviewed, row.description, d.name):
+                elif _description_writable(row.description_origin, row.reviewed, row.description, d.name, d.source_name,
+                                           row.business_name):
                     row.description, row.description_origin = metadata_table_description(table_sem, d, row.business_name), "rule"
                     described += 1
                 pii_found += self._apply_columns(s, row, d, table_sem)
@@ -562,11 +577,11 @@ class _Crawl:
                     col.business_name_origin = "source" if source_bn else "rule"
             if col.description_origin == "user":
                 pass  # a person's description is never overwritten
-            elif c.description and not cat.is_placeholder_description(c.description):
+            elif c.description and not cat.is_placeholder_description(c.description) \
+                    and not cat.restates_name(c.description, c.name, c.business_name, d.name, d.source_name):
                 if not (col.tags_origin == "user" and col.description):
                     col.description, col.description_origin = cat.screen_text(c.description, max_chars=500), "source"
-            elif sem and (col.description_origin in (None, "rule") or not col.description) \
-                    and col.description_origin not in ("source", "model"):
+            elif sem and _column_text_writable(col, d.name, d.source_name):
                 # rule text is refreshed on every derivation (a changed type or reference changes it); the
                 # profile-aware sentence replaces it when this column is profiled (persist_profile)
                 col.description, col.description_origin = cat.describe_column(
@@ -906,11 +921,10 @@ class _Crawl:
         with session_scope() as s:
             from analystos.knowledge.entries import visible_entries
 
-            terms = [{"id": t.id, "name": t.name, "synonyms": list(t.synonyms), "mapped_columns": list(t.mapped_columns)}
+            # a domain pack's `maps_to` names the columns its definition reads, not what they mean (link_glossary)
+            terms = [{"id": t.id, "name": t.name, "synonyms": list(t.synonyms), "mapped_columns": list(t.mapped_columns),
+                      "mapped_identity": not str(t.origin or "").startswith("pack:")}
                      for t in visible_entries(s, ws, kinds=["term"])]
-            if not terms:
-                self.stats["glossary_links"] = 0
-                return
             cols: list[dict[str, Any]] = []
             col_rows: dict[str, SourceColumn] = {}
             for asset_id in ids.values():
@@ -920,11 +934,25 @@ class _Crawl:
                     cols.append({"fq": fq, "name": c.name, "business_name": c.business_name})
                     col_rows[fq] = c
             names = {t["id"]: t["name"] for t in terms}
-            links = cat.link_glossary(cols, terms)
-            for link in links:
-                c = col_rows[link.column_fq]
-                c.semantics = {**(c.semantics or {}), "glossary": {"term_id": link.term_id, "term": names.get(link.term_id),
-                                                                   "score": link.score, "reason": link.reason}}
+            links = cat.link_glossary(cols, terms) if terms else []
+            own = {k.column_fq: k for k in links if k.relation == "is"}
+            related: dict[str, list[dict[str, Any]]] = {}
+            for k in links:
+                if k.relation == "related":
+                    related.setdefault(k.column_fq, []).append({"term_id": k.term_id, "term": names.get(k.term_id), "reason": k.reason})
+            for fq, c in col_rows.items():
+                sem = {k: v for k, v in (c.semantics or {}).items() if k != "related_terms"}
+                link = own.get(fq)
+                if link is not None:
+                    sem["glossary"] = {"term_id": link.term_id, "term": names.get(link.term_id), "score": link.score,
+                                       "reason": link.reason}
+                elif (sem.get("glossary") or {}).get("origin") != "review":
+                    sem.pop("glossary", None)  # a link that no longer holds (a term removed, a pack that does not apply)
+                if fq in related:
+                    sem["related_terms"] = related[fq]
+                if sem != (c.semantics or {}):
+                    c.semantics = sem
+        links = list(own.values())
         self.stats["glossary_links"] = len(links)
         self.log.stage("glossary", f"{len(links)} columns linked to glossary terms")
 

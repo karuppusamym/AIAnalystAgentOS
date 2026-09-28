@@ -244,3 +244,18 @@ def test_a_polymorphic_reference_is_an_issue_not_a_relationship(model_world):
         c.semantics = {**(c.semantics or {}), "polymorphic_reference": {"targets": [{"asset": "sn.incident"}, {"asset": "sn.sc_task"}]}}
     orders = next(t for t in _suggest()["tables"] if t["name"] == "orders")
     assert any(i["code"] == "polymorphic_reference" and "sn.incident, sn.sc_task" in i["message"] for i in orders["issues"])
+
+
+def test_an_identifier_like_or_free_text_column_is_not_a_dimension(model_world):
+    with session_scope() as s:
+        c = s.scalars(select(SourceColumn).where(SourceColumn.asset_id == "ast_orders", SourceColumn.name == "state")).one()
+        c.name, c.semantic_type, c.semantics = "number", "id", {"semantic_role": "dimension"}
+    orders = next(t for t in _suggest()["tables"] if t["name"] == "orders")
+    assert "number" not in orders["dimensions"]
+
+
+def test_a_yes_no_flag_of_a_fact_is_offered_as_a_share(model_world):
+    with session_scope() as s:
+        s.scalars(select(SourceColumn).where(SourceColumn.asset_id == "ast_orders", SourceColumn.name == "late")).one().data_type = "boolean"
+    share = next(m for m in _suggest()["metrics"] if m["name"] == "share_late")
+    assert share["expression"] == "AVG(CASE WHEN late THEN 1.0 ELSE 0.0 END)" and share["format"] == "percent"

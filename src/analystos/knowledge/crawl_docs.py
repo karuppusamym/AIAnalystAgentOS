@@ -77,7 +77,10 @@ def table_documents(asset: Mapping[str, Any], columns: list[Mapping[str, Any]], 
                            "mapped_columns": [f"{fq}.{c['name']}" for c in columns[:COLUMNS_PER_DOC]]}
     if asset.get("business_name"):
         ext["synonyms"] = [str(asset["business_name"])]
-    fm: dict[str, Any] = {"type": "Table", "title": fq, "status": "deprecated" if asset.get("lifecycle") == "deprecated"
+    bn = str(asset.get("business_name") or "")
+    # a reader (and retrieval) looks for "Orders", not `src_src_1.orders`; the resource keeps the qualified name
+    title = f"{bn} ({asset['name']})" if bn and bn.lower() != str(asset["name"]).lower() else fq
+    fm: dict[str, Any] = {"type": "Table", "title": title, "status": "deprecated" if asset.get("lifecycle") == "deprecated"
                           else ("stable" if reviewed else "draft"),
                           "tags": sorted(_tag(t) for t in tags), "generated": {"by": CRAWLER_ACTOR},
                           "resource": f"analystos://source/{source_id}/{fq}",
@@ -97,7 +100,7 @@ def table_documents(asset: Mapping[str, Any], columns: list[Mapping[str, Any]], 
                                                   for i in range(2, len(parts) + 1))]
     out = {table_path(fq): okf.render_document(fm, "\n".join(body))}
     for i, chunk in enumerate(parts[1:], start=2):
-        pfm = {"type": "Table Columns", "title": f"{fq} (columns part {i})", "status": fm["status"], "tags": ["table"],
+        pfm = {"type": "Table Columns", "title": f"{title} (columns part {i})", "status": fm["status"], "tags": ["table"],
                "generated": {"by": CRAWLER_ACTOR},
                "analystos": {"kind": "table_columns", "origin": "crawler", "trusted": bool(trusted), "source_id": source_id,
                              "mapped_columns": [f"{fq}.{c['name']}" for c in chunk]}}

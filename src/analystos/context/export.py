@@ -240,6 +240,7 @@ def collect(session: Session, workspace_id: str, *, source_id: str | None = None
     # A column's glossary link may point at a domain pack's term, so the definition of every linked one comes along
     # (the pack's other terms stay in the pack; `visible_entries` already drops packs of other domains).
     linked = {str(c["glossary"].get("term_id")) for a in asset_rows for c in a["columns"] if isinstance(c.get("glossary"), dict)}
+    linked |= {str(r.get("term_id")) for a in asset_rows for c in a["columns"] for r in c.get("related_terms") or []}
     for e in visible_entries(session, workspace_id, exclude_kinds=("episode",)):
         if not e.origin.startswith("pack:") or e.id not in linked:
             continue
@@ -313,6 +314,8 @@ def _column(c: Any, *, samples_allowed: bool) -> dict[str, Any]:
             "business_name": c.business_name, "business_name_origin": c.business_name_origin,
             "description": c.description, "description_origin": c.description_origin, "reviewed": bool(sem.get("reviewed")),
             "tags": sorted(c.tags or []), "pii": sem.get("pii"), "glossary": sem.get("glossary"),
+            "related_terms": [{"term": r.get("term"), "term_id": r.get("term_id")} for r in sem.get("related_terms") or []
+                              if isinstance(r, dict)],
             "polymorphic_reference": sem.get("polymorphic_reference"),
             "sensitive": column_is_sensitive(c.tags, sem),
             "profile": export_profile(c.profile, c.tags, sem, samples_allowed=samples_allowed)}
@@ -400,9 +403,12 @@ def _glossary_link(value: Any) -> Any:
     return value.get("term") or value.get("term_id") if isinstance(value, dict) else value
 
 
+_MEASURED = ("null_rate", "distinct", "min", "max", "mean", "top_values", "values", "row_count")
+
+
 def profile_line(p: Mapping[str, Any] | None, *, withheld: bool = False) -> str:
     """A column profile in one line: completeness, cardinality, range, values (when the export carries them)."""
-    if not p:
+    if not p or not any(p.get(k) is not None for k in _MEASURED):  # value patterns or a reference alone are not a profile
         return "not profiled"
     parts = []
     if p.get("null_rate") is not None:
@@ -474,7 +480,9 @@ def render_markdown(content: Mapping[str, Any], *, generated_at: str) -> str:
                                                                                   if c.get("description_origin") else ""),
                           ", ".join(c.get("tags") or []) + (f" PII {(c.get('pii') or {}).get('category')}"
                                                             if isinstance(c.get("pii"), dict) and c["pii"].get("category") else ""),
-                          _glossary_link(c.get("glossary")), profile_line(c.get("profile"), withheld=bool(c.get("sensitive")) and not
+                          "; ".join(str(x) for x in [_glossary_link(c.get("glossary")),
+                                                     *(f"related: {_glossary_link(r)}" for r in c.get("related_terms") or [])] if x),
+                          profile_line(c.get("profile"), withheld=bool(c.get("sensitive")) and not
                                                                  content["policy"]["data_samples_included"]))
                          for c in a["columns"]]), ""]
     rels = content["relationships"]

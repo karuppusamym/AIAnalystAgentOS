@@ -1029,7 +1029,8 @@ def _link_mapped(session: Session, workspace_id: str, entry: Any, mapped: list[s
             q = q.where(SourceAsset.schema_name == schema)
         for c in session.scalars(q):
             c.semantics = {**(c.semantics or {}), "glossary": {"term_id": entry.id, "term": entry.name, "score": 1.0,
-                                                               "reason": "column is mapped to the term"}}
+                                                               "reason": "column is mapped to the term",
+                                                               "origin": "review"}}
 
 
 def answer_error(fields: dict[str, Any]) -> str | None:

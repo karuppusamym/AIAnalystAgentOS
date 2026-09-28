@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from analystos.core.errors import AnalystOSError, Conflict
 from analystos.core.ids import utcnow
 from analystos.db.models import Relationship, SemanticRelationshipCandidate, SourceAsset, SourceColumn, User
+from analystos.skills.catalog import normalize_type
 from analystos.skills.profiling import column_is_sensitive
 
 MAX_QUERIES = 40
@@ -45,6 +46,12 @@ _ORDINAL_TOKENS = {"priority", "state", "status", "risk", "impact", "urgency", "
 def _is_ordinal(name: str) -> bool:
     tokens = [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
     return bool(tokens) and tokens[-1] in _ORDINAL_TOKENS
+
+
+def _row_valued(c: SourceColumn, table_role: str) -> bool:
+    if c.semantic_type not in ("id", "text"):
+        return False
+    return not (table_role in DIMENSION_ROLES and (c.semantics or {}).get("semantic_role") == "name")
 
 
 def _fq(a: SourceAsset) -> str:
@@ -132,8 +139,10 @@ def _table(asset: SourceAsset, cols: list[SourceColumn], approved: list[str] | N
                 and c.name not in fks and not c.is_key and not _is_ordinal(c.name)]
     ordinal = [c.name for c in usable if (c.semantics or {}).get("semantic_role") in MEASURE_ROLES and _is_ordinal(c.name)
                and c.name not in fks and not c.is_key]
+    # A column whose profile says it is identifier-like (`number`, nearly unique) or free text (`short_description`)
+    # has a value per row: grouping by it means nothing. A dimension table's own name is still its label.
     dimensions = [c.name for c in usable if (c.semantics or {}).get("semantic_role") in DIMENSION_COLUMN_ROLES
-                  and c.name not in fks] + ordinal
+                  and c.name not in fks and not _row_valued(c, role)] + ordinal
     time_column = _time_column(cols)
     issues = []
     if pk["evidence"] == "none":
@@ -234,6 +243,14 @@ def candidate_metrics(tables: list[dict[str, Any]], cols: dict[str, list[SourceC
                                                                           if agg == "AVG" else " (additive)")
             out.append({"name": _ident(f"{agg.lower()}_{m}"), "label": f"{'Average' if agg == 'AVG' else 'Total'} {label}",
                         "expression": f"{agg}({m})", "table_fq": t["fq"], "reason": why})
+        # a yes/no flag of the record (`is_late`, `active`) is read as a rate: the share of records where it holds
+        for c in cols.get(t["asset_id"], []):
+            if normalize_type(c.data_type) != "boolean" or c.is_key or column_is_sensitive(c.tags, c.semantics):
+                continue
+            label = (c.business_name or c.name.replace("_", " ")).strip()
+            out.append({"name": _ident(f"share_{c.name}"), "label": f"Share of {entity} records: {label}",
+                        "expression": f"AVG(CASE WHEN {c.name} THEN 1.0 ELSE 0.0 END)", "format": "percent",
+                        "table_fq": t["fq"], "reason": "yes/no flag of the record (a rate between 0 and 1)"})
     return out
 
 

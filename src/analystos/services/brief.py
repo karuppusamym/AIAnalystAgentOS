@@ -222,7 +222,10 @@ def derive(session: Session, workspace_id: str) -> list[Assertion]:
         if sem.get("grain"):
             out.append(_suggestion("data_semantics", "grain", fq, sem["grain"], "rule", ev, sem.get("confidence")))
         if sem.get("entity"):
-            out.append(_suggestion("domain", "entity", fq, sem["entity"], "rule", ev, sem.get("confidence")))
+            # the source's own label ("Configuration Item") names the entity better than one read from the table name
+            # ("cmdb ci"); a person's business name wins too
+            label = a.business_name if a.business_name and a.business_name_origin in ("source", "user") else sem["entity"]
+            out.append(_suggestion("domain", "entity", fq, label, "rule", ev, sem.get("confidence")))
         cols = list(session.scalars(select(SourceColumn).where(SourceColumn.asset_id == a.id).order_by(SourceColumn.ordinal)))
         keys = [c.name for c in cols if c.is_key]
         if keys:
@@ -235,7 +238,7 @@ def derive(session: Session, workspace_id: str) -> list[Assertion]:
                                        [EvidenceRef(kind="profile", ref=fq, detail={"candidate_key": cand[0]})]))
         times = [c for c in cols if (c.semantic_type == "datetime" or (c.semantics or {}).get("semantic_role") in TIME_ROLES)
                  and "pii" not in (c.tags or [])]
-        if times:
+        if times and sem.get("role") not in ("dimension", "reference"):  # a dimension's last-edited time is not, not an event
             out.append(_suggestion("time_measures", "event_time", fq, times[0].name, "rule",
                                    [EvidenceRef(kind="column", ref=f"{fq}.{times[0].name}")]))
     for r in session.scalars(select(Relationship).where(Relationship.workspace_id == workspace_id).order_by(Relationship.id)):
