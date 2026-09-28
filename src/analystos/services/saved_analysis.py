@@ -51,11 +51,14 @@ def request_schedule(session, user, turn_id, *, name, cron, timezone, approval_i
     schedules.validate("saved_analysis", cron, timezone, {})
     config = {"turn_id": turn_id, "fingerprint": fingerprint(turn), "approval_id": approval_id}
     if not approval_id:
+        # request_approval returns the open request for this exact payload (a retry or a reload reuses it).
         approval = request_approval(session, workspace_id=turn.workspace_id, run_id=None, action=ACTION,
             payload=payload(turn.workspace_id, user.id, name, cron, timezone, config), plan_hash=None,
             policy_version=get_workspace(session, turn.workspace_id).policy_version, requested_by=user.id,
             risk_tier="medium", destination="saved_analysis", affected_assets=[a["asset"] for a in turn.provenance.get("assets", [])])
-        return {"status": "approval_required", "approval_id": approval.id, "expires_at": approval.expires_at.isoformat()}
+        out = {"status": "approval_required", "approval_id": approval.id, "expires_at": approval.expires_at.isoformat()}
+        _record(turn, {"target": "schedule", "id": approval.id, **out, "name": name, "cron": cron, "timezone": timezone})
+        return out
     # Retrying confirmation returns the same schedule. Serialize confirmations on the approval row.
     from analystos.db.models import Approval
 
@@ -68,8 +71,23 @@ def request_schedule(session, user, turn_id, *, name, cron, timezone, approval_i
                                                       cron=cron, timezone=timezone, config=config)
     if existing is None:
         _pin(session, user, turn, schedule, approval_id)
+    _record(turn, {"target": "schedule", "id": schedule.id, "status": "created", "approval_id": approval_id, "name": name,
+                   "cron": cron, "timezone": timezone})
     session.flush()
     return {"status": "created", "id": schedule.id}
+
+
+def _record(turn, record):
+    """The schedule request lives on the turn (not only in the page), so a reload can activate it once
+    approved; activating replaces the pending entry. One entry per approval."""
+    from analystos.core.ids import utcnow
+    from analystos.services.ask import record_promotion
+
+    current = list(turn.promotions or [])
+    if any(p.get("target") == "schedule" and p.get("approval_id") == record["approval_id"] and p.get("status") == record["status"]
+           for p in current):
+        return
+    turn.promotions = record_promotion(current, {**record, "at": utcnow().isoformat()})
 
 
 def _pin(session, user, turn, schedule, approval_id):

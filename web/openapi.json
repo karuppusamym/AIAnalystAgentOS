@@ -708,7 +708,8 @@
               "metric",
               "monitor",
               "dashboard",
-              "investigate"
+              "investigate",
+              "report"
             ],
             "title": "Target",
             "type": "string"
@@ -9736,7 +9737,7 @@
     },
     "/api/ask/turns/{turn_id}/promote": {
       "post": {
-        "description": "Promote an answer: verified query, metric, monitor, \"Investigate why\" (starts a run), or a\ndashboard chart (202 with an approval request first; again with the approved `approval_id`).",
+        "description": "Promote an answer: verified query, metric, monitor, \"Investigate why\" (starts a run), a report (an\nHTML document of the stored answer, listed in Outputs), or a dashboard chart (202 with an approval\nrequest first; again with the approved `approval_id` publishes it to the approved destination).",
         "operationId": "promote_turn_api_ask_turns__turn_id__promote_post",
         "parameters": [
           {

@@ -47,7 +47,7 @@ class AskScheduleIn(BaseModel):
 
 
 class AskPromoteIn(BaseModel):
-    target: Literal["verified_query", "metric", "monitor", "dashboard", "investigate"]
+    target: Literal["verified_query", "metric", "monitor", "dashboard", "investigate", "report"]
     name: str | None = None
     question: str | None = None  # verified query: the phrasing it answers (default: the question asked)
     sql_expression: str | None = None  # metric / monitor: default = the answer's first aggregate
@@ -218,8 +218,9 @@ def schedule(turn_id: str, body: AskScheduleIn, user: User = Depends(current_use
 
 @router.post("/ask/turns/{turn_id}/promote")
 def promote_turn(turn_id: str, body: AskPromoteIn, user: User = Depends(current_user)):
-    """Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), or a
-    dashboard chart (202 with an approval request first; again with the approved `approval_id`)."""
+    """Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), a report (an
+    HTML document of the stored answer, listed in Outputs), or a dashboard chart (202 with an approval
+    request first; again with the approved `approval_id` publishes it to the approved destination)."""
     fields = body.model_dump(exclude={"target", "extra"}, exclude_none=True)
     out = ask_svc.promote(user, turn_id, body.target, {**body.extra, **fields})
     return JSONResponse(status_code=202, content=out) if out.get("status") == "approval_required" else out

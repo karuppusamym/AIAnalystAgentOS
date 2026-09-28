@@ -668,8 +668,9 @@ export interface paths {
         put?: never;
         /**
          * Promote Turn
-         * @description Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), or a
-         *     dashboard chart (202 with an approval request first; again with the approved `approval_id`).
+         * @description Promote an answer: verified query, metric, monitor, "Investigate why" (starts a run), a report (an
+         *     HTML document of the stored answer, listed in Outputs), or a dashboard chart (202 with an approval
+         *     request first; again with the approved `approval_id` publishes it to the approved destination).
          */
         post: operations["promote_turn_api_ask_turns__turn_id__promote_post"];
         delete?: never;
@@ -5686,7 +5687,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate";
+            target: "verified_query" | "metric" | "monitor" | "dashboard" | "investigate" | "report";
             /** Value */
             value?: number | null;
         };

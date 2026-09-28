@@ -9,7 +9,9 @@ a remedy, provenance and staleness, the inspector (decisions and model-call rece
 Promotions that stay inside the platform (verified query, metric, monitor, "Investigate why") are
 role-checked and validated through the gateway (a metric is proposed to the semantic layer, where an
 approver approves it); adding an answer to a dashboard is meant for a BI
-audience, so it is an approval bound to the payload hash and runs only after `verify_for_execution`.
+audience, so it is an approval bound to the payload hash and runs only after `verify_for_execution`
+(then it is published through the BI publisher; services/ask_outputs.py). "Save as report" renders the
+stored answer as an HTML report. A pending promotion stays on the turn with its approval's status.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -42,6 +44,7 @@ from analystos.core.errors import (
     UpstreamUnavailable,
 )
 from analystos.core.ids import new_id, utcnow
+from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import (
     Approval,
@@ -67,9 +70,12 @@ from analystos.governance.policy import (
     scoped_loader,
 )
 
+log = get_logger(__name__)
 AGING_AFTER = timedelta(hours=24)
 STALE_AFTER = timedelta(days=7)
-PROMOTE_TARGETS = ("verified_query", "metric", "monitor", "dashboard", "investigate")
+PROMOTE_TARGETS = ("verified_query", "metric", "monitor", "dashboard", "investigate", "report")
+# What a caller sees when the Ask path failed in a way no refusal kind describes (the cause is only logged).
+UNEXPECTED_FAILURE = "The question stopped because of an unexpected error. Nothing was answered from a guess."
 MODES = ("quick", "analyst")
 DASHBOARD_ACTION = "ask.add_to_dashboard"
 NEW_THREAD_TITLE = "New question"
@@ -381,7 +387,39 @@ def turn_out(session: Session, turn: AskTurn) -> dict[str, Any]:
     if governance["governance"] == "governed":
         governance |= {"semantic_model_version": semantic.get("semantic_model_version", semantic.get("model_version")),
                        "compiler_version": semantic.get("compiler_version")}
-    return {**row(turn), **governance, "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh)}
+    return {**row(turn), **governance, "staleness": fresh, "evidence_status": evidence_status(session, turn, fresh),
+            "promotions": promotions_view(session, list(turn.promotions or []))}
+
+
+def approval_state(approval: Approval | None) -> str:
+    """The status a person acts on: an open request past its expiry reads `expired` before anyone tries it."""
+    if approval is None:
+        return "missing"
+    expires = approval.expires_at if approval.expires_at.tzinfo else approval.expires_at.replace(tzinfo=UTC)
+    return "expired" if approval.status in ("pending", "approved") and expires < utcnow() else approval.status
+
+
+def promotions_view(session: Session, promotions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each promotion still waiting on an approval carries that approval's current status, so the thread can
+    offer "Complete" once it is approved (and say when it was rejected or expired) after a reload."""
+    waiting = [p["approval_id"] for p in promotions if p.get("status") == "approval_required" and p.get("approval_id")]
+    if not waiting:
+        return promotions
+    states = {a.id: approval_state(a) for a in session.scalars(select(Approval).where(Approval.id.in_(waiting)))}
+    return [{**p, "approval_status": states.get(p["approval_id"], "missing")}
+            if p.get("status") == "approval_required" and p.get("approval_id") else p for p in promotions]
+
+
+def record_promotion(promotions: list[dict[str, Any]] | None, record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Append a promotion; completing one that waited on an approval replaces that pending entry."""
+    out = list(promotions or [])
+    approval_id = record.get("approval_id")
+    for i, p in enumerate(out):
+        if approval_id and p.get("approval_id") == approval_id and p.get("target") == record.get("target") \
+                and p.get("status") == "approval_required":
+            out[i] = {**record, "requested_at": p.get("requested_at") or p.get("at")}
+            return out
+    return [*out, record]
 
 
 # ------------------------------------------------------------------------------ asking
@@ -473,8 +511,38 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
             out = (ask_fn or sql_ask)(ctx, question, parameters=parameters)
     except AnalystOSError as exc:
         out = {"status": "refused", "refusal": refusal_for(exc)}
+    except Exception:  # noqa: BLE001 - any other failure still ends the turn; it must never stay "running"
+        log.exception("ask turn %s failed unexpectedly", turn_id)
+        out = {"status": "refused", "refusal": refusal("failed", UNEXPECTED_FAILURE)}
     status, refused = _finish(out)
     stage("done", "Answered" if status == "answered" else (refused or {}).get("title", "Not answered"))
+    try:
+        out_turn = _persist_turn(user, thread_id, workspace_id, turn_id, out, status, refused, stages, started, mode)
+    except Exception:
+        _mark_failed(turn_id, stages)
+        raise
+    if status == "answered":
+        from analystos.services.steps import record_quietly
+
+        record_quietly("ask_thread", workspace_id, thread_id, user.id)
+    return out_turn
+
+
+def _mark_failed(turn_id: str, stages: list[dict[str, Any]] | None = None) -> None:
+    """Best effort: a turn whose result could not be recorded ends as a `failed` refusal, not `running`."""
+    try:
+        with session_scope() as s:
+            turn = s.get(AskTurn, turn_id)
+            if turn is not None and turn.status == "running":
+                turn.status, turn.refusal = "refused", refusal("failed", UNEXPECTED_FAILURE)
+                if stages is not None:
+                    turn.stages = stages
+    except Exception:  # noqa: BLE001 - the stale-work sweep ends it later
+        log.exception("could not mark ask turn %s failed", turn_id)
+
+
+def _persist_turn(user: User, thread_id: str, workspace_id: str, turn_id: str, out: dict[str, Any], status: str,
+                  refused: dict[str, Any] | None, stages: list[dict[str, Any]], started: float, mode: str) -> dict[str, Any]:
     with session_scope() as s:
         turn = s.get(AskTurn, turn_id)
         turn.status, turn.refusal = status, refused
@@ -502,12 +570,7 @@ def ask_in_thread(user: User, thread_id: str, question: str, parameters: dict[st
         s.flush()
         if status != "answered":
             _suggest_terms(s, workspace_id, turn)
-        out_turn = turn_out(s, turn)
-    if status == "answered":
-        from analystos.services.steps import record_quietly
-
-        record_quietly("ask_thread", workspace_id, thread_id, user.id)
-    return out_turn
+        return turn_out(s, turn)
 
 
 def _suggest_terms(session: Session, workspace_id: str, turn: AskTurn) -> None:
@@ -581,6 +644,9 @@ async def stream_turn(user: User, thread_id: str, question: str, parameters: dic
             yield _sse("turn", task.result())
         except AnalystOSError as exc:
             yield _sse("error", {"error": exc.to_dict()})
+        except Exception:  # noqa: BLE001 - the stream always closes with `end`; the cause is only logged
+            log.exception("ask stream for thread %s failed", thread_id)
+            yield _sse("error", {"error": AnalystOSError(UNEXPECTED_FAILURE).to_dict()})
         yield _sse("end", {"status": "done"})
     finally:
         if getter is not None and not getter.done():
@@ -866,7 +932,7 @@ def _measure(session: Session, user: User, turn: AskTurn, body: dict[str, Any]) 
 @scoped_loader
 def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn an answered question into a platform object; returns the promotion record."""
-    from analystos.artifacts.registry import link, save_artifact
+    from analystos.artifacts.registry import link
     from analystos.governance.approvals import request_approval, verify_for_execution
     from analystos.registries import verified_queries as vq_svc
     from analystos.services.monitors import create_monitor
@@ -924,12 +990,17 @@ def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None =
             s.flush()
             record = {"target": target, "id": m.id, "name": m.name, "status": "created", "kind": kind, "value": check["value"]}
         elif target == "dashboard":
-            record = _dashboard(s, me, turn, body, request_approval, verify_for_execution, save_artifact, link)
-        node = {"investigate": "run", "metric": "semantic_metric",
+            record = _dashboard(s, me, turn, body, request_approval, verify_for_execution)
+        elif target == "report":
+            from analystos.services.ask_outputs import answer_report
+
+            require_role(s, me, ws_id, "analyst")
+            record = answer_report(s, me, turn)
+        node = {"investigate": "run", "metric": "semantic_metric", "report": "artifact",
                 "dashboard": "approval" if record["status"] == "approval_required" else "chart"}.get(target, target)
         link(s, ws_id, ("ask_turn", turn_id), "promoted_to", (node, record["id"]))
         record["at"] = utcnow().isoformat()
-        turn.promotions = [*(turn.promotions or []), record]
+        turn.promotions = record_promotion(turn.promotions, record)
         emit(ws_id, "ask.promoted", {"turn_id": turn_id, **{k: record.get(k) for k in ("target", "id", "status")}},
              actor=f"user:{user.id}", session=s)
         audit(f"user:{user.id}", "ask.promoted", workspace_id=ws_id, target=turn_id,
@@ -937,42 +1008,44 @@ def promote(user: User, turn_id: str, target: str, body: dict[str, Any] | None =
     return record
 
 
-def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], request_approval, verify_for_execution,
-               save_artifact, link) -> dict[str, Any]:
+def _dashboard_payload(turn: AskTurn, *, chart: Any, dashboard: str, destination: str) -> dict[str, Any]:
+    """What an approver approves: the answer's own question and SQL (read from the turn, never the request)
+    and the requester's choices of chart, dashboard and destination."""
+    return {"kind": "ask_chart", "turn_id": turn.id, "question": turn.question, "sql": turn.sql, "chart": chart,
+            "dashboard": dashboard, "destination": destination}
+
+
+def _dashboard(s: Session, me: User, turn: AskTurn, body: dict[str, Any], request_approval, verify_for_execution) -> dict[str, Any]:
     """Adding an answer to a dashboard is for a BI audience: an approval over the exact chart payload
-    first; with an approved request, verified just before, the chart is added to the dashboard draft."""
+    first; with the approved request (`approval_id`), verified just before the side effect, the chart is
+    published to the approved destination through the BI publisher (services/ask_outputs.py)."""
     require_role(s, me, turn.workspace_id, "editor")
     ws = get_workspace(s, turn.workspace_id)
     policy = load_policy(s, ws)
-    from analystos.publishing.base import default_destination
-
-    destination = body.get("destination") or default_destination(policy.publish_destinations)
-    # Without Superset (no `bi` profile) the default is the in-platform preview, as for run publications;
-    # a destination the caller names must still be one the policy allows.
-    defaulted_preview = destination == "preview" and not body.get("destination")
-    if destination not in policy.publish_destinations and not defaulted_preview:
-        raise PolicyDenied(f"destination {destination} is not allowed by this workspace's policy")
-    payload = {"kind": "ask_chart", "turn_id": turn.id, "question": turn.question, "sql": turn.sql,
-               "chart": body.get("chart") or turn.chart, "dashboard": (body.get("dashboard") or "Ask answers")[:200],
-               "destination": destination}
     approval_id = body.get("approval_id")
-    if not approval_id:
-        apr = request_approval(s, workspace_id=turn.workspace_id, run_id=None, action=DASHBOARD_ACTION, payload=payload,
-                               plan_hash=None, policy_version=ws.policy_version, requested_by=me.id, risk_tier="medium",
-                               destination=destination, affected_assets=[a["asset"] for a in (turn.provenance or {}).get("assets", [])],
-                               evidence={"query_id": (turn.result or {}).get("query_id"), "answered_by": turn.answered_by})
-        return {"target": "dashboard", "id": apr.id, "status": "approval_required", "approval_id": apr.id,
-                "payload_hash": apr.payload_hash, "dashboard": payload["dashboard"], "destination": destination}
-    apr = s.get(Approval, approval_id, with_for_update=True)
-    if apr is None or apr.workspace_id != turn.workspace_id or apr.action != DASHBOARD_ACTION:
-        raise InvalidInput("the approval does not cover adding this answer to a dashboard")
-    verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
-    from analystos.governance.approvals import consume
+    if approval_id:
+        from analystos.services.ask_outputs import publish_to_dashboard
 
-    consume(s, apr)  # single use (compare-and-set)
-    art = save_artifact(s, workspace_id=turn.workspace_id, type_="chart", name=_slug(turn.question), creator_user=me.id,
-                        status="approved", content={"title": turn.question[:200], "sql": turn.sql, "chart": payload["chart"],
-                                                    "dashboard": payload["dashboard"], "destination": destination,
-                                                    "approval_id": approval_id, "origin": {"type": "ask", "turn_id": turn.id}})
-    return {"target": "dashboard", "id": art.id, "status": "added", "approval_id": approval_id, "dashboard": payload["dashboard"],
-            "destination": destination}
+        apr = s.get(Approval, approval_id, with_for_update=True)
+        if apr is None or apr.workspace_id != turn.workspace_id or apr.action != DASHBOARD_ACTION \
+                or (apr.payload or {}).get("turn_id") != turn.id:
+            raise InvalidInput("the approval does not cover adding this answer to a dashboard")
+        # The choices come from the approved request; the question and SQL are recomputed from the turn, so a
+        # changed answer no longer matches the approved hash.
+        approved = apr.payload or {}
+        payload = _dashboard_payload(turn, chart=approved.get("chart"), dashboard=approved.get("dashboard") or "Ask answers",
+                                     destination=approved.get("destination") or "preview")
+        verify_for_execution(s, approval_id, payload=payload, plan_hash=None)
+        return publish_to_dashboard(s, me, turn, payload, apr)
+    from analystos.services.ask_outputs import usable_destination
+
+    destination, note = usable_destination(policy.publish_destinations, body.get("destination"))
+    payload = _dashboard_payload(turn, chart=body.get("chart") or turn.chart, dashboard=(body.get("dashboard") or "Ask answers")[:200],
+                                 destination=destination)
+    apr = request_approval(s, workspace_id=turn.workspace_id, run_id=None, action=DASHBOARD_ACTION, payload=payload,
+                           plan_hash=None, policy_version=ws.policy_version, requested_by=me.id, risk_tier="medium",
+                           destination=destination, affected_assets=[a["asset"] for a in (turn.provenance or {}).get("assets", [])],
+                           evidence={"query_id": (turn.result or {}).get("query_id"), "answered_by": turn.answered_by})
+    return {"target": "dashboard", "id": apr.id, "status": "approval_required", "approval_id": apr.id,
+            "payload_hash": apr.payload_hash, "dashboard": payload["dashboard"], "destination": destination,
+            "expires_at": apr.expires_at.isoformat(), **({"note": note} if note else {})}

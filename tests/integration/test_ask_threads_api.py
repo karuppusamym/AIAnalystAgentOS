@@ -202,23 +202,64 @@ def test_ask_thread_streams_stages_records_decisions_and_promotes(api, world, tr
                    json={"target": "monitor", "sql_expression": "SUM(no_such_column)"})
     assert bad.status_code == 422
 
-    # Dashboard: an approval over the exact payload first; executed only with the approved request.
+    # Dashboard: an approval over the exact payload first; published only with the approved request, through
+    # the BI publisher (a preview publisher stands in for Superset here), and the pending entry is completed.
+    from analystos.publishing import base as publishing
+    from analystos.publishing.preview import PreviewPublisher
+
+    published: list = []
+
+    class Recording(PreviewPublisher):
+        def publish(self, bundle, **kw):
+            published.append(bundle)
+            return super().publish(bundle, **kw)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(publishing, "get_publisher", lambda destination, settings=None: Recording())
     first = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin, json={"target": "dashboard", "destination": "superset"})
     assert first.status_code == 202, first.text
     apr = first.json()["approval_id"]
-    early = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin,
-                     json={"target": "dashboard", "destination": "superset", "approval_id": apr})
+    pending = api.get(f"/api/ask/threads/{thread['id']}", headers=admin).json()["turns"][0]["promotions"][-1]
+    assert pending["status"] == "approval_required" and pending["approval_status"] == "pending"
+    early = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin, json={"target": "dashboard", "approval_id": apr})
     assert early.status_code == 409  # still pending
     assert api.post(f"/api/approvals/{apr}/approve", headers=approver, json={}).status_code == 200
-    added = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin,
-                     json={"target": "dashboard", "destination": "superset", "approval_id": apr})
-    assert added.status_code == 200 and added.json()["status"] == "added", added.text
-    replay = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin,
-                      json={"target": "dashboard", "destination": "superset", "approval_id": apr})
+    approved = api.get(f"/api/ask/threads/{thread['id']}", headers=admin).json()["turns"][0]["promotions"][-1]
+    assert approved["approval_status"] == "approved"  # the thread offers "Complete" after a reload
+    added = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin, json={"target": "dashboard", "approval_id": apr})
+    assert added.status_code == 200 and added.json()["status"] == "published", added.text
+    assert [c.chart_type for c in published[0].charts] == ["table"] and published[0].datasets[0].sql == turn["sql"]
+    chart = api.get(f"/api/artifacts/{added.json()['id']}", headers=admin).json()
+    assert chart["status"] == "published" and chart["platform"] == added.json()["destination"] and chart["external_id"]
+    replay = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin, json={"target": "dashboard", "approval_id": apr})
     assert replay.status_code == 409  # single use
 
     promotions = api.get(f"/api/ask/threads/{thread['id']}", headers=admin).json()["turns"][0]["promotions"]
-    assert [p["target"] for p in promotions] == ["verified_query", "metric", "monitor", "dashboard", "dashboard"]
+    assert [p["target"] for p in promotions] == ["verified_query", "metric", "monitor", "dashboard"]
+    assert promotions[-1]["status"] == "published" and promotions[-1]["requested_at"]
+
+    # A publication is rolled back once.
+    pub = added.json()["publication_id"]
+    assert api.post(f"/api/publications/{pub}/rollback", headers=admin).status_code == 200
+    assert api.get(f"/api/artifacts/{added.json()['id']}", headers=admin).json()["status"] == "rolled_back"
+    assert api.post(f"/api/publications/{pub}/rollback", headers=admin).status_code == 409
+    mp.undo()
+
+    # Save as report: an HTML document of the stored answer, listed as a report and downloadable.
+    report = api.post(f"/api/ask/turns/{turn['id']}/promote", headers=admin, json={"target": "report"})
+    assert report.status_code == 200 and report.json()["status"] == "created", report.text
+    listed = api.get(f"/api/workspaces/{ws}/artifacts?type=report", headers=admin).json()
+    assert report.json()["id"] in [a["id"] for a in listed]
+    html = api.get(f"/api/artifacts/{report.json()['id']}/download?format=html", headers=admin)
+    assert html.status_code == 200 and turn["result"]["query_id"] in html.text and "text/html" in html.headers["content-type"]
+
+    # Schedule: the request is kept on the turn and a retry reuses it (no duplicate approval).
+    body = {"name": question[:200], "cron": "0 9 * * *", "timezone": "UTC"}
+    one = api.post(f"/api/ask/turns/{turn['id']}/schedule", headers=admin, json=body).json()
+    two = api.post(f"/api/ask/turns/{turn['id']}/schedule", headers=admin, json=body).json()
+    assert one["status"] == "approval_required" and two["approval_id"] == one["approval_id"]
+    kept = api.get(f"/api/ask/threads/{thread['id']}", headers=admin).json()["turns"][0]["promotions"]
+    assert [p["approval_id"] for p in kept if p["target"] == "schedule"] == [one["approval_id"]]
     assert api.post(f"/api/ask/turns/{vague['id']}/promote", headers=admin, json={"target": "monitor"}).status_code == 422
 
 

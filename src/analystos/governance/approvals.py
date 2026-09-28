@@ -28,9 +28,12 @@ def request_approval(session: Session, *, workspace_id: str, run_id: str | None,
                      plan_hash: str | None, policy_version: int, requested_by: str, risk_tier: str,
                      destination: str | None, affected_assets: list[str], evidence: dict[str, Any] | None = None) -> Approval:
     payload_hash = stable_hash(payload)
+    # A retry reuses the open request for the same payload; one past its expiry can never be decided or
+    # executed, so returning it would leave the requester stuck: a fresh request replaces it.
     existing = session.scalar(select(Approval).where(
         Approval.workspace_id == workspace_id, Approval.run_id == run_id, Approval.payload_hash == payload_hash,
-        Approval.plan_hash == plan_hash, Approval.status.in_(["pending", "approved"])))
+        Approval.plan_hash == plan_hash, Approval.action == action, Approval.status.in_(["pending", "approved"]),
+        Approval.expires_at > utcnow()).order_by(Approval.created_at.desc()).limit(1))
     if existing:
         return existing
     ws = get_workspace(session, workspace_id)
