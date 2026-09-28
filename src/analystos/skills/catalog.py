@@ -542,7 +542,7 @@ def _structural_role(sem: list[ColumnSemantics], cols: list[DiscoveredColumn], n
     if len(fk) >= 2 and not measures and len(other) <= 1:
         return "bridge", 0.75, ev + ["only references (plus at most one attribute)"]
     fk_stems = {s.name.lower() for s in fk} | {re.sub(r"_(id|key|sk)$", "", s.name.lower()) for s in fk}
-    # `assignment_group_name` beside the reference `assignment_group` displays that reference: it does not make the
+    # `owner_team_name` beside the reference `owner_team` displays that reference: it does not make the
     # table a keyed, named entity (a transactional record with two such labels was read as a dimension)
     names = [s for s in sem if s.semantic_role == "name" and not (s.name.lower().endswith("_name")
                                                                    and s.name.lower()[:-5] in fk_stems)]
