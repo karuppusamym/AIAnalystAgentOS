@@ -32,6 +32,17 @@ def _family(col: dict[str, Any]) -> str:
     return catalog_family(col.get("data_type")) or "categorical"
 
 
+_EVENT_WORDS = {"date", "created", "opened", "ordered", "start", "started", "placed", "submitted", "booked", "issued"}
+
+
+def _event_time(columns: list[dict[str, Any]]) -> str | None:
+    """The column that dates a record: a datetime whose name says the record starts (order_date, created_at)."""
+    dated = [c["name"] for c in columns if _family(c) == "datetime"]
+    named = [n for n in dated if _tokens(n.replace("_", " ")) & _EVENT_WORDS or n.lower().endswith(("_date", "_at"))]
+    starts = [n for n in named if _tokens(n.replace("_", " ")) & (_EVENT_WORDS - {"date"})]
+    return (starts or named or [None])[0]
+
+
 def propose(columns: list[dict[str, Any]], *, asset: str, row_count: int | None = None, objective: str | None = None,
             target: str | None = None, task: str | None = None, features: list[str] | None = None,
             estimators: list[str] | None = None, time_column: str | None = None, horizon: int | None = None) -> dict[str, Any]:
@@ -47,6 +58,9 @@ def propose(columns: list[dict[str, Any]], *, asset: str, row_count: int | None 
         return {"proposal": None, "problems": problems, "source": "inputs"}
     source = "inputs" if any(v is not None for v in (target, task, features, estimators)) else "rules"
     keys = [c["name"] for c in columns if c.get("is_key")]
+    if not keys and row_count:  # a file declares no key: an identifier measured unique per row is one
+        keys = [c["name"] for c in columns if _family(c) != "datetime" and c.get("distinct") == row_count
+                and (c.get("semantic_type") == "id" or c["name"].lower().endswith("id"))][:1]
     if target is None and task not in ("cluster",):
         scored = sorted(((len(_tokens(c["name"]) & words) * 2 + bool(_TARGET_WORDS.search(c["name"])) +
                           (_family(c) == "boolean"), c["name"]) for c in columns if c["name"] not in keys),
@@ -64,9 +78,13 @@ def propose(columns: list[dict[str, Any]], *, asset: str, row_count: int | None 
             task = "classify"
         else:
             task = "regress"
+    if time_column is None and task in ("classify", "regress"):
+        # dated records are split by time (train on the past, evaluate on what came after): the honest default
+        time_column = _event_time(columns)
     if features is None:
-        features = [c["name"] for c in columns
-                    if c["name"] not in {target, time_column, *keys} and _family(c) in ("numeric", "boolean", "categorical")
+        features = [c["name"] for c in columns  # an identifier (customer_id) memorises rows; it is never a feature
+                    if c["name"] not in {target, time_column, *keys} and c.get("semantic_type") != "id"
+                    and _family(c) in ("numeric", "boolean", "categorical")
                     and not (_family(c) == "categorical" and row_count and (c.get("distinct") or 0) > 0.5 * row_count)]
         if task == "anomaly":
             features = [f for f in features if _family(by_name[f]) == "numeric"]

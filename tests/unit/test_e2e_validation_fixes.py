@@ -94,3 +94,17 @@ def test_a_compared_value_the_column_never_holds_is_refused_for_repair():
 
     with pytest.raises(SQLRejected, match="'Y' is not a value of column returned"):
         check_literals("SELECT 1 FROM s.orders WHERE returned IN ('Y')", "postgres", {"returned": {"No", "Yes"}})
+
+
+def test_an_ml_proposal_on_dated_file_rows_splits_by_time_and_keeps_identifiers_out():
+    from analystos.ml.propose import propose
+
+    cols = [{"name": "order_id", "data_type": "text", "semantic_type": "id", "distinct": 6000},
+            {"name": "customer_id", "data_type": "text", "semantic_type": "id", "distinct": 400},
+            {"name": "order_date", "data_type": "date", "semantic_type": "datetime", "distinct": 365},
+            {"name": "quantity", "data_type": "integer", "semantic_type": "numeric", "distinct": 4},
+            {"name": "sales_channel", "data_type": "text", "semantic_type": "categorical", "distinct": 3},
+            {"name": "returned", "data_type": "text", "semantic_type": "categorical", "distinct": 2}]
+    spec = propose(cols, asset="s.orders", row_count=6000, target="returned", task="classify")["proposal"]
+    assert spec["time_column"] == "order_date" and spec["entity_keys"] == ["order_id"]
+    assert {f["column"] for f in spec["features"]} == {"quantity", "sales_channel"}
