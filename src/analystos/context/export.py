@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from analystos.core.errors import AnalystOSError, InvalidInput
 from analystos.core.ids import stable_hash
 from analystos.core.logging import get_logger
+from analystos.knowledge.entries import visible_entries
 
 log = get_logger(__name__)
 
@@ -236,6 +237,14 @@ def collect(session: Session, workspace_id: str, *, source_id: str | None = None
             continue
         glossary.append({"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": list(e.synonyms or []),
                          "mapped_columns": mapped, "origin": e.origin, "trusted": bool(e.trusted)})
+    # A column's glossary link may point at a domain pack's term, so the definition of every linked one comes along
+    # (the pack's other terms stay in the pack; `visible_entries` already drops packs of other domains).
+    linked = {str(c["glossary"].get("term_id")) for a in asset_rows for c in a["columns"] if isinstance(c.get("glossary"), dict)}
+    for e in visible_entries(session, workspace_id, exclude_kinds=("episode",)):
+        if not e.origin.startswith("pack:") or e.id not in linked:
+            continue
+        glossary.append({"id": e.id, "kind": e.kind, "name": e.name, "body": e.body, "synonyms": list(e.synonyms),
+                         "mapped_columns": list(e.mapped_columns), "origin": e.origin, "trusted": bool(e.trusted)})
 
     documents = []
     for d, pack in session.execute(select(KnowledgeDocument, KnowledgePack).join(KnowledgePack, KnowledgePack.id == KnowledgeDocument.pack_id)
@@ -372,11 +381,17 @@ def _table(headers: list[str], rows: Iterable[Iterable[Any]]) -> list[str]:
     return ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers), *body] if body else ["_None yet._"]
 
 
+def _dataset_source(source: Any) -> str:
+    """A dataset's table, or its defining query cut to one readable line (a dataset may be a SELECT, not a table)."""
+    text = " ".join(str(source or "").split())
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
 def _glossary_link(value: Any) -> Any:
     return value.get("term") or value.get("term_id") if isinstance(value, dict) else value
 
 
-def profile_line(p: Mapping[str, Any] | None) -> str:
+def profile_line(p: Mapping[str, Any] | None, *, withheld: bool = False) -> str:
     """A column profile in one line: completeness, cardinality, range, values (when the export carries them)."""
     if not p:
         return "not profiled"
@@ -393,7 +408,7 @@ def profile_line(p: Mapping[str, Any] | None) -> str:
                                                                   if isinstance(t, dict)]
     if values:
         parts.append("values " + ", ".join(str(v) for v in values[:12]))
-    return "; ".join(parts) or "profiled"
+    return "; ".join(parts + (["values withheld (sensitive)"] if withheld else [])) or "profiled"
 
 
 def _scope_text(content: Mapping[str, Any]) -> str:
@@ -445,12 +460,14 @@ def render_markdown(content: Mapping[str, Any], *, generated_at: str) -> str:
                 f"{', unique' if key.get('unique') is True else ', not unique' if key.get('unique') is False else ''}); "
                 f"time column {a.get('time_column') or '—'}", "",
                 *_table(["column", "type", "role", "unit", "business name", "description", "tags / PII", "glossary", "profile"],
-                        [(c["name"], c.get("semantic_type") or c["data_type"], c.get("role"), c.get("unit"),
+                        [(c["name"], c["data_type"], c.get("role"), c.get("unit"),
                           c.get("business_name"), (c.get("description") or "") + (f" ({c['description_origin']})"
                                                                                   if c.get("description_origin") else ""),
                           ", ".join(c.get("tags") or []) + (f" PII {(c.get('pii') or {}).get('category')}"
                                                             if isinstance(c.get("pii"), dict) and c["pii"].get("category") else ""),
-                          _glossary_link(c.get("glossary")), profile_line(c.get("profile"))) for c in a["columns"]]), ""]
+                          _glossary_link(c.get("glossary")), profile_line(c.get("profile"), withheld=bool(c.get("sensitive")) and not
+                                                                 content["policy"]["data_samples_included"]))
+                         for c in a["columns"]]), ""]
     rels = content["relationships"]
     out += ["## Relationships", "", "### Known joins", "",
             *_table(["from", "to", "cardinality", "validated", "origin", "confidence"],
@@ -464,7 +481,7 @@ def render_markdown(content: Mapping[str, Any], *, generated_at: str) -> str:
     for m in content["semantic_models"]:
         out += [f"### {m['name']} v{m['version']} ({m['status']})", "", m.get("description") or "", "",
                 *_table(["dataset", "table", "primary key", "fields"],
-                        [(d.get("name"), d.get("source"), d.get("primary_key"), len(d.get("fields") or []))
+                        [(d.get("name"), _dataset_source(d.get("source")), d.get("primary_key"), len(d.get("fields") or []))
                          for d in m["datasets"]]), "",
                 *_table(["relationship", "from", "to", "columns", "cardinality"],
                         [(r.get("name"), r.get("from") or r.get("from_dataset"), r.get("to"),
@@ -573,6 +590,8 @@ def render_okf(content: Mapping[str, Any], *, generated_at: str) -> dict[str, by
         return path
 
     for g in content["glossary"]:
+        if str(g["origin"]).startswith("pack:"):
+            continue  # a domain pack's own terms re-import from the pack, not as copies in this workspace
         path = unique(f"glossary/{crawl_docs.safe_segment(g['kind'])}-{slug(g['name'])}.md")
         files[path] = _bounded(render_entry(kind=g["kind"], name=g["name"], body=g["body"] or g["name"], synonyms=g["synonyms"],
                                             mapped_columns=g["mapped_columns"], origin=g["origin"], trusted=g["trusted"],
@@ -593,7 +612,7 @@ def render_okf(content: Mapping[str, Any], *, generated_at: str) -> dict[str, by
              "analystos": {"kind": "semantic_model", "origin": m["origin"], "trusted": m["status"] == "approved",
                            "version": m["version"], "content_hash": m["content_hash"]}},
             "\n".join(["# Datasets", "", *_table(["dataset", "table", "primary key", "fields"],
-                                                 [(d.get("name"), d.get("source"), d.get("primary_key"), len(d.get("fields") or []))
+                                                 [(d.get("name"), _dataset_source(d.get("source")), d.get("primary_key"), len(d.get("fields") or []))
                                                   for d in m["datasets"]]), "", "# Relationships", "",
                        *_table(["relationship", "from", "to", "columns", "cardinality"],
                                [(r.get("name"), r.get("from") or r.get("from_dataset"), r.get("to"),

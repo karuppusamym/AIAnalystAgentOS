@@ -149,6 +149,8 @@ def _strip_table_prefix(tokens: list[str]) -> tuple[list[str], list[str]]:
 def _entity_from_table(name: str) -> str:
     rest, _ = _strip_table_prefix(split_tokens(name))
     rest = [t for t in rest if t not in {"dim", "fact", "fct", "bridge", "xref", "map", "lookup", "lkp"}] or rest
+    if len(rest) > 1 and len(rest[0]) == 1:  # u_task_activity: `u_` marks a custom table, it is not part of the entity
+        rest = rest[1:]
     return " ".join(rest[:-1] + [singularize(rest[-1])]) if rest else name.lower()
 
 
@@ -539,7 +541,11 @@ def _structural_role(sem: list[ColumnSemantics], cols: list[DiscoveredColumn], n
     col_tokens = {t for c in cols for t in split_tokens(c.name)}
     if len(fk) >= 2 and not measures and len(other) <= 1:
         return "bridge", 0.75, ev + ["only references (plus at most one attribute)"]
-    names = [s for s in sem if s.semantic_role == "name"]
+    fk_stems = {s.name.lower() for s in fk} | {re.sub(r"_(id|key|sk)$", "", s.name.lower()) for s in fk}
+    # `assignment_group_name` beside the reference `assignment_group` displays that reference: it does not make the
+    # table a keyed, named entity (a transactional record with two such labels was read as a dimension)
+    names = [s for s in sem if s.semantic_role == "name" and not (s.name.lower().endswith("_name")
+                                                                   and s.name.lower()[:-5] in fk_stems)]
     if names and idents and len(desc) >= 2 and len(measures) <= 1:
         conf = 0.65 + (0.15 if inbound else 0.0)
         return "dimension", _conf(conf), ev + ["keyed entity with name attributes"] + (
@@ -967,6 +973,23 @@ def _person_nouns() -> frozenset[str] | set[str]:
     return _PERSON_NOUNS | hints().person_nouns
 
 
+_PERSON_ROLE_NOUNS = {"assignee", "requester", "requestor", "caller", "reporter", "approver", "submitter", "creator"}
+_BY_VERBS = {"created", "updated", "modified", "opened", "closed", "resolved", "assigned", "approved", "requested",
+             "submitted", "owned", "reported", "entered", "changed", "edited", "completed", "raised", "logged"}
+_NOT_A_PERSON = {"id", "key", "uuid", "guid", "sk", "count", "cnt", "flag", "group", "team", "queue", "department",
+                 "dept", "status", "state", "date", "time", "at", "on", "type", "role"}
+
+
+def _names_a_person(tokens: list[str]) -> bool:
+    """A text column whose name says it holds who did or owns something (`assigned_to`, `opened_by`, `requester`),
+    without saying `name`: its values are people's names. A reference (`..._id`, `..._group`, a declared
+    foreign key) is not covered here: an opaque key is not a name."""
+    t = set(tokens)
+    if t & _NOT_A_PERSON:
+        return False
+    return bool(t & _PERSON_ROLE_NOUNS) or ("by" in t and bool(t & _BY_VERBS)) or {"assigned", "to"} <= t
+
+
 def _pii_from_name(tokens: list[str]) -> str | None:
     t = set(tokens)
     joined = "_".join(tokens)
@@ -1049,7 +1072,8 @@ _VALUE_DETECTORS: list[tuple[str, str, Any]] = [
 ]
 
 
-def classify_pii(name: str, data_type: str, sample_values: list[str] | None = None) -> PiiResult:
+def classify_pii(name: str, data_type: str, sample_values: list[str] | None = None, *,
+                 references: bool = False) -> PiiResult:
     """PII category and sensitivity from the column name, strengthened by sample values.
 
     Values can add or upgrade a classification (e.g. a ``contact`` column holding e-mail
@@ -1059,6 +1083,9 @@ def classify_pii(name: str, data_type: str, sample_values: list[str] | None = No
     tokens = split_tokens(name)
     dtype = normalize_type(data_type)
     cat = _pii_from_name(tokens)
+    person_reference = cat is None and dtype == "text" and not references and _names_a_person(tokens)
+    if person_reference:
+        cat = "person_name"
     if cat == "date_of_birth" and dtype not in {"date", "timestamp", "text"}:
         cat = None
     if cat == "free_text_risk" and dtype not in {"text", "json"}:
@@ -1067,7 +1094,8 @@ def classify_pii(name: str, data_type: str, sample_values: list[str] | None = No
     if cat:
         rule = next(r for r in _PII_NAME_RULES if r[0] == cat)
         result = PiiResult(category=cat, sensitivity=rule[1], confidence=0.7 if cat != "free_text_risk" else 0.5,  # type: ignore[arg-type]
-                           reasons=[rule[2]])
+                           reasons=["column name says who owns or did the work: values are people's names"] if person_reference
+                           else [rule[2]])
 
     values = [str(v).strip() for v in (sample_values or [])[:500] if v is not None and str(v).strip()]
     if not values:

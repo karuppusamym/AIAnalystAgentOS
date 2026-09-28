@@ -36,6 +36,15 @@ MEASURE_ROLES = {"measure", "amount", "percent", "duration"}
 DIMENSION_COLUMN_ROLES = {"dimension", "code", "name", "geo", "flag"}
 TIME_ROLES = {"timestamp", "date"}
 _NAME = re.compile(r"[^A-Za-z0-9_]+")
+# Numeric codes that rank or label a state, not an amount: summing or averaging them means nothing (a total "priority"
+# or "state"); they stay usable as dimensions and filters.
+_ORDINAL_TOKENS = {"priority", "state", "status", "risk", "impact", "urgency", "severity", "level", "rank", "tier", "grade",
+                   "stage", "phase", "type", "class", "category", "code"}
+
+
+def _is_ordinal(name: str) -> bool:
+    tokens = [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
+    return bool(tokens) and tokens[-1] in _ORDINAL_TOKENS
 
 
 def _fq(a: SourceAsset) -> str:
@@ -120,9 +129,11 @@ def _table(asset: SourceAsset, cols: list[SourceColumn], approved: list[str] | N
     fks = {c.name for c in cols if (c.semantics or {}).get("semantic_role") == "foreign_key" or (c.profile or {}).get("references")}
     usable = [c for c in cols if not column_is_sensitive(c.tags, c.semantics)]
     measures = [c.name for c in usable if (c.semantics or {}).get("semantic_role") in MEASURE_ROLES
-                and c.name not in fks and not c.is_key]
+                and c.name not in fks and not c.is_key and not _is_ordinal(c.name)]
+    ordinal = [c.name for c in usable if (c.semantics or {}).get("semantic_role") in MEASURE_ROLES and _is_ordinal(c.name)
+               and c.name not in fks and not c.is_key]
     dimensions = [c.name for c in usable if (c.semantics or {}).get("semantic_role") in DIMENSION_COLUMN_ROLES
-                  and c.name not in fks]
+                  and c.name not in fks] + ordinal
     time_column = _time_column(cols)
     issues = []
     if pk["evidence"] == "none":

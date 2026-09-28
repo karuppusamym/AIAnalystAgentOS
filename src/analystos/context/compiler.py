@@ -682,7 +682,10 @@ def load_knowledge(session: Any, workspace_id: str, sections: Iterable[str], *, 
                                      trusted=bool(e.trusted), document_id=e.pack_id and e.id, path=e.path, sha256=e.sha256,
                                      synonyms=tuple(str(s) for s in e.synonyms or ())))
     if query and kinds:
-        out.extend(pack_section_items(session, workspace_id, query, kinds, candidates=candidates))
+        from analystos.knowledge.entries import applicable_domain_packs, in_applicable_packs
+
+        out.extend(in_applicable_packs(pack_section_items(session, workspace_id, query, kinds, candidates=candidates),
+                                       applicable_domain_packs(session, workspace_id), origin_of=lambda i: i.source))
     if "external" in wanted:
         out.extend(external_items(external if external is not None else _run_external(session, workspace_id, run_id)))
     if "prior_findings" in wanted:

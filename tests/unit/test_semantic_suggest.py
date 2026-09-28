@@ -220,3 +220,19 @@ def test_an_unjoined_table_says_why_and_a_table_from_another_source_points_at_a_
         s.get(SourceAsset, "ast_lines").source_id = "src_elsewhere"
     msgs = {i["asset_id"]: i["message"] for i in _suggest()["issues"] if i["code"] == "orphan_table"}
     assert "only selected table from its source" in msgs["ast_lines"] and "Prepare data" in msgs["ast_lines"]
+
+
+@pytest.mark.parametrize(("name", "ordinal"), [("priority", True), ("state", True), ("risk_level", True), ("reassignment_count", False),
+                                               ("amount", False), ("business_impact", True), ("status_code", True)])
+def test_ordinal_codes_are_not_summed_or_averaged(name, ordinal):
+    assert sug._is_ordinal(name) is ordinal
+
+
+def test_an_ordinal_measure_becomes_a_dimension_not_a_candidate_metric(model_world):
+    with session_scope() as s:
+        c = s.scalars(select(SourceColumn).where(SourceColumn.asset_id == "ast_orders", SourceColumn.name == "state")).one()
+        c.name = "priority"
+        c.semantics = {"semantic_role": "measure"}
+    orders = next(t for t in _suggest()["tables"] if t["name"] == "orders")
+    assert "priority" not in orders["measures"] and "priority" in orders["dimensions"]
+    assert not any("priority" in m["expression"] for m in _suggest()["metrics"])

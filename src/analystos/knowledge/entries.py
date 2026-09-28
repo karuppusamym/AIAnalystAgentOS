@@ -117,9 +117,54 @@ def doc_entry(d: Any, pack_slug: str) -> EntryView:
                      extra={"type": d.type, "status": d.status, "trust_tier": d.trust_tier, "pack": pack_slug})
 
 
+def domain_pack_of(origin: str | None) -> str | None:
+    """`pack:itsm` -> `itsm`: the domain pack an entry's origin names, or None for any other origin."""
+    return origin[5:] if origin and origin.startswith("pack:") else None
+
+
+def applicable_domain_packs(session: Session, workspace_id: str) -> set[str] | None:
+    """Names of the domain packs whose vocabulary belongs to this workspace: the policy's `domain_packs` when set,
+    else the packs whose `applies_when` match its selected tables and columns. None means "do not filter": the
+    workspace names no packs and no installed pack matches its catalog (or nothing is selected yet), so its
+    domain is unknown and every pack's vocabulary stays visible, as it always was. Once a catalog clearly belongs
+    to some domains, the other domains' terms (a sales "channel" or "segment" beside a ticket queue) stay out."""
+    from analystos.capabilities import packs
+    from analystos.db.models import SourceAsset, SourceColumn
+    from analystos.governance.policy import get_workspace, load_policy
+
+    try:
+        explicit = getattr(load_policy(session, get_workspace(session, workspace_id)), "domain_packs", None)
+        if explicit is not None:
+            return {p.name for p in packs.enabled_for([], [], explicit)}
+        assets = list(session.execute(select(SourceAsset.id, SourceAsset.name).where(
+            SourceAsset.workspace_id == workspace_id, SourceAsset.selected.is_(True), SourceAsset.lifecycle == "active")))
+        if not assets:
+            return None
+        tables = [a.name for a in assets]
+        matched = packs.enabled_for(tables, [])
+        if not matched:  # a pack may match on column names only
+            columns = [c for (c,) in session.execute(select(SourceColumn.name).where(
+                SourceColumn.asset_id.in_([a.id for a in assets])))]
+            matched = packs.enabled_for(tables, columns)
+        return {p.name for p in matched} or None
+    except Exception:  # noqa: BLE001 - applicability narrows vocabulary; failing to tell must not hide it
+        return None
+
+
+def in_applicable_packs(entries: Iterable[Any], applicable: set[str] | None, *, origin_of: Any = None) -> list[Any]:
+    """`entries` without those that come from a domain pack this workspace does not use (see
+    `applicable_domain_packs`); everything else is kept. `origin_of(entry)` reads the origin (default `.origin`)."""
+    entries = list(entries)
+    if applicable is None:
+        return entries
+    read = origin_of or (lambda e: getattr(e, "origin", None))
+    return [e for e in entries if (pack := domain_pack_of(read(e))) is None or pack in applicable]
+
+
 def pack_entries(session: Session, workspace_id: str, *, kinds: Iterable[str] | None = None,
                  exclude_kinds: Iterable[str] = (), trusted_only: bool = False) -> list[EntryView]:
-    """Indexed documents of the packs this workspace may see (platform + its own), as entries."""
+    """Indexed documents of the packs this workspace may see (platform + its own), as entries; a domain pack the
+    workspace does not use (`applicable_domain_packs`) contributes nothing."""
     from analystos.db.models import KnowledgeDocument
     from analystos.knowledge.store import visible_packs
 
@@ -133,6 +178,7 @@ def pack_entries(session: Session, workspace_id: str, *, kinds: Iterable[str] | 
     if exclude:
         q = q.where(KnowledgeDocument.kind.notin_(exclude))
     out = [doc_entry(d, packs[d.pack_id]) for d in session.scalars(q.order_by(KnowledgeDocument.path, KnowledgeDocument.id))]
+    out = in_applicable_packs(out, applicable_domain_packs(session, workspace_id))
     return [e for e in out if e.trusted] if trusted_only else out
 
 

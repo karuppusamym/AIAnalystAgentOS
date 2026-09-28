@@ -119,9 +119,9 @@ def test_json_export_carries_the_whole_context_and_nothing_secret(api, env):
     assert "values" not in cols["segment"]["profile"] and "top_values" not in cols["segment"]["profile"]  # samples policy off
     assert cols["segment"]["profile"]["distinct"] == 2
     assert b"Customer 1" not in r.content  # a PII column's values appear nowhere
-    assert {g["name"] for g in doc["glossary"]} == {"Revenue", "Headcount"}  # never the episode
+    assert {g["name"] for g in doc["glossary"]} == {"Revenue", "Headcount", "Customer segment"}  # never the episode; the pack term a column links to comes along
     assert doc["suggested_model"]["available"] and {t["name"] for t in doc["suggested_model"]["tables"]} >= {"orders", "people"}
-    assert doc["counts"]["assets"] == len(doc["assets"]) and doc["counts"]["glossary"] == 2
+    assert doc["counts"]["assets"] == len(doc["assets"]) and doc["counts"]["glossary"] == 3
     again = _export(api, env, "json").json()
     assert again["content_digest"] == doc["content_digest"]  # unchanged context, same digest
 

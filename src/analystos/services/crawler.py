@@ -546,7 +546,7 @@ class _Crawl:
             col.ordinal, col.data_type, col.nullable, col.is_key = i, c.data_type, c.nullable, c.is_key
             col.profile = {"references": c.references} if c.references else {}
             sem = col_sem.get(c.name)
-            pii = cat.classify_pii(c.name, c.data_type)
+            pii = cat.classify_pii(c.name, c.data_type, references=bool(c.references))
             prior_pii = (col.semantics or {}).get("pii")
             if prior_pii and prior_pii.get("confidence", 0) > pii.confidence:
                 pii = cat.PiiResult.model_validate(prior_pii)  # a value-sampled classification is never lost on re-crawl
@@ -743,6 +743,9 @@ class _Crawl:
 
         dialect = getattr(run_sql, "dialect", "postgres")
         text_cols = [(n, t) for n, t in cols if cat.normalize_type(t) == "text"]
+        with session_scope() as s:  # a declared reference holds keys, not names
+            references = {c.name for c in s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset_id))
+                          if (c.profile or {}).get("references")}
         tagged = 0
         for name, dtype in text_cols:
             sql = (exp.select(col(name).as_("v")).distinct().from_(table(fq)).where(exp.Not(this=exp.Is(this=col(name), expression=exp.Null())))
@@ -753,7 +756,7 @@ class _Crawl:
                 log.info("pii sample skipped for %s.%s: %s", fq, name, exc.message)
                 continue
             values = [str(next(iter(r.values()))) for r in res.records()]
-            pii = cat.classify_pii(name, dtype, values)
+            pii = cat.classify_pii(name, dtype, values, references=name in references)
             masks = pattern_masks(values) if patterns is not None and not pii.category else []
             del values
             if not pii.category:

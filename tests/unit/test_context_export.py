@@ -240,3 +240,11 @@ def test_workspace_cache_view_counts_and_clears_only_that_workspace():
     assert context_cache.workspace_stats("ws2")["total_entries"] == 1
     assert context_cache.workspace_of(context_cache.key("retrieval", "ws2", {})) == "ws2"
     assert context_cache.workspace_of(context_cache.key("retrieval", None, {})) is None
+
+
+def test_a_sensitive_columns_values_are_reported_as_withheld_and_a_query_dataset_is_one_short_line():
+    assert export.profile_line({"distinct": 4}, withheld=True) == "distinct 4; values withheld (sensitive)"
+    assert export.profile_line({"distinct": 4}) == "distinct 4"
+    line = export._dataset_source("SELECT a,\n   b FROM   src.some_table WHERE x = 1 " * 5)
+    assert "\n" not in line and len(line) <= 80 and line.endswith("...")
+    assert export._dataset_source("src.orders") == "src.orders"
