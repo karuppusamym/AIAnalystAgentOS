@@ -8,6 +8,7 @@ import { ChangesPanel } from "../components/ChangesPanel";
 import { InvestigationBoard } from "../components/InvestigationBoard";
 import { InvestigationTree } from "../components/InvestigationTree";
 import { Markdown } from "../components/Markdown";
+import { RunLineage } from "../components/RunLineage";
 import { VerificationBadge, WhyState } from "../components/WhyNumber";
 import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tabs, Tag, TechnicalDetails, Value } from "../components/ui";
 import { durationBetween, fmtDate, fmtPct, fmtTime, shortHash } from "../lib/format";
@@ -31,7 +32,7 @@ export function RunViewPage() {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [stream, setStream] = useState<{ state: StreamState; error?: string; info?: StreamInfo; lastUpdate?: Date }>({ state: "connecting" });
   const handleRef = useRef<EventStreamHandle | null>(null);
-  const [tab, setTab] = useState<"board" | "tree" | "tasks" | "events">("board");
+  const [tab, setTab] = useState<"board" | "tree" | "tasks" | "events" | "lineage">("board");
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const control = useAction();
   const reload = run.reload;
@@ -149,6 +150,7 @@ export function RunViewPage() {
             { id: "tree", label: "Tree" },
             { id: "tasks", label: `Plan & tasks (${r.tasks.length})` },
             { id: "events", label: `Live events (${events.length})` },
+            { id: "lineage", label: "Lineage" },
           ]} />
           <div className="tab-panel card card-body" role="tabpanel">
             {tab === "board" && <InvestigationBoard wsId={wsId} runId={runId} hypotheses={r.hypotheses} insights={r.insights} approvals={r.approvals}
@@ -156,6 +158,7 @@ export function RunViewPage() {
             {tab === "tree" && <InvestigationTree wsId={wsId} objective={r.objective} hypotheses={r.hypotheses} insights={r.insights} />}
             {tab === "tasks" && <TaskBoard tasks={r.tasks} />}
             {tab === "events" && <EventFeed events={events} />}
+            {tab === "lineage" && <RunLineage wsId={wsId} runId={runId} />}
           </div>
         </div>
         <aside className="run-side">

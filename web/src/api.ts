@@ -435,6 +435,11 @@ export interface Lineage {
   edges: LineageEdge[];
 }
 
+/** Every edge one run recorded; `truncated` when the run has more edges than the route returns. */
+export interface RunLineage extends Lineage {
+  truncated: boolean;
+}
+
 export interface InsightDetail extends Insight {
   queries: QueryExecution[];
   experiments: Experiment[];
@@ -3336,6 +3341,8 @@ export const api = {
   getQuery: (id: string) => get("/api/queries/{query_id}", { path: { query_id: id } }) as Promise<QueryExecution>,
   listInsights: (ws: string) => get("/api/workspaces/{workspace_id}/insights", { path: W(ws) }) as Promise<Insight[]>,
   getInsight: (id: string) => get("/api/insights/{insight_id}", { path: { insight_id: id } }) as Promise<InsightDetail>,
+  runLineage: (ws: string, run: string) =>
+    get("/api/workspaces/{workspace_id}/lineage", { path: W(ws), query: { run_id: run } }) as Promise<RunLineage>,
   listApprovals: (ws: string, status?: string) =>
     get("/api/workspaces/{workspace_id}/approvals", { path: W(ws), query: { status } }) as Promise<Approval[]>,
   approve: (id: string, reason?: string) =>
