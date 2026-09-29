@@ -1,8 +1,7 @@
 # ADR-0017 — Cross-repository contract alignment (AnalystOS, Atlas, DataPilot)
 
-**Status:** Proposed (2026-09-25, tracker P4-G01). A decision for the owners of the three
-repositories; nothing is merged across repositories by this record. It becomes Accepted when each
-owner has signed off below.
+**Status:** Accepted (2026-09-28, tracker P4-G01; proposed 2026-09-25). Signed off by the owner of
+the three repositories, recorded below; nothing is merged across repositories by this record.
 **Amended 2026-09-26 by [ADR-0018](0018-one-platform-donor-repositories.md):** AnalystOS becomes the
 single platform and Atlas/DataPilot become donors. The three contracts below still govern artifacts
 exchanged while the donor products run, but the "Consequences" statement that nothing moves code
@@ -90,6 +89,10 @@ each repo carries its own copy, with the three tested against the same vectors; 
 
 | Owner | Repository | Decision | Date |
 |---|---|---|---|
-| | AnalystOS | | |
-| | Atlas | | |
-| | DataPilot | | |
+| karuppusamym | AnalystOS | Accepted as proposed | 2026-09-28 |
+| karuppusamym | Atlas | Accepted as proposed | 2026-09-28 |
+| karuppusamym | DataPilot | Accepted as proposed | 2026-09-28 |
+
+Open question (a) is settled as proposed: each repository carries its own copy of `contracts/`,
+tested against the same vectors. (b) and (c) are left to the DataPilot and Atlas adoption work in
+the table above; adopting there is each donor repository's change, not an AnalystOS row.

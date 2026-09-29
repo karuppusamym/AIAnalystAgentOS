@@ -14,16 +14,16 @@ CONTRACTS = REPO_ROOT / "contracts"
 
 
 def _schema() -> dict:
-    return json.loads((CONTRACTS / "decision_purpose.schema.json").read_text())
+    return json.loads((CONTRACTS / "decision_purpose.schema.json").read_text(encoding="utf-8"))
 
 
 def test_okf_pin_matches_the_code():
     from analystos.knowledge import okf
 
-    pin = json.loads((CONTRACTS / "okf_profile_pin.json").read_text())
+    pin = json.loads((CONTRACTS / "okf_profile_pin.json").read_text(encoding="utf-8"))
     assert (pin["repository"], pin["path"], pin["revision"], pin["sha256"], pin["okf_version"], pin["conformance_status"]) == (
         okf.OKF_SPEC_REPOSITORY, okf.OKF_SPEC_PATH, okf.OKF_SPEC_REVISION, okf.OKF_SPEC_SHA256, okf.OKF_VERSION, okf.CONFORMANCE_STATUS)
-    profile = (REPO_ROOT / "docs" / "10-architecture" / "okf-profile.md").read_text()
+    profile = (REPO_ROOT / "docs" / "10-architecture" / "okf-profile.md").read_text(encoding="utf-8")
     assert pin["revision"] in profile and pin["sha256"] in profile
 
 
@@ -77,7 +77,7 @@ def test_approval_hash_vectors():
     from analystos.core.ids import canonical_json, stable_hash
     from analystos.runtime.plan import plan_hash
 
-    text = (CONTRACTS / "approval_hash.md").read_text()
+    text = (CONTRACTS / "approval_hash.md").read_text(encoding="utf-8")
     vectors = json.loads(re.search(r"## 4\. Test vectors\s+```json\n(.*?)```", text, re.S).group(1))
     assert len(vectors) >= 5
     for v in vectors:
