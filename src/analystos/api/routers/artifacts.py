@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
-from analystos.api.serialize import row, rows, with_verification
+from analystos.api.serialize import row, rows, standing, with_verification
 from analystos.artifacts.registry import lineage_for, run_lineage
 from analystos.contracts.policy import ApprovalSubject, ApprovalView
 from analystos.core.errors import Conflict, InvalidInput
@@ -92,7 +92,7 @@ def get_insight(insight_id: str, user: User = Depends(current_user), session: Se
     from analystos.db.models import Experiment
     from analystos.evidence.verification import insight_view
 
-    return {**row(ins), "verification_state": insight_view(session, ins),
+    return {**row(ins), "verification_state": insight_view(session, ins), **standing(ins.evidence_bundle),
             "queries": rows(session.scalars(select(QueryExecution).where(
                 QueryExecution.id.in_(q_ids), QueryExecution.workspace_id == ins.workspace_id))),
             "experiments": rows(session.scalars(select(Experiment).where(Experiment.hypothesis_id == ins.hypothesis_id))),

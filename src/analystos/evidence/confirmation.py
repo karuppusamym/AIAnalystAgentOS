@@ -10,7 +10,9 @@ confidence score — can set the label (`contracts.evidence.Validation` refuses 
     The claim (method, spec, top group, direction) was locked before an untouched partition was read,
     and the partition supports it with the same top group and direction. Input: a ``holdout`` record
     ``{partition, claim_locked_at, partition_accessed_at, supported, top, direction}`` produced by the
-    confirming step. Fails when the lock is not strictly before access.
+    confirming step (`evidence.holdout`, P8-15: REV runs it once per verified finding on the rows the
+    discovery never read). Fails when the lock is not strictly before access, or when the record says
+    the held-out test was not evaluated (and why).
 
 ``fresh_snapshot_replication``
     A pre-registered claim (hypothesis origin ``registry`` or ``carried``: its spec was fixed by an
@@ -40,11 +42,14 @@ def _same(a: Any, b: Any) -> bool:
 def holdout_rule(holdout: Mapping[str, Any] | None, top: Any, direction: str | None) -> tuple[bool, str]:
     if not holdout:
         return False, "no held-out partition was evaluated"
+    if holdout.get("evaluated") is False:
+        return False, f"not checked on held-out rows: {holdout.get('reason') or 'no held-out partition'}"
     locked, accessed = str(holdout.get("claim_locked_at") or ""), str(holdout.get("partition_accessed_at") or "")
     if not locked or not accessed or not locked < accessed:
         return False, "the claim was not locked before the partition was read"
     if not holdout.get("supported"):
-        return False, f"the held-out partition {holdout.get('partition')} does not support the claim"
+        why = f": {holdout['reason']}" if holdout.get("reason") else ""
+        return False, f"the held-out partition {holdout.get('partition')} does not support the claim{why}"
     if not _same(holdout.get("top"), top) or (direction and holdout.get("direction") and holdout["direction"] != direction):
         return False, "the held-out partition names a different top group or direction"
     return True, f"confirmed on held-out partition {holdout.get('partition')}"

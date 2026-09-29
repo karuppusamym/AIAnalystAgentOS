@@ -257,6 +257,43 @@ export interface HypothesisResult {
   highlights?: Dict | null;
   groups?: Dict[] | null;
   warnings?: string[] | null;
+  /** P8-15: how far a supported result clears its method's bars (`evidence/strength.py`). */
+  strength?: FindingStrength | null;
+}
+
+/** P8-15 `contracts/evidence.py Strength`: weak when the effect is under 1.5x the method's minimum or q is within 10x of alpha. */
+export interface FindingStrength {
+  label: "weak" | "moderate" | "strong";
+  effect?: number | null;
+  effect_label?: string | null;
+  threshold?: number | null;
+  margin?: number | null;
+  q?: number | null;
+  alpha?: number | null;
+  reasons?: string[];
+}
+
+/** P8-15 `contracts/evidence.py HoldoutCheck`: the claim locked, then tested once on rows the discovery never read. */
+export interface HoldoutCheck {
+  evaluated: boolean;
+  reason?: string | null;
+  partition?: string | null;
+  claim?: Dict | null;
+  claim_locked_at?: string | null;
+  partition_accessed_at?: string | null;
+  supported?: boolean | null;
+  top?: string | null;
+  direction?: string | null;
+  test?: string | null;
+  p_value?: number | null;
+  p_one_sided?: number | null;
+  alpha?: number | null;
+  effect_size?: number | null;
+  effect_label?: string | null;
+  n?: number | null;
+  contrast?: string[] | null;
+  experiment_id?: string | null;
+  confirmed?: boolean | null;
 }
 
 export interface Hypothesis {
@@ -280,6 +317,8 @@ export interface Hypothesis {
   created_at: string;
   result: HypothesisResult | null;
   experiment_id: string | null;
+  /** P8-15: the held-out confirmation of this hypothesis's finding, when one was considered. */
+  holdout?: HoldoutCheck | null;
 }
 
 export interface EvidenceRef {
@@ -332,6 +371,11 @@ export interface Insight {
   created_at: string;
   /** The verification record's state (P7-01); a void one carries its cause. */
   verification_state?: VerificationState;
+  /** Evidence state (P4-03): exploratory | confirmed | replicated | inconclusive | ... */
+  validation?: string | null;
+  /** P8-15: strength of a verified finding and its held-out confirmation record. */
+  strength?: FindingStrength | null;
+  holdout?: HoldoutCheck | null;
 }
 
 /** `evidence/verification.py state_of`: what the UI shows about a finding's verdict. */

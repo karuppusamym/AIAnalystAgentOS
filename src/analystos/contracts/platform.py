@@ -146,6 +146,10 @@ class AnalysisSettings(BaseModel):
     # Statistical safeguards can only be tightened: REV uses max(critic.MIN_N, this value).
     min_sample_size: int = Field(100, ge=30, le=1_000_000)
     sample_rows: int = Field(50000, ge=1000, le=5_000_000)
+    # P8-15: share of each analysed table's rows held out (by a stable hash of the row key) and read only
+    # once, after REV locked a verified claim, to confirm it. 0 turns held-out confirmation off: every
+    # finding then stays exploratory unless a fresh-snapshot replication confirms it.
+    holdout_fraction: float = Field(0.3, ge=0.0, le=0.5)
     heuristic_hypotheses_sufficient: int = Field(6, ge=1, le=30)  # auto mode: skip the model if rules produce this many
     max_charts: int = Field(16, ge=1, le=60)
 

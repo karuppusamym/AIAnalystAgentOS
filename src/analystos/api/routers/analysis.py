@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analystos.api.deps import StreamAuth, current_user, db, stream_guard, streaming_auth
-from analystos.api.serialize import row, rows, with_verification
+from analystos.api.serialize import row, rows, standing, with_verification
 from analystos.core.errors import InvalidInput
 from analystos.db.base import session_scope
 from analystos.db.models import (
@@ -101,12 +101,14 @@ def _run_detail(session: Session, run: AnalysisRun) -> dict:
     exps = {e.hypothesis_id: e for e in session.scalars(select(Experiment).where(Experiment.run_id == run.id, Experiment.role == "primary"))}
     insights = list(session.scalars(select(Insight).where(Insight.run_id == run.id).order_by(Insight.code)))
     approvals = list(session.scalars(select(Approval).where(Approval.run_id == run.id).order_by(Approval.created_at)))
+    held = {i.hypothesis_id: standing(i.evidence_bundle)["holdout"] for i in insights if i.hypothesis_id}  # P8-15
     scope = dict(run.scope or {})
     return {**row(run), "scope": {k: scope.get(k) for k in ("assets", "denied_columns", "max_rows", "timeout_seconds", "policy_version", "hash")},
             "tasks": rows(tasks),
             "hypotheses": [{**row(h), "result": {k: (exps[h.id].result or {}).get(k) for k in (
-                "test", "n", "p_value", "p_adjusted", "effect_size", "effect_label", "highlights", "groups", "warnings")}
-                if h.id in exps else None, "experiment_id": exps[h.id].id if h.id in exps else None} for h in hyps],
+                "test", "n", "p_value", "p_adjusted", "effect_size", "effect_label", "highlights", "groups", "warnings",
+                "strength")} if h.id in exps else None, "experiment_id": exps[h.id].id if h.id in exps else None,
+                "holdout": held.get(h.id)} for h in hyps],
             "insights": with_verification(session, insights), "approvals": rows(approvals, exclude={"payload"})}
 
 

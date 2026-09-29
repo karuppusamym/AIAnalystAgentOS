@@ -83,12 +83,31 @@ def plan_approved(ctx: RunContext) -> dict:
 _NUM = re.compile(r"-?\d+(?:[.,]\d+)?")
 
 
+def finding_standing(ins: Insight) -> dict:
+    """P8-15: whether a verified finding was confirmed on separate data, and its strength."""
+    validation = (ins.evidence_bundle or {}).get("validation") or {}
+    return {"confirmed": ins.validation == "confirmed", "strength": (validation.get("strength") or {}).get("label")}
+
+
+def standing_note(facts: list[dict]) -> str:
+    """The summary's plain-language line for findings that are not established facts (empty when none)."""
+    leads = [f["code"] for f in facts if not (f.get("standing") or {}).get("confirmed")]
+    weak = [f["code"] for f in facts if (f.get("standing") or {}).get("strength") == "weak"]
+    lines = []
+    if leads:
+        lines.append("_Not yet confirmed on separate data, so treat these as leads worth checking, not established facts: "
+                     f"{', '.join(leads)}._")
+    if weak:
+        lines.append(f"_Weak evidence (the effect only just clears the minimum size that counts): {', '.join(weak)}._")
+    return "\n".join(lines)
+
+
 def finalize(ctx: RunContext) -> dict:
     with session_scope() as s:
         insights = list(s.scalars(select(Insight).where(Insight.run_id == ctx.run.id, Insight.status == "verified")
                                   .order_by(*by_code(Insight.code))))
         facts = [{"code": i.code, "title": i.title, "finding": i.finding, "confidence": i.confidence,
-                  "impact": i.business_impact} for i in insights]
+                  "impact": i.business_impact, "standing": finding_standing(i)} for i in insights]
     summary_md, source = None, "template"
     payload = {"objective": ctx.run.objective, "facts": facts}
     data, model = llm_json(ctx, "summarization", "run_summary.v1", payload) \
@@ -100,6 +119,8 @@ def finalize(ctx: RunContext) -> dict:
             summary_md, source = data["summary_markdown"], f"llm:{model}"
     if summary_md is None:
         summary_md = "\n".join(f"- **{f['title']}** — {f['finding']}" for f in facts) or "- No finding passed verification."
+    if standing_note(facts):  # deterministic, after any model wording: the summary never states a lead as fact
+        summary_md = f"{summary_md.rstrip()}\n\n{standing_note(facts)}"
     with session_scope() as s:
         run = s.get(AnalysisRun, ctx.run.id)
         tasks = {t.key: t for t in s.scalars(select(RunTask).where(RunTask.run_id == ctx.run.id))}

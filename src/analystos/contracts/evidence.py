@@ -11,7 +11,8 @@ One overloaded `verified` badge is replaced by dimensions on a versioned `Eviden
   assumptions and power at the practical threshold where the method can state it.
 * **Validation** — `state` (exploratory | replicated | confirmed | inconclusive | invalid |
   insufficient_evidence | legacy) with check-level pass / fail / not_applicable, and the confirmation rule
-  that promoted a discovery, if any. `confirmed` cannot be constructed without a passing rule.
+  that promoted a discovery, if any. `confirmed` cannot be constructed without a passing rule. Since P8-15
+  it also carries the finding's `strength` and its `holdout` confirmation record.
 * **Limits** — population, stale inputs, confounding, untested slices.
 
 The legacy review score stays, labelled uncalibrated: it is not a probability that the claim is true.
@@ -34,6 +35,7 @@ ValidationState = Literal["exploratory", "replicated", "confirmed", "inconclusiv
                           "insufficient_evidence", "legacy"]
 Label = Literal["discovery", "confirmation", "legacy"]
 CheckOutcome = Literal["pass", "fail", "not_applicable"]
+StrengthLabel = Literal["weak", "moderate", "strong"]
 CONFIRMATION_RULES = ("holdout_partition", "fresh_snapshot_replication")
 
 
@@ -125,6 +127,51 @@ class Confirmation(BaseModel):
     evaluated: list[dict[str, Any]] = Field(default_factory=list)  # every rule tried, with its reason
 
 
+class Strength(BaseModel):
+    """How far a supported finding clears its method's bars (P8-15, `evidence.strength`): `weak` when the
+    effect is under 1.5x the method's minimum effect or the adjusted p-value is within 10x of alpha. Computed
+    from the statistic alone; no model is involved."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: StrengthLabel
+    effect: float | None = None
+    effect_label: str | None = None
+    threshold: float | None = None  # the method's minimum effect for this effect measure
+    margin: float | None = None  # how many times the threshold the effect is (log scale for ratios)
+    q: float | None = None  # the adjusted p-value (raw p when there was no adjustment)
+    alpha: float | None = None
+    reasons: list[str] = Field(default_factory=list)
+    rule: str = "strength.v1"
+
+
+class HoldoutCheck(BaseModel):
+    """The held-out confirmation of one claim (P8-15, `evidence.holdout`): the claim was locked, then the same
+    test ran once on rows the discovery never read. `evaluated` False says why it did not run."""
+
+    model_config = ConfigDict(extra="forbid")
+    evaluated: bool
+    reason: str | None = None
+    partition: str | None = None  # plain description, e.g. "30% of rows held out by Order ID"
+    partition_spec: dict[str, Any] | None = None
+    claim: dict[str, Any] | None = None  # method, spec hash, top group, baseline, direction, asset
+    claim_hash: str | None = None
+    claim_locked_at: str | None = None
+    partition_accessed_at: str | None = None
+    supported: bool | None = None
+    top: str | None = None
+    direction: Direction | None = None
+    test: str | None = None
+    p_value: float | None = None
+    p_one_sided: float | None = None
+    alpha: float | None = None
+    effect_size: float | None = None
+    effect_label: str | None = None
+    n: int | None = None
+    contrast: list[str] | None = None  # the two groups compared when the claim was tested as top vs baseline
+    experiment_id: str | None = None
+    confirmed: bool | None = None  # the holdout rule's verdict (same top group and direction, locked first)
+
+
 class Validation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     state: ValidationState
@@ -134,6 +181,8 @@ class Validation(BaseModel):
     missing_evidence: list[str] = Field(default_factory=list)
     reproducible: bool | None = None
     predictive_evaluated: bool = False  # a model evaluated on unseen rows (e.g. holdout AUC), not a confirmation
+    strength: Strength | None = None  # P8-15: supported findings only
+    holdout: HoldoutCheck | None = None  # P8-15: the held-out confirmation attempt, if one was considered
 
     @model_validator(mode="after")
     def _confirmed_needs_a_rule(self) -> Validation:

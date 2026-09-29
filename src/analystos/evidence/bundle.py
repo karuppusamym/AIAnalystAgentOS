@@ -25,8 +25,10 @@ from analystos.contracts.evidence import (
     EvidenceBundle,
     Fact,
     Freshness,
+    HoldoutCheck,
     ManifestEntry,
     ReviewScore,
+    Strength,
     Validation,
 )
 
@@ -168,7 +170,8 @@ def assemble(*, spec: Mapping[str, Any], stat: Mapping[str, Any], second: Mappin
              population: Mapping[str, Any] | None, caveats: Sequence[str], confirmation: Confirmation,
              replicated: bool, reproducible: bool | None, review_score: float | None, family_size: int, alpha: float,
              origin: str | None, iteration: int | None, parent: str | None, claim_meta: Mapping[str, Any],
-             optional: Sequence[str] = (), predictive: bool = False) -> EvidenceBundle:
+             optional: Sequence[str] = (), predictive: bool = False, strength: Strength | None = None,
+             holdout: HoldoutCheck | None = None) -> EvidenceBundle:
     """The finding's bundle; its `validation.missing_evidence` lists what refused it (if anything)."""
     method = method_dimensions(spec, stat, second, family_size=family_size, alpha=alpha, origin=origin,
                                iteration=iteration, parent=parent)
@@ -194,7 +197,7 @@ def assemble(*, spec: Mapping[str, Any], stat: Mapping[str, Any], second: Mappin
     return EvidenceBundle(data=data, claim=claim, method=method, limits=limits,
                           validation=Validation(state=state, label=label, checks=checks, confirmation=confirmation,
                                                 missing_evidence=missing, reproducible=reproducible,
-                                                predictive_evaluated=predictive),
+                                                predictive_evaluated=predictive, strength=strength, holdout=holdout),
                           freshness=Freshness(state="current"), review_score=ReviewScore(value=review_score))
 
 

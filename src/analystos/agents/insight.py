@@ -3,7 +3,11 @@
 Narratives are bound to typed facts (P4-03, `evidence.facts`): every number in model-written text must
 be a computed fact used with its own group, unit and direction, otherwise the deterministic template
 text is used and the fallback is recorded. The draft finding carries its facts, the binding and the
-run's data-version manifest; REV (`agents.critic`) completes the evidence bundle."""
+run's data-version manifest; REV (`agents.critic`) completes the evidence bundle.
+
+P8-15: every result still supported after Benjamini-Hochberg gets a deterministic strength
+(`evidence.strength`: weak / moderate / strong) on its experiment, and a finding measured on the discovery
+rows says so in its caveats (the held-out rows are REV's to read, once, after the claim is locked)."""
 from __future__ import annotations
 
 import re
@@ -18,6 +22,7 @@ from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import Experiment, Hypothesis, Insight, QueryExecution, by_code
 from analystos.events.bus import emit
+from analystos.evidence.strength import grade
 from analystos.methods.base import cap, fmt_pct, text_parts
 from analystos.runtime.context import RunContext
 from analystos.staging.snapshots import population_for
@@ -189,6 +194,9 @@ def build_insights(ctx: RunContext) -> dict:
                 h.status = "inconclusive"
                 h.conclusion = (h.conclusion or "") + f" — not significant after Benjamini-Hochberg adjustment (q={adj:.3g})"
             elif h.status == "supported":
+                strength = grade(res, alpha=ctx.policy.alpha)
+                if strength is not None:
+                    exps[eid].result = res = {**res, "strength": strength.model_dump(mode="json")}
                 candidates.append((h.id, h.code, h.statement, dict(h.spec), dict(res), eid, list(exps[eid].query_ids), h.priority_score))
     candidates.sort(key=lambda c: (-(c[7] or 0), c[4].get("p_adjusted") or 1))
     # One finding per claim (method, outcome, segment/drivers, filters, top group): drill-downs that restate a
@@ -251,6 +259,9 @@ def build_insights(ctx: RunContext) -> dict:
                            "rendered_from": source},
                  "data": {"manifest": {"version": manifest.version if manifest else None}}}
         caveats = ["Association in historical data; not proof of causation."] + list(stat.get("warnings") or [])[:3]
+        part = (stat.get("details") or {}).get("partition") or {}
+        if part.get("applied"):
+            caveats.append(f"Measured on the discovery rows only ({part.get('description')} for a separate confirmation check).")
         if spec.get("filters"):
             caveats.append("Scoped to: " + ", ".join(f"{f['column']} {f['op']} {f.get('value')}" for f in spec["filters"]))
         population = population_for(spec.get("asset"), ctx.scope.asset_sources.get(spec.get("asset") or "")).caveat()
