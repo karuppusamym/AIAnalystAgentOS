@@ -270,7 +270,10 @@ class QueryGateway:
                       strict=False)
         summary = plan_summary(rows[0][0] if rows and rows[0] else None)
         shown = visible_relations(summary["relations"], scope.assets, validated.referenced_assets)
-        summary.update(relations=shown, relations_hidden=len(summary["relations"]) - len(shown))
+        seen = set(visible_relations(sorted({s["relation"] for s in summary["scans"]}), scope.assets,
+                                     validated.referenced_assets))
+        summary.update(relations=shown, relations_hidden=len(summary["relations"]) - len(shown),
+                       scans=[s for s in summary["scans"] if s["relation"] in seen])
         return {"available": True, **summary}
 
     # ------------------------------------------------------------------ helpers
@@ -509,12 +512,17 @@ def visible_relations(relations: list[str], assets: list[str], referenced: list[
     return [r for r in relations if (r in full if "." in r else r in bare)]
 
 
-def plan_summary(raw: Any) -> dict[str, Any]:
-    """The top of a Postgres JSON plan: estimated rows and cost, and every node and relation in it."""
+def _plan_top(raw: Any) -> dict[str, Any]:
     import json
 
     doc = json.loads(raw) if isinstance(raw, str) else raw
-    top = (doc[0] if isinstance(doc, list) and doc else doc or {}).get("Plan") or {}
+    return (doc[0] if isinstance(doc, list) and doc else doc or {}).get("Plan") or {}
+
+
+def plan_summary(raw: Any) -> dict[str, Any]:
+    """The top of a Postgres JSON plan: estimated rows and cost, every node and relation in it, and its
+    scan nodes (for the index advisor, N-11)."""
+    top = _plan_top(raw)
     nodes: list[str] = []
     relations: list[str] = []
 
@@ -527,7 +535,49 @@ def plan_summary(raw: Any) -> dict[str, Any]:
 
     walk(top)
     return {"node": top.get("Node Type"), "estimated_rows": top.get("Plan Rows"), "total_cost": top.get("Total Cost"),
-            "nodes": nodes[:40], "relations": sorted(set(relations))}
+            "nodes": nodes[:40], "relations": sorted(set(relations)), "scans": plan_scans(raw)}
+
+
+_INDEX_NODES = {"Index Scan", "Index Only Scan", "Bitmap Index Scan", "Bitmap Heap Scan"}
+
+
+def plan_columns(expression: Any) -> list[str]:
+    """Column names named by a plan condition (`Filter`, `Index Cond`); literals are dropped, never kept."""
+    if not isinstance(expression, str) or not expression.strip():
+        return []
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(expression, read="postgres")
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted({str(c.name) for c in tree.find_all(exp.Column)}) if tree is not None else []
+
+
+def plan_scans(raw: Any) -> list[dict[str, Any]]:
+    """The scan nodes of a Postgres JSON plan: node type, relation, estimated rows and cost, and the column
+    names of its filter / index condition (never their values)."""
+    top = _plan_top(raw)
+    scans: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        kind = str(node.get("Node Type"))
+        if node.get("Relation Name") or kind in _INDEX_NODES:
+            scans.append({
+                "node": kind,
+                "relation": f"{node.get('Schema') or ''}.{node.get('Relation Name') or ''}".strip("."),
+                "index": node.get("Index Name"),
+                "filter_columns": plan_columns(node.get("Filter")),
+                "index_columns": plan_columns(node.get("Index Cond") or node.get("Recheck Cond")),
+                "estimated_rows": node.get("Plan Rows"),
+                "total_cost": node.get("Total Cost"),
+            })
+        for child in node.get("Plans") or []:
+            walk(child)
+
+    walk(top)
+    return scans[:40]
 
 
 def _bind_scope(scope: DataScope, source_id: str) -> DataScope:

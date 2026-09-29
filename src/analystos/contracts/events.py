@@ -65,6 +65,8 @@ EVENT_TYPES = {
     "delivery.destination_requested", "delivery.destination_authorized", "delivery.destination_rejected",
     "delivery.destination_revoked", "delivery.queued", "delivery.sent", "delivery.retrying", "delivery.dead_lettered",
     "delivery.refused",
+    # Physical-design advice (N-11): index / partitioning / clustering recommendations, never applied
+    "index_advice.generated", "index_advice.reviewed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

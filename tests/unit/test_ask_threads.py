@@ -281,7 +281,9 @@ def test_plan_summary_walks_every_node_and_relation():
         {"Node Type": "Seq Scan", "Relation Name": "incident", "Schema": "stg", "Plan Rows": 4210}]}}]
     out = plan_summary(plan)
     assert out == {"node": "Aggregate", "estimated_rows": 5, "total_cost": 12.5, "nodes": ["Aggregate", "Seq Scan"],
-                   "relations": ["stg.incident"]}
+                   "relations": ["stg.incident"],
+                   "scans": [{"node": "Seq Scan", "relation": "stg.incident", "index": None, "filter_columns": [],
+                              "index_columns": [], "estimated_rows": 4210, "total_cost": None}]}
 
 
 def test_explain_shows_only_relations_in_the_callers_scope():
