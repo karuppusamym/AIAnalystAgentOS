@@ -67,6 +67,9 @@ EVENT_TYPES = {
     "delivery.refused",
     # Physical-design advice (N-11): index / partitioning / clustering recommendations, never applied
     "index_advice.generated", "index_advice.reviewed",
+    # Evidence fusion (N-8): a finding's or answer's measured and document citations recorded; a document
+    # claim that disagrees with measured data flagged (measured data wins)
+    "evidence.citations_recorded", "evidence.conflict_flagged",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

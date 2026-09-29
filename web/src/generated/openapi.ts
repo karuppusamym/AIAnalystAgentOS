@@ -640,6 +640,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask/turns/{turn_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Turn Citations
+         * @description The answer's evidence as two citation kinds (N-8): each governed query result, and the knowledge
+         *     documents its model calls were given (with sha256 receipts); a number found only in a document is
+         *     labelled document-sourced; document claims that disagree with the result are flagged.
+         */
+        get: operations["turn_citations_api_ask_turns__turn_id__citations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ask/turns/{turn_id}/inspector": {
         parameters: {
             query?: never;
@@ -1276,6 +1298,29 @@ export interface paths {
          * @description The verified finding as an OKF v0.2 Attested Computation (document text and frontmatter).
          */
         get: operations["attested_api_insights__insight_id__attested_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/insights/{insight_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Insight Citations
+         * @description The finding's evidence as two citation kinds (N-8): measured results (query id, result hash, the
+         *     facts computed from them) and knowledge documents (path, anchor, document/section sha256), the source
+         *     of every number in its text (only `quantitative` is verified) and document claims that disagree with
+         *     measured data. `recorded` is false for a finding verified before citations were recorded.
+         */
+        get: operations["insight_citations_api_insights__insight_id__citations_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2799,6 +2844,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/evidence/conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evidence Conflicts
+         * @description Findings and Ask answers of the workspace whose cited documents disagree with measured data (N-8).
+         */
+        get: operations["evidence_conflicts_api_workspaces__workspace_id__evidence_conflicts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/hypothesis-registry": {
         parameters: {
             query?: never;
@@ -2814,6 +2879,57 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/index-advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Advice */
+        get: operations["list_advice_api_workspaces__workspace_id__index_advice_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/index-advice/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze */
+        post: operations["analyze_api_workspaces__workspace_id__index_advice_analyze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/index-advice/{advice_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Review */
+        patch: operations["review_api_workspaces__workspace_id__index_advice__advice_id__patch"];
         trace?: never;
     };
     "/api/workspaces/{workspace_id}/insights": {
@@ -6628,6 +6744,49 @@ export interface components {
             /** Watermark */
             watermark: string;
         };
+        /** IndexAdviceAnalyzeIn */
+        IndexAdviceAnalyzeIn: {
+            /**
+             * Days
+             * @default 30
+             */
+            days?: number;
+            /**
+             * Explain
+             * @default true
+             */
+            explain?: boolean;
+            /**
+             * Limit
+             * @default 25
+             */
+            limit?: number;
+            /**
+             * Max Explains
+             * @default 10
+             */
+            max_explains?: number;
+            /**
+             * Min Ms
+             * @default 500
+             */
+            min_ms?: number;
+            /**
+             * Min Table Rows
+             * @default 10000
+             */
+            min_table_rows?: number;
+        };
+        /** IndexAdviceReviewIn */
+        IndexAdviceReviewIn: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "acknowledged" | "dismissed";
+        };
         /** IngestSpec */
         IngestSpec: {
             /** Delimiter */
@@ -9448,6 +9607,40 @@ export interface operations {
             };
         };
     };
+    turn_citations_api_ask_turns__turn_id__citations_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     inspect_turn_api_ask_turns__turn_id__inspector_get: {
         parameters: {
             query?: never;
@@ -10600,6 +10793,40 @@ export interface operations {
         };
     };
     attested_api_insights__insight_id__attested_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                insight_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    insight_citations_api_insights__insight_id__citations_get: {
         parameters: {
             query?: never;
             header?: {
@@ -14146,6 +14373,40 @@ export interface operations {
             };
         };
     };
+    evidence_conflicts_api_workspaces__workspace_id__evidence_conflicts_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_registered_hypotheses_api_workspaces__workspace_id__hypothesis_registry_get: {
         parameters: {
             query?: {
@@ -14161,6 +14422,119 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_advice_api_workspaces__workspace_id__index_advice_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analyze_api_workspaces__workspace_id__index_advice_analyze_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexAdviceAnalyzeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_api_workspaces__workspace_id__index_advice__advice_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                advice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IndexAdviceReviewIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

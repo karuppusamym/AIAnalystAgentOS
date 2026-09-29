@@ -695,6 +695,28 @@ class VerificationRecord(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class EvidenceCitationSet(Base):
+    """The citations of one finding or Ask answer (N-8, `contracts/citations.py`): measured results and
+    knowledge documents as separate kinds, where each narrative number comes from, and document claims
+    that disagree with measured data. Rewritten when the subject is re-verified or re-answered."""
+
+    __tablename__ = "evidence_citation_set"
+    __table_args__ = (UniqueConstraint("subject_type", "subject_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    subject_type: Mapped[str] = mapped_column(String(30))  # insight | ask_turn
+    subject_id: Mapped[str] = mapped_column(String(80))
+    version: Mapped[str] = mapped_column(String(30))
+    quantitative_count: Mapped[int] = mapped_column(Integer, default=0)
+    document_count: Mapped[int] = mapped_column(Integer, default=0)
+    conflict_count: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    document_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    citations: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _ts()
+
+
 class VerificationDependency(Base):
     """The lookup side of a record's fingerprint: events find dependents by (kind, ref)."""
 

@@ -1,0 +1,436 @@
+{
+  "$defs": {
+    "Conflict": {
+      "additionalProperties": false,
+      "description": "A document number that disagrees with a measured fact about the same metric.",
+      "properties": {
+        "document_citation_id": {
+          "title": "Document Citation Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anchor"
+        },
+        "fact_id": {
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject"
+        },
+        "document_text": {
+          "title": "Document Text",
+          "type": "string"
+        },
+        "document_value": {
+          "title": "Document Value",
+          "type": "number"
+        },
+        "measured_value": {
+          "title": "Measured Value",
+          "type": "number"
+        },
+        "unit": {
+          "enum": [
+            "fraction",
+            "percent",
+            "value"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "relative_difference": {
+          "title": "Relative Difference",
+          "type": "number"
+        },
+        "sentence": {
+          "title": "Sentence",
+          "type": "string"
+        },
+        "resolution": {
+          "const": "measured_data_wins",
+          "default": "measured_data_wins",
+          "title": "Resolution",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_citation_id",
+        "path",
+        "fact_id",
+        "metric",
+        "document_text",
+        "document_value",
+        "measured_value",
+        "unit",
+        "relative_difference",
+        "sentence"
+      ],
+      "title": "Conflict",
+      "type": "object"
+    },
+    "DocumentCitation": {
+      "additionalProperties": false,
+      "description": "A knowledge section the claim was grounded on, with the receipts to check it was not edited.",
+      "properties": {
+        "kind": {
+          "const": "document",
+          "default": "document",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anchor"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        },
+        "pack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pack"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "document_sha256": {
+          "title": "Document Sha256",
+          "type": "string"
+        },
+        "section_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Sha256"
+        },
+        "excerpt": {
+          "default": "",
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "numbers": {
+          "items": {
+            "$ref": "#/$defs/DocumentNumber"
+          },
+          "title": "Numbers",
+          "type": "array"
+        },
+        "trusted": {
+          "default": true,
+          "title": "Trusted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "document_id",
+        "path",
+        "document_sha256"
+      ],
+      "title": "DocumentCitation",
+      "type": "object"
+    },
+    "DocumentNumber": {
+      "additionalProperties": false,
+      "description": "A number as a document states it. Always `verified=False`: a document is not a measurement.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "unit": {
+          "default": "value",
+          "enum": [
+            "percent",
+            "value"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "sentence": {
+          "title": "Sentence",
+          "type": "string"
+        },
+        "source": {
+          "const": "document",
+          "default": "document",
+          "title": "Source",
+          "type": "string"
+        },
+        "verified": {
+          "const": false,
+          "default": false,
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text",
+        "value",
+        "sentence"
+      ],
+      "title": "DocumentNumber",
+      "type": "object"
+    },
+    "NarrativeNumber": {
+      "additionalProperties": false,
+      "description": "One number of the rendered text and where it comes from. Only `quantitative` is a verified number.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "quantitative",
+            "document",
+            "unbound"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "citation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation Id"
+        }
+      },
+      "required": [
+        "text",
+        "source"
+      ],
+      "title": "NarrativeNumber",
+      "type": "object"
+    },
+    "QuantitativeCitation": {
+      "additionalProperties": false,
+      "description": "A governed query result the claim stands on.",
+      "properties": {
+        "kind": {
+          "const": "quantitative",
+          "default": "quantitative",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "query_id": {
+          "title": "Query Id",
+          "type": "string"
+        },
+        "result_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Hash"
+        },
+        "query_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Hash"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "fact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fact Ids",
+          "type": "array"
+        },
+        "values": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "verified": {
+          "default": true,
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "query_id"
+      ],
+      "title": "QuantitativeCitation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Every citation of one subject, the two kinds kept apart.",
+  "properties": {
+    "version": {
+      "default": "citations.v1",
+      "title": "Version",
+      "type": "string"
+    },
+    "subject_type": {
+      "enum": [
+        "insight",
+        "ask_turn"
+      ],
+      "title": "Subject Type",
+      "type": "string"
+    },
+    "subject_id": {
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "quantitative": {
+      "items": {
+        "$ref": "#/$defs/QuantitativeCitation"
+      },
+      "title": "Quantitative",
+      "type": "array"
+    },
+    "documents": {
+      "items": {
+        "$ref": "#/$defs/DocumentCitation"
+      },
+      "title": "Documents",
+      "type": "array"
+    },
+    "narrative_numbers": {
+      "items": {
+        "$ref": "#/$defs/NarrativeNumber"
+      },
+      "title": "Narrative Numbers",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "$ref": "#/$defs/Conflict"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "subject_type",
+    "subject_id"
+  ],
+  "title": "Citations",
+  "type": "object"
+}
