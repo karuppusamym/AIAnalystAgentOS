@@ -700,11 +700,53 @@ export interface AskProvenanceAsset {
   row_count: number | null;
 }
 
+/** A governed metric query (ADR-0019): names and literal values only; the compiler writes the SQL. */
+export type SemanticQueryBody = Schemas["SemanticQuery"];
+
+// ----------------------------------------------------------------------------------- what-if scenarios (N-9)
+export type ValueBasis = "observed" | "simulated";
+export interface LabelledValue { value: number | null; basis: ValueBasis }
+export type ScenarioAdjustment = Schemas["ScenarioAdjustment"];
+export type ScenarioSpecBody = Schemas["ScenarioSpec"];
+export interface ScenarioCell {
+  metric: string;
+  observed: LabelledValue;
+  simulated: LabelledValue;
+  change: LabelledValue;
+  change_pct: LabelledValue;
+  adjusted_by: number[];
+}
+/** A recorded scenario: every number labelled; `publishable` is always false. */
+export interface Scenario {
+  id: string;
+  workspace_id: string;
+  name: string;
+  scenario_version: string;
+  label: "simulated";
+  publishable: false;
+  spec: ScenarioSpecBody;
+  spec_hash: string;
+  assumptions: string[];
+  assumptions_hash: string;
+  baseline: { basis: "observed"; query_id: string; sql_hash: string; result_hash: string | null; row_count: number; truncated: boolean;
+    semantic: { model_version?: number; compiler_version?: string } };
+  remeasured: { basis: "simulated"; query_id: string; row_count: number } | null;
+  columns: string[];
+  rows: { key: Record<string, unknown>; cells: ScenarioCell[] }[];
+  totals: ScenarioCell[];
+  summary: string;
+  guard: { ok: boolean; problems: string[] };
+  result_hash: string;
+  ask_turn_id: string | null;
+  created_by: string;
+  created_at: string | null;
+}
+
 export interface AskProvenance {
   parent_turn_id?: string | null;
   governance?: "governed" | "ad_hoc";
   semantic?: { model_id: string; model_version: number; compiler_version: string;
-    metrics: { id: string; name: string; version: number; hash: string }[] } | null;
+    metrics: { id: string; name: string; version: number; hash: string }[]; query?: SemanticQueryBody } | null;
   assets?: AskProvenanceAsset[];
   answered_by?: string | null;
   verified_query?: { id: string; name: string; pattern?: string; score?: number } | null;
@@ -3656,6 +3698,13 @@ export const api = {
     request<{ status: string; approval_id?: string; expires_at?: string; id?: string }>("POST", `/ask/turns/${encodeURIComponent(turnId)}/schedule`, body),
   promoteTurn: (turnId: string, body: AskPromoteBody) =>
     post("/api/ask/turns/{turn_id}/promote", { path: { turn_id: turnId }, body }) as Promise<AskPromotion>,
+  // what-if scenarios (N-9): observed baseline through the gateway, simulated values by deterministic arithmetic
+  runScenario: (ws: string, body: ScenarioSpecBody) =>
+    post("/api/workspaces/{workspace_id}/scenarios", { path: W(ws), body }) as Promise<Scenario>,
+  scenarios: (ws: string, askTurnId?: string) =>
+    get("/api/workspaces/{workspace_id}/scenarios", { path: W(ws), query: { ask_turn_id: askTurnId } }) as Promise<Scenario[]>,
+  scenario: (ws: string, id: string) =>
+    get("/api/workspaces/{workspace_id}/scenarios/{scenario_id}", { path: { workspace_id: ws, scenario_id: id } }) as Promise<Scenario>,
 
   // brief, readiness and Start-work job kinds (P4-04)
   jobKinds: (ws: string) => get("/api/workspaces/{workspace_id}/capabilities", { path: W(ws) }) as Promise<WorkspaceJobKinds>,

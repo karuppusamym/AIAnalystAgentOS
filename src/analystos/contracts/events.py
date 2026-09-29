@@ -59,6 +59,8 @@ EVENT_TYPES = {
     "ml.scoring.refused", "ml.scoring.duplicate",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
+    # What-if scenarios (N-9): a governed query with declared changes; every number labelled observed or simulated
+    "scenario.computed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

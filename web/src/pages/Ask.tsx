@@ -10,6 +10,7 @@ import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
 } from "../components/ui";
 import { NumberTrail, VerificationBadge, WhyState } from "../components/WhyNumber";
+import { WhatIfPanel } from "../components/WhatIf";
 import {
   PROMOTE_LABELS, PROMOTE_MIN_ROLE, canComplete, canPromote, decisionLine, groupThreads, mergePromotion, promotionText, provenancePills, receiptView,
   refusalView, stalenessPill, topProbabilities, turnSuggestions,
@@ -396,6 +397,7 @@ function TurnView({ turn, role, selected, onSelect, busy, onParameters, onRephra
             <button className="btn btn-primary" disabled={busy || !editedSql.trim()}>Run edited SQL</button>
           </form>}
           {turn.sql && <CodeBlock code={turn.sql} label={`SQL${turn.model ? ` · ${turn.model}` : turn.answered_by === "registry" ? " · verified query" : turn.answered_by === "rules" ? " · built from the catalog" : ""}`} />}
+          <WhatIfPanel turn={turn} />
           <Suggestions turn={turn} busy={busy} onAsk={onAsk} />
           {canPromote(turn) && <PromoteBar turn={turn} role={role} onRecorded={onRecorded} />}
           {canPromote(turn) && <ScheduleAnswer turn={turn} role={role} />}

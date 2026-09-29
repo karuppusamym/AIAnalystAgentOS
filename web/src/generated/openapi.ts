@@ -4307,6 +4307,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Scenarios
+         * @description The caller's own scenarios in this workspace (optionally those made from one Ask answer), newest first.
+         */
+        get: operations["list_scenarios_api_workspaces__workspace_id__scenarios_get"];
+        put?: never;
+        /**
+         * Run Scenario
+         * @description Compute and record a scenario: the observed baseline, the simulated values, assumptions and hashes.
+         */
+        post: operations["run_scenario_api_workspaces__workspace_id__scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/scenarios/{scenario_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scenario */
+        get: operations["get_scenario_api_workspaces__workspace_id__scenarios__scenario_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/schedules": {
         parameters: {
             query?: never;
@@ -6275,6 +6316,19 @@ export interface components {
             /** Value */
             value?: unknown;
         };
+        /**
+         * FilterOverride
+         * @description A threshold change: the query's filter on `field` takes `value` (and `op`, if given). The query is
+         *     re-measured through the gateway; its numbers answer a changed definition, so they are simulated.
+         */
+        FilterOverride: {
+            /** Field */
+            field: string;
+            /** Op */
+            op?: ("=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not_in" | "is_null" | "is_not_null") | null;
+            /** Value */
+            value?: string | number | boolean | (string | number | boolean)[] | null;
+        };
         /** FindingOutcomeIn */
         FindingOutcomeIn: {
             /** Reason */
@@ -7285,6 +7339,51 @@ export interface components {
             /** Source Ids */
             source_ids?: string[] | null;
         };
+        /**
+         * ScenarioAdjustment
+         * @description One change to a requested metric: `scale` by `percent`, `shift` by `amount`, or `set` to `amount`.
+         */
+        ScenarioAdjustment: {
+            /** Amount */
+            amount?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "scale" | "shift" | "set";
+            /** Metric */
+            metric: string;
+            /** Percent */
+            percent?: number | null;
+            segment?: components["schemas"]["ScenarioSegment"] | null;
+        };
+        /**
+         * ScenarioSegment
+         * @description Restrict a change to result rows whose requested dimension holds one of `values`.
+         */
+        ScenarioSegment: {
+            /** Dimension */
+            dimension: string;
+            /** Values */
+            values: (string | number | boolean)[];
+        };
+        /**
+         * ScenarioSpec
+         * @description What the person asks: the governed query, the changes, and the assumptions in their own words.
+         */
+        ScenarioSpec: {
+            /** Adjustments */
+            adjustments?: components["schemas"]["ScenarioAdjustment"][];
+            /** Ask Turn Id */
+            ask_turn_id?: string | null;
+            /** Assumptions */
+            assumptions?: string[];
+            /** Filter Overrides */
+            filter_overrides?: components["schemas"]["FilterOverride"][];
+            /** Name */
+            name: string;
+            semantic_query: components["schemas"]["SemanticQuery"];
+        };
         /** ScheduleIn */
         ScheduleIn: {
             /**
@@ -7421,6 +7520,68 @@ export interface components {
             label?: string | null;
             /** Name */
             name: string;
+        };
+        /**
+         * SemanticFilter
+         * @description One predicate on a model field. Values become literals in the compiler, never SQL text.
+         */
+        SemanticFilter: {
+            /** Field */
+            field: string;
+            /**
+             * Op
+             * @default =
+             * @enum {string}
+             */
+            op?: "=" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not_in" | "is_null" | "is_not_null";
+            /** Value */
+            value?: string | number | boolean | (string | number | boolean)[] | null;
+        };
+        /** SemanticOrder */
+        SemanticOrder: {
+            /**
+             * Direction
+             * @default asc
+             * @enum {string}
+             */
+            direction?: "asc" | "desc";
+            /** Field */
+            field: string;
+        };
+        /**
+         * SemanticQuery
+         * @description ADR-0019 IR. Names only: metrics, model fields and literal values. SQL comes from the approved
+         *     definitions and the compiler (`semantic/compiler.py`), never from whoever chose the query.
+         */
+        SemanticQuery: {
+            /** Dimensions */
+            dimensions?: string[];
+            /** Filters */
+            filters?: components["schemas"]["SemanticFilter"][];
+            /**
+             * Limit
+             * @default 500
+             */
+            limit?: number;
+            /** Metrics */
+            metrics: string[];
+            /** Order */
+            order?: components["schemas"]["SemanticOrder"][];
+            time?: components["schemas"]["SemanticTime"] | null;
+        };
+        /**
+         * SemanticTime
+         * @description A time dimension, its grain (a truncation that becomes a group) and an absolute window [start, end).
+         */
+        SemanticTime: {
+            /** Dimension */
+            dimension: string;
+            /** End */
+            end?: string | null;
+            /** Grain */
+            grain?: ("day" | "week" | "month" | "quarter" | "year") | null;
+            /** Start */
+            start?: string | null;
         };
         /** ServerIn */
         ServerIn: {
@@ -17010,6 +17171,116 @@ export interface operations {
                 "application/json": components["schemas"]["ReportIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scenarios_api_workspaces__workspace_id__scenarios_get: {
+        parameters: {
+            query?: {
+                ask_turn_id?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_scenario_api_workspaces__workspace_id__scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scenario_api_workspaces__workspace_id__scenarios__scenario_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-correlation-id"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                scenario_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

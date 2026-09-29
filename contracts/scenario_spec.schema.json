@@ -1,0 +1,468 @@
+{
+  "$defs": {
+    "FilterOverride": {
+      "additionalProperties": false,
+      "description": "A threshold change: the query's filter on `field` takes `value` (and `op`, if given). The query is\nre-measured through the gateway; its numbers answer a changed definition, so they are simulated.",
+      "properties": {
+        "field": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Field",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "op": {
+          "anyOf": [
+            {
+              "enum": [
+                "=",
+                "!=",
+                "<",
+                "<=",
+                ">",
+                ">=",
+                "in",
+                "not_in",
+                "is_null",
+                "is_not_null"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Op"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "FilterOverride",
+      "type": "object"
+    },
+    "ScenarioAdjustment": {
+      "additionalProperties": false,
+      "description": "One change to a requested metric: `scale` by `percent`, `shift` by `amount`, or `set` to `amount`.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "scale",
+            "shift",
+            "set"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "metric": {
+          "maxLength": 120,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Metric",
+          "type": "string"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": -100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Percent"
+        },
+        "amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        },
+        "segment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenarioSegment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "metric"
+      ],
+      "title": "ScenarioAdjustment",
+      "type": "object"
+    },
+    "ScenarioSegment": {
+      "additionalProperties": false,
+      "description": "Restrict a change to result rows whose requested dimension holds one of `values`.",
+      "properties": {
+        "dimension": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Dimension",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dimension",
+        "values"
+      ],
+      "title": "ScenarioSegment",
+      "type": "object"
+    },
+    "SemanticFilter": {
+      "additionalProperties": false,
+      "description": "One predicate on a model field. Values become literals in the compiler, never SQL text.",
+      "properties": {
+        "field": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Field",
+          "type": "string"
+        },
+        "op": {
+          "default": "=",
+          "enum": [
+            "=",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "in",
+            "not_in",
+            "is_null",
+            "is_not_null"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "SemanticFilter",
+      "type": "object"
+    },
+    "SemanticOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Field",
+          "type": "string"
+        },
+        "direction": {
+          "default": "asc",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "title": "Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "SemanticOrder",
+      "type": "object"
+    },
+    "SemanticQuery": {
+      "additionalProperties": false,
+      "description": "ADR-0019 IR. Names only: metrics, model fields and literal values. SQL comes from the approved\ndefinitions and the compiler (`semantic/compiler.py`), never from whoever chose the query.",
+      "properties": {
+        "metrics": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Metrics",
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/SemanticFilter"
+          },
+          "maxItems": 20,
+          "title": "Filters",
+          "type": "array"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemanticTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "order": {
+          "items": {
+            "$ref": "#/$defs/SemanticOrder"
+          },
+          "maxItems": 10,
+          "title": "Order",
+          "type": "array"
+        },
+        "limit": {
+          "default": 500,
+          "maximum": 5000,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "metrics"
+      ],
+      "title": "SemanticQuery",
+      "type": "object"
+    },
+    "SemanticTime": {
+      "additionalProperties": false,
+      "description": "A time dimension, its grain (a truncation that becomes a group) and an absolute window [start, end).",
+      "properties": {
+        "dimension": {
+          "maxLength": 241,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "title": "Dimension",
+          "type": "string"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        }
+      },
+      "required": [
+        "dimension"
+      ],
+      "title": "SemanticTime",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What the person asks: the governed query, the changes, and the assumptions in their own words.",
+  "properties": {
+    "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "semantic_query": {
+      "$ref": "#/$defs/SemanticQuery"
+    },
+    "adjustments": {
+      "items": {
+        "$ref": "#/$defs/ScenarioAdjustment"
+      },
+      "maxItems": 10,
+      "title": "Adjustments",
+      "type": "array"
+    },
+    "filter_overrides": {
+      "items": {
+        "$ref": "#/$defs/FilterOverride"
+      },
+      "maxItems": 5,
+      "title": "Filter Overrides",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "ask_turn_id": {
+      "anyOf": [
+        {
+          "maxLength": 40,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ask Turn Id"
+    }
+  },
+  "required": [
+    "name",
+    "semantic_query"
+  ],
+  "title": "ScenarioSpec",
+  "type": "object"
+}
