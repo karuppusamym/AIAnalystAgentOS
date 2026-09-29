@@ -19,6 +19,7 @@ from analystos.api.routers import data_shape as data_shape_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import deliveries as deliveries_router
+from analystos.api.routers import entity_matching as entity_matching_router
 from analystos.api.routers import evidence as evidence_router
 from analystos.api.routers import index_advice as index_advice_router
 from analystos.api.routers import knowledge as knowledge_router
@@ -106,6 +107,7 @@ app.include_router(steps_router.router)
 app.include_router(pipelines_router.router)
 app.include_router(worker_router.router)  # token-authenticated routes for isolated compute workers (P7-06)
 app.include_router(ml_router.router)
+app.include_router(entity_matching_router.router)  # general entity matching (INT-004, N-7)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
 app.include_router(process_router.router)  # process and task mining over event logs
 app.include_router(deliveries_router.router)  # approved external email/webhook delivery (N-3)
