@@ -115,3 +115,34 @@ class PublishResult(BaseModel):
     external_ids: dict[str, Any] = Field(default_factory=dict)  # {"datasets": {name: id}, "charts": {...}, "dashboards": {...}}
     urls: dict[str, str] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
+
+
+# -- existing-dashboard mode (v1 §35, BI-011/012) ----------------------------------------------------
+class BIMetricRef(BaseModel):
+    """One aggregate a BI chart shows: its label in the chart's result and the SQL it aggregates with."""
+
+    label: str
+    expression: str | None = None  # None: the BI tool's definition could not be read
+    saved: bool = False  # a named metric of the dataset (vs. one defined inline on the chart)
+    certified: bool = False
+
+
+class BIFilter(BaseModel):
+    column: str
+    op: Literal["==", "!=", "IN", "NOT IN", ">", ">=", "<", "<=", "IS NULL", "IS NOT NULL", "LIKE"]
+    value: Any = None
+
+
+class BIChartQuery(BaseModel):
+    """A BI chart's query, platform-neutral: enough to re-execute it through the gateway. Each adapter
+    translates its own chart definition into this; `unsupported` says why it cannot be reproduced."""
+
+    dataset_id: str
+    metrics: list[BIMetricRef] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    time_column: str | None = None
+    time_grain: Literal["day", "week", "month", "quarter"] | None = None
+    filters: list[BIFilter] = Field(default_factory=list)
+    sql_filters: list[str] = Field(default_factory=list)
+    row_limit: int | None = None
+    unsupported: str | None = None

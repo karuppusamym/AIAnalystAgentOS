@@ -70,6 +70,8 @@ EVENT_TYPES = {
     # Evidence fusion (N-8): a finding's or answer's measured and document citations recorded; a document
     # claim that disagrees with measured data flagged (measured data wins)
     "evidence.citations_recorded", "evidence.conflict_flagged",
+    # Existing-dashboard mode (N-2, BI-011/012): import, drift, proposed changes and their approved write-back
+    "bi_dashboard.imported", "bi_dashboard.drift_detected", "bi_dashboard.update_requested", "bi_dashboard.updated",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

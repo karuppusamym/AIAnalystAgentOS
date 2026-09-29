@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import { ChartView } from "../components/Chart";
 import { PublishCard } from "../components/DashboardPublish";
 import { DashboardPreview } from "../components/DashboardPreview";
+import { ExistingDashboards } from "../components/ExistingDashboards";
 import { LineageGraph } from "../components/LineageGraph";
 import { Markdown } from "../components/Markdown";
 import { ModelsOutput } from "../components/Ml";
@@ -168,6 +169,12 @@ export function OutputsPage() {
           <div className="card-body">
             <GenerateReportForm wsId={wsId} onCreated={(a) => { void artifacts.reload(); set({ artifact: a.id }); }} />
           </div>
+        </details>
+      )}
+      {type === "dashboard" && (
+        <details className="card generate-report">
+          <summary>Import an existing BI dashboard</summary>
+          <div className="card-body"><ExistingDashboards wsId={wsId} role={role} /></div>
         </details>
       )}
       {type === "model" && <ModelsOutput wsId={wsId} role={role} />}
