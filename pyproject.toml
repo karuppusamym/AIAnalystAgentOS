@@ -37,8 +37,9 @@ dependencies = [
 # ML stack: the driver model (logistic regression, random forest importance) and Holt-Winters forecasts.
 # Only the isolated compute-ml image (ADR-0022) needs it; without it those features say so.
 ml = ["scikit-learn>=1.5", "statsmodels>=0.14"]
-# PDF and XLSX reports (charts rendered with matplotlib). The API/lite image installs it; md/html need nothing.
-reports = ["matplotlib>=3.9", "fpdf2>=2.7", "openpyxl>=3.1"]
+# PDF, XLSX, PPTX and DOCX reports (charts rendered with matplotlib; the PDF font is bundled). The API/lite image
+# installs it; md/html need nothing.
+reports = ["matplotlib>=3.9", "fpdf2>=2.7", "openpyxl>=3.1", "python-pptx>=1.0", "python-docx>=1.1"]
 # The Temporal orchestrator and `analystos worker` (standard and scale profiles).
 temporal = ["temporalio>=1.7"]
 # The optional Neo4j projection (ANALYSTOS_GRAPH_ENABLED, the `graph` profile).
@@ -51,6 +52,7 @@ dev = [
   "pytest-asyncio>=0.24",
   "respx>=0.21",
   "cryptography>=42",  # tests/oidc_fake.py signs ID tokens for the fake IdP
+  "pypdf>=4",  # tests read report PDF text back (embedded-font text is glyph ids, not literal strings)
   "ruff>=0.6",
   "mypy>=1.11",
   "types-PyYAML",

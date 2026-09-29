@@ -46,6 +46,11 @@ def _importable(module: str) -> bool:
         return False
 
 
+def importable(module: str) -> bool:
+    """Whether `module` resolves here (for a feature that needs one library of an extra, not all of it)."""
+    return _importable(module)
+
+
 def missing_modules(extra: str) -> list[str]:
     modules, _ = EXTRAS[extra]
     return [m for m in modules if not _importable(m)]

@@ -7,7 +7,7 @@ import { fmtDate } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 import { REPORT_FORMATS, REPORT_KINDS } from "../lib/schedules";
 
-const FORMAT_LABEL: Record<string, string> = { pdf: "PDF", xlsx: "Excel", html: "HTML", md: "Markdown" };
+const FORMAT_LABEL: Record<string, string> = { pdf: "PDF", xlsx: "Excel", docx: "Word", pptx: "PowerPoint", html: "HTML", md: "Markdown" };
 
 export function reportFormats(a: Artifact): string[] {
   const files = (a.content as ReportContent).files ?? {};

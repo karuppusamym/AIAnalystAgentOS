@@ -1,27 +1,26 @@
-"""PDF report rendering with fpdf2 (pypdf is not a dependency: streams are inflated with zlib)."""
+"""PDF report rendering with fpdf2 and the bundled DejaVu font (text is read back with pypdf)."""
 from __future__ import annotations
 
+import io
 import re
-import zlib
 from functools import cache
 
 import pytest
+from pypdf import PdfReader
 from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportData, ReportInsight
 from analystos.reports import render
-from analystos.reports.pdf import build_pdf, pdf_text, render_pdf
+from analystos.reports.pdf import FONT_DIR, build_pdf, font_coverage, pdf_text, render_pdf
+
+
+def _pages(pdf: bytes) -> list[str]:
+    return [p.extract_text() for p in PdfReader(io.BytesIO(pdf)).pages]
 
 
 def _text(pdf: bytes) -> str:
-    """Concatenated inflated content streams (core-font text appears as literal strings)."""
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf, flags=re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except zlib.error:
-            out.append(m.group(1).decode("latin-1"))
-    return "\n".join(out)
+    """All pages, whitespace collapsed (extraction splits wrapped lines and widens some spaces)."""
+    return re.sub(r"\s+", " ", " ".join(_pages(pdf)))
 
 
 @cache
@@ -36,9 +35,8 @@ def test_pdf_renders_each_kind(kind):
     assert b.startswith(b"%PDF-") and b.rstrip().endswith(b"%%EOF")
     assert len(re.findall(rb"/Type /Page\b", b)) == n >= 2
     txt = _text(b)
-    assert "ServiceNow SLA analysis - week 38" in txt  # title, em dash folded
-    # footer with page numbers on every page ("{nb}" alias is substituted as its own text run)
-    assert re.findall(r"\(Page (\d+)/\) Tj \((\d+)\) Tj", txt) == [(str(i), str(n)) for i in range(1, n + 1)]
+    assert "ServiceNow SLA analysis — week 38" in txt  # the em dash prints as written
+    assert re.findall(r"Page (\d+)/(\d+)", txt) == [(str(i), str(n)) for i in range(1, n + 1)]  # footer on every page
     assert txt.count("run run_0f3a9c2e") == n
     assert "not proof of causation" in txt
     assert "/Image" in b.decode("latin-1")  # chart PNGs embedded
@@ -54,14 +52,33 @@ def test_pdf_sections_follow_kind():
     assert exc.index("Alerts") < exc.index("Summary")
 
 
-def test_non_latin_text_is_sanitized_not_fatal():
-    assert pdf_text("a → b ≥ c … “q” — Zürich 日本語 🚀") == 'a -> b >= c ... "q" - Zürich ??? ?'
-    d = ReportData(title="Отчёт 報告 → ≥ … 🚀", workspace_name="ws​", objective="Ω\x00\x07", run_id="r",
-                   generated_at="2026-09-21T08:30:00+02:00",
-                   insights=[ReportInsight(code="Ж", title="χ²", finding="√ 😀", confidence=0.5, verified=True, caveats=["€"])])
-    b = render_pdf(d)
-    assert b.startswith(b"%PDF-")
-    assert "-> >= ..." in _text(b)
+def test_bundled_unicode_font_is_embedded_with_its_licence():
+    b = _doc("executive")[1]
+    assert re.search(rb"/BaseFont /[A-Z]{6}\+DejaVuSans", b) and b"/FontFile2" in b and b"/ToUnicode" in b
+    assert b"/Helvetica" not in b and b"/Courier" not in b  # no latin-1-only core fonts left
+    assert "Bitstream" in (FONT_DIR / "LICENSE_DEJAVU").read_text(encoding="utf-8")
+
+
+def test_non_latin_text_renders_as_written():
+    d = ReportData(title="Отчёт Ελληνικά Zürich Łódź Ærø", workspace_name="Škoda ws", objective="χ² ≥ 3.84 → reject; √n … “ok” — €",
+                   run_id="r", generated_at="2026-09-21T08:30:00+02:00",
+                   insights=[ReportInsight(code="Ж-1", title="Время решения выросло", finding="Δ = +12 %", confidence=0.5,
+                                           verified=True, caveats=["ψ ≠ ω"])])
+    txt = _text(render_pdf(d))
+    for s in ("Отчёт Ελληνικά Zürich Łódź Ærø", "χ² ≥ 3.84 → reject; √n … “ok” — €", "Ж-1", "Время решения выросло",
+              "Δ = +12 %", "ψ ≠ ω", "Škoda ws"):
+        assert s in txt, s
+
+
+def test_uncovered_characters_fall_back_instead_of_blank_boxes():
+    cov = font_coverage()
+    assert all(ord(c) in cov for c in "ЖΩЁ→≥…€")
+    assert ord("日") not in cov and ord("🚀") not in cov
+    assert pdf_text("a → b 日本語 🚀\tz\x07​") == "a → b ??? ?    z"
+    assert pdf_text("a → b", "DejaVuMono") == "a → b"
+    b = render_pdf(ReportData(title="報告 🚀", workspace_name="ws", objective="Ω\x00", run_id="r",
+                              generated_at="2026-09-21T08:30:00+02:00"))
+    assert b.startswith(b"%PDF-") and "?? ?" in _text(b)
 
 
 def test_pdf_is_deterministic_and_dispatch():

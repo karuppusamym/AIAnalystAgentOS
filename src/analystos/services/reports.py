@@ -21,7 +21,7 @@ from analystos.evidence.verification import insight_states, void_cause
 from analystos.governance.audit import audit
 from analystos.services.notifications import notify
 
-FORMATS = ("md", "html", "pdf", "xlsx")
+FORMATS = ("md", "html", "pdf", "xlsx", "pptx", "docx")
 KINDS = ("executive", "operational", "statistical", "exception", "weekly_summary")
 
 

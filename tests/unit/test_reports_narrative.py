@@ -163,4 +163,4 @@ def test_determinism_and_render_dispatch():
     body, mime, ext = render(d, "html")
     assert mime.startswith("text/html") and ext == "html"
     with pytest.raises(InvalidInput):
-        render(d, "docx")  # type: ignore[arg-type]
+        render(d, "odt")  # type: ignore[arg-type]
