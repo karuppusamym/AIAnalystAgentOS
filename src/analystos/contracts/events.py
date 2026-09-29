@@ -59,6 +59,8 @@ EVENT_TYPES = {
     "ml.scoring.refused", "ml.scoring.duplicate",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
+    # Existing-dashboard mode (N-2, BI-011/012): import, drift, proposed changes and their approved write-back
+    "bi_dashboard.imported", "bi_dashboard.drift_detected", "bi_dashboard.update_requested", "bi_dashboard.updated",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

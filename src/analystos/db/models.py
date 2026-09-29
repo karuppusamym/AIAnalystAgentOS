@@ -908,6 +908,34 @@ class Publication(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class BiDashboardImport(Base):
+    """One import of an existing BI dashboard (v1 §35, BI-011/012): what the dashboard is (inspection and its
+    fingerprint), what it maps to (sources, semantic metrics), whether its numbers re-execute to the same values
+    through the gateway (verification), what is wrong (findings) and what the platform proposes. Immutable once
+    written except `applied`; a re-import is a new version, so drift since the last import is a fingerprint diff."""
+
+    __tablename__ = "bi_dashboard_import"
+    __table_args__ = (UniqueConstraint("workspace_id", "destination", "external_id", "version", name="uq_bi_dashboard_import_version"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    destination: Mapped[str] = mapped_column(String(40))
+    external_id: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20))  # verified | attention | unverified
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    previous_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    inspection: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    mapping: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    verification: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    findings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    proposals: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    applied: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    imported_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Feedback(Base):
     __tablename__ = "feedback"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

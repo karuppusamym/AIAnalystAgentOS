@@ -122,6 +122,48 @@ class BIPublisher(Protocol):
     def rollback(self, external_ids: dict[str, Any]) -> list[str]: ...
 
 
+@runtime_checkable
+class DashboardSource(Protocol):
+    """Existing-dashboard mode (v1 §35, BI-011/012): what a BI adapter offers so the platform can import a
+    dashboard it did not build, re-execute its charts through the gateway and propose changes. Reads never
+    write; ``apply_changes`` is the one write and runs only after an approval was verified for it."""
+
+    destination: str
+
+    def list_dashboards(self, workspace_id: str) -> list[dict[str, Any]]:
+        """[{id, title, slug, published, url}] this workspace may import (never another workspace's)."""
+        ...
+
+    def inspect_dashboard(self, dashboard_id: ExternalId, *, workspace_id: str | None = None) -> dict[str, Any]:
+        """{id, title, slug, published, url, charts: [{id, name, viz_type, dataset_id, metrics, query}],
+        datasets: [{id, name, schema, sql, kind, database, columns, metrics}], filters, layout}; each
+        chart's ``query`` is a ``BIChartQuery`` dump."""
+        ...
+
+    def chart_data(self, chart_id: ExternalId) -> dict[str, Any]:
+        """The numbers the BI tool shows for a chart: {columns, rows} or {error}. Never raises."""
+        ...
+
+    def apply_changes(self, dashboard: dict[str, Any], changes: list[dict[str, Any]]) -> list[str]:
+        """Apply approved changes (``set_dataset_metric``) to the BI tool; returns what was changed."""
+        ...
+
+
+def get_dashboard_source(destination: str, settings: Settings | None = None) -> DashboardSource:
+    """Factory for existing-dashboard mode. Only a real BI tool has existing dashboards."""
+    if destination == "superset":
+        from analystos.core.config import get_settings
+        from analystos.publishing.superset import SupersetPublisher
+
+        settings = settings or get_settings()
+        if not settings.superset_url:
+            raise InvalidInput("Superset is not installed here (no superset_url); existing-dashboard mode needs a BI tool")
+        return SupersetPublisher(settings)
+    if destination in ("preview", "powerbi"):
+        raise InvalidInput(f"existing-dashboard mode is not available for {destination!r}; use 'superset'")
+    raise InvalidInput(f"unknown BI destination {destination!r}")
+
+
 def default_destination(allowed: list[str], settings: Settings | None = None) -> str | None:
     """The first allowed destination this installation can reach; `preview` (in-platform, no external
     side effect) when Superset is not installed (no `bi` profile, ADR-0025) or nothing else is allowed."""

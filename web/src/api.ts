@@ -457,6 +457,56 @@ export interface InsightDetail extends Insight {
   lineage: Lineage;
 }
 
+/** Existing-dashboard mode (N-2, BI-011/012): a BI dashboard this workspace may import. */
+export interface BiDashboardCandidate {
+  id: number | string;
+  title: string | null;
+  slug: string | null;
+  published: boolean;
+  url: string;
+  last_import: { id: string; version: number; status: string } | null;
+}
+
+export interface BiChartVerification {
+  chart_id: number | string;
+  name: string | null;
+  viz_type: string | null;
+  status: "verified" | "mismatch" | "governed_only" | "not_reproducible" | "unmapped" | "refused" | "filtered";
+  reason: string | null;
+  sql: string | null;
+  comparison?: { compared: number; mismatches: { key: unknown[]; metric: string; governed: unknown; bi: unknown; delta: number | null }[] };
+}
+
+export interface BiDashboardFinding { id: string; kind: string; severity: "high" | "medium" | "low" | "info"; message: string }
+
+export interface BiDashboardProposal {
+  id: string;
+  kind: string;
+  title: string;
+  write_back: boolean;
+  platform: boolean;
+  status: string;
+}
+
+export interface BiDashboardImport {
+  id: string;
+  destination: string;
+  external_id: string;
+  version: number;
+  title: string;
+  status: "verified" | "attention" | "unverified";
+  drift: boolean;
+  url?: string | null;
+  verification?: BiChartVerification[];
+  verification_counts: Record<string, number>;
+  mapping?: { datasets: { dataset_id: string; name: string; assets: string[]; mapped: boolean; reason: string | null }[];
+    metrics: { label: string; status: string; semantic_metric: string | null }[] };
+  findings: BiDashboardFinding[];
+  proposals: BiDashboardProposal[];
+  applied: { approval_id: string; status: string; proposals: string[]; changed?: string[]; error?: string }[];
+  created_at: string | null;
+}
+
 export interface Approval {
   id: string;
   workspace_id: string;
@@ -3633,6 +3683,25 @@ export const api = {
   // dashboards: publishing is proposal-based (returns the pending, hash-bound proposal; decided in the inbox)
   publishDashboard: (artifactId: string) =>
     post("/api/artifacts/{artifact_id}/publish", { path: { artifact_id: artifactId } }) as Promise<Approval>,
+
+  // Existing-dashboard mode (N-2, BI-011/012)
+  biDashboardCandidates: (ws: string, destination = "superset") =>
+    get("/api/workspaces/{workspace_id}/bi/dashboards/candidates", { path: W(ws), query: { destination } }) as Promise<BiDashboardCandidate[]>,
+  biDashboardImports: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/bi/dashboards/imports", { path: W(ws) }) as Promise<BiDashboardImport[]>,
+  biDashboardImport: (ws: string, importId: string) =>
+    get("/api/workspaces/{workspace_id}/bi/dashboards/imports/{import_id}", { path: { ...W(ws), import_id: importId } }) as Promise<BiDashboardImport>,
+  importBiDashboard: (ws: string, dashboardId: string, destination = "superset") =>
+    post("/api/workspaces/{workspace_id}/bi/dashboards/imports", { path: W(ws), body: { dashboard_id: dashboardId, destination } }) as Promise<BiDashboardImport>,
+  requestBiDashboardUpdate: (ws: string, importId: string, proposalIds: string[]) =>
+    post("/api/workspaces/{workspace_id}/bi/dashboards/imports/{import_id}/update-requests",
+      { path: { ...W(ws), import_id: importId }, body: { proposal_ids: proposalIds } }) as Promise<{ status: string; approval_id: string; expires_at: string }>,
+  applyBiDashboardUpdate: (ws: string, importId: string, approvalId: string) =>
+    post("/api/workspaces/{workspace_id}/bi/dashboards/imports/{import_id}/updates",
+      { path: { ...W(ws), import_id: importId }, body: { approval_id: approvalId } }) as Promise<{ status: string; changed?: string[]; error?: string }>,
+  proposeBiDashboardMetric: (ws: string, importId: string, proposalId: string) =>
+    post("/api/workspaces/{workspace_id}/bi/dashboards/imports/{import_id}/semantic-proposals",
+      { path: { ...W(ws), import_id: importId }, body: { proposal_id: proposalId } }) as Promise<{ status: string; metric: string; approval_id: string | null }>,
 
   // Ask threads (P4-U02)
   askThreads: (ws: string, q?: string) =>

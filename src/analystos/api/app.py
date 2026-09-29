@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from analystos.api.request_id import RequestIdMiddleware, current, envelope
 from analystos.api.routers import admin, analysis, artifacts, auth, capabilities, catalog, continuous, workspaces
 from analystos.api.routers import ask as ask_router
+from analystos.api.routers import bi_dashboards as bi_dashboards_router
 from analystos.api.routers import builds as builds_router
 from analystos.api.routers import context_export as context_export_router
 from analystos.api.routers import data_shape as data_shape_router
@@ -104,6 +105,7 @@ app.include_router(ml_router.router)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
 app.include_router(process_router.router)  # process and task mining over event logs
 app.include_router(data_shape_router.router)  # what the selected tables are good for (patterns, next steps)
+app.include_router(bi_dashboards_router.router)  # existing-dashboard mode (N-2, BI-011/012)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 

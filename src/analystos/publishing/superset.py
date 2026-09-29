@@ -722,10 +722,79 @@ class SupersetPublisher:
         return resp.content
 
     # -- inspect (existing-dashboard mode, §35) -------------------------------------------------
-    def inspect_dashboard(self, dashboard_id: ExternalId) -> dict[str, Any]:
+    def list_dashboards(self, workspace_id: str) -> list[dict[str, Any]]:
+        """Dashboards this workspace may import: never one AnalystOS published for another workspace."""
+        from analystos.knowledge.superset_meta import Scope
+
+        scope = Scope(workspace_id)
+        return [{"id": d.get("id"), "title": d.get("dashboard_title"), "slug": d.get("slug"),
+                 "published": bool(d.get("published")), "url": self.dashboard_url(d.get("id")),
+                 "changed_on": d.get("changed_on_utc") or d.get("changed_on")}
+                for d in self.client.list("dashboard", []) if scope.dashboard(d)]
+
+    def chart_data(self, chart_id: ExternalId) -> dict[str, Any]:
+        """The chart's numbers as Superset computes them from its saved query context (read-only)."""
+        try:
+            body = self.client.get(f"/api/v1/chart/{int(chart_id)}/data/", params={"format": "json", "type": "full"})
+        except AnalystOSError as exc:
+            return {"error": exc.message}
+        results = (body or {}).get("result") or []
+        if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+            return {"error": "Superset returned no result for the chart"}
+        first = results[0]
+        columns = list(first.get("colnames") or (list(first["data"][0]) if first.get("data") else []))
+        rows = [[rec.get(c) for c in columns] for rec in first.get("data") or []]
+        return {"columns": columns, "rows": rows}
+
+    def set_dataset_metric(self, dataset_id: ExternalId, name: str, *, expression: str, certify: bool,
+                           details: str = "") -> None:
+        """Replace one saved metric's expression (and certification) and keep every other metric as is."""
+        current = self.client.get(f"/api/v1/dataset/{int(dataset_id)}")["result"]
+        payload = []
+        found = False
+        for m in current.get("metrics") or []:
+            item = {k: v for k, v in m.items() if k in _METRIC_PUT_FIELDS and v is not None}
+            if m.get("metric_name") == name:
+                found = True
+                item["expression"] = expression
+                if certify:
+                    item["extra"] = json.dumps({"certification": {"certified_by": "AnalystOS semantic layer",
+                                                                  "details": details or "Approved metric of the workspace semantic model"}})
+            payload.append(item)
+        if not found:
+            raise NotFound(f"Superset dataset {dataset_id} has no metric {name!r}")
+        self.client.put(f"/api/v1/dataset/{int(dataset_id)}", {"metrics": payload})
+
+    def apply_changes(self, dashboard: dict[str, Any], changes: list[dict[str, Any]]) -> list[str]:
+        known = {str(d.get("id")) for d in dashboard.get("datasets") or []}
+        done: list[str] = []
+        for change in changes:
+            if change.get("type") != "set_dataset_metric":
+                raise InvalidInput(f"unsupported dashboard change {change.get('type')!r}")
+            if str(change["dataset_id"]) not in known:
+                raise InvalidInput(f"dataset {change['dataset_id']} is not part of dashboard {dashboard.get('id')}")
+            self.set_dataset_metric(change["dataset_id"], change["metric"], expression=change["expression"],
+                                    certify=bool(change.get("certify")), details=change.get("details", ""))
+            done.append(f"dataset:{change['dataset_id']}:metric:{change['metric']}")
+        return done
+
+    def inspect_dashboard(self, dashboard_id: ExternalId, *, workspace_id: str | None = None) -> dict[str, Any]:
+        """With ``workspace_id`` the inspection is tenant-scoped: another workspace's AnalystOS dashboard is
+        a 404, and charts or datasets another workspace published are left out."""
+        from analystos.knowledge.superset_meta import Scope
+        from analystos.publishing.superset_import import chart_query, is_certified
+
         dash = self.client.get(f"/api/v1/dashboard/{dashboard_id}")["result"]
+        scope = Scope(workspace_id) if workspace_id else None
+        if scope is not None and not scope.dashboard(dash):
+            raise NotFound(f"dashboard {dashboard_id} not found")
         charts = self.client.get(f"/api/v1/dashboard/{dashboard_id}/charts").get("result") or []
         datasets = self.client.get(f"/api/v1/dashboard/{dashboard_id}/datasets").get("result") or []
+        if scope is not None:
+            charts = [c for c in charts if scope.chart(c)]
+            datasets = [d for d in datasets if scope.dataset(
+                {**d, "database": {"database_name": (d.get("database") or {}).get("database_name")
+                                   or (d.get("database") or {}).get("name")}})]
         try:
             meta = json.loads(dash.get("json_metadata") or "{}")
         except ValueError:
@@ -734,6 +803,42 @@ class SupersetPublisher:
             position = json.loads(dash.get("position_json") or "{}")
         except ValueError:
             position = {}
+        ds_out = []
+        all_metrics = []
+        for d in datasets:
+            if scope is not None and d.get("id") is not None:
+                # The dashboard's dataset listing leaves out a metric's `extra` (its certification): read the dataset.
+                try:
+                    detail = (self.client.get(f"/api/v1/dataset/{int(d['id'])}", allow_404=True) or {}).get("result") or {}
+                except AnalystOSError:
+                    detail = {}
+                extra = {m.get("metric_name"): m.get("extra") for m in detail.get("metrics") or []}
+                d = {**d, "metrics": [{**m, "extra": m.get("extra") or extra.get(m.get("metric_name"))}
+                                      for m in d.get("metrics") or []]}
+            ms = [
+                {"name": m.get("metric_name"), "expression": m.get("expression"), "verbose_name": m.get("verbose_name"),
+                 "d3format": m.get("d3format"), "dataset_id": d.get("id"), "certified": is_certified(m)}
+                for m in d.get("metrics") or []
+            ]
+            all_metrics.extend(ms)
+            db = d.get("database") or {}
+            ds_out.append(
+                {
+                    "id": d.get("id"),
+                    "name": d.get("table_name") or d.get("datasource_name"),
+                    "schema": d.get("schema"),
+                    "sql": d.get("sql"),
+                    "kind": "virtual" if d.get("sql") else "physical",
+                    "database": db.get("database_name") or db.get("name"),
+                    "main_dttm_col": d.get("main_dttm_col") or d.get("granularity_sqla"),
+                    "columns": [
+                        {"name": col.get("column_name"), "type": col.get("type"), "is_dttm": col.get("is_dttm")}
+                        for col in d.get("columns") or []
+                    ],
+                    "metrics": ms,
+                }
+            )
+        ds_by_id = {str(d["id"]): d for d in ds_out}
         chart_out = []
         used_metrics: set[str] = set()
         for c in charts:
@@ -741,41 +846,21 @@ class SupersetPublisher:
             ms = [m for m in (fd.get("metrics") or []) + ([fd["metric"]] if fd.get("metric") else [])]
             names = [m if isinstance(m, str) else (m.get("label") or m.get("sqlExpression")) for m in ms]
             used_metrics.update(n for n in names if n)
+            ds_id = str(fd.get("datasource") or "").split("__", 1)[0] or str(c.get("datasource_id") or "")
             chart_out.append(
                 {
                     "id": c.get("id"),
                     "name": c.get("slice_name"),
                     "viz_type": fd.get("viz_type") or c.get("viz_type"),
                     "datasource": fd.get("datasource"),
+                    "dataset_id": ds_id or None,
                     "metrics": names,
                     "groupby": fd.get("groupby") or [],
                     "x_axis": fd.get("x_axis"),
                     "time_grain": fd.get("time_grain_sqla"),
                     "adhoc_filters": fd.get("adhoc_filters") or [],
                     "aos_key": fd.get("aos_key"),
-                }
-            )
-        ds_out = []
-        all_metrics = []
-        for d in datasets:
-            ms = [
-                {"name": m.get("metric_name"), "expression": m.get("expression"), "verbose_name": m.get("verbose_name"),
-                 "d3format": m.get("d3format"), "dataset_id": d.get("id")}
-                for m in d.get("metrics") or []
-            ]
-            all_metrics.extend(ms)
-            ds_out.append(
-                {
-                    "id": d.get("id"),
-                    "name": d.get("table_name") or d.get("datasource_name"),
-                    "schema": d.get("schema"),
-                    "sql": d.get("sql"),
-                    "main_dttm_col": d.get("main_dttm_col") or d.get("granularity_sqla"),
-                    "columns": [
-                        {"name": col.get("column_name"), "type": col.get("type"), "is_dttm": col.get("is_dttm")}
-                        for col in d.get("columns") or []
-                    ],
-                    "metrics": ms,
+                    "query": chart_query(fd, ds_by_id.get(ds_id)).model_dump(),
                 }
             )
         filters = [
