@@ -208,6 +208,7 @@ def patch_monitor(monitor_id: str, body: MonitorPatch, response: Response, user:
     changes = {k: v for k, v in body.model_dump().items() if v is not None}
     if "config" in changes:
         mon_svc.validate_baseline(session, m.workspace_id, changes["config"])
+        mon_svc.validate_delivery(session, m.workspace_id, changes["config"])
     for k, v in changes.items():
         setattr(m, k, v)
     if changes:

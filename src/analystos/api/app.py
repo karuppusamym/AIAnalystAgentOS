@@ -17,6 +17,7 @@ from analystos.api.routers import context_export as context_export_router
 from analystos.api.routers import data_shape as data_shape_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import definitions as definitions_router
+from analystos.api.routers import deliveries as deliveries_router
 from analystos.api.routers import evidence as evidence_router
 from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
@@ -105,6 +106,7 @@ app.include_router(worker_router.router)  # token-authenticated routes for isola
 app.include_router(ml_router.router)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
 app.include_router(process_router.router)  # process and task mining over event logs
+app.include_router(deliveries_router.router)  # approved external email/webhook delivery (N-3)
 app.include_router(data_shape_router.router)  # what the selected tables are good for (patterns, next steps)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 

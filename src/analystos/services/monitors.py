@@ -28,7 +28,7 @@ from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import evaluate as policy_evaluate
 from analystos.governance.policy import require_role, resolve_scope
-from analystos.services.notifications import notify
+from analystos.services.notifications import deliver, notify
 
 log = get_logger(__name__)
 ML_KINDS = {"ml_drift", "ml_freshness", "ml_performance"}  # P5-03: analystos/ml/monitoring.py
@@ -44,7 +44,7 @@ BASELINE_VOID = "baseline_void"
 def condition_key(workspace_id: str, kind: str, config: dict) -> str:
     """Identity of what a monitor watches. Two monitors with the same condition are the same signal:
     they share alerts instead of each raising its own (the repeated alert in the Phase-3 evidence)."""
-    watched = {k: v for k, v in config.items() if k != "pinned"}  # the pin records how, not what
+    watched = {k: v for k, v in config.items() if k not in ("pinned", "deliver_to")}  # how and where, not what
     return stable_hash({"workspace": workspace_id, "kind": kind, "config": watched})[:32]
 
 
@@ -66,6 +66,7 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
         if config.get("grain", "week") not in ("day", "week", "month"):
             raise InvalidInput("grain must be day, week or month")
     validate_baseline(session, workspace_id, config)
+    validate_delivery(session, workspace_id, config)
     if config.get("investigate_definition") is not None:  # checked again when an alert starts the run (P7-03)
         from analystos.services.definitions import resolve_runnable
 
@@ -83,6 +84,14 @@ def create_monitor(session: Session, user: User, workspace_id: str, *, name: str
     session.add(m)
     audit(f"user:{user.id}", "monitor.created", workspace_id=workspace_id, target=m.id, details={"kind": kind}, session=session)
     return m
+
+
+def validate_delivery(session: Session, workspace_id: str, config: dict) -> None:
+    """`config.deliver_to`: approved external destinations a new alert is sent to (N-3)."""
+    if config.get("deliver_to") is not None:
+        from analystos.services.deliveries import check_targets
+
+        check_targets(session, workspace_id, config["deliver_to"], "alert")
 
 
 # ------------------------------------------------------------------------------------ verified baselines (P7-01)
@@ -614,6 +623,8 @@ def _raise_alert(monitor: Monitor, owner: User, workspace: Workspace, result: di
         emit(monitor.workspace_id, "alert.raised", {"alert": alert.id, "severity": severity, "title": alert.title}, session=s)
         notify(s, monitor.workspace_id, kind="alert", title=f"[{severity}] {alert.title}", body=alert.message,
                link={"type": "alert", "id": alert.id})
+        deliver(s, monitor.workspace_id, (monitor.config or {}).get("deliver_to"), subject_type="alert",
+                subject_id=alert.id, origin={"monitor_id": monitor.id})  # N-3: approved destinations only
         audit(f"monitor:{monitor.id}", "alert.raised", workspace_id=monitor.workspace_id, target=alert.id,
               details={"severity": severity, "triage": triage}, session=s)
         alert_id = alert.id

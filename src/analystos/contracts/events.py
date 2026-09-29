@@ -61,6 +61,10 @@ EVENT_TYPES = {
     "workspace.owners_changed", "source.owners_changed",
     # What-if scenarios (N-9): a governed query with declared changes; every number labelled observed or simulated
     "scenario.computed",
+    # Approved external delivery (N-3): destinations authorized by hash-bound approvals, then bounded-retry sends
+    "delivery.destination_requested", "delivery.destination_authorized", "delivery.destination_rejected",
+    "delivery.destination_revoked", "delivery.queued", "delivery.sent", "delivery.retrying", "delivery.dead_lettered",
+    "delivery.refused",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

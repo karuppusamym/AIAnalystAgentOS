@@ -1492,6 +1492,8 @@ export interface ScheduleConfig {
   mode?: "full" | "incremental";
   include?: string[];
   exclude?: string[];
+  /** N-3: approved delivery destinations a produced report is sent to. */
+  deliver_to?: string[];
   [k: string]: unknown;
 }
 
@@ -1535,6 +1537,40 @@ export interface Schedule {
   recent_runs?: ScheduleRun[];
   revision?: number;
   pins?: Dict | null;
+}
+
+/** An external email/webhook target (N-3): sends only while an approval bound to its hash stands. */
+export interface DeliveryDestination {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: "email" | "webhook" | string;
+  /** The secret reference is not returned; `has_secret` says whether a webhook has one. */
+  config: { recipients?: string[]; attach_formats?: string[]; url?: string };
+  has_secret?: boolean;
+  content_kinds: string[];
+  destination_hash: string;
+  status: "pending" | "authorized" | "rejected" | "revoked" | "lapsed" | string;
+  approval_id: string | null;
+  authorized_until: string | null;
+  authorized: boolean;
+  summary: string;
+  approval: { id: string; status: string } | null;
+  revision: number;
+}
+
+export interface Delivery {
+  id: string;
+  destination_id: string;
+  subject_type: "report" | "alert" | string;
+  subject_id: string;
+  status: "queued" | "sending" | "retrying" | "delivered" | "dead_letter" | "refused" | string;
+  attempts: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
 }
 
 export type PinState = "current" | "upgrade_available" | "deprecated" | "blocked" | "unpinned";
@@ -3471,6 +3507,20 @@ export const api = {
     del("/api/schedules/{schedule_id}", { path: { schedule_id: id } }) as Promise<{ deleted: boolean }>,
   runScheduleNow: (id: string) =>
     post("/api/schedules/{schedule_id}/run", { path: { schedule_id: id } }) as Promise<ScheduleRun>,
+
+  // approved external delivery (N-3): authorization is decided in the approvals inbox
+  listDeliveryDestinations: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/delivery-destinations", { path: W(ws) }) as Promise<DeliveryDestination[]>,
+  createDeliveryDestination: (ws: string, body: Schemas["DeliveryDestinationIn"]) =>
+    post("/api/workspaces/{workspace_id}/delivery-destinations", { path: W(ws), body }) as Promise<DeliveryDestination>,
+  reauthorizeDeliveryDestination: (id: string) =>
+    post("/api/delivery-destinations/{destination_id}/reauthorize", { path: { destination_id: id } }) as Promise<DeliveryDestination>,
+  revokeDeliveryDestination: (id: string) =>
+    post("/api/delivery-destinations/{destination_id}/revoke", { path: { destination_id: id } }) as Promise<DeliveryDestination>,
+  listDeliveries: (ws: string) =>
+    get("/api/workspaces/{workspace_id}/deliveries", { path: W(ws) }) as Promise<Delivery[]>,
+  redriveDelivery: (id: string) =>
+    post("/api/deliveries/{delivery_id}/redrive", { path: { delivery_id: id } }) as Promise<Delivery>,
 
   // monitors & alerts (§38)
   listMonitors: (ws: string) => get("/api/workspaces/{workspace_id}/monitors", { path: W(ws) }) as Promise<Monitor[]>,

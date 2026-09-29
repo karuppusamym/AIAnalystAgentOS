@@ -2,6 +2,7 @@ import { useId, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { roleAtLeast, to } from "../routes";
 import { SchedulePins } from "../components/SchedulePins";
+import { DeliveryDestinations } from "../components/DeliveryDestinations";
 import { api, type Schedule, type ScheduleRun } from "../api";
 import { Card, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StatusBadge, Tag } from "../components/ui";
 import { fmtDate } from "../lib/format";
@@ -48,6 +49,7 @@ export function SchedulesPage() {
             onPatched={(u) => list.setData((prev) => prev?.map((x) => (x.id === u.id ? { ...x, ...u, recent_runs: x.recent_runs } : x)))} />
         ))}
       </div>
+      <DeliveryDestinations wsId={wsId} canEdit={canEdit} />
     </div>
   );
 }
@@ -126,6 +128,7 @@ function ConfigSummary({ schedule: s }: { schedule: Schedule }) {
   } else if (s.kind === "report") {
     parts.push(`${c.kind ?? "executive"} (${(c.formats ?? ["html", "pdf"]).join(", ")})`);
     parts.push(c.run_id ? "a chosen investigation" : "latest completed investigation");
+    if (c.deliver_to?.length) parts.push(`sent to ${c.deliver_to.length} approved destination(s)`);
   } else if (s.kind === "monitor") {
     parts.push(c.monitor_ids?.length ? `${c.monitor_ids.length} monitor(s)` : "all enabled monitors");
   } else if (s.kind === "dataset_refresh") {
