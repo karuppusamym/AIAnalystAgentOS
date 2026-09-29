@@ -59,6 +59,10 @@ EVENT_TYPES = {
     "ml.scoring.refused", "ml.scoring.duplicate",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
+    # Approved external delivery (N-3): destinations authorized by hash-bound approvals, then bounded-retry sends
+    "delivery.destination_requested", "delivery.destination_authorized", "delivery.destination_rejected",
+    "delivery.destination_revoked", "delivery.queued", "delivery.sent", "delivery.retrying", "delivery.dead_lettered",
+    "delivery.refused",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

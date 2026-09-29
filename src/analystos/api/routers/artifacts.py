@@ -150,6 +150,11 @@ def _decide(approval_id: str, user: User, session: Session, approve: bool, reaso
             review.apply_model_decision(session, approval)
         elif approval.action == review.RELATIONSHIP_APPROVAL_ACTION:  # P7-09: a measured relationship
             review.apply_candidate_decision(session, approval)
+        else:
+            from analystos.services import deliveries
+
+            if approval.action == deliveries.APPROVAL_ACTION:  # N-3: an external destination's authorization
+                deliveries.apply_decision(session, approval)
     session.flush()
     result = row(approval, exclude={"payload"})
     run_id = approval.run_id

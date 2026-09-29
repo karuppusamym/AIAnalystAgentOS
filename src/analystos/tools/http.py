@@ -184,8 +184,9 @@ def validate_parameters(schema: dict[str, Any] | None, parameters: dict[str, Any
 def call(url: str, *, method: str = "POST", parameters: dict[str, Any] | None = None,
          allowlist: Iterable[str] | None, private_hosts: Iterable[str] = (), timeout: float = DEFAULT_TIMEOUT_SECONDS,
          max_bytes: int = DEFAULT_MAX_BYTES, headers: dict[str, str] | None = None, resolver: Resolver | None = None,
-         transport: Any | None = None) -> dict[str, Any]:
-    """One guarded request. Parameters go in the JSON body (the query string for GET)."""
+         transport: Any | None = None, content: bytes | None = None) -> dict[str, Any]:
+    """One guarded request. Parameters go in the JSON body (the query string for GET); ``content`` sends
+    exact bytes instead (a signed webhook body, whose signature must cover what goes on the wire)."""
     import httpx
 
     method = method.upper()
@@ -197,7 +198,10 @@ def call(url: str, *, method: str = "POST", parameters: dict[str, Any] | None = 
     default_port = target.port == (443 if target.scheme == "https" else 80)
     send_headers = {**(headers or {}), "Host": target.hostname if default_port else f"{target.hostname}:{target.port}"}
     extensions = {"sni_hostname": target.hostname} if target.scheme == "https" else {}
-    body = {"params": parameters} if method == "GET" else {"json": parameters or {}}
+    if method == "GET":
+        body: dict[str, Any] = {"params": parameters}
+    else:
+        body = {"content": content} if content is not None else {"json": parameters or {}}
     cap = max(1, int(max_bytes))
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False, transport=transport) as client, \

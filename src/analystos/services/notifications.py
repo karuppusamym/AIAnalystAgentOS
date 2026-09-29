@@ -1,5 +1,6 @@
-"""In-app notifications. Delivery outside the platform (email, chat, webhooks) is an external
-side effect and would go through an approval (§39); it is not part of this release."""
+"""In-app notifications, and the hand-off to external delivery. Email and webhooks are side effects
+outside the platform: `deliver` only queues them for destinations an approver authorized (§39, N-3);
+`services/deliveries.py` re-verifies that approval immediately before each send."""
 from __future__ import annotations
 
 from sqlalchemy import or_, select
@@ -16,6 +17,24 @@ def notify(session: Session, workspace_id: str, *, kind: str, title: str, body: 
     session.add(n)
     emit(workspace_id, "notification.created", {"kind": kind, "title": title[:200]}, session=session)
     return n
+
+
+def deliver(session: Session, workspace_id: str, destination_ids: list[str] | None, *, subject_type: str,
+            subject_id: str, origin: dict | None = None) -> list[str]:
+    """Queue a verified report snapshot or an alert for approved external destinations; never raises, so a
+    delivery problem cannot fail the schedule or monitor that produced the content (it shows as refused)."""
+    if not destination_ids:
+        return []
+    from analystos.core.errors import AnalystOSError
+    from analystos.services import deliveries
+
+    try:
+        return [d.id for d in deliveries.enqueue(session, workspace_id, destination_ids=destination_ids,
+                                                 subject_type=subject_type, subject_id=subject_id, origin=origin)]
+    except AnalystOSError as exc:
+        notify(session, workspace_id, kind="delivery", title=f"Delivery not queued: {subject_type} {subject_id}",
+               body=exc.message, link={"type": subject_type, "id": subject_id})
+        return []
 
 
 def list_for(session: Session, user: User, *, unread_only: bool = False, limit: int = 100) -> list[Notification]:

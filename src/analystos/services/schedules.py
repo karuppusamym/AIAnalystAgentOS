@@ -27,7 +27,7 @@ from analystos.events.bus import emit
 from analystos.governance.audit import audit
 from analystos.governance.policy import require_role
 from analystos.services import pins as pins_svc
-from analystos.services.notifications import notify
+from analystos.services.notifications import deliver, notify
 
 log = get_logger(__name__)
 KINDS = {"reanalysis": "analyst", "dataset_refresh": "editor", "report": "analyst", "monitor": "analyst", "crawl": "editor"}
@@ -55,6 +55,9 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
     first = next_fire(cron, tz)
     if (next_fire(cron, tz, first) - first).total_seconds() < MIN_INTERVAL_SECONDS:
         raise InvalidInput("schedules may not fire more often than every 15 minutes")
+    deliver_to = config.get("deliver_to")
+    if deliver_to is not None and (not isinstance(deliver_to, list) or not all(isinstance(d, str) for d in deliver_to)):
+        raise InvalidInput("config.deliver_to must be a list of delivery destination ids")
     report = config.get("report")
     if report is not None and not isinstance(report, dict):
         raise InvalidInput("config.report must be an object like {kind, formats}")
@@ -77,11 +80,16 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
 
 
 def _check_definition(session: Session, workspace_id: str, config: dict) -> None:
-    """A schedule may only name a runnable definition (published; a draft only in a dev workspace)."""
+    """A schedule may only name a runnable definition (published; a draft only in a dev workspace), and
+    only deliver to destinations of its workspace that take reports (authorized or pending; N-3)."""
     if config.get("definition") is not None:
         from analystos.services.definitions import resolve_runnable
 
         resolve_runnable(session, workspace_id, config["definition"], trigger="schedule")
+    if config.get("deliver_to"):
+        from analystos.services.deliveries import check_targets
+
+        check_targets(session, workspace_id, config["deliver_to"], "report")
 
 
 def _pin_baseline(session: Session, sch: Schedule) -> None:
@@ -207,6 +215,11 @@ def _finish(srun_id: str, status: str, result: dict | None = None, error: str | 
         if status == "failed" and sch:
             notify(s, srun.workspace_id, kind="schedule", title=f"Schedule failed: {sch.name}", body=error or "",
                    link={"type": "schedule", "id": sch.id}, user_id=sch.owner_id)
+        report_id = (result or {}).get("report_artifact_id")
+        if status == "succeeded" and sch and report_id and (sch.config or {}).get("deliver_to"):  # N-3
+            queued = deliver(s, srun.workspace_id, sch.config["deliver_to"], subject_type="report", subject_id=report_id,
+                             origin={"schedule_id": sch.id, "schedule_run_id": srun.id})
+            srun.result = {**(srun.result or {}), "deliveries": queued}
 
 
 def execute(srun_id: str) -> None:
@@ -520,6 +533,12 @@ def housekeeping() -> dict[str, Any]:
         out["freshness_alerts"] = len(check_freshness())
     except Exception:
         log.exception("pipeline freshness check failed")
+    try:  # N-3: approved external deliveries that are due (bounded retries; never fatal to the loop)
+        from analystos.services.deliveries import process_due
+
+        out["deliveries"] = process_due()
+    except Exception:
+        log.exception("external delivery failed")
     return out
 
 

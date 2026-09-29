@@ -1017,7 +1017,7 @@ class Alert(Base):
 
 
 class Notification(Base):
-    """In-app notifications. External delivery (email/webhook) is approval-gated (§39) and not in this release."""
+    """In-app notifications. External delivery (email/webhook) is approval-gated (§39): see `Delivery` (N-3)."""
 
     __tablename__ = "notification"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -1029,6 +1029,57 @@ class Notification(Base):
     link: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {type, id}
     read_by: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = _ts()
+
+
+class DeliveryDestination(Base):
+    """An external delivery target (N-3): email recipients or a webhook URL. Sending needs an approved
+    authorization bound to `destination_hash`; any change to the target clears it (re-approval)."""
+
+    __tablename__ = "delivery_destination"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(20))  # email | webhook
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # email {recipients}; webhook {url, secret_ref}
+    content_kinds: Mapped[list[str]] = mapped_column(JSON, default=list)  # report | alert
+    destination_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | authorized | rejected | revoked | lapsed
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    authorized_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    authorized_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(40))
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Delivery(Base):
+    """One send of a verified report snapshot or an alert to one destination (N-3). `idempotency_key` makes
+    enqueueing idempotent and travels with the send so a receiver can drop a retried duplicate."""
+
+    __tablename__ = "delivery"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True)
+    destination_id: Mapped[str] = mapped_column(String(40), index=True)
+    destination_hash: Mapped[str] = mapped_column(String(64))
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    subject_type: Mapped[str] = mapped_column(String(20))  # report | alert
+    subject_id: Mapped[str] = mapped_column(String(40))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
+    # queued | sending | retrying | delivered | dead_letter | refused
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    origin: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # {schedule_run_id} | {monitor_id} | {user}
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PlatformSetting(Base):

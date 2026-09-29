@@ -248,6 +248,25 @@ class Settings(BaseSettings):
     http_tool_timeout_seconds: float = 30.0
     http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
 
+    # External delivery (N-3, services/deliveries.py). SMTP comes from the environment; the password is a
+    # secret reference (env:NAME / file:/path), never a value. Webhooks use the outbound guard above (no
+    # hostname allowlist: the destination's approval is its allowlist) and sign with the destination's
+    # own secret_ref. Empty `smtp_host` = email delivery unavailable (webhooks still work).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password_ref: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    smtp_timeout_seconds: float = 20.0
+    delivery_email_allowed_domains: str = ""  # comma-separated; empty = any domain the approver accepts
+    delivery_max_attempts: int = Field(default=5, ge=1, le=20)
+    delivery_backoff_seconds: float = Field(default=60.0, gt=0)
+    delivery_backoff_max_seconds: float = Field(default=3600.0, gt=0)
+    delivery_authorization_days: int = Field(default=90, ge=1)  # an authorized destination is re-approved after this
+    delivery_attachment_max_bytes: int = Field(default=10_000_000, ge=0)
+    delivery_timeout_seconds: float = 20.0
+
     # Set by compose.yaml: this process runs in a compose container, where `localhost` is the container itself.
     in_container: bool = False
 
