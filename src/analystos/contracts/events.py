@@ -59,6 +59,9 @@ EVENT_TYPES = {
     "ml.scoring.refused", "ml.scoring.duplicate",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
+    # Evidence fusion (N-8): a finding's or answer's measured and document citations recorded; a document
+    # claim that disagrees with measured data flagged (measured data wins)
+    "evidence.citations_recorded", "evidence.conflict_flagged",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

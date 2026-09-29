@@ -69,6 +69,7 @@ from analystos.governance.policy import (
     resolve_scope,
     scoped_loader,
 )
+from analystos.services.citations import record_turn_quietly
 
 log = get_logger(__name__)
 AGING_AFTER = timedelta(hours=24)
@@ -570,6 +571,8 @@ def _persist_turn(user: User, thread_id: str, workspace_id: str, turn_id: str, o
         s.flush()
         if status != "answered":
             _suggest_terms(s, workspace_id, turn)
+        else:  # N-8: measured results and cited documents as separate citation kinds; conflicts flagged
+            record_turn_quietly(s, turn, actor=f"user:{user.id}")
         return turn_out(s, turn)
 
 
@@ -795,6 +798,7 @@ def rerun_step(user: User, turn_id: str, n: int, sql: str | None = None) -> dict
         audit(f"user:{user.id}", "ask.step_rerun", workspace_id=ws_id, target=turn_id,
               details={"step": n, "edited": edited, "query_id": result.get("query_id"), "sql": statement[:2000]}, session=s)
         s.flush()
+        record_turn_quietly(s, turn, actor=f"user:{user.id}")
         return turn_out(s, turn)
 
 
@@ -823,6 +827,7 @@ def resynthesize(user: User, turn_id: str) -> dict[str, Any]:
         turn.analysis = current
         turn.explanation = synthesis["text"]
         s.flush()
+        record_turn_quietly(s, turn, actor=f"user:{user.id}")
         return turn_out(s, turn)
 
 

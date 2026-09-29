@@ -8,6 +8,7 @@ import { hypothesisIcon, toneFor } from "../lib/status";
 import { buildInvestigationTree, type HypNode } from "../lib/tree";
 import { to } from "../routes";
 import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, RecordTable, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
+import { CitationsPanel } from "./Citations";
 import { VerificationBadge, voidCause, WhyNumberButton } from "./WhyNumber";
 import { methodLabel, methodsLabel } from "../lib/methods";
 
@@ -322,6 +323,8 @@ function TrustDrawer({ insight: i, hypothesis, approvals, wsId, onClose }: {
           </ul>
           {detail.loading && !detail.data && <Loading label="Loading query evidence…" />}
           {detail.error && <p className="muted small">Query evidence unavailable: {detail.error}</p>}
+          <h3>Citations</h3>
+          <CitationsPanel load={() => api.insightCitations(i.id)} deps={[i.id]} workspaceId={wsId} />
           <h3>Caveats</h3>
           {caveats.length ? <ul className="small">{caveats.map((c) => <li key={c}>{c}</li>)}</ul> : <p className="muted small">No data-quality or population caveats recorded.</p>}
           <h3>Approvals on this investigation</h3>

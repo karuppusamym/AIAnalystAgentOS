@@ -9,6 +9,7 @@ state (`evidence.bundle`) is `exploratory` for a discovery until a confirmation 
 lower the review score or add caveats, but cannot make a finding true; the score is uncalibrated."""
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -39,8 +40,11 @@ from analystos.llm.cache import estimate_tokens
 from analystos.llm.config import family
 from analystos.registries.hypotheses import spec_hash
 from analystos.runtime.context import RunContext
+from analystos.services.citations import insight_citations
+from analystos.services.citations import record as record_citations
 from analystos.services.platform_settings import get as platform
 
+log = logging.getLogger(__name__)
 CAUSAL = re.compile(r"\b(causes?|caused|drives?|driven by|because|leads? to|results? in|due to)\b", re.I)
 MIN_N = 100
 
@@ -123,6 +127,17 @@ def independent_reviews(ctx: RunContext, states: list[dict]) -> dict[str, tuple[
         out[st["code"]] = ({k: v for k, v in review.items() if k != "id"}, model) if _review_ok(review) \
             else (None, f"not reviewed in the batch answer of {model}")
     return out
+
+
+def _citations(session: Any, ins: Any, bundle: dict, title: str, finding: str, narrative_source: str | None) -> Any:
+    """The finding's measured and document citations (N-8), or None when they could not be built: they
+    describe the claim, so a failure here is logged and never changes the verdict."""
+    try:
+        with session.begin_nested():
+            return insight_citations(session, ins, bundle=bundle, title=title, finding=finding, narrative_source=narrative_source)
+    except Exception:  # noqa: BLE001
+        log.exception("could not build citations of %s", ins.id)
+        return None
 
 
 def verify_insights(ctx: RunContext) -> dict:
@@ -315,6 +330,14 @@ def verify_insights(ctx: RunContext) -> dict:
                                             "role": "verification"})
         with session_scope() as s:
             ins = s.get(Insight, insight_id)
+            # N-8: measured and document evidence cited as separate kinds; a document claim that disagrees
+            # with the measurement is a caveat (measured data wins), never a check that could verify or fail.
+            cited = _citations(s, ins, bundle.model_dump(mode="json"), title, finding, narrative_source)
+            if cited is not None:
+                caveats_extra += [c.caveat() for c in cited.conflicts]
+                bundle.claim["citations"] = cited.summary()
+                verification["verify"]["citations"] = {**cited.summary(),
+                                                       "conflicts": [c.model_dump(mode="json") for c in cited.conflicts]}
             ins.finding = finding
             ins.narrative_source = narrative_source
             ins.verified = deterministic_ok
@@ -345,6 +368,8 @@ def verify_insights(ctx: RunContext) -> dict:
                 dependencies=insight_dependencies(
                     s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=ins.hypothesis_id, spec=spec_d,
                     entry=recorded or entry, narrative_source=narrative_source))
+            if cited is not None:
+                record_citations(s, cited, workspace_id=ctx.workspace.id, run_id=ctx.run.id)
             emit(ctx.workspace.id, "insight.verified", {"code": code, "verified": deterministic_ok, "confidence": ins.confidence,
                                                         "validation": bundle.validation.state, "label": bundle.validation.label,
                                                         "failed_checks": [c["check"] for c in checks if not c["passed"]],

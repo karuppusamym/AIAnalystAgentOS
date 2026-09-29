@@ -191,6 +191,16 @@ def why_turn_number(turn_id: str, number: str | None = None, column: str | None 
     return explain_ask_turn(session, ask_svc._turn_for(session, user, turn_id), number=number, column=column, row=row)
 
 
+@router.get("/ask/turns/{turn_id}/citations")
+def turn_citations(turn_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """The answer's evidence as two citation kinds (N-8): each governed query result, and the knowledge
+    documents its model calls were given (with sha256 receipts); a number found only in a document is
+    labelled document-sourced; document claims that disagree with the result are flagged."""
+    from analystos.services.citations import for_turn
+
+    return for_turn(session, ask_svc._turn_for(session, user, turn_id))
+
+
 @router.post("/ask/turns/{turn_id}/rerun")
 def rerun(turn_id: str, body: AskRerunIn, user: User = Depends(current_user)):
     return ask_svc.rerun_turn(user, turn_id, body.sql)

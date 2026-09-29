@@ -394,6 +394,83 @@ export interface WhyRunResponse {
   by_state: Record<string, number>;
 }
 
+/** A measured result a claim cites (contracts/citations.py, N-8): only these back verified numbers. */
+export interface QuantitativeCitation {
+  kind: "quantitative";
+  id: string;
+  label: string;
+  query_id: string;
+  result_hash: string | null;
+  query_hash?: string | null;
+  step?: number | null;
+  fact_ids: string[];
+  values: number[];
+  verified: boolean;
+}
+
+/** A number as a document states it: never a verified metric. */
+export interface DocumentNumber {
+  text: string;
+  value: number;
+  unit: "percent" | "value";
+  sentence: string;
+  source: "document";
+  verified: false;
+}
+
+/** A knowledge section a claim cites, with the receipts to check it was not edited. */
+export interface DocumentCitation {
+  kind: "document";
+  id: string;
+  document_id: string;
+  path: string;
+  anchor: string | null;
+  heading: string | null;
+  pack: string | null;
+  section: string | null;
+  document_sha256: string;
+  section_sha256: string | null;
+  excerpt: string;
+  numbers: DocumentNumber[];
+  trusted: boolean;
+}
+
+export interface NarrativeNumber {
+  text: string;
+  source: "quantitative" | "document" | "unbound";
+  citation_id: string | null;
+}
+
+/** A document number that disagrees with a measured fact; measured data wins. */
+export interface EvidenceConflict {
+  document_citation_id: string;
+  path: string;
+  anchor: string | null;
+  fact_id: string;
+  metric: string;
+  subject: string | null;
+  document_text: string;
+  document_value: number;
+  measured_value: number;
+  unit: "fraction" | "percent" | "value";
+  relative_difference: number;
+  sentence: string;
+  resolution: "measured_data_wins";
+}
+
+/** GET /api/insights/{id}/citations and /api/ask/turns/{id}/citations (services/citations.py). */
+export interface CitationsResponse {
+  version: string;
+  subject_type: "insight" | "ask_turn";
+  subject_id: string;
+  quantitative: QuantitativeCitation[];
+  documents: DocumentCitation[];
+  narrative_numbers: NarrativeNumber[];
+  conflicts: EvidenceConflict[];
+  summary: { quantitative: number; documents: number; conflicts: number; document_sourced_numbers: number; unbound_numbers: number };
+  recorded: boolean;
+}
+
 export interface QueryExecution {
   id: string;
   workspace_id: string;
@@ -3450,6 +3527,11 @@ export const api = {
     get("/api/workspaces/{workspace_id}/analysis/{run_id}/why", { path: { workspace_id: ws, run_id: run } }) as Promise<WhyRunResponse>,
   /** An Ask answer's numbers, each traced fact -> query receipt -> data version -> definition -> verdict. */
   whyAskTurn: (turnId: string) => get("/api/ask/turns/{turn_id}/why", { path: { turn_id: turnId } }) as Promise<WhyResponse>,
+  /** Measured and document evidence as separate citation kinds, with document/data conflicts (N-8). */
+  insightCitations: (id: string) =>
+    get("/api/insights/{insight_id}/citations", { path: { insight_id: id } }) as Promise<CitationsResponse>,
+  askTurnCitations: (turnId: string) =>
+    get("/api/ask/turns/{turn_id}/citations", { path: { turn_id: turnId } }) as Promise<CitationsResponse>,
   /** A new verdict by the subject's own deterministic path; the old (VOID) record stays readable. */
   reverify: (recordId: string) =>
     post("/api/verification/{record_id}/reverify", { path: { record_id: recordId } }) as Promise<ReverifyResult>,

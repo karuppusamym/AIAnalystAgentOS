@@ -9663,6 +9663,79 @@
         ]
       }
     },
+    "/api/ask/turns/{turn_id}/citations": {
+      "get": {
+        "description": "The answer's evidence as two citation kinds (N-8): each governed query result, and the knowledge\ndocuments its model calls were given (with sha256 receipts); a number found only in a document is\nlabelled document-sourced; document claims that disagree with the result are flagged.",
+        "operationId": "turn_citations_api_ask_turns__turn_id__citations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Turn Citations",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
     "/api/ask/turns/{turn_id}/inspector": {
       "get": {
         "operationId": "inspect_turn_api_ask_turns__turn_id__inspector_get",
@@ -11912,6 +11985,79 @@
           }
         },
         "summary": "Attested",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/insights/{insight_id}/citations": {
+      "get": {
+        "description": "The finding's evidence as two citation kinds (N-8): measured results (query id, result hash, the\nfacts computed from them) and knowledge documents (path, anchor, document/section sha256), the source\nof every number in its text (only `quantitative` is verified) and document claims that disagree with\nmeasured data. `recorded` is false for a finding verified before citations were recorded.",
+        "operationId": "insight_citations_api_insights__insight_id__citations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insight_id",
+            "required": true,
+            "schema": {
+              "title": "Insight Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Insight Citations",
         "tags": [
           "evidence"
         ]
@@ -19723,6 +19869,79 @@
         "summary": "Change Status",
         "tags": [
           "definitions"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/evidence/conflicts": {
+      "get": {
+        "description": "Findings and Ask answers of the workspace whose cited documents disagree with measured data (N-8).",
+        "operationId": "evidence_conflicts_api_workspaces__workspace_id__evidence_conflicts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evidence Conflicts",
+        "tags": [
+          "evidence"
         ]
       }
     },

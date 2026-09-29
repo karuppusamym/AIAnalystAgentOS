@@ -6,6 +6,7 @@ import {
 } from "../api";
 import { AnalystAnswer } from "../components/AnalystAnswer";
 import { ChartView } from "../components/Chart";
+import { CitationsPanel } from "../components/Citations";
 import {
   Card, CodeBlock, DataTable, EmptyState, ErrorBox, Field, KeyValue, Loading, Notice, PageHeader, StateView, Tabs, TechnicalDetails,
 } from "../components/ui";
@@ -492,6 +493,12 @@ function Inspector({ turn }: { turn: AskTurn }) {
                 })}</ul>
               ) : <p className="small muted">No context receipts: no model prompt was compiled for this answer.</p>}
             </div>
+            {turn.status === "answered" && (
+              <div>
+                <h3 className="h-sm">Citations</h3>
+                <CitationsPanel load={() => api.askTurnCitations(turn.id)} deps={[turn.id]} workspaceId={turn.workspace_id} />
+              </div>
+            )}
           </div>
         )}
         {tab === "decision" && (

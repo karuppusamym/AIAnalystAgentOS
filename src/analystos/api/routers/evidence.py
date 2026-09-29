@@ -43,6 +43,26 @@ def why_number(insight_id: str, number: str | None = None, fact_id: str | None =
     return explain_insight(session, ins, number=number, fact_id=fact_id)
 
 
+@router.get("/insights/{insight_id}/citations")
+def insight_citations(insight_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """The finding's evidence as two citation kinds (N-8): measured results (query id, result hash, the
+    facts computed from them) and knowledge documents (path, anchor, document/section sha256), the source
+    of every number in its text (only `quantitative` is verified) and document claims that disagree with
+    measured data. `recorded` is false for a finding verified before citations were recorded."""
+    from analystos.services.citations import for_insight
+
+    return for_insight(session, load_in_workspace(session, Insight, insight_id, user=user, label="insight"))
+
+
+@router.get("/workspaces/{workspace_id}/evidence/conflicts")
+def evidence_conflicts(workspace_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Findings and Ask answers of the workspace whose cited documents disagree with measured data (N-8)."""
+    from analystos.services.citations import conflicts
+
+    require_role(session, user, workspace_id, "viewer")
+    return {"items": conflicts(session, workspace_id)}
+
+
 @router.post("/verification/{record_id}/reverify")
 def reverify_record(record_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     """Re-verify a verdict (P7-01, ADR-0020 decision 5): a new record by the subject's own deterministic path

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { roleAtLeast, to } from "../routes";
 import { api, type InsightDetail, type Verification } from "../api";
+import { CitationsPanel } from "../components/Citations";
 import { LineageGraph } from "../components/LineageGraph";
 import { Card, CodeBlock, ConfidenceBar, EmptyState, ErrorBox, KeyValue, Loading, Notice, PreviewTable, RecordTable, StatusBadge, Tag, TechnicalDetails } from "../components/ui";
 import { ReverifyButton, VerificationBadge, voidCause, WhyNumberButton, WhyState } from "../components/WhyNumber";
@@ -59,6 +60,9 @@ export function FindingDetail({ id, wsId }: { id: string; wsId: string }) {
       </Card>
       <VerificationRecord v={i.verification} />
       <EvidenceSection d={i} />
+      <Card title="Citations">
+        <CitationsPanel load={() => api.insightCitations(i.id)} deps={[i.id]} workspaceId={wsId} />
+      </Card>
       <Card title="Lineage">
         <LineageGraph lineage={i.lineage} focus={{ type: "insight", id: i.id }} />
       </Card>
