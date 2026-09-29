@@ -1,5 +1,5 @@
 # AnalystOS application image (API, Temporal worker, scheduler). ADR-0025: the extras decide its weight.
-#   lite API (default):   docker build --build-arg EXTRAS=reports,ml ...        core + PDF/XLSX reports + ML
+#   lite API (default):   docker build --build-arg EXTRAS=reports,ml ...        core + PDF/XLSX/DOCX/PPTX reports + ML
 #   standard API:         --build-arg EXTRAS=reports,temporal,ml                  + the Temporal client
 #   worker / scheduler:   --build-arg EXTRAS=standard                             + ml, graph (every extra)
 # The ML stack (scikit-learn, statsmodels) is in the API image too: ML experiments train in the lite API and are

@@ -1385,7 +1385,7 @@ export interface AuditEvent {
 // ----------------------------------------------------------------------------------- continuous (phase 3)
 export type ScheduleKind = "reanalysis" | "dataset_refresh" | "report" | "monitor" | "crawl";
 export type ReportKind = "executive" | "operational" | "statistical" | "exception" | "weekly_summary";
-export type ReportFormat = "md" | "html" | "pdf" | "xlsx";
+export type ReportFormat = "md" | "html" | "pdf" | "xlsx" | "pptx" | "docx";
 
 export interface ReportSpec {
   kind?: ReportKind | string;

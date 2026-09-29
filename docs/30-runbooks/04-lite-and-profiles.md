@@ -74,7 +74,7 @@ or an isolated compute pool, `requires: [pool:compute-ml]` (§5).
 | Extra | Libraries | Needed by |
 |---|---|---|
 | core | FastAPI, SQLAlchemy/psycopg, numpy, scipy, duckdb, pandas, polars, pyarrow, redis client | every method of the investigate playbook (grouped logistic, Mantel-Haenszel and Durbin-Watson are numpy) |
-| `reports` | matplotlib, fpdf2, openpyxl | PDF/XLSX reports |
+| `reports` | matplotlib, fpdf2, openpyxl, python-pptx, python-docx | PDF (bundled DejaVu Unicode font)/XLSX/PPTX/DOCX reports; PPTX/DOCX are checked per library, so an image without them keeps PDF/XLSX |
 | `ml` | scikit-learn, statsmodels | driver model; Holt-Winters |
 | `temporal` | temporalio | `standard`/`scale` API and `analystos worker` |
 | `graph` | neo4j | the Neo4j projection |

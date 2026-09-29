@@ -1,8 +1,10 @@
-"""PDF rendering of ReportData with fpdf2 and a core font (no font files, no network).
+"""PDF rendering of ReportData with fpdf2 and the bundled DejaVu fonts (N-6-font; no network).
 
-Core fonts are latin-1 only, so every string passes through `pdf_text`, which maps common typography
-to ASCII (→ to ->, ≥ to >=, … to ...), folds accents where possible and replaces anything else with
-'?'. The creation date comes from ReportData.generated_at, so the same input yields the same bytes.
+DejaVu Sans (Bitstream Vera licence, `fonts/LICENSE_DEJAVU`) is embedded as a subset, so Latin,
+Latin-extended, Greek, Cyrillic, typography (→ ≥ … “ ” —) and most symbols print as written. A
+character the fonts lack (CJK, Indic scripts, emoji) passes through `pdf_text`, which maps it to an
+ASCII look-alike, folds accents or prints '?', so no text silently vanishes as an empty glyph box.
+The creation date comes from ReportData.generated_at, so the same input yields the same bytes.
 """
 from __future__ import annotations
 
@@ -10,7 +12,10 @@ import io
 import re
 import unicodedata
 from datetime import UTC, datetime
+from functools import cache
+from pathlib import Path
 
+from fontTools.ttLib import TTFont
 from fpdf import FPDF
 from fpdf.fonts import FontFace
 
@@ -25,26 +30,36 @@ _MAP = {
     "€": "EUR", "™": "(TM)", "✓": "v", "✔": "v", "✗": "x", "✘": "x", " ": " ", "​": "",
     "\t": "    ",
 }
-_MAP_RE = re.compile("|".join(re.escape(k) for k in _MAP))
+_ALWAYS = {"\t": "    ", "​": ""}
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
+FONT_DIR = Path(__file__).parent / "fonts"
+FONT, MONO = "DejaVu", "DejaVuMono"
+FONT_FILES = {(FONT, ""): "DejaVuSans.ttf", (FONT, "B"): "DejaVuSans-Bold.ttf", (FONT, "I"): "DejaVuSans-Oblique.ttf",
+              (MONO, ""): "DejaVuSansMono.ttf"}
 
-def pdf_text(v: object) -> str:
-    """Latin-1-safe text for fpdf core fonts; never raises."""
+
+@cache
+def font_coverage(family: str = FONT) -> frozenset[int]:
+    """Code points every style of `family` has a glyph for (a style missing one would print a blank box)."""
+    maps = [set(TTFont(FONT_DIR / f, lazy=True).getBestCmap()) for (fam, _), f in FONT_FILES.items() if fam == family]
+    return frozenset(set.intersection(*maps))
+
+
+def pdf_text(v: object, family: str = FONT) -> str:
+    """Text the bundled font can draw: covered characters as written, the rest mapped or folded; never raises."""
     s = "" if v is None else str(v)
-    s = _MAP_RE.sub(lambda m: _MAP[m.group(0)], s)
     s = _CTRL.sub("", s.replace("\r\n", "\n").replace("\r", "\n"))
-    try:
-        s.encode("latin-1")
-        return s
-    except UnicodeEncodeError:
-        pass
+    covered = font_coverage(family)
     out = []
     for ch in s:
-        try:
-            ch.encode("latin-1")
+        if ch in _ALWAYS:
+            out.append(_ALWAYS[ch])
+        elif ord(ch) in covered or ch == "\n":
             out.append(ch)
-        except UnicodeEncodeError:
+        elif ch in _MAP:
+            out.append(_MAP[ch])
+        else:
             folded = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode("ascii")
             out.append(folded or "?")
     return "".join(out)
@@ -63,6 +78,8 @@ class _ReportPDF(FPDF):
     def __init__(self, data: ReportData) -> None:
         super().__init__(orientation="portrait", unit="mm", format="A4")
         self.data = data
+        for (family, style), file in FONT_FILES.items():
+            self.add_font(family, style, FONT_DIR / file)
         self.set_margins(16, 16, 16)
         self.set_auto_page_break(auto=True, margin=20)
         self.alias_nb_pages()
@@ -71,7 +88,7 @@ class _ReportPDF(FPDF):
         self.set_y(-14)
         self.set_draw_color(*LINE)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
-        self.set_font("Helvetica", "", 7)
+        self.set_font(FONT, "", 7)
         self.set_text_color(*MUTED)
         left = pdf_text(f"{self.data.title} | run {self.data.run_id} | generated {C.generated_label(self.data)}")
         if self.get_string_width(left) > self.epw - 30:
@@ -84,7 +101,7 @@ class _ReportPDF(FPDF):
 
 # ---------------------------------------------------------------------------------------------
 def _h1(pdf: _ReportPDF, text: str) -> None:
-    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_font(FONT, "B", 20)
     pdf.set_text_color(*TEXT)
     pdf.multi_cell(0, 9, pdf_text(text), new_x="LMARGIN", new_y="NEXT")
 
@@ -93,7 +110,7 @@ def _h2(pdf: _ReportPDF, text: str) -> None:
     if pdf.get_y() > pdf.page_break_trigger - 30:
         pdf.add_page()
     pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_font(FONT, "B", 13)
     pdf.set_text_color(*ACCENT)
     pdf.multi_cell(0, 7, pdf_text(text), new_x="LMARGIN", new_y="NEXT")
     pdf.set_draw_color(*LINE)
@@ -104,13 +121,13 @@ def _h2(pdf: _ReportPDF, text: str) -> None:
 def _h3(pdf: _ReportPDF, text: str) -> None:
     if pdf.get_y() > pdf.page_break_trigger - 20:
         pdf.add_page()
-    pdf.set_font("Helvetica", "B", 10.5)
+    pdf.set_font(FONT, "B", 10.5)
     pdf.set_text_color(*TEXT)
     pdf.multi_cell(0, 5.5, pdf_text(text), new_x="LMARGIN", new_y="NEXT")
 
 
 def _p(pdf: _ReportPDF, text: str, *, size: float = 9.5, style: str = "", color=TEXT, indent: float = 0) -> None:
-    pdf.set_font("Helvetica", style, size)
+    pdf.set_font(FONT, style, size)
     pdf.set_text_color(*color)
     if indent:
         pdf.set_x(pdf.l_margin + indent)
@@ -123,11 +140,11 @@ def _bullets(pdf: _ReportPDF, items: list[str], *, size: float = 9.5, indent: fl
 
 
 def _code(pdf: _ReportPDF, code: str) -> None:
-    pdf.set_font("Courier", "", 7.5)
+    pdf.set_font(MONO, "", 7.5)
     pdf.set_text_color(*TEXT)
     pdf.set_fill_color(*SOFT)
     pdf.set_draw_color(*LINE)
-    pdf.multi_cell(0, 3.6, pdf_text(code.rstrip()), border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 3.6, pdf_text(code.rstrip(), MONO), border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1.5)
 
 
@@ -135,7 +152,7 @@ def _table(pdf: _ReportPDF, headers: list[str], rows: list[list[str]], widths: t
            size: float = 8.5) -> None:
     if not rows:
         return
-    pdf.set_font("Helvetica", "", size)
+    pdf.set_font(FONT, "", size)
     pdf.set_text_color(*TEXT)
     pdf.set_draw_color(*LINE)
     pdf.set_fill_color(255, 255, 255)
@@ -205,7 +222,7 @@ def _section(pdf: _ReportPDF, key: str, d: ReportData) -> None:
         if not d.alerts:
             _p(pdf, "No alerts.")
         for a in C.sorted_alerts(d):
-            pdf.set_font("Helvetica", "B", 9.5)
+            pdf.set_font(FONT, "B", 9.5)
             pdf.set_text_color(*SEV.get(a.severity, MUTED))
             pdf.multi_cell(0, 5, pdf_text(f"{a.severity.upper()}  {a.title}"), new_x="LMARGIN", new_y="NEXT")
             _p(pdf, a.message + (f" (metric: {a.metric})" if a.metric else ""), indent=3)
@@ -232,7 +249,7 @@ def _section(pdf: _ReportPDF, key: str, d: ReportData) -> None:
             return
         _table(pdf, ["Code", "Hypothesis", "Status", "Conclusion"],
                [[str(h.get("code", "")), str(h.get("statement", "")), str(h.get("status", "")), str(h.get("conclusion", "") or "")]
-                for h in d.hypotheses], (16, 62, 20, 52))
+                for h in d.hypotheses], (16, 58, 24, 52))
     elif key == "evidence":
         qs = [(i.code, q) for i in d.insights for q in i.evidence_queries]
         if not qs:

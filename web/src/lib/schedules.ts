@@ -24,7 +24,7 @@ export const REPORT_KINDS: { id: ReportKind; label: string }[] = [
   { id: "weekly_summary", label: "Weekly summary" },
 ];
 
-export const REPORT_FORMATS: ReportFormat[] = ["html", "pdf", "xlsx", "md"];
+export const REPORT_FORMATS: ReportFormat[] = ["html", "pdf", "xlsx", "docx", "pptx", "md"];
 
 export type PresetId = "weekly_monday_0700" | "daily_0600" | "monthly_1st_0700";
 
