@@ -117,7 +117,7 @@ def design(ctx: RunContext) -> dict:
             continue
         # Filters on dataset columns only (raw columns keep their names in the dataset).
         filters = [f"{_q(f.column)} {f.op} {repr(f.value) if isinstance(f.value, str) else f.value}"
-                   for f in spec.filters if f.column in cols and f.op in ("=", "!=", ">", ">=", "<", "<=")]
+                   for f in spec.filters if f.column in cols and not f.via and f.op in ("=", "!=", ">", ">=", "<", "<=")]
         intent = shown.intent
         card = int(cols[dim].get("distinct") or 10) if isinstance(cols[dim].get("distinct"), int) else 10
         ctype, why = _choose(ctx, intent, cols[dim].get("semantic_type"), card, title)

@@ -113,12 +113,12 @@ class AnalysisMethod:
 
     def claim_subject(self, spec: Mapping[str, Any]) -> Any:
         """What the outcome is broken down by; part of the claim identity."""
-        return (spec.get("segment") or {}).get("column")
+        return ref_name(spec.get("segment") or {}) or None
 
     def claim_key(self, spec: Mapping[str, Any], highlights: Mapping[str, Any] | None) -> ClaimKey:
         """Identity of a claim: what was tested (method, outcome, subject, population filters) and which
         group came out on top. Wording is not part of it."""
-        filters = ";".join(sorted(f"{f.get('column')}{f.get('op')}{f.get('value')}" for f in spec.get("filters") or []))
+        filters = ";".join(sorted(f"{ref_name(f)}{f.get('op')}{f.get('value')}" for f in spec.get("filters") or []))
         hl = highlights or {}
         top = hl.get("top_segment", hl.get("top_driver"))
         return (self.name, (spec.get("outcome") or {}).get("column"), self.claim_subject(spec), filters, str(top))
@@ -249,11 +249,18 @@ def cap(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+def ref_name(item: Mapping[str, Any]) -> str:
+    """A derivation's or filter's column as stable text: `via.column` when it is read from a related table,
+    so a joined `region` and the base table's own `region` are different subjects."""
+    column = str(item.get("column") or "")
+    return f"{item['via']}.{column}" if item.get("via") and column else column
+
+
 def text_parts(spec: Mapping[str, Any]) -> tuple[str, str, str]:
     """(segment label, outcome label, population scope suffix) for template sentences."""
-    seg = (spec.get("segment") or {}).get("label") or (spec.get("segment") or {}).get("column") or "segment"
+    seg = (spec.get("segment") or {}).get("label") or ref_name(spec.get("segment") or {}) or "segment"
     out = (spec.get("outcome") or {}).get("label") or (spec.get("outcome") or {}).get("column") or "volume"
-    scope = f" (where {', '.join(f['column'] + ' ' + f['op'] + ' ' + str(f.get('value')) for f in spec.get('filters') or [])})" \
+    scope = f" (where {', '.join(ref_name(f) + ' ' + f['op'] + ' ' + str(f.get('value')) for f in spec.get('filters') or [])})" \
         if spec.get("filters") else ""
     return seg, out, scope
 

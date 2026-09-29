@@ -15,6 +15,9 @@ derivation      postgres / duckdb                  tsql
 =============== ================================== ===================================================
 duration_hours  (EXTRACT(EPOCH FROM end)           DATEDIFF_BIG(SECOND, start, end) / 3600.0
                  - EXTRACT(EPOCH FROM start))/3600
+later_than      CASE: end > start (or the hours       same, with DATEDIFF_BIG for a tolerance
+                between them > tolerance) -> 1/0,
+                NULL when either is NULL
 after_hours     EXTRACT(HOUR ..) / EXTRACT(DOW ..) DATEPART(HOUR, ..) and a DATEFIRST-independent
                                                    day-of-week: DATEDIFF(DAY, '1900-01-07', ts) % 7
 date_trunc      DATE_TRUNC('grain', ts)            DATEADD/DATEDIFF from 1900-01-01 (works on every
@@ -27,6 +30,11 @@ bucket          CASE on edges -> string-sortable   same
                 have more digits) + numeric order
 equals/is_true  CASE -> 1 / 0 / NULL                same (no boolean type needed)
 =============== ================================== ===================================================
+
+A derivation or filter with `via` reads a related table: the spec's `joins` compile to
+``LEFT JOIN <asset> AS "j_<from_column>" ON "t"."<from_column>" = "j_<from_column>"."<to_column>"`` with the
+base table aliased ``t``. Validation admits only many-to-one joins to a unique key, so every base row is
+kept exactly once and counts stay those of the base table; the gateway still checks every table and column.
 
 Timestamp inputs are CAST to TIMESTAMP (DATETIME2 on tsql) so text-typed timestamps (common in
 ServiceNow extracts) work. Boolean derivations evaluate to integer 1/0 (NULL when the input is NULL),
@@ -58,8 +66,17 @@ from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter, Parti
 from analystos.core.errors import InvalidInput
 
 DIALECTS = ("postgres", "tsql", "duckdb")
-BOOLEAN_DERIVATIONS = frozenset({"after_hours", "equals", "is_true"})
-TIME_DERIVATIONS = frozenset({"duration_hours", "after_hours", "date_trunc", "hour_of_day", "day_of_week"})
+BOOLEAN_DERIVATIONS = frozenset({"after_hours", "equals", "is_true", "later_than"})
+TIME_DERIVATIONS = frozenset({"duration_hours", "later_than", "after_hours", "date_trunc", "hour_of_day", "day_of_week"})
+BASE_ALIAS = "t"  # the spec's own table when the query joins related ones
+JOIN_PREFIX = "j_"
+
+
+def join_alias(via: str) -> str:
+    """The table alias of a spec join, derived from its `from_column` so a derivation compiles on its own."""
+    return f"{JOIN_PREFIX}{via}"
+
+
 TRUE_TEXT = ("true", "t", "1", "yes", "y")
 
 MAX_GROUPS = 1000  # cap on GROUP BY result rows for segment aggregates
@@ -315,7 +332,7 @@ def bucket_exprs(d: Derivation, dialect: str) -> tuple[exp.Expression, exp.Expre
     """(label CASE, sortable order CASE) for a bucket derivation."""
     edges = _validated_edges(d)
     labels = bucket_labels(edges)
-    x = col(d.column)
+    x = _dcol(d, d.column)
     below = below_label(edges)
     lab_whens: list[tuple[exp.Expression, exp.Expression]] = [(is_null(x), exp.Null()),
                                                                (exp.LT(this=x.copy(), expression=num(edges[0])), lit(below))]
@@ -327,6 +344,14 @@ def bucket_exprs(d: Derivation, dialect: str) -> tuple[exp.Expression, exp.Expre
     return case(lab_whens, lit(labels[-1])), case(ord_whens, num(len(edges) - 1))
 
 
+def _dcol(d: Derivation, name: str) -> exp.Column:
+    """A derivation's source column, qualified with its join alias when it is read through `via`."""
+    c = col(name)
+    if d.via:
+        c.set("table", ident(join_alias(d.via)))
+    return c
+
+
 def is_true_expr(e: exp.Expression, dialect: str) -> exp.Expression:
     """Boolean-ish value -> 1/0/NULL. Handles native booleans, bits and 'true'/'false'/'1'/'yes' text."""
     txt = exp.Lower(this=exp.Trim(this=cast(e.copy(), "text", dialect)))
@@ -335,8 +360,14 @@ def is_true_expr(e: exp.Expression, dialect: str) -> exp.Expression:
 
 
 def derive(d: Derivation, dialect: str) -> exp.Expression:
-    """The SQL expression for one derivation (value only; see `bucket_exprs` for bucket order)."""
-    dialect = _check_dialect(dialect)
+    """The SQL expression for one derivation (value only; see `bucket_exprs` for bucket order). A `via`
+    derivation's columns are qualified with its join alias; the spec's own columns stay unqualified until
+    `base_select` qualifies them with the base alias (so a spec without joins compiles as it always did)."""
+    e = _derive(d, _check_dialect(dialect))
+    return _qualify(e, join_alias(d.via)) if d.via else e
+
+
+def _derive(d: Derivation, dialect: str) -> exp.Expression:
     t = d.type
     if t == "column":
         return col(d.column)
@@ -344,6 +375,13 @@ def derive(d: Derivation, dialect: str) -> exp.Expression:
         if not d.end_column:
             raise InvalidInput("duration_hours requires `end_column`")
         return epoch_hours_diff(ts_expr(d.column, dialect), ts_expr(d.end_column, dialect), dialect)
+    if t == "later_than":
+        if not d.end_column:
+            raise InvalidInput("later_than requires `end_column` (the actual date compared with `column`)")
+        start, end = ts_expr(d.column, dialect), ts_expr(d.end_column, dialect)
+        later: exp.Expression = exp.GT(this=end, expression=start) if not d.tolerance_hours else \
+            exp.GT(this=epoch_hours_diff(start, end, dialect), expression=num(float(d.tolerance_hours)))
+        return case([(or_all([is_null(col(d.column)), is_null(col(d.end_column))]), exp.Null()), (later, num(1))], num(0))
     if t == "after_hours":
         if not (0 <= d.start_hour <= 24 and 0 <= d.end_hour <= 24 and d.start_hour < d.end_hour):
             raise InvalidInput("after_hours requires 0 <= start_hour < end_hour <= 24")
@@ -392,10 +430,17 @@ def describe(d: Derivation | None) -> str:
         return "count(*)"
     if d.label:
         return d.label
+    text = _describe(d)
+    return f"{d.via}->{text}" if d.via else text
+
+
+def _describe(d: Derivation) -> str:
     if d.type == "column":
         return d.column
     if d.type == "duration_hours":
         return f"hours({d.column}->{d.end_column})"
+    if d.type == "later_than":
+        return f"{d.end_column}>{d.column}"
     if d.type == "equals":
         return f"{d.column}={d.value!r}"
     if d.type == "date_trunc":
@@ -411,6 +456,8 @@ _OPS = {"=": exp.EQ, "!=": exp.NEQ, ">": exp.GT, ">=": exp.GTE, "<": exp.LT, "<=
 
 def filter_expr(f: Filter, dialect: str) -> exp.Expression:
     c = col(f.column)
+    if f.via:
+        c.set("table", ident(join_alias(f.via)))
     if f.op == "is null":
         return is_null(c)
     if f.op == "is not null":
@@ -508,12 +555,25 @@ def partition_predicate(p: Partition, dialect: str) -> exp.Expression:
 # query assembly
 # --------------------------------------------------------------------------------------------
 def base_select(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]]) -> exp.Select:
-    q = exp.select(*[e.as_(ident(a)) for a, e in cols]).from_(table(spec.asset))
+    """``SELECT <derived columns> FROM <asset> WHERE <filters> [AND <partition>]``: the one place every
+    method reads the source, so a spec's joins and the active row partition (P8-15) apply to every method.
+    With joins the base table is aliased `t` (the partition's key columns are qualified with it) and each
+    join is a LEFT JOIN on its declared key (many-to-one: no base row multiplied, none dropped)."""
     part = _ACTIVE_PARTITION.get()
     w = and_all([where_clause(spec.filters, dialect), partition_predicate(part, dialect) if part is not None else None])
-    if w is not None:
-        q = q.where(w)
-    return q
+    if not spec.joins:
+        q = exp.select(*[e.as_(ident(a)) for a, e in cols]).from_(table(spec.asset))
+        return q.where(w) if w is not None else q
+    for via in spec.vias():
+        if spec.join(via) is None:
+            raise InvalidInput(f"via {via!r} names no join of the spec")
+    q = exp.select(*[_qualify(e, BASE_ALIAS).as_(ident(a)) for a, e in cols]).from_(table(spec.asset, BASE_ALIAS))
+    for j in spec.joins:
+        alias = join_alias(j.from_column)
+        on = exp.EQ(this=exp.Column(this=ident(j.from_column), table=ident(BASE_ALIAS)),
+                    expression=exp.Column(this=ident(j.to_column), table=ident(alias)))
+        q = q.join(table(j.asset, alias), on=on, join_type="left")
+    return q.where(_qualify(w, BASE_ALIAS)) if w is not None else q
 
 
 def subquery(q: exp.Select, alias: str) -> exp.Subquery:
@@ -639,9 +699,6 @@ def aggregate_query(asset: str, dialect: str, *, dimensions: list[tuple[str, Der
     if limit is not None:
         q = q.limit(int(limit))
     return q.sql(dialect=dialect)
-
-
-BASE_ALIAS = "t"
 
 
 def _joined_aggregate(asset: str, dialect: str, *, dimensions: list[tuple[str, Derivation]],

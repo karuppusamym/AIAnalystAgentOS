@@ -53,7 +53,7 @@ from analystos.skills import stats as st
 
 MIN_RELATIVE_EFFECT = 0.05  # the rate effect must move the KPI by >= 5% of its earlier value
 MAX_CELLS = 5000
-BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
+BOOLEAN_OUT = {"equals", "is_true", "after_hours", "later_than"}
 NUMERIC_OUT = {"column", "duration_hours"}
 
 
@@ -133,7 +133,7 @@ class ContributionDecomposition(AnalysisMethod):
     def validate(self, spec: AnalysisSpec, semantic: Semantic) -> list[str]:
         errors = []
         if spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT | NUMERIC_OUT:
-            errors.append(f"{self.name} needs a boolean (equals/is_true/after_hours) or numeric (column/duration_hours) outcome")
+            errors.append(f"{self.name} needs a boolean (equals/is_true/after_hours/later_than) or numeric (column/duration_hours) outcome")
         elif spec.outcome.type == "column" and semantic(spec.outcome) not in ("numeric", None):
             errors.append(f"outcome {spec.outcome.column} is not numeric")
         if spec.segment is None:

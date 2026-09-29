@@ -5529,6 +5529,8 @@ export interface components {
             drivers?: components["schemas"]["Derivation"][];
             /** Filters */
             filters?: components["schemas"]["Filter"][];
+            /** Joins */
+            joins?: components["schemas"]["Join"][];
             /**
              * Method
              * @description A registered analysis method:
@@ -6049,6 +6051,8 @@ export interface components {
          *     type:
          *       column          -> the raw column
          *       duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end
+         *       later_than      -> TRUE when `end_column` is later than `column` by more than `tolerance_hours`
+         *                          (delivered after promised, resolved after due); NULL when either is NULL
          *       after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend
          *       bucket          -> numeric column bucketed by `edges` (labels like "0", "1", "2", "3+")
          *       equals          -> TRUE when column = value (boolean outcome from a categorical)
@@ -6056,6 +6060,9 @@ export interface components {
          *       date_trunc      -> date_trunc(grain, column)
          *       hour_of_day     -> extract(hour from column)
          *       day_of_week     -> extract(dow from column)
+         *
+         *     via: the column(s) live in a related table, reached through the spec's join whose `from_column`
+         *     is `via` (customer region through `customer_id`); None reads the spec's own asset.
          */
         Derivation: {
             /** Column */
@@ -6079,13 +6086,20 @@ export interface components {
              */
             start_hour?: number;
             /**
+             * Tolerance Hours
+             * @default 0
+             */
+            tolerance_hours?: number;
+            /**
              * Type
              * @default column
              * @enum {string}
              */
-            type?: "column" | "duration_hours" | "after_hours" | "bucket" | "equals" | "is_true" | "date_trunc" | "hour_of_day" | "day_of_week";
+            type?: "column" | "duration_hours" | "later_than" | "after_hours" | "bucket" | "equals" | "is_true" | "date_trunc" | "hour_of_day" | "day_of_week";
             /** Value */
             value?: unknown;
+            /** Via */
+            via?: string | null;
         };
         /** DestinationIn */
         DestinationIn: {
@@ -6274,6 +6288,8 @@ export interface components {
             origin?: "plan" | "user_redirect" | "policy";
             /** Value */
             value?: unknown;
+            /** Via */
+            via?: string | null;
         };
         /** FindingOutcomeIn */
         FindingOutcomeIn: {
@@ -6461,6 +6477,21 @@ export interface components {
             };
             /** Run Id */
             run_id?: string | null;
+        };
+        /**
+         * Join
+         * @description A many-to-one lookup from the spec's asset: `from_column` references the unique `to_column` of
+         *     `asset`. Compiled as a LEFT JOIN, so every base row is kept exactly once; validation accepts only a
+         *     validated (or user-declared) relationship between in-scope tables of one source. Derivations and
+         *     filters name it by `via` = `from_column`.
+         */
+        Join: {
+            /** Asset */
+            asset: string;
+            /** From Column */
+            from_column: string;
+            /** To Column */
+            to_column: string;
         };
         /**
          * JoinExpectation
