@@ -26,7 +26,7 @@ from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link, link_queries
 from analystos.contracts.analysis import AnalysisSpec, StatResult
 from analystos.contracts.evidence import DataManifest, Fact, HoldoutCheck
-from analystos.core.errors import AnalystOSError
+from analystos.core.errors import AnalystOSError, OutputContractViolation
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution, by_code
@@ -132,6 +132,16 @@ def independent_reviews(ctx: RunContext, states: list[dict]) -> dict[str, tuple[
     return out
 
 
+def _bound_allows_holdout(ctx: RunContext) -> bool:
+    """A run keeps the agent manifests it was bound with. One bound to a critic from before P8-15 declares
+    no held-out experiment, so the step is skipped for it (and says so) instead of failing verification."""
+    try:
+        ctx.check_output("experiment", {"method": "rate_by_segment", "params": {}, "result": {}, "query_ids": [], "role": "holdout"})
+        return True
+    except OutputContractViolation:
+        return False
+
+
 def confirm_on_holdout(ctx: RunContext, st: dict, top: Any, direction: str | None) -> HoldoutCheck:
     """Lock the verified claim, then run its test once on the held-out rows (P8-15). A repeated review of
     the same hypothesis in this run reuses the first answer: the held-out rows are never read twice."""
@@ -139,6 +149,8 @@ def confirm_on_holdout(ctx: RunContext, st: dict, top: Any, direction: str | Non
     part = (stat_d.get("details") or {}).get("partition") or {}
     if st["discovery"] is None:
         return not_evaluated(part.get("reason") or "the test read every row (it ran before held-out confirmation existed)")
+    if not _bound_allows_holdout(ctx):
+        return not_evaluated("this run is bound to a critic version without the held-out step")
     with session_scope() as s:
         done = s.scalar(select(Experiment).where(Experiment.run_id == ctx.run.id, Experiment.hypothesis_id == st["hypothesis_id"],
                                                  Experiment.role == "holdout"))

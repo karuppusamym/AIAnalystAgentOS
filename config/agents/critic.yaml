@@ -2,7 +2,7 @@
 apiVersion: analystos/v1
 kind: Agent
 id: agent.critic
-version: 1.0.0
+version: 1.1.0
 summary: REV Critic Agent
 entry: python:analystos.agents.critic:verify_insights
 determinism: model

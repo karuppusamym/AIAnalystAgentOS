@@ -158,7 +158,8 @@ def claim_spec(spec: AnalysisSpec, claim: Mapping[str, Any]) -> tuple[AnalysisSp
     if (seg is None or seg.type != "column" or (claim.get("groups") or 0) <= 2 or top is None or base is None
             or top == base or OTHER in (top, base) or "None" in (top, base) or _numeric(top) or _numeric(base)):
         return spec, None
-    focus = Filter(column=seg.column, op="in", value=[top, base])
+    # a joined segment (P8-16) is filtered on its related table's column, through the same join
+    focus = Filter(column=seg.column, op="in", value=[top, base], via=getattr(seg, "via", None))
     return spec.model_copy(update={"filters": [*spec.filters, focus]}), [top, base]
 
 
