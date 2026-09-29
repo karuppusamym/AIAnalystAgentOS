@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 
 def _method_schema(schema: dict[str, Any]) -> None:
@@ -18,12 +18,23 @@ def _method_schema(schema: dict[str, Any]) -> None:
     methods.schema_extra(schema)
 
 
+def _omit(data: dict[str, Any], **defaults: Any) -> dict[str, Any]:
+    """Drop fields added after specs were first hashed while they hold their default: a spec written
+    before them serializes (and hashes) exactly as it did, so registries and pins keep matching."""
+    for key, default in defaults.items():
+        if key in data and data[key] == default:
+            data.pop(key)
+    return data
+
+
 class Derivation(BaseModel):
     """A column or a safe derived expression over one column (or two for durations).
 
     type:
       column          -> the raw column
       duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end
+      later_than      -> TRUE when `end_column` is later than `column` by more than `tolerance_hours`
+                         (delivered after promised, resolved after due); NULL when either is NULL
       after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend
       bucket          -> numeric column bucketed by `edges` (labels like "0", "1", "2", "3+")
       equals          -> TRUE when column = value (boolean outcome from a categorical)
@@ -31,9 +42,12 @@ class Derivation(BaseModel):
       date_trunc      -> date_trunc(grain, column)
       hour_of_day     -> extract(hour from column)
       day_of_week     -> extract(dow from column)
+
+    via: the column(s) live in a related table, reached through the spec's join whose `from_column`
+    is `via` (customer region through `customer_id`); None reads the spec's own asset.
     """
 
-    type: Literal["column", "duration_hours", "after_hours", "bucket", "equals", "is_true",
+    type: Literal["column", "duration_hours", "later_than", "after_hours", "bucket", "equals", "is_true",
                   "date_trunc", "hour_of_day", "day_of_week"] = "column"
     column: str
     end_column: str | None = None
@@ -42,10 +56,16 @@ class Derivation(BaseModel):
     grain: Literal["day", "week", "month", "quarter"] | None = None
     start_hour: int = 8
     end_hour: int = 18
+    tolerance_hours: float = Field(0.0, ge=0)
+    via: str | None = None
     label: str | None = None
 
     def columns(self) -> list[str]:
         return [c for c in (self.column, self.end_column) if c]
+
+    @model_serializer(mode="wrap")
+    def _compat(self, handler: Any):  # unannotated: the serialization schema stays the model's
+        return _omit(handler(self), tolerance_hours=0.0, via=None)
 
 
 class Filter(BaseModel):
@@ -53,6 +73,22 @@ class Filter(BaseModel):
     op: Literal["=", "!=", ">", ">=", "<", "<=", "in", "not in", "is null", "is not null"]
     value: Any = None
     origin: Literal["plan", "user_redirect", "policy"] = "plan"
+    via: str | None = None  # as Derivation.via: a related table's column
+
+    @model_serializer(mode="wrap")
+    def _compat(self, handler: Any):  # unannotated: the serialization schema stays the model's
+        return _omit(handler(self), via=None)
+
+
+class Join(BaseModel):
+    """A many-to-one lookup from the spec's asset: `from_column` references the unique `to_column` of
+    `asset`. Compiled as a LEFT JOIN, so every base row is kept exactly once; validation accepts only a
+    validated (or user-declared) relationship between in-scope tables of one source. Derivations and
+    filters name it by `via` = `from_column`."""
+
+    from_column: str
+    asset: str  # "schema.table"
+    to_column: str
 
 
 class AnalysisSpec(BaseModel):
@@ -67,6 +103,7 @@ class AnalysisSpec(BaseModel):
     drivers: list[Derivation] = Field(default_factory=list)
     time: Derivation | None = None
     filters: list[Filter] = Field(default_factory=list)
+    joins: list[Join] = Field(default_factory=list)
     min_group_size: int = 30
     top_k: int = 12
 
@@ -78,6 +115,34 @@ class AnalysisSpec(BaseModel):
         if v not in methods.names():
             raise ValueError(f"unknown analysis method {v!r}; registered methods: {', '.join(methods.names())}")
         return v
+
+    @model_validator(mode="after")
+    def _vias_declared(self) -> AnalysisSpec:
+        keys = [j.from_column for j in self.joins]
+        if len(keys) != len(set(keys)):
+            raise ValueError("each join needs its own from_column")
+        for via in self.vias():
+            if via not in keys:
+                raise ValueError(f"via {via!r} names no join of the spec (declare it in `joins`)")
+        return self
+
+    def derivations(self) -> list[Derivation]:
+        return [d for d in (self.outcome, self.segment, self.time, *self.drivers) if d is not None]
+
+    def vias(self) -> list[str]:
+        return list(dict.fromkeys(x.via for x in (*self.derivations(), *self.filters) if x.via))
+
+    def join(self, via: str | None) -> Join | None:
+        return next((j for j in self.joins if j.from_column == via), None) if via else None
+
+    def table_of(self, item: Derivation | Filter) -> str:
+        """The table a derivation's or a filter's columns are read from."""
+        j = self.join(item.via)
+        return j.asset if j is not None else self.asset
+
+    @model_serializer(mode="wrap")
+    def _compat(self, handler: Any):  # unannotated: the serialization schema stays the model's
+        return _omit(handler(self), joins=[])
 
 
 class HypothesisProposal(BaseModel):

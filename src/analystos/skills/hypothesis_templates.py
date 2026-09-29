@@ -45,6 +45,7 @@ class Col:
     semantic_type: str | None
     role: str | None = None
     profile: dict[str, Any] = field(default_factory=dict)
+    flag_true: str | None = None  # a Yes/No text flag's "yes" value (crawler semantics), analysed as `equals`
 
 
 def _list(v: Any) -> list[Any]:

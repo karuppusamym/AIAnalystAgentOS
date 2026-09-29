@@ -27,13 +27,14 @@ from analystos.methods.base import (
     first,
     is_number,
     no_data,
+    ref_name,
     seg_label,
     text_parts,
 )
 from analystos.skills import sqlbuild as sb
 from analystos.skills import stats as st
 
-BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
+BOOLEAN_OUT = {"equals", "is_true", "after_hours", "later_than"}
 
 
 def build_design(rows: list[dict[str, Any]], drivers: list[Derivation], *, max_levels: int = 10
@@ -131,7 +132,7 @@ class DriverModel(AnalysisMethod):
         return finish(spec, primary, fi, direction, table)
 
     def claim_subject(self, spec: Mapping[str, Any]) -> Any:
-        return "drivers:" + ",".join(sorted(d.get("column", "") for d in spec.get("drivers") or []))
+        return "drivers:" + ",".join(sorted(ref_name(d) for d in spec.get("drivers") or []))
 
     def identity_keys(self, spec: AnalysisSpec) -> list[Any]:
         """A second driver model on the same outcome and population re-answers the same question with a
