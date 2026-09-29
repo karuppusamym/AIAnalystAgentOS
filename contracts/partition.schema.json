@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "description": "A deterministic split of one table's rows into a discovery part and a held-out part (P8-15).\n\nA row's bucket is the first 16 bits of md5(salt | key columns as text), 0..65535; rows whose bucket is\nbelow ``fraction * 65536`` are held out. The same rows and key give the same split on every run.\n`side` is the part a query reads. The held-out side compiles only with `claim_locked_at` set: the claim\nit confirms was locked first (`evidence.holdout`). Kept out of `AnalysisSpec` on purpose, so no\nproposal (model or rule) can ask to read the held-out rows.",
+  "properties": {
+    "side": {
+      "default": "discovery",
+      "enum": [
+        "discovery",
+        "holdout"
+      ],
+      "title": "Side",
+      "type": "string"
+    },
+    "key": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Key",
+      "type": "array"
+    },
+    "basis": {
+      "default": "full_row",
+      "title": "Basis",
+      "type": "string"
+    },
+    "fraction": {
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "title": "Fraction",
+      "type": "number"
+    },
+    "salt": {
+      "default": "analystos.holdout.v1",
+      "title": "Salt",
+      "type": "string"
+    },
+    "claim_locked_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Claim Locked At"
+    }
+  },
+  "required": [
+    "key",
+    "fraction"
+  ],
+  "title": "Partition",
+  "type": "object"
+}

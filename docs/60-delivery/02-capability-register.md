@@ -602,3 +602,9 @@ against a live API, worker and database built from the merged tree.
 | Row | Code | Coverage | Measured / limits |
 |---|---|---|---|
 | P8-14 vector backend | `db/vectors.py`, `db/models.py`, migrations 0001/0018, `knowledge/{index,cli}.py`, `context/service.py`, `core/config.py` (`vector_backend`), Helm `config.vectorBackend` | `test_vector_backends.py` (8); knowledge/context integration on both backends (32 passed, 1 skipped each) | `evidence/2026-09-28-vector-backend-array.md`: plain Postgres 16 migrates and seeds; rankings identical to pgvector on 10/10 questions; conversion both ways. Exact in-process scan: fine to thousands of sections |
+
+## 2026-09-28 — P8-15 Weak findings and held-out confirmation
+
+| Row | Code | Coverage | Measured / limits |
+|---|---|---|---|
+| P8-15 holdout + strength | `skills/sqlbuild.py` (`Partition` predicate), `contracts/analysis.py` (`Partition`), `contracts/evidence.py` (`Strength`, `HoldoutCheck`), `evidence/{holdout,strength,confirmation,bundle}.py`, `agents/{data_scientist,insight,critic,supervisor}.py`, `api/serialize.py`, `contracts/platform.py` (`analysis.holdout_fraction`), `web/src/lib/standing.ts`, `InvestigationBoard.tsx`, ADR-0008 amendment | `test_holdout_confirmation.py` (187), `standing.test.tsx` (2); integration `test_holdout_p815.py`, `test_typed_evidence_p403.py` (4 passed on local Postgres, own test databases) | Retail generator in process: random-status price difference not confirmed (rejected on discovery rows by Order ID; weak + not confirmed by whole row); planted Marketplace returns confirmed on held-out rows (n 900, one-sided p 0.019). Governed Postgres run: one held-out test per verified claim, lock before access, no other query reads held-out rows. Numbers describe discovery rows; a whole-table fluke can still pass the holdout (strength flags it); live journey re-run not done |

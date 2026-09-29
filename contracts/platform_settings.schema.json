@@ -30,6 +30,13 @@
           "title": "Sample Rows",
           "type": "integer"
         },
+        "holdout_fraction": {
+          "default": 0.3,
+          "maximum": 0.5,
+          "minimum": 0.0,
+          "title": "Holdout Fraction",
+          "type": "number"
+        },
         "heuristic_hypotheses_sufficient": {
           "default": 6,
           "maximum": 30,
@@ -62,6 +69,18 @@
           "minimum": 0.0,
           "title": "Min Relevance",
           "type": "number"
+        },
+        "cache_enabled": {
+          "default": true,
+          "title": "Cache Enabled",
+          "type": "boolean"
+        },
+        "cache_ttl_seconds": {
+          "default": 900,
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Cache Ttl Seconds",
+          "type": "integer"
         },
         "profiles": {
           "additionalProperties": {
@@ -126,6 +145,18 @@
         "pii_value_sampling": {
           "default": true,
           "title": "Pii Value Sampling",
+          "type": "boolean"
+        },
+        "profile_reuse_hours": {
+          "default": 24,
+          "maximum": 8760,
+          "minimum": 0,
+          "title": "Profile Reuse Hours",
+          "type": "integer"
+        },
+        "profile_on_select": {
+          "default": true,
+          "title": "Profile On Select",
           "type": "boolean"
         }
       },

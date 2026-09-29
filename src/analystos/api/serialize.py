@@ -25,10 +25,17 @@ def rows(objs, exclude: set[str] | None = None) -> list[dict[str, Any]]:
     return [row(o, exclude) for o in objs]
 
 
+def standing(bundle: Any) -> dict[str, Any]:
+    """P8-15: a finding's strength (weak | moderate | strong) and its held-out confirmation record, lifted
+    out of the evidence bundle so the UI need not read the bundle; None for findings recorded before."""
+    validation = (bundle.get("validation") or {}) if isinstance(bundle, dict) else {}
+    return {"strength": validation.get("strength"), "holdout": validation.get("holdout")}
+
+
 def with_verification(session: Any, insights: Any) -> list[dict[str, Any]]:
     """Insight rows with their verification record's state (P7-01): a VOID one carries its cause."""
     from analystos.evidence.verification import insight_states
 
     found = list(insights)
     states = insight_states(session, [i.id for i in found])
-    return [{**row(i), "verification_state": states[i.id]} for i in found]
+    return [{**row(i), "verification_state": states[i.id], **standing(i.evidence_bundle)} for i in found]

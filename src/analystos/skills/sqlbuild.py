@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Iterator, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -53,7 +54,7 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter
+from analystos.contracts.analysis import AnalysisSpec, Derivation, Filter, Partition
 from analystos.core.errors import InvalidInput
 
 DIALECTS = ("postgres", "tsql", "duckdb")
@@ -461,11 +462,55 @@ def render_filter(f: Filter, dialect: str, *, table_alias: str | None = None) ->
 
 
 # --------------------------------------------------------------------------------------------
+# discovery / held-out partition (P8-15)
+# --------------------------------------------------------------------------------------------
+PARTITION_BUCKETS = 65536  # 16 bits of md5: the fraction is honoured to 1/65536
+PARTITION_DIALECTS = ("postgres", "duckdb", "tsql")  # dialects with a stable md5 the compiler can emit
+_HEX = "0123456789abcdef"
+_ACTIVE_PARTITION: ContextVar[Partition | None] = ContextVar("analystos_partition", default=None)
+
+
+def partition_bucket(p: Partition, dialect: str) -> exp.Expression:
+    """0..65535 from the first 16 bits of md5(salt | key...). Postgres/DuckDB read the md5 hex digits
+    by position in '0123456789abcdef' (no collation or hex-cast differences); T-SQL casts the first two
+    HASHBYTES bytes to INT. A NULL key value hashes as '~', so every row lands on exactly one side."""
+    dialect = _check_dialect(dialect)
+    parts: list[exp.Expression] = [lit(p.salt)]
+    for c in p.key:
+        parts += [lit("|"), exp.Coalesce(this=cast(col(c), "text", dialect), expressions=[lit("~")])]
+    if dialect == "tsql":
+        digest = fn("HASHBYTES", lit("MD5"), fn("CONCAT", *parts))
+        return exp.Cast(this=exp.Substring(this=digest, start=num(1), length=num(2)), to=exp.DataType.build("INT"))
+    total: exp.Expression | None = None
+    for i in range(4):
+        digit = exp.Sub(this=exp.StrPosition(this=lit(_HEX), substr=exp.Substring(
+            this=exp.MD5(this=exp.Concat(expressions=[x.copy() for x in parts])), start=num(i + 1), length=num(1))),
+            expression=num(1))
+        term = exp.Mul(this=paren(digit), expression=num(16 ** (3 - i))) if i < 3 else paren(digit)
+        total = term if total is None else exp.Add(this=total, expression=term)
+    assert total is not None
+    return paren(total)
+
+
+def partition_predicate(p: Partition, dialect: str) -> exp.Expression:
+    """The rows of `p.side`. The held-out side refuses to compile before its claim was locked."""
+    dialect = _check_dialect(dialect)
+    if dialect not in PARTITION_DIALECTS:
+        raise InvalidInput(f"no stable row partition for dialect {dialect!r}")
+    if p.side == "holdout" and not p.claim_locked_at:
+        raise InvalidInput("the held-out rows are read only after the claim they confirm is locked")
+    threshold = num(int(round(p.fraction * PARTITION_BUCKETS)))
+    bucket = partition_bucket(p, dialect)
+    return exp.LT(this=bucket, expression=threshold) if p.side == "holdout" else exp.GTE(this=bucket, expression=threshold)
+
+
+# --------------------------------------------------------------------------------------------
 # query assembly
 # --------------------------------------------------------------------------------------------
 def base_select(spec: AnalysisSpec, dialect: str, cols: list[tuple[str, exp.Expression]]) -> exp.Select:
     q = exp.select(*[e.as_(ident(a)) for a, e in cols]).from_(table(spec.asset))
-    w = where_clause(spec.filters, dialect)
+    part = _ACTIVE_PARTITION.get()
+    w = and_all([where_clause(spec.filters, dialect), partition_predicate(part, dialect) if part is not None else None])
     if w is not None:
         q = q.where(w)
     return q
@@ -652,13 +697,15 @@ def require(spec: AnalysisSpec, what: str) -> None:
         raise InvalidInput(f"{spec.method} requires `{what}`")
 
 
-def compile_spec(spec: AnalysisSpec, dialect: str, *, purpose: str = "primary", sample_rows: int = 50000) -> CompiledQuery:
+def compile_spec(spec: AnalysisSpec, dialect: str, *, purpose: str = "primary", sample_rows: int = 50000,
+                 partition: Partition | None = None) -> CompiledQuery:
     """Compile one query of `spec` for `dialect`.
 
     The spec's method (a registered `analystos.methods` plugin) builds the statement from the
     primitives above; `purpose` is one of the method's `purposes` ("primary" for every method).
     Returns a `CompiledQuery` whose `columns` maps roles (segment, outcome, n, positives, ...) to
-    output column aliases.
+    output column aliases. With `partition`, every read of the asset keeps only that side's rows
+    (`base_select` adds the predicate); a method that bypassed it is refused, never run on all rows.
     """
     from analystos import methods
 
@@ -668,7 +715,17 @@ def compile_spec(spec: AnalysisSpec, dialect: str, *, purpose: str = "primary", 
         raise InvalidInput(f"method {spec.method} has no {purpose!r} query (available: {method.purposes})")
     if sample_rows <= 0:
         raise InvalidInput("sample_rows must be positive")
-    return method.compile(spec, dialect, purpose=purpose, sample_rows=sample_rows)
+    if partition is None:
+        return method.compile(spec, dialect, purpose=purpose, sample_rows=sample_rows)
+    partition_predicate(partition, dialect)  # refuse early: unsupported dialect, or held-out rows before the lock
+    token = _ACTIVE_PARTITION.set(partition)
+    try:
+        cq = method.compile(spec, dialect, purpose=purpose, sample_rows=sample_rows)
+    finally:
+        _ACTIVE_PARTITION.reset(token)
+    if partition.salt not in cq.sql:
+        raise InvalidInput(f"method {spec.method} built its {purpose!r} query without the row partition")
+    return cq
 
 
 def compile_all(spec: AnalysisSpec, dialect: str, *, sample_rows: int = 50000) -> dict[str, CompiledQuery]:

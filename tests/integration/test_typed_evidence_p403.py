@@ -57,6 +57,26 @@ def pg_orders(control_db, tmp_path_factory):
     engine.dispose()
 
 
+@pytest.fixture
+def without_holdout(control_db):
+    """This test pins the fresh-snapshot rule. Held-out confirmation (P8-15, `analysis.holdout_fraction`) is
+    switched off for it, so that rule is the only one that can confirm; tests/integration/test_holdout_p815.py
+    covers the held-out rule."""
+    from analystos.core.config import get_settings
+    from analystos.db.base import session_scope
+    from analystos.db.models import User
+    from analystos.services import platform_settings as ps
+
+    before = ps.get().analysis.holdout_fraction
+    with session_scope() as s:
+        admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
+        ps.update(s, admin, {"analysis": {"holdout_fraction": 0}}, note="P4-03 test: snapshot rule only")
+    yield
+    with session_scope() as s:
+        admin = s.scalar(select(User).where(User.email == get_settings().bootstrap_admin_email))
+        ps.update(s, admin, {"analysis": {"holdout_fraction": before}}, note="P4-03 test done")
+
+
 def _wait(run_id: str, timeout: float = 900) -> str:
     from analystos.db.base import session_scope
     from analystos.db.models import AnalysisRun
@@ -83,7 +103,7 @@ def _insights(run_id: str) -> list[dict]:
                                       .where(Insight.run_id == run_id))]
 
 
-def test_evidence_manifest_staleness_and_confirmation(control_db, pg_orders, monkeypatch):
+def test_evidence_manifest_staleness_and_confirmation(control_db, pg_orders, without_holdout, monkeypatch):
     from analystos.core.config import get_settings
     from analystos.db.base import session_scope
     from analystos.db.models import AnalysisRun, RunEvent, User

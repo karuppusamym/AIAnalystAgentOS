@@ -132,7 +132,7 @@ def export_contracts() -> None:
     out.mkdir(exist_ok=True)
     models = {"agent": registry.AgentSpec, "agent_manifest": AgentBody, "tool": registry.ToolSpec, "skill": registry.SkillSpec, "policy": policy.WorkspacePolicyDoc,
               "data_scope": policy.DataScope, "policy_decision": policy.PolicyDecision, "analysis_spec": analysis.AnalysisSpec,
-              "stat_result": analysis.StatResult, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
+              "stat_result": analysis.StatResult, "partition": analysis.Partition, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
               "dataset": bi.DatasetDef, "publish_bundle": bi.PublishBundle,
               "platform_settings": platform.PlatformSettings, "capability": capability.CapabilityManifest,
               "semantic_model": semantic.SemanticModelDoc, "semantic_metric": semantic.SemanticMetricDef,

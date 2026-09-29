@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _method_schema(schema: dict[str, Any]) -> None:
@@ -106,3 +106,21 @@ class StatResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     supported: bool | None = None  # method-level verdict before REV
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class Partition(BaseModel):
+    """A deterministic split of one table's rows into a discovery part and a held-out part (P8-15).
+
+    A row's bucket is the first 16 bits of md5(salt | key columns as text), 0..65535; rows whose bucket is
+    below ``fraction * 65536`` are held out. The same rows and key give the same split on every run.
+    `side` is the part a query reads. The held-out side compiles only with `claim_locked_at` set: the claim
+    it confirms was locked first (`evidence.holdout`). Kept out of `AnalysisSpec` on purpose, so no
+    proposal (model or rule) can ask to read the held-out rows."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    side: Literal["discovery", "holdout"] = "discovery"
+    key: list[str] = Field(min_length=1)  # the columns hashed: the table's key, or every readable column
+    basis: str = "full_row"  # approved_key | declared_key | measured_unique_key | profile_unique_key | full_row
+    fraction: float = Field(gt=0, lt=1)  # share of rows held out
+    salt: str = "analystos.holdout.v1"
+    claim_locked_at: str | None = None

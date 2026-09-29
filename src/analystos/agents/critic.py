@@ -6,7 +6,12 @@ the typed facts, the data version did not change during the run, and the evidenc
 `verified` says the REV checks passed; it does not say the claim is confirmed: the bundle's validation
 state (`evidence.bundle`) is `exploratory` for a discovery until a confirmation rule
 (`evidence.confirmation`) passes. Model opinions (independent model family + JEV) are recorded and can
-lower the review score or add caveats, but cannot make a finding true; the score is uncalibrated."""
+lower the review score or add caveats, but cannot make a finding true; the score is uncalibrated.
+
+P8-15: the second method reads the same discovery rows as the primary test. Once a finding is verified its
+claim is locked and the same test runs once on the held-out rows (`evidence.holdout`); that record is what
+the `holdout_partition` rule reads. Every verified finding also carries its strength (`evidence.strength`),
+and a weak or unconfirmed one says so in its own sentence."""
 from __future__ import annotations
 
 import re
@@ -20,7 +25,7 @@ from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link, link_queries
 from analystos.contracts.analysis import AnalysisSpec, StatResult
-from analystos.contracts.evidence import DataManifest, Fact
+from analystos.contracts.evidence import DataManifest, Fact, HoldoutCheck
 from analystos.core.errors import AnalystOSError
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
@@ -31,8 +36,10 @@ from analystos.evidence.bundle import assemble
 from analystos.evidence.confirmation import evaluate as confirm
 from analystos.evidence.confirmation import is_replication, prior_claim
 from analystos.evidence.facts import bind_finding
+from analystos.evidence.holdout import from_record, lock_claim, not_evaluated, test_on_holdout
 from analystos.evidence.manifest import changed as manifest_changed
 from analystos.evidence.manifest import current_entry
+from analystos.evidence.strength import grade, qualify
 from analystos.evidence.verification import insight_dependencies, record_verdict
 from analystos.knowledge.attested import sql_hash
 from analystos.llm.cache import estimate_tokens
@@ -125,6 +132,49 @@ def independent_reviews(ctx: RunContext, states: list[dict]) -> dict[str, tuple[
     return out
 
 
+def confirm_on_holdout(ctx: RunContext, st: dict, top: Any, direction: str | None) -> HoldoutCheck:
+    """Lock the verified claim, then run its test once on the held-out rows (P8-15). A repeated review of
+    the same hypothesis in this run reuses the first answer: the held-out rows are never read twice."""
+    spec, spec_d, stat_d, code, alpha = st["spec"], st["spec_d"], st["stat_d"], st["code"], st["alpha"]
+    part = (stat_d.get("details") or {}).get("partition") or {}
+    if st["discovery"] is None:
+        return not_evaluated(part.get("reason") or "the test read every row (it ran before held-out confirmation existed)")
+    with session_scope() as s:
+        done = s.scalar(select(Experiment).where(Experiment.run_id == ctx.run.id, Experiment.hypothesis_id == st["hypothesis_id"],
+                                                 Experiment.role == "holdout"))
+        if done is not None and (done.result or {}).get("holdout"):
+            return HoldoutCheck.model_validate(done.result["holdout"])
+    locked = lock_claim(spec=spec_d, stat=stat_d, top=top, direction=direction, spec_hash=spec_hash(spec_d))
+    min_n = max(MIN_N, platform().analysis.min_sample_size)
+    outcome = None
+    try:
+        run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
+        record, outcome = ctx.tools().invoke(
+            "analysis.verify", {"insight": code, "method": spec.method, "partition": "holdout"},
+            lambda: test_on_holdout(spec, run_sql, locked, st["discovery"], alpha=alpha, min_n=min_n,
+                                    sample_rows=platform().analysis.sample_rows))
+    except AnalystOSError as exc:
+        record = not_evaluated(f"the held-out test did not run ({exc.code})").model_copy(
+            update={"claim": locked.claim, "claim_hash": locked.claim_hash, "claim_locked_at": locked.locked_at})
+    result = {**(_dump(outcome.stat) if outcome is not None else {}), "holdout": None}
+    query_ids = list(outcome.query_ids) if outcome is not None else []
+    ctx.check_output("experiment", {"method": spec.method, "params": {"holdout_of": code}, "result": result,
+                                    "query_ids": query_ids, "role": "holdout"})
+    with session_scope() as s:
+        hexp = Experiment(id=new_id("exp"), workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=st["hypothesis_id"],
+                          method=spec.method, params={"holdout_of": code, "claim": locked.claim, "claim_hash": locked.claim_hash},
+                          result=result, query_ids=query_ids, role="holdout")
+        record = record.model_copy(update={"experiment_id": hexp.id})
+        hexp.result = {**result, "holdout": record.model_dump(mode="json")}
+        s.add(hexp)
+        link(s, ctx.workspace.id, ("insight", st["insight_id"]), "confirmation_tested_by", ("experiment", hexp.id), run_id=ctx.run.id)
+        link_queries(s, ctx.workspace.id, ("experiment", hexp.id), query_ids, run_id=ctx.run.id,
+                     assets=[spec.asset] if spec.asset else None)
+    ctx.say(f"REV {code}: claim locked at {locked.locked_at}; held-out test ({record.partition or 'not run'}): "
+            + ("supports it" if record.supported else f"does not support it ({record.reason})"), kind="decision")
+    return record
+
+
 def verify_insights(ctx: RunContext) -> dict:
     from analystos.skills.analysis import verify_analysis
 
@@ -149,10 +199,11 @@ def verify_insights(ctx: RunContext) -> dict:
                          "result_hash": q.result_hash, "fingerprint": q.fingerprint, "rows": q.row_count} for q in queries]
             finding, spec_d, stat_d, narrative_source = ins.finding, dict(h.spec), dict(exp.result), ins.narrative_source
             statement, title, draft, prior_caveats = h.statement, ins.title, dict(ins.evidence_bundle or {}), list(ins.caveats or [])
-            origin, iteration, parent = h.origin, h.iteration, h.parent_id
+            origin, iteration, parent, hypothesis_id = h.origin, h.iteration, h.parent_id, h.id
             recorded_manifest = dict(s.get(AnalysisRun, ctx.run.id).data_manifest or {})
             prior = prior_claim(s, ctx.workspace.id, ctx.run.id, spec_d)
         spec = with_constraints(AnalysisSpec.model_validate(spec_d), ctx.run.constraints)
+        discovery = from_record((stat_d.get("details") or {}).get("partition"))  # the rows the primary test read
         primary_family = narrative_family(narrative_source)  # before any rewrite below: who wrote the claim
         run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
         alpha = ctx.policy.alpha
@@ -213,8 +264,8 @@ def verify_insights(ctx: RunContext) -> dict:
         second = None
         try:
             second = ctx.tools().invoke("analysis.verify", {"insight": code, "method": spec.method},
-                                        lambda spec=spec, run_sql=run_sql, stat_d=stat_d, alpha=alpha: verify_analysis(
-                                            spec, run_sql, StatResult.model_validate(stat_d), alpha=alpha))
+                                        lambda spec=spec, run_sql=run_sql, stat_d=stat_d, alpha=alpha, discovery=discovery: verify_analysis(
+                                            spec, run_sql, StatResult.model_validate(stat_d), alpha=alpha, partition=discovery))
             sd = _dump(second.stat)
             agrees = bool(sd.get("details", {}).get("agrees", sd.get("supported")))
             checks.append({"check": "second_method", "passed": agrees, "detail": f"{sd.get('test')}: p={sd.get('p_value')} "
@@ -233,7 +284,8 @@ def verify_insights(ctx: RunContext) -> dict:
                        "recorded_manifest": recorded_manifest, "recorded": recorded, "entry": entry, "prior": prior,
                        "origin": origin, "iteration": iteration, "parent": parent, "prior_caveats": prior_caveats,
                        "population": population, "facts": facts, "binding": binding, "receipts": receipts, "alpha": alpha,
-                       "primary_family": primary_family, "review_payload": review_payload})
+                       "primary_family": primary_family, "review_payload": review_payload, "discovery": discovery,
+                       "hypothesis_id": hypothesis_id})
     reviews = independent_reviews(ctx, states)
     for st in states:
         (insight_id, code, spec, spec_d, stat_d, finding, title, narrative_source, checks, second, p_adj, reproducible, dq,
@@ -281,8 +333,15 @@ def verify_insights(ctx: RunContext) -> dict:
         top = hl.get("top_segment", hl.get("top_driver"))
         direction = pair.direction if pair is not None else None
         method_impl = methods.get(spec.method) if spec.method in methods.names() else None
+        strength = grade(stat_d, alpha=alpha)
+        # P8-15: only a verified claim is locked and taken to the held-out rows; a failed one never reads them.
+        holdout = confirm_on_holdout(ctx, st, top, direction) if deterministic_ok else None
         confirmation = confirm(verified=deterministic_ok, origin=origin, top=top, direction=direction, prior=prior,
-                               current=recorded or entry, holdout=(stat_d.get("details") or {}).get("holdout"))
+                               current=recorded or entry, holdout=holdout.model_dump(mode="json") if holdout else None)
+        if holdout is not None:
+            holdout = holdout.model_copy(update={"confirmed": confirmation.rule == "holdout_partition"})
+        if deterministic_ok:  # a weak or unconfirmed finding is not worded as an established fact
+            finding = qualify(finding, confirmed=confirmation.passed, strength=strength.label if strength else None)
         bundle = assemble(
             spec=spec_d, stat=stat_d, second=_dump(second.stat) if second is not None else None, facts=facts,
             binding=binding, rev_checks=checks, receipts=receipts, manifest=recorded_manifest, entry=recorded or entry,
@@ -295,7 +354,7 @@ def verify_insights(ctx: RunContext) -> dict:
                         "spec_hash": spec_hash(spec_d), "title": title, "text": finding,
                         "rendered_from": narrative_source},
             optional=tuple(getattr(method_impl, "evidence_optional", ()) or ()),
-            predictive=isinstance(hl.get("holdout_roc_auc"), int | float))
+            predictive=isinstance(hl.get("holdout_roc_auc"), int | float), strength=strength, holdout=holdout)
         if bundle.validation.missing_evidence:
             deterministic_ok = False
             ctx.say(f"REV {code}: refused, missing evidence: {', '.join(bundle.validation.missing_evidence)}.", kind="decision")
@@ -347,6 +406,7 @@ def verify_insights(ctx: RunContext) -> dict:
                     entry=recorded or entry, narrative_source=narrative_source))
             emit(ctx.workspace.id, "insight.verified", {"code": code, "verified": deterministic_ok, "confidence": ins.confidence,
                                                         "validation": bundle.validation.state, "label": bundle.validation.label,
+                                                        "strength": strength.label if strength else None,
                                                         "failed_checks": [c["check"] for c in checks if not c["passed"]],
                                                         "verification_record": record.id, "fingerprint": record.fingerprint},
                  run_id=ctx.run.id, session=s)

@@ -38,7 +38,7 @@ spec:
     max_iterations: 3
   phase: mvp
   output_contract:
-    - type: experiment  # the independent second-method verification experiment
+    - type: experiment  # the independent second-method verification experiment, and the held-out confirmation test (P8-15)
       schema:
         type: object
         required: [method, params, result, query_ids, role]
@@ -47,4 +47,4 @@ spec:
           params: {type: object}
           result: {type: object}
           query_ids: {type: array, items: {type: string}}
-          role: {enum: [primary, verification]}
+          role: {enum: [primary, verification, holdout]}

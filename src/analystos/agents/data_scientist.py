@@ -1,4 +1,7 @@
-"""Data Scientist Agent (§13.8, §21): executes one hypothesis test with deterministic skills."""
+"""Data Scientist Agent (§13.8, §21): executes one hypothesis test with deterministic skills.
+
+Since P8-15 the test reads only the discovery part of the table (`evidence.holdout`): the held-out rows
+are kept for REV's one locked confirmation test. The result records which rows it read."""
 from __future__ import annotations
 
 from analystos.agents.investigator import with_constraints
@@ -16,7 +19,20 @@ def _dump(v):
     return v.model_dump() if hasattr(v, "model_dump") else v
 
 
+def discovery_for(ctx: RunContext, asset: str, dialect: str):
+    """(the discovery partition of `asset`, None) or (None, why this table has no held-out rows)."""
+    from analystos.agents.critic import MIN_N
+    from analystos.evidence.holdout import catalog_facts, discovery_partition, readable_columns
+
+    settings = platform().analysis
+    with session_scope() as s:
+        key, rows = catalog_facts(s, ctx.scope.asset_sources.get(asset), asset)
+    return discovery_partition(fraction=settings.holdout_fraction, dialect=dialect, readable=readable_columns(ctx.scope, asset),
+                               key=key, rows=rows, min_rows=max(MIN_N, settings.min_sample_size))
+
+
 def test_hypothesis(ctx: RunContext) -> dict:
+    from analystos.evidence.holdout import partition_record
     from analystos.skills.analysis import run_analysis
 
     with session_scope() as s:
@@ -26,11 +42,13 @@ def test_hypothesis(ctx: RunContext) -> dict:
         s.expunge(h)
     spec = with_constraints(AnalysisSpec.model_validate(h.spec), ctx.run.constraints)
     run_sql = ctx.run_sql(ctx.scope.asset_sources.get(spec.asset))
+    partition, no_holdout = discovery_for(ctx, spec.asset, getattr(run_sql, "dialect", "duckdb"))
     ctx.check_control()
     outcome = ctx.tools().invoke("analysis.run", {"hypothesis": h.code, "method": spec.method, "asset": spec.asset},
                                  lambda: run_analysis(spec, run_sql, alpha=ctx.policy.alpha,
-                                                      sample_rows=platform().analysis.sample_rows))
+                                                      sample_rows=platform().analysis.sample_rows, partition=partition))
     stat = _dump(outcome.stat)
+    stat["details"] = {**(stat.get("details") or {}), "partition": partition_record(partition, no_holdout)}
     status = {True: "supported", False: "rejected"}.get(stat.get("supported"), "inconclusive")
     ctx.check_output("experiment", {"method": spec.method, "params": spec.model_dump(), "result": stat,
                                     "query_ids": list(outcome.query_ids), "role": "primary"})

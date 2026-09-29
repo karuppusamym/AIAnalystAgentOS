@@ -10,8 +10,16 @@ import { to } from "../routes";
 import { ConfidenceBar, EmptyState, ErrorBox, Loading, Notice, RecordTable, StateView, StatusBadge, Tag, TechnicalDetails, Value } from "./ui";
 import { VerificationBadge, voidCause, WhyNumberButton } from "./WhyNumber";
 import { methodLabel, methodsLabel } from "../lib/methods";
+import { holdoutBadge, holdoutText, hypothesisStanding, strengthBadge, strengthText, type Badge } from "../lib/standing";
 
 type Filter = ColumnId | "all";
+
+/** Plain badges for a finding's standing (P8-15): "weak evidence", "confirmed on held-out data" / "not confirmed". */
+function StandingBadges({ badges }: { badges: (Badge | null)[] }) {
+  return <>{badges.filter((b): b is Badge => b !== null).map((b) => (
+    <span key={b.label} title={b.title}><Tag tone={b.tone}>{b.label}</Tag></span>
+  ))}</>;
+}
 
 /**
  * Keep the nodes that pass; a hidden node's visible follow-ups move up to its place, so filtering
@@ -121,6 +129,10 @@ function HypothesisRow({ node, question, ...rest }: { node: HypNode; question?: 
   const r = h.result;
   const col = columnOf(h.status);
   const highlights = r?.highlights ? Object.entries(r.highlights).filter(([, v]) => v !== null && v !== undefined && typeof v !== "object") : [];
+  const standing = hypothesisStanding(h, node.findings);
+  const supported = h.status === "supported" || node.findings.length > 0;
+  const strengthLine = supported ? strengthText(standing.strength) : null;
+  const holdoutLine = holdoutText(standing.holdout);
   return (
     <li className={`hyp-row hyp-row-${col ?? "superseded"}`}>
       <article aria-label={`Hypothesis ${h.code}`}>
@@ -133,6 +145,7 @@ function HypothesisRow({ node, question, ...rest }: { node: HypNode; question?: 
             <span className="hyp-row-tags">
               <Tag tone={h.priority === "high" ? "danger" : h.priority === "medium" ? "warning" : "neutral"}>{h.priority}</Tag>
               <StatusBadge status={h.status} />
+              {supported && <StandingBadges badges={[strengthBadge(standing.strength), holdoutBadge(standing.holdout, standing.validation)]} />}
               {node.findings.length > 0 && <span className="muted small">{node.findings.length} finding{node.findings.length > 1 ? "s" : ""}</span>}
             </span>
             <span className="hyp-row-result muted small">
@@ -144,6 +157,12 @@ function HypothesisRow({ node, question, ...rest }: { node: HypNode; question?: 
           <div className="hyp-row-body">
             {question && <p className="small"><span className="tree-kind">Question</span> {question}</p>}
             {h.conclusion && <p className="small">{h.conclusion}</p>}
+            {(strengthLine || holdoutLine) && (
+              <ul className="small standing" aria-label={`How firm ${h.code} is`}>
+                {strengthLine && <li><span className="muted">Strength:</span> {strengthLine}</li>}
+                {holdoutLine && <li><span className="muted">Held-out check:</span> {holdoutLine}</li>}
+              </ul>
+            )}
             {highlights.length > 0 && (
               <ul className="highlights small">
                 {highlights.map(([k, v]) => <li key={k}><span className="muted">{k.replace(/_/g, " ")}:</span> {fmtValue(v)}</li>)}
@@ -216,6 +235,7 @@ function FindingCard({ insight: i, wsId, runId, readOnly, onChanged, onTrust }: 
       <div className="chip-row small">
         {i.verification_state?.badge === "void" ? <VerificationBadge state={i.verification_state} showCause={false} />
           : <StatusBadge status={i.status} label={i.verified ? "verified" : i.status.replace(/_/g, " ")} />}
+        {i.verified && <StandingBadges badges={[strengthBadge(i.strength), holdoutBadge(i.holdout, i.validation)]} />}
         <span className="muted">n</span> <Value value={i.population_size || null} format="int" />
       </div>
       {voidCause(i.verification_state) && <p className="small void-cause">Why void: {voidCause(i.verification_state)}</p>}
