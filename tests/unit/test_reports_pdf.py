@@ -1,11 +1,12 @@
-"""PDF report rendering with fpdf2 (pypdf is not a dependency: streams are inflated with zlib)."""
+"""PDF report rendering, including embedded Unicode text extraction."""
 from __future__ import annotations
 
+import io
 import re
-import zlib
 from functools import cache
 
 import pytest
+from pypdf import PdfReader
 from tests.report_sample import sample_report
 
 from analystos.contracts.reports import ReportData, ReportInsight
@@ -14,14 +15,7 @@ from analystos.reports.pdf import build_pdf, pdf_text, render_pdf
 
 
 def _text(pdf: bytes) -> str:
-    """Concatenated inflated content streams (core-font text appears as literal strings)."""
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf, flags=re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except zlib.error:
-            out.append(m.group(1).decode("latin-1"))
-    return "\n".join(out)
+    return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
 
 
 @cache
@@ -34,14 +28,13 @@ def _doc(kind: str) -> tuple[int, bytes]:
 def test_pdf_renders_each_kind(kind):
     n, b = _doc(kind)
     assert b.startswith(b"%PDF-") and b.rstrip().endswith(b"%%EOF")
-    assert len(re.findall(rb"/Type /Page\b", b)) == n >= 2
+    assert len(PdfReader(io.BytesIO(b)).pages) == n >= 2
     txt = _text(b)
-    assert "ServiceNow SLA analysis - week 38" in txt  # title, em dash folded
-    # footer with page numbers on every page ("{nb}" alias is substituted as its own text run)
-    assert re.findall(r"\(Page (\d+)/\) Tj \((\d+)\) Tj", txt) == [(str(i), str(n)) for i in range(1, n + 1)]
+    assert "ServiceNow SLA analysis — week 38" in txt
+    assert [int(page) for page in re.findall(r"Page (\d+)/\d+", txt)] == list(range(1, n + 1))
     assert txt.count("run run_0f3a9c2e") == n
     assert "not proof of causation" in txt
-    assert "/Image" in b.decode("latin-1")  # chart PNGs embedded
+    assert b"/Image" in b  # chart PNGs embedded
 
 
 def test_pdf_sections_follow_kind():
@@ -54,14 +47,18 @@ def test_pdf_sections_follow_kind():
     assert exc.index("Alerts") < exc.index("Summary")
 
 
-def test_non_latin_text_is_sanitized_not_fatal():
-    assert pdf_text("a → b ≥ c … “q” — Zürich 日本語 🚀") == 'a -> b >= c ... "q" - Zürich ??? ?'
-    d = ReportData(title="Отчёт 報告 → ≥ … 🚀", workspace_name="ws​", objective="Ω\x00\x07", run_id="r",
-                   generated_at="2026-09-21T08:30:00+02:00",
-                   insights=[ReportInsight(code="Ж", title="χ²", finding="√ 😀", confidence=0.5, verified=True, caveats=["€"])])
+def test_cjk_and_unicode_round_trip_through_pdf():
+    assert pdf_text("a → b ≥ c … “q” — Zürich 日本語 한국어 中文 🚀") == "a → b ≥ c … “q” — Zürich 日本語 한국어 中文 ?"
+    d = ReportData(title="Отчёт 報告 → ≥ …", workspace_name="東京 Zürich", objective="한국어 中文 日本語 Ω\x00\x07",
+                   run_id="r", generated_at="2026-09-21T08:30:00+02:00",
+                   insights=[ReportInsight(code="Ж", title="χ²", finding="√ 中文 日本語 한국어", confidence=0.5,
+                                           verified=True, caveats=["€"])])
     b = render_pdf(d)
+    txt = _text(b)
     assert b.startswith(b"%PDF-")
-    assert "-> >= ..." in _text(b)
+    for phrase in ("Отчёт 報告 → ≥ …", "東京 Zürich", "한국어 中文 日本語 Ω", "√ 中文 日本語 한국어"):
+        assert phrase in txt
+    assert "?" not in txt
 
 
 def test_pdf_is_deterministic_and_dispatch():

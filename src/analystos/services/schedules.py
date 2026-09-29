@@ -58,6 +58,15 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
     report = config.get("report")
     if report is not None and not isinstance(report, dict):
         raise InvalidInput("config.report must be an object like {kind, formats}")
+    delivery = config.get("external_delivery")
+    if delivery is not None:
+        from analystos.services.external_delivery import _destination
+
+        if kind not in ("report", "monitor") or not isinstance(delivery, dict):
+            raise InvalidInput("config.external_delivery is available only on report and monitor schedules")
+        if not isinstance(delivery.get("channel"), str) or not isinstance(delivery.get("destination"), str):
+            raise InvalidInput("config.external_delivery needs channel and destination")
+        _destination(delivery["channel"], delivery["destination"])
     if config.get("publish", "skip") not in ("skip", "propose"):
         raise InvalidInput("config.publish must be skip or propose (publication always needs an approval)")
     if kind == "pipeline":
@@ -72,7 +81,7 @@ def validate(kind: str, cron: str, tz: str, config: dict) -> None:
 
         validate_schedule_config(config)
         definition = config.get("definition")
-        if definition is not None and not isinstance(definition, (dict, str)):
+        if definition is not None and not isinstance(definition, dict | str):
             raise InvalidInput("config.definition must name a playbook definition: {key, version} or a definition id")
 
 
@@ -385,7 +394,15 @@ def _report(owner: User, workspace_id: str, schedule_id: str, srun_id: str, conf
             raise InvalidInput("no completed run to report on")
         art = generate_report(s, run_id, kind=config.get("kind", "executive"), formats=tuple(config.get("formats", ["html", "pdf"])),
                               actor=f"schedule:{schedule_id}")
-        return {"run_id": run_id, "report_artifact_id": art.id}
+        result = {"run_id": run_id, "report_artifact_id": art.id}
+        if delivery := config.get("external_delivery"):
+            from analystos.services.external_delivery import request
+
+            approval = request(s, s.merge(owner), workspace_id, subject_type="report", subject_id=art.id,
+                               channel=delivery["channel"], destination=delivery["destination"],
+                               format=delivery.get("format", "pdf"))
+            result["delivery_approval_id"] = approval.id
+        return result
 
 
 def _monitors(owner: User, workspace_id: str, schedule_id: str, srun_id: str, config: dict) -> dict[str, Any]:
@@ -403,6 +420,15 @@ def _monitors(owner: User, workspace_id: str, schedule_id: str, srun_id: str, co
             results[mid] = {"alert": bool(r.get("alert")), "alert_id": r.get("alert_id"), "message": r.get("message")}
         except AnalystOSError as exc:
             results[mid] = {"error": exc.message}
+    if delivery := config.get("external_delivery"):
+        from analystos.services.external_delivery import request
+
+        with session_scope() as s:
+            for item in results.values():
+                if item.get("alert") and item.get("alert_id"):
+                    approval = request(s, s.merge(owner), workspace_id, subject_type="alert", subject_id=item["alert_id"],
+                                       channel=delivery["channel"], destination=delivery["destination"])
+                    item["delivery_approval_id"] = approval.id
     return {"monitors": results, "alerts": sum(1 for r in results.values() if r.get("alert"))}
 
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from analystos.capabilities import registry
-from analystos.core.errors import Forbidden, InvalidInput
+from analystos.core.errors import Forbidden, InvalidInput, PolicyDenied
 from analystos.db.models import McpServer
 from analystos.mcp import client as mc
 from analystos.mcp import grants as G
@@ -74,6 +74,23 @@ def test_url_and_secret_ref_validation():
     assert mc._validate_secret_ref("env:SUPERSET_MCP_TOKEN") == "env:SUPERSET_MCP_TOKEN"
     with pytest.raises(InvalidInput):
         mc._validate_secret_ref("sk-live-abcdef")
+
+
+def test_platform_mcp_hosts_are_exact_and_required_at_registration(monkeypatch):
+    monkeypatch.setattr(mc, "_host_allowlist", lambda: ["mcp.example.org", "127.0.0.1"])
+    assert mc._validate_url("https://MCP.EXAMPLE.ORG/mcp") == "https://MCP.EXAMPLE.ORG/mcp"
+    with pytest.raises(PolicyDenied):
+        mc._validate_url("https://sub.mcp.example.org/mcp")
+    with pytest.raises(PolicyDenied):
+        mc._validate_url("http://169.254.169.254/latest")
+
+
+def test_platform_mcp_host_change_revokes_existing_destination(monkeypatch):
+    monkeypatch.setattr(mc, "_host_allowlist", lambda: ["mcp.example.org"])
+    mc._require_host("https://mcp.example.org/mcp")
+    monkeypatch.setattr(mc, "_host_allowlist", lambda: [])
+    with pytest.raises(PolicyDenied):
+        mc._require_host("https://mcp.example.org/mcp")
 
 
 def test_overlay_adds_workspace_capabilities_without_replacing_builtins():

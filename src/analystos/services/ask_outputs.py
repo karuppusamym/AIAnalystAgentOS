@@ -33,6 +33,8 @@ def usable_destination(allowed: list[str], requested: str | None) -> tuple[str, 
 
     if requested and requested not in allowed:
         raise PolicyDenied(f"destination {requested} is not allowed by this workspace's policy")
+    if requested == "powerbi":
+        raise InvalidInput("Power BI publishing is not implemented yet; use 'superset' or 'preview'")
     destination = requested or default_destination(allowed)
     if destination == "superset" and not get_settings().superset_url:
         return "preview", "Superset is not part of this installation; the chart is published to the in-platform preview."

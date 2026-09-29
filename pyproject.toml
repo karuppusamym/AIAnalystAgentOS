@@ -38,7 +38,7 @@ dependencies = [
 # Only the isolated compute-ml image (ADR-0022) needs it; without it those features say so.
 ml = ["scikit-learn>=1.5", "statsmodels>=0.14"]
 # PDF and XLSX reports (charts rendered with matplotlib). The API/lite image installs it; md/html need nothing.
-reports = ["matplotlib>=3.9", "fpdf2>=2.7", "openpyxl>=3.1"]
+reports = ["matplotlib>=3.9", "fpdf2>=2.7", "fonttools>=4.50", "openpyxl>=3.1"]
 # The Temporal orchestrator and `analystos worker` (standard and scale profiles).
 temporal = ["temporalio>=1.7"]
 # The optional Neo4j projection (ANALYSTOS_GRAPH_ENABLED, the `graph` profile).
@@ -50,6 +50,7 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "respx>=0.21",
+  "pypdf>=5.0",  # PDF text extraction assertions for bundled Unicode fonts
   "cryptography>=42",  # tests/oidc_fake.py signs ID tokens for the fake IdP
   "ruff>=0.6",
   "mypy>=1.11",

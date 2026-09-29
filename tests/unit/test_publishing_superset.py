@@ -517,6 +517,41 @@ def test_inspect_dashboard(router, fake):
     assert len(info["layout"]) == 3 and {c["width"] for c in info["layout"]} == {4, 8, 12}
 
 
+def test_rename_existing_dashboard_preserves_layout_filters_and_id(router, fake):
+    res = publisher().publish(make_bundle(), idempotency_key="k1")
+    did = res.external_ids["dashboards"]["executive"]
+    before = dict(fake.dashboards[did])
+    publisher().rename_existing_dashboard(did, "Revised executive overview")
+    after = fake.dashboards[did]
+    assert after["dashboard_title"] == "Revised executive overview"
+    assert {k: v for k, v in after.items() if k != "dashboard_title"} == {
+        k: v for k, v in before.items() if k != "dashboard_title"}
+
+
+def test_bounded_existing_dashboard_edits_preserve_other_settings(router, fake):
+    res = publisher().publish(make_bundle(), idempotency_key="k1")
+    did = res.external_ids["dashboards"]["executive"]
+    cid = res.external_ids["charts"]["trend"]
+    p = publisher()
+    before = p.inspect_dashboard(did)
+    p.edit_existing_dashboard(did, {"operation": "chart_metric", "chart_id": cid,
+                                    "metric": "incident_count"})
+    assert "incident_count" in next(c for c in p.inspect_dashboard(did)["charts"] if c["id"] == cid)["metrics"]
+    p.edit_existing_dashboard(did, {"operation": "chart_groupby", "chart_id": cid,
+                                    "groupby": ["priority"]})
+    assert next(c for c in p.inspect_dashboard(did)["charts"] if c["id"] == cid)["groupby"] == ["priority"]
+    dataset_id = res.external_ids["datasets"]["incidents"]
+    p.edit_existing_dashboard(did, {"operation": "native_filter", "dataset_id": dataset_id,
+                                    "column": "assignment_group"})
+    assert any(f["name"] == "assignment_group" for f in p.inspect_dashboard(did)["filters"])
+    p.edit_existing_dashboard(did, {"operation": "layout_size", "chart_id": cid,
+                                    "width": 7, "height": 61})
+    after = p.inspect_dashboard(did)
+    assert next(c for c in after["layout"] if c["chart_id"] == cid)["width"] == 7
+    assert before["revision"] != after["revision"]
+    assert before["id"] == after["id"] and before["title"] == after["title"]
+
+
 def test_export_and_phase3_stubs(router, fake):
     res = publisher().publish(make_bundle(), idempotency_key="k1")
     p = publisher()

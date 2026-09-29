@@ -129,7 +129,9 @@ def default_destination(allowed: list[str], settings: Settings | None = None) ->
         from analystos.core.config import get_settings
 
         settings = get_settings()
-    usable = [d for d in allowed if d != "superset" or settings.superset_url]
+    # A policy may mention a future adapter. Never bind an approval to a destination
+    # that this installation cannot execute.
+    usable = [d for d in allowed if d == "preview" or (d == "superset" and settings.superset_url)]
     return usable[0] if usable else "preview"
 
 

@@ -35,6 +35,22 @@ class ArtifactDecision(BaseModel):
     reason: str | None = None
 
 
+class ExistingDashboardTitleChange(BaseModel):
+    new_title: str
+
+
+class ExistingDashboardEdit(BaseModel):
+    operation: str
+    rationale: str
+    chart_id: int | None = None
+    metric: str | None = None
+    groupby: list[str] | None = None
+    dataset_id: int | None = None
+    column: str | None = None
+    width: int | None = None
+    height: int | None = None
+
+
 INTERNAL_ARTIFACT_TYPES = ("step_result",)
 
 
@@ -191,6 +207,63 @@ def approve_artifact(artifact_id: str, body: ArtifactDecision | None = None, use
 
 
 # ---------------------------------------------------------------------------------- dashboards
+@router.get("/workspaces/{workspace_id}/dashboards/superset/{dashboard_id}")
+def inspect_existing_dashboard(workspace_id: str, dashboard_id: int, user: User = Depends(current_user),
+                               session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import inspect
+
+    return inspect(session, user, workspace_id, dashboard_id)
+
+
+@router.post("/workspaces/{workspace_id}/dashboards/superset/{dashboard_id}/import")
+def import_existing_dashboard(workspace_id: str, dashboard_id: int, user: User = Depends(current_user),
+                              session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import import_dashboard
+
+    return row(import_dashboard(session, user, workspace_id, dashboard_id))
+
+
+@router.post("/artifacts/{artifact_id}/dashboard-title-change")
+def propose_existing_dashboard_title_change(artifact_id: str, body: ExistingDashboardTitleChange,
+                                            user: User = Depends(current_user),
+                                            session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import propose_title_change
+
+    art = load_in_workspace(session, Artifact, artifact_id, user=user, minimum="editor", label="artifact")
+    return row(propose_title_change(session, user, art, body.new_title), exclude={"payload"})
+
+
+@router.post("/artifacts/{artifact_id}/dashboard-title-change/{approval_id}/apply")
+def apply_existing_dashboard_title_change(artifact_id: str, approval_id: str, user: User = Depends(current_user),
+                                          session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import apply_title_change
+
+    art = load_in_workspace(session, Artifact, artifact_id, user=user, minimum="editor", label="artifact",
+                            for_update=True)
+    load_in_workspace(session, Approval, approval_id, art.workspace_id, user=user, label="approval")
+    return row(apply_title_change(session, user, art, approval_id))
+
+
+@router.post("/artifacts/{artifact_id}/dashboard-edit")
+def propose_existing_dashboard_edit(artifact_id: str, body: ExistingDashboardEdit,
+                                    user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import propose_edit
+
+    art = load_in_workspace(session, Artifact, artifact_id, user=user, minimum="editor", label="artifact")
+    return row(propose_edit(session, user, art, body.model_dump(exclude_none=True)), exclude={"payload"})
+
+
+@router.post("/artifacts/{artifact_id}/dashboard-edit/{approval_id}/apply")
+def apply_existing_dashboard_edit(artifact_id: str, approval_id: str, user: User = Depends(current_user),
+                                  session: Session = Depends(db, scope="function")):
+    from analystos.services.existing_dashboard import apply_edit
+
+    art = load_in_workspace(session, Artifact, artifact_id, user=user, minimum="editor", label="artifact",
+                            for_update=True)
+    load_in_workspace(session, Approval, approval_id, art.workspace_id, user=user, label="approval")
+    return row(apply_edit(session, user, art, approval_id))
+
+
 @router.post("/workspaces/{workspace_id}/dashboards")
 def create_dashboards(workspace_id: str, body: dict, user: User = Depends(current_user)):
     """Dashboards are produced by an analysis run (design -> approval -> publish). This starts one."""

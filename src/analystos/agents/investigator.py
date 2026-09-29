@@ -210,17 +210,19 @@ def heuristic_proposals(ctx: RunContext, types: dict[str, dict[str, str]], packs
 
 
 def validated_lookups(ctx: RunContext) -> list[Lookup]:
-    """The many-to-one lookups a spec of this run may join through (P8-16): validated (or user-declared)
+    """The many-to-one lookups a spec of this run may join through (P8-16): validated (or measured user-declared)
     relationships whose tables are both in scope and in one source, on visible, non-denied key columns.
     Once per step (memoised on the context)."""
     from analystos.agents.common import _memo
     from analystos.db.models import Relationship
+    from analystos.services.relationship_safety import admissible
 
     memo = _memo(ctx, "_aos_lookups")
     if "v" in memo:
         return list(memo["v"])
     scope = ctx.scope
-    fq = {a.id: f"{a.schema_name}.{a.name}" for a, _ in asset_rows(ctx) if getattr(a, "id", None)}
+    rows = {a.id: a for a, _ in asset_rows(ctx) if getattr(a, "id", None)}
+    fq = {aid: f"{a.schema_name}.{a.name}" for aid, a in rows.items()}
     denied = set(scope.denied_columns)
     sources = getattr(scope, "asset_sources", None) or {}
     out: list[Lookup] = []
@@ -231,6 +233,7 @@ def validated_lookups(ctx: RunContext) -> list[Lookup]:
                 Relationship.validated.is_(True) | (Relationship.origin == "user"),
                 Relationship.cardinality.in_(("many_to_one", "one_to_one")),
                 Relationship.from_asset_id.in_(list(fq)), Relationship.to_asset_id.in_(list(fq))).order_by(Relationship.id)))
+            rels = [r for r in rels if admissible(s, r, rows[r.to_asset_id])]
         for r in rels:
             src, dst = fq[r.from_asset_id], fq[r.to_asset_id]
             if (r.evidence or {}).get("rejected") or src == dst or sources.get(src) != sources.get(dst):
@@ -763,6 +766,21 @@ def _drilldowns(supported: list[dict], types, display_patterns: list[str] = ()) 
                         "spec": {**spec, "segment": {"type": "column", "column": other, "label": other.replace('_', ' ')},
                                  "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=", "value": top,
                                                                              **({"via": via} if via else {})}]}})
+        if (spec.get("outcome") or {}).get("type") == "later_than":
+            excluded = {(spec.get("outcome") or {}).get("column"), (spec.get("outcome") or {}).get("end_column")}
+            dates = [c for c, t in types.get(spec["asset"], {}).items() if t == "datetime" and c not in excluded]
+            event_date = next((c for c in dates if any(w in c for w in ("order", "created", "opened", "start"))),
+                              dates[0] if dates else None)
+            if event_date:
+                label = seg.get("label") or seg["column"]
+                out.append({"question": f"Within {label} = {top}, did the late rate change by month?",
+                            "statement": f"Within {label} = {top}, the late rate differs across months.",
+                            "priority": "high", "parent": r["code"],
+                            "spec": {**spec, "segment": {"type": "date_trunc", "column": event_date, "grain": "month",
+                                                          "label": f"{event_date.replace('_', ' ')} month"},
+                                     "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=",
+                                                                               "value": top,
+                                                                               **({"via": via} if via else {})}]}})
     return out
 
 

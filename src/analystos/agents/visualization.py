@@ -27,6 +27,18 @@ def _q(c: str) -> str:
     return '"' + c.replace('"', '""') + '"'
 
 
+def _dataset_filters(spec: AnalysisSpec, columns: set[str]) -> list[str]:
+    """A joined drill-down filters the dataset's projected alias, not the base table column."""
+    out = []
+    for f in spec.filters:
+        alias = derivation_alias(Derivation(type="column", column=f.column, via=f.via))
+        if alias not in columns or f.op not in ("=", "!=", ">", ">=", "<", "<="):
+            continue
+        value = "'" + f.value.replace("'", "''") + "'" if isinstance(f.value, str) else str(f.value)
+        out.append(f"{_q(alias)} {f.op} {value}")
+    return out
+
+
 def preview_sql(chart: ChartSpec, ds_sql: str, metrics: dict[str, MetricDef]) -> str:
     src = f"({ds_sql}) d"
     where = (" WHERE " + " AND ".join(chart.filters)) if chart.filters else ""
@@ -115,9 +127,7 @@ def design(ctx: RunContext) -> dict:
         dim = derivation_alias(seg) if seg is not None else None
         if shown is None or shown.dimension != "segment" or not metric or not dim or dim not in cols:
             continue
-        # Filters on dataset columns only (raw columns keep their names in the dataset).
-        filters = [f"{_q(f.column)} {f.op} {repr(f.value) if isinstance(f.value, str) else f.value}"
-                   for f in spec.filters if f.column in cols and not f.via and f.op in ("=", "!=", ">", ">=", "<", "<=")]
+        filters = _dataset_filters(spec, set(cols))
         intent = shown.intent
         card = int(cols[dim].get("distinct") or 10) if isinstance(cols[dim].get("distinct"), int) else 10
         ctype, why = _choose(ctx, intent, cols[dim].get("semantic_type"), card, title)

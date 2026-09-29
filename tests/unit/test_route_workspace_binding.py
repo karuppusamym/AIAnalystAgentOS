@@ -34,6 +34,10 @@ WORKER_TOKEN = ("isolated-worker route (P7-06): authenticated only by a scoped t
                 "(test_worker_routes_accept_only_task_tokens)")
 EXEMPT_ROUTES = {
     ("POST", "/api/dashboards/{artifact_id}/schedule"): "always answers with where to create a schedule; reads nothing",
+    ("GET", "/api/workspaces/{workspace_id}/dashboards/superset/{dashboard_id}"):
+        "Superset external id; existing_dashboard.inspect checks workspace membership and rejects foreign AOS objects",
+    ("POST", "/api/workspaces/{workspace_id}/dashboards/superset/{dashboard_id}/import"):
+        "Superset external id; existing_dashboard.import_dashboard calls the workspace-scoped inspection first",
     ("GET", "/api/worker/artifacts/{artifact_id}"): WORKER_TOKEN,
     ("PUT", "/api/worker/tasks/{task_id}/outputs/{name}"): WORKER_TOKEN,
 }

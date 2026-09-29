@@ -84,7 +84,8 @@ def build_dataset(ctx: RunContext) -> dict:
     types = {c.name: c.semantic_type for a, cols in asset_rows(ctx) if f"{a.schema_name}.{a.name}" == asset for c in cols}
     spec_joins: dict[str, Any] = {}  # via -> Join: related-table attributes the verified findings are broken down by
     for spec in (sp for sp in specs if sp.asset == asset):
-        for d in (spec.outcome, spec.segment, spec.time, *spec.drivers):
+        joined_filters = [Derivation(type="column", column=f.column, via=f.via) for f in spec.filters if f.via]
+        for d in (spec.outcome, spec.segment, spec.time, *spec.drivers, *joined_filters):
             if d is None or (d.type == "column" and not d.via):
                 continue
             j = spec.join(d.via)

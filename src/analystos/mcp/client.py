@@ -101,6 +101,18 @@ def _private_hosts() -> list[str]:
     return outbound.split_hosts(s.outbound_private_hosts) + outbound.split_hosts(s.mcp_private_hosts)
 
 
+def _host_allowlist() -> list[str]:
+    from analystos.core.config import get_settings
+
+    return outbound.split_hosts(get_settings().mcp_host_allowlist)
+
+
+def _require_host(url: str) -> None:
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if host not in {h.lower().rstrip(".") for h in _host_allowlist()}:
+        raise PolicyDenied(f"MCP host {host or '<missing>'} is not on the platform host allowlist")
+
+
 def _bearer(server: McpServer) -> dict[str, str]:
     from analystos.connectors.secrets import resolve_secret
 
@@ -115,7 +127,7 @@ async def _with_client(server: McpServer, fn: Callable[[Any], Awaitable[T]]) -> 
     # P7-11: the owner's `allowed` flag is this server's allowlist; the address must still be public
     # (or listed by the operator), and every request goes to the address vetted here (no rebinding,
     # no redirects, no environment proxies).
-    target = outbound.pin(server.url, allowlist=None, private_hosts=_private_hosts())
+    target = outbound.pin(server.url, allowlist=_host_allowlist(), private_hosts=_private_hosts())
     from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
 
@@ -277,6 +289,7 @@ def _validate_url(url: str) -> str:
         raise InvalidInput("MCP server url must be an http(s) URL")
     if parts.username or parts.password:
         raise InvalidInput("put credentials in secret_ref (env:NAME or file:/path), never in the url")
+    _require_host(url)
     try:  # an address literal is checked now; a hostname is resolved and checked on every call
         literal = ipaddress.ip_address(parts.hostname.strip("[]"))
     except ValueError:
@@ -321,6 +334,8 @@ def set_allowed(session: Session, user: User, workspace_id: str, server_id: str,
     """The allowlist decision. Revoking also stops every invocation immediately."""
     require_role(session, user, workspace_id, "owner")
     srv = _server(session, workspace_id, server_id)
+    if allowed:
+        _require_host(srv.url)
     srv.allowed, srv.allowed_by = bool(allowed), user.id
     audit(f"user:{user.id}", "mcp.server_allowed" if allowed else "mcp.server_disallowed", workspace_id=workspace_id,
           target=srv.id, decision="allow" if allowed else "deny", details={"name": srv.name, "url": srv.url}, session=session)

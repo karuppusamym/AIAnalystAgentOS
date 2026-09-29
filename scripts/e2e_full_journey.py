@@ -21,6 +21,10 @@ from datetime import date, datetime, timedelta
 
 from analystos.demo.seed import Api
 
+# Keep the live-check log usable on Windows terminals with a legacy code page.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="backslashreplace")
+
 API = os.environ.get("ANALYSTOS_API", "http://localhost:8000")
 NAME = sys.argv[1] if len(sys.argv) > 1 else f"E2E Retail {datetime.now():%m%d-%H%M}"
 results: list[tuple[str, str, str]] = []

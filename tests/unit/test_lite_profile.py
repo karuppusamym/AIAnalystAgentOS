@@ -215,6 +215,8 @@ def test_publishing_defaults_to_preview_without_superset():
     assert default_destination(["superset"], SimpleNamespace(superset_url="")) == "preview"
     assert default_destination(["superset", "preview"], SimpleNamespace(superset_url="http://s")) == "superset"
     assert default_destination([], SimpleNamespace(superset_url="http://s")) == "preview"
+    assert default_destination(["powerbi", "superset"], SimpleNamespace(superset_url="http://s")) == "superset"
+    assert default_destination(["powerbi"], SimpleNamespace(superset_url="")) == "preview"
 
 
 def test_spend_store_follows_configuration_not_runtime_outages():

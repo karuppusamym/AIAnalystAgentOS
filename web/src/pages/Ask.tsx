@@ -111,10 +111,20 @@ function Pills({ pills, label }: { pills: Pill[]; label: string }) {
 
 function Stages({ stages, live }: { stages: AskStage[]; live: boolean }) {
   if (!stages.length) return null;
+  const visible = stages.filter((s) => s.key !== "done" || !live);
+  if (live) return (
+    <div className="ask-progress" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden="true" />
+      <span>{visible[visible.length - 1]?.text ?? "Working…"}</span>
+      {visible.length > 1 && <details><summary>{visible.length - 1} completed step{visible.length === 2 ? "" : "s"}</summary>
+        <ol className="ask-stages small">{visible.slice(0, -1).map((s, i) => <li key={i}>{s.text}</li>)}</ol>
+      </details>}
+    </div>
+  );
   return (
     <ol className="ask-stages small" aria-label="Progress" aria-live={live ? "polite" : undefined}>
-      {stages.filter((s) => s.key !== "done" || !live).map((s, i, all) => (
-        <li key={i} className={live && i === all.length - 1 ? "ask-stage-current" : "muted"}>{s.text}</li>
+      {visible.map((s, i) => (
+        <li key={i} className="muted">{s.text}</li>
       ))}
     </ol>
   );

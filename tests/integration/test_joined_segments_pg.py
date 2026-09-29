@@ -76,7 +76,7 @@ def test_validated_lookups_come_from_the_catalog(control_db):
     from sqlalchemy import select
 
     from analystos.contracts.policy import DataScope
-    from analystos.core.ids import new_id
+    from analystos.core.ids import new_id, utcnow
     from analystos.db.base import session_scope
     from analystos.db.models import Relationship, Source, SourceAsset, SourceColumn, User, Workspace
 
@@ -98,12 +98,15 @@ def test_validated_lookups_come_from_the_catalog(control_db):
         ids = {}
         for name, cols in tables.items():
             ids[name] = new_id("ast")
+            meta = {"profiled_at": utcnow().isoformat(), "fingerprint": f"fp-{name}",
+                    "sampled": False, "truncated": False, "snapshot_load": None}
             s.add(SourceAsset(id=ids[name], source_id=sid, workspace_id=ws, schema_name=schema, name=name, source_name=name,
-                              kind="table", selected=True, row_count=6000 if name == "orders" else 100))
+                              kind="table", selected=True, row_count=6000 if name == "orders" else 100,
+                              fingerprint=f"fp-{name}", stats={"profile_meta": meta}))
             s.flush()
             for i, (c, t) in enumerate(cols):
                 s.add(SourceColumn(asset_id=ids[name], name=c, ordinal=i, data_type="text", semantic_type=t,
-                                   profile={"distinct": 4 if t == "categorical" else 100}))
+                                   profile={"distinct": 4 if t == "categorical" else 100, "null_count": 0}))
 
         def rel(frm, col, to, to_col, **kw):
             s.add(Relationship(id=new_id("rel"), workspace_id=ws, from_asset_id=ids[frm], from_column=col, to_asset_id=ids[to],

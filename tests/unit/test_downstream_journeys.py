@@ -247,6 +247,8 @@ def test_superset_without_the_bi_profile_binds_the_request_to_preview(monkeypatc
     assert destination == "preview" and "preview" in note
     with pytest.raises(PolicyDenied):
         ask_outputs.usable_destination(["superset"], "powerbi")
+    with pytest.raises(InvalidInput, match="Power BI publishing is not implemented"):
+        ask_outputs.usable_destination(["powerbi"], "powerbi")
 
 
 # ------------------------------------------------------------------------------------ reports never fail a run

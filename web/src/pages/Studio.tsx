@@ -58,7 +58,7 @@ export function OutputsPage() {
   const [params, setParams] = useSearchParams();
   const requested = params.get("type") as OutputType | null;
   const type: OutputType | "" = insightId ? "finding" : OUTPUT_FILTERS.some((f) => f.id === requested) ? requested! : "";
-  const selected = insightId ?? params.get("artifact") ?? params.get("dashboard") ?? params.get("run");
+  const requestedSelection = insightId ?? params.get("artifact") ?? params.get("dashboard") ?? params.get("run");
   const analysis = params.get("analysis");
   const [search, setSearch] = useState("");
   const artifacts = useAsync(() => api.listArtifacts(wsId), [wsId]);
@@ -108,6 +108,9 @@ export function OutputsPage() {
   }
   const shown = scopedItems.filter((i) => (!type || typeOf(i) === type) &&
     `${i.kind === "finding" ? i.finding.title : i.kind === "artifact" ? i.artifact.name : i.run.recipe_name} ${runById.get(analysisOf(i) ?? "")?.objective ?? ""}`.toLowerCase().includes(search.toLowerCase()));
+  // Open the newest visible output on first visit so the detail pane is useful immediately.
+  const selected = requestedSelection && shown.some((i) => i.id === requestedSelection)
+    ? requestedSelection : shown[0]?.id ?? null;
   const analysisRuns = (runs.data ?? []).filter((r) => items.some((i) => analysisOf(i) === r.id));
   const unknownRuns = [...new Set(items.map(analysisOf).filter((id): id is string => !!id && !runById.has(id)))];
   const open = selected ? items.find((i) => i.id === selected) : undefined;
@@ -208,7 +211,7 @@ export function OutputsPage() {
               <strong>{runById.get(analysisOf(open) ?? "")?.objective ?? "Earlier investigation"}</strong>
               <Link className="small" to={to.run(wsId, analysisOf(open)!)}>Open investigation</Link>
             </div>}
-            {insightId ? <FindingDetail id={insightId} wsId={wsId} />
+            {open?.kind === "finding" ? <FindingDetail id={open.id} wsId={wsId} />
               : open?.kind === "prepared" ? <PreparedView run={open.run} wsId={wsId} />
                 : selected ? <ArtifactView id={selected} wsId={wsId} onSelect={(id) => set({ artifact: id })} />
                   : <EmptyState title="Select an output">A dashboard shows a live preview from its charts&apos; data before anything is published.</EmptyState>}

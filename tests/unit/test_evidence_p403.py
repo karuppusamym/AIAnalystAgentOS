@@ -298,6 +298,37 @@ def test_manifest_versions_follow_content_not_the_load():
     assert m1.version == m2.version and M.build([changed]).version != m1.version and m1.entry("src_x.incident") == a
 
 
+def test_joined_finding_checks_each_table_version():
+    base = _entry()
+    lookup = M.entry_from("src_x.customer", "s1", "staged",
+                          snapshot={"content_fingerprint": "a" * 64, "rows_staged": 100})
+    spec = {"asset": base.asset, "joins": [{"from_column": "customer_id", "asset": lookup.asset,
+                                             "to_column": "id"}]}
+    manifest = M.build([base, lookup])
+    assert M.spec_assets(spec) == [lookup.asset, base.asset]
+    assert M.changed_for_spec(manifest, spec, {base.asset: base, lookup.asset: lookup}) == []
+    changed_lookup = M.entry_from(lookup.asset, "s1", "staged",
+                                  snapshot={"content_fingerprint": "b" * 64, "rows_staged": 100})
+    assert lookup.asset in M.changed_for_spec(manifest, spec,
+                                                {base.asset: base, lookup.asset: changed_lookup})[0]
+    assert lookup.asset in M.changed_for_spec(M.build([base]), spec,
+                                                {base.asset: base, lookup.asset: lookup})[0]
+
+
+def test_joined_finding_bundle_keeps_both_data_versions():
+    base = _entry()
+    lookup = M.entry_from("src_x.customer", "s1", "staged",
+                          snapshot={"content_fingerprint": "a" * 64, "rows_staged": 100})
+    spec = {**RATE_SPEC, "joins": [{"from_column": "customer_id", "asset": lookup.asset,
+                                     "to_column": "id"}]}
+    bundle = _assemble(spec=spec, manifest=M.build([base, lookup]).model_dump(mode="json"))
+    assert {e["asset"] for e in bundle.data["manifest"]["entries"]} == {base.asset, lookup.asset}
+    changed_lookup = M.entry_from(lookup.asset, "s1", "staged",
+                                  snapshot={"content_fingerprint": "b" * 64, "rows_staged": 100})
+    stale = M.freshness(bundle.model_dump(mode="json"), {base.asset: base, lookup.asset: changed_lookup})
+    assert stale.state == "stale" and stale.assets == [lookup.asset]
+
+
 def test_snapshot_change_marks_a_finding_stale():
     bundle = _assemble().model_dump(mode="json")
     assert M.freshness(bundle, {"src_x.incident": _entry(load_id="load_9")}).state == "current"

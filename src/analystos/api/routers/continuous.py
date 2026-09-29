@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows
 from analystos.core.errors import InvalidInput, NotFound
-from analystos.db.models import Alert, AnalysisRun, Artifact, Monitor, Schedule, ScheduleRun, User
+from analystos.db.models import Alert, AnalysisRun, Approval, Artifact, Monitor, Schedule, ScheduleRun, User
 from analystos.governance.audit import audit
 from analystos.governance.policy import load_in_workspace, require_role
 from analystos.services import monitors as mon_svc
@@ -62,6 +62,14 @@ class ReportIn(BaseModel):
 
 class ReadIn(BaseModel):
     ids: list[int]
+
+
+class ExternalDeliveryIn(BaseModel):
+    subject_type: str  # report | alert
+    subject_id: str
+    channel: str  # email | webhook
+    destination: str
+    format: str = "pdf"
 
 
 # ---------------------------------------------------------------------------------- schedules
@@ -269,6 +277,28 @@ def alert_action(alert_id: str, action: str, user: User = Depends(current_user),
 
 
 # ---------------------------------------------------------------------------------- notifications
+@router.post("/workspaces/{workspace_id}/external-deliveries", status_code=202)
+def request_external_delivery(workspace_id: str, body: ExternalDeliveryIn, user: User = Depends(current_user),
+                              session: Session = Depends(db, scope="function")):
+    """Freeze one report or alert and request an approval for its exact outside recipient."""
+    from analystos.services import external_delivery
+
+    approval = external_delivery.request(session, session.merge(user), workspace_id, **body.model_dump())
+    return {"status": "approval_required", "approval_id": approval.id, "payload_hash": approval.payload_hash,
+            "destination": approval.destination}
+
+
+@router.post("/external-deliveries/{approval_id}/execute")
+def execute_external_delivery(approval_id: str, user: User = Depends(current_user),
+                              session: Session = Depends(db, scope="function")):
+    from analystos.services import external_delivery
+
+    approval = load_in_workspace(session, Approval, approval_id, user=user, minimum="editor", label="delivery approval")
+    if approval.action != external_delivery.ACTION:
+        raise NotFound("delivery approval not found")
+    return external_delivery.execute(user, approval_id)
+
+
 @router.get("/notifications")
 def notifications(unread: bool = False, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
     return [{**row(n), "read": user.id in (n.read_by or [])} for n in note_svc.list_for(session, user, unread_only=unread)]

@@ -14,6 +14,7 @@ exist fall back to name lookup. ``update_*`` PUTs in place, so external ids stay
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -726,6 +727,13 @@ class SupersetPublisher:
         dash = self.client.get(f"/api/v1/dashboard/{dashboard_id}")["result"]
         charts = self.client.get(f"/api/v1/dashboard/{dashboard_id}/charts").get("result") or []
         datasets = self.client.get(f"/api/v1/dashboard/{dashboard_id}/datasets").get("result") or []
+        revision = hashlib.sha256(json.dumps(
+            {"dashboard": {k: dash.get(k) for k in ("dashboard_title", "slug", "position_json", "json_metadata")},
+             "charts": [{k: c.get(k) for k in ("id", "slice_name", "params", "query_context")}
+                        for c in sorted(charts, key=lambda c: c.get("id") or 0)],
+             "datasets": [{"id": d.get("id"), "metrics": d.get("metrics")}
+                          for d in sorted(datasets, key=lambda d: d.get("id") or 0)]},
+            sort_keys=True, default=str).encode()).hexdigest()
         try:
             meta = json.loads(dash.get("json_metadata") or "{}")
         except ValueError:
@@ -769,6 +777,7 @@ class SupersetPublisher:
                     "id": d.get("id"),
                     "name": d.get("table_name") or d.get("datasource_name"),
                     "schema": d.get("schema"),
+                    "database": (d.get("database") or {}).get("database_name") if isinstance(d.get("database"), dict) else None,
                     "sql": d.get("sql"),
                     "main_dttm_col": d.get("main_dttm_col") or d.get("granularity_sqla"),
                     "columns": [
@@ -792,6 +801,7 @@ class SupersetPublisher:
         ]
         return {
             "id": dash.get("id"),
+            "revision": revision,
             "title": dash.get("dashboard_title"),
             "slug": dash.get("slug"),
             "published": dash.get("published"),
@@ -802,6 +812,54 @@ class SupersetPublisher:
             "filters": filters,
             "layout": parse_position_json(position),
         }
+
+    def rename_existing_dashboard(self, dashboard_id: ExternalId, title: str) -> None:
+        """Change only the title; preserve human charts, layout, filters and stable external id."""
+        self.client.put(f"/api/v1/dashboard/{int(dashboard_id)}", {"dashboard_title": title})
+
+    def edit_existing_dashboard(self, dashboard_id: int, edit: dict[str, Any]) -> None:
+        """Apply one validated, bounded change while preserving every other Superset setting."""
+        operation = edit["operation"]
+        if operation in {"chart_metric", "chart_groupby"}:
+            chart_id = int(edit["chart_id"])
+            current = self.client.get(f"/api/v1/chart/{chart_id}")["result"]
+            params = json.loads(current.get("params") or "{}")
+            if operation == "chart_metric":
+                params["metrics"] = [edit["metric"]]
+                if "metric" in params:
+                    params["metric"] = edit["metric"]
+            else:
+                params["groupby"] = edit["groupby"]
+            self.client.put(f"/api/v1/chart/{chart_id}",
+                            {"params": json.dumps(params), "query_context_generation": True})
+            return
+        current = self.client.get(f"/api/v1/dashboard/{dashboard_id}")["result"]
+        if operation == "native_filter":
+            meta = json.loads(current.get("json_metadata") or "{}")
+            filters = meta.setdefault("native_filter_configuration", [])
+            fid = f"AOS_FILTER-{edit['dataset_id']}-{edit['column']}"
+            if any(f.get("id") == fid for f in filters):
+                raise InvalidInput("this native filter already exists")
+            chart_ids = [int(c["id"]) for c in
+                         self.client.get(f"/api/v1/dashboard/{dashboard_id}/charts").get("result") or []]
+            filters.append({"id": fid, "name": edit["column"], "filterType": "filter_select",
+                            "targets": [{"datasetId": edit["dataset_id"],
+                                         "column": {"name": edit["column"]}}],
+                            "defaultDataMask": {"extraFormData": {}, "filterState": {}, "ownState": {}},
+                            "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+                            "chartsInScope": chart_ids, "tabsInScope": [], "description": ""})
+            self.client.put(f"/api/v1/dashboard/{dashboard_id}", {"json_metadata": json.dumps(meta)})
+            return
+        if operation == "layout_size":
+            position = json.loads(current.get("position_json") or "{}")
+            nodes = [n for n in position.values() if isinstance(n, dict) and n.get("type") == "CHART"
+                     and (n.get("meta") or {}).get("chartId") == edit["chart_id"]]
+            if len(nodes) != 1:
+                raise InvalidInput("chart has no unique dashboard layout node")
+            nodes[0]["meta"].update(width=edit["width"], height=edit["height"])
+            self.client.put(f"/api/v1/dashboard/{dashboard_id}", {"position_json": json.dumps(position)})
+            return
+        raise InvalidInput("unsupported dashboard edit")
 
     # -- high level -----------------------------------------------------------------------------
     def _exists(self, resource: str, oid: Any) -> bool:

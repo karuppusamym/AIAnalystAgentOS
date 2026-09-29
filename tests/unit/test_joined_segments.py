@@ -19,12 +19,15 @@ from analystos import methods  # noqa: E402
 from analystos.agents import investigator as inv  # noqa: E402
 from analystos.agents.prompts import prompt  # noqa: E402
 from analystos.agents.sql_agent import derivation_alias  # noqa: E402
+from analystos.agents.visualization import _dataset_filters, preview_sql  # noqa: E402
 from analystos.capabilities import packs  # noqa: E402
 from analystos.contracts.analysis import AnalysisSpec, Derivation  # noqa: E402
+from analystos.contracts.bi import ChartSpec, MetricDef  # noqa: E402
 from analystos.contracts.policy import DataScope  # noqa: E402
 from analystos.core.errors import SQLRejected  # noqa: E402
 from analystos.gateway.validator import validate_sql  # noqa: E402
 from analystos.registries.hypotheses import spec_hash  # noqa: E402
+from analystos.services.relationship_safety import admissible  # noqa: E402
 from analystos.skills import lookups as lk  # noqa: E402
 from analystos.skills import sqlbuild as sb  # noqa: E402
 from analystos.skills import stats  # noqa: E402
@@ -76,6 +79,39 @@ def test_via_must_name_a_declared_join():
              joins=[CUSTOMER_JOIN, PRODUCT_JOIN])
     assert s.vias() == ["customer_id", "product_id"] and s.table_of(s.segment) == CUSTOMERS and s.table_of(s.outcome) == ORDERS
     assert s.table_of(s.filters[0]) == PRODUCTS
+
+
+def test_joined_drill_down_chart_filters_the_projected_dataset_column():
+    s = spec(filters=[{"column": "category", "op": "=", "value": "Men's Electronics", "via": "product_id"}],
+             joins=[CUSTOMER_JOIN, PRODUCT_JOIN])
+    assert _dataset_filters(s, {"customer_region", "product_category"}) == ["\"product_category\" = 'Men''s Electronics'"]
+    assert _dataset_filters(s, {"customer_region"}) == []
+    chart = ChartSpec(key="c", title="Returns by region", chart_type="bar", intent="comparison", dataset="orders",
+                      dimension="customer_region", metric="returned_rate",
+                      filters=_dataset_filters(s, {"customer_region", "product_category"}))
+    metric = MetricDef(name="returned_rate", display_name="Return rate", definition="Returned orders",
+                       sql_expression='AVG("returned_flag")')
+    sql = preview_sql(chart, 'SELECT * FROM shop.orders', {"returned_rate": metric})
+    assert 'WHERE "product_category" = \'Men\'\'s Electronics\'' in sql
+    assert '"customer_region" AS x' in sql
+
+
+def test_user_declared_join_needs_fresh_whole_table_unique_key(monkeypatch):
+    from analystos.core.ids import utcnow
+    from analystos.services import brief
+
+    monkeypatch.setattr(brief, "key_uniqueness", lambda *args: {"state": "unique"})
+    rel = SimpleNamespace(validated=False, origin="user", workspace_id="ws", to_column="id")
+    meta = {"profiled_at": utcnow().isoformat(), "fingerprint": "fp", "snapshot_load": "load", "sampled": False,
+            "truncated": False}
+    target = SimpleNamespace(schema_name="shop", name="customers", fingerprint="fp", snapshot={"load_id": "load"},
+                             stats={"profile_meta": meta})
+    assert admissible(None, rel, target)
+    for change in ({"sampled": True}, {"truncated": True}, {"fingerprint": "old"}, {"snapshot_load": "old"}):
+        target.stats = {"profile_meta": {**meta, **change}}
+        assert not admissible(None, rel, target)
+    target.stats = {}
+    assert not admissible(None, rel, target)
 
 
 def test_a_spec_without_the_new_fields_serializes_and_hashes_as_before():
@@ -392,6 +428,15 @@ def test_investigation_finds_the_causes_one_join_away(retail):
     assert inv.validate_spec(d_spec, sc, retail.catalog["types"], retail.catalog["lookups"]) == []
     inside = run_analysis(d_spec, gw)
     assert inside.stat.supported and inside.stat.highlights["top_segment"] == "Marketplace"
+
+    west = [{"code": "H-1", "spec": late_s.model_dump(), "result": {"highlights": late.stat.highlights}}]
+    month = next(p for p in inv._drilldowns(west, retail.catalog["types"])
+                 if p["spec"]["segment"]["type"] == "date_trunc")
+    month_spec = AnalysisSpec.model_validate(month["spec"])
+    assert month_spec.segment.column == "order_date" and month_spec.filters[-1].via == "customer_id"
+    assert inv.validate_spec(month_spec, sc, retail.catalog["types"], retail.catalog["lookups"]) == []
+    over_time = run_analysis(month_spec, gw)
+    assert over_time.stat.supported and over_time.stat.highlights["top_rate"] > 0.2
 
 
 def test_matrix_continues_an_outcome_across_joined_dimensions():
