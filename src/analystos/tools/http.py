@@ -9,21 +9,30 @@ PORT; the donor has no licence file, so the P7-13 licence check is open), with t
   reserved list let ``100.64.0.0/10`` (carrier-grade NAT, often cloud-internal) through.
 * Parameters are validated with ``jsonschema`` (Draft 2020-12) instead of a hand-written subset.
 
-Order of checks, every one before a byte is sent: scheme http(s), no credentials in the URL, the
-hostname on the operator's allowlist, every resolved address public (or the host/network explicitly
-listed in ``outbound_private_hosts`` by the operator), then the connection goes to the vetted IP
-itself -- the Host header and TLS SNI/certificate check keep the hostname -- so a second DNS answer
-cannot swap in an internal address (DNS rebinding). No proxies from the environment, no redirects
-(a 3xx is refused, never followed), and the body is streamed and cut at a byte cap.
+Order of checks, every one before a byte is sent: the URL shape (http(s), no credentials, no
+whitespace/backslashes, one canonical spelling of the host -- ``127.1``, ``2130706433``, ``0x7f.0.0.1``
+and ``0177.0.0.1`` are refused rather than guessed at, P4-X05), the host on the allowlist, every resolved
+address public (or the host/network explicitly listed in ``outbound_private_hosts`` by the operator;
+link-local and cloud-metadata addresses never), then the connection goes to the vetted IP itself -- the
+Host header and TLS SNI/certificate check keep the hostname -- so a second DNS answer cannot swap in an
+internal address (DNS rebinding). No proxies from the environment, no redirects (a 3xx is refused,
+never followed), and the body is streamed and cut at a byte cap. Air-gapped installs (``internal_only``)
+refuse every public address, the same egress rule the model transport follows.
+
+Allowlist entries (``match_host``): ``*`` (any host), ``*.example.com`` (subdomains only), an exact
+hostname, an IP address or CIDR network (matches address-literal URLs only), each optionally with
+``:port`` (``[v6]:port`` for IPv6). Exact names and networks are *explicit* matches; wildcards are not,
+and callers use that to decide whether a private address may be reached.
 """
 from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from analystos.core.errors import InvalidInput, PolicyDenied, UpstreamUnavailable
@@ -34,10 +43,142 @@ DEFAULT_MAX_BYTES = 1_000_000
 DEFAULT_TIMEOUT_SECONDS = 30.0
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# Never reachable, whatever an operator lists: link-local (where cloud metadata lives) and the metadata
+# endpoints that sit outside it (AWS IPv6 IMDS, Alibaba, Azure WireServer).
+NEVER_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "169.254.0.0/16", "fe80::/10", "fd00:ec2::254/128", "100.100.100.200/32", "168.63.129.16/32"))
+_UNSAFE_URL_CHARS = re.compile(r"[\s\\\x00-\x1f\x7f]")
+_HOST_LABEL = re.compile(r"^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?$")
+_NUMERIC_LABEL = re.compile(r"^(0x[0-9a-f]*|[0-9]+)$")
+Match = Literal["explicit", "wildcard"]
 
 
 class OutboundRefused(PolicyDenied):
     """An outbound call the SSRF guard will not make."""
+
+
+def canonical_host(host: str) -> str:
+    """The one accepted spelling of a URL host: lower-case ASCII, no trailing dot, an IPv4 address only
+    in dotted-quad form. WHATWG URL parsers read a numeric last label as IPv4 (``127.1``, ``0x7f000001``,
+    ``0177.0.0.1``); rather than reproduce every parser's reading, such a host is refused."""
+    host = (host or "").strip().lower().rstrip(".")
+    if not host:
+        raise OutboundRefused("the URL has no host")
+    if ":" in host:  # an IPv6 literal (brackets already removed); zone ids (%eth0) are refused
+        if "%" in host:
+            raise OutboundRefused(f"host {host!r}: IPv6 zone ids are not allowed")
+        try:
+            return str(ipaddress.IPv6Address(host))
+        except ValueError:
+            raise OutboundRefused(f"host {host!r} is not a valid IPv6 address") from None
+    if not host.isascii():
+        raise OutboundRefused(f"host {host!r} must be written in ASCII (punycode, xn--...)")
+    labels = host.split(".")
+    if _NUMERIC_LABEL.match(labels[-1]):
+        try:
+            if str(ipaddress.IPv4Address(host)) == host:
+                return host
+        except ValueError:
+            pass
+        raise OutboundRefused(f"host {host!r} is an ambiguous numeric address; write it as a dotted quad (a.b.c.d)")
+    if len(host) > 253 or not all(_HOST_LABEL.match(label) for label in labels):
+        raise OutboundRefused(f"host {host!r} is not a valid hostname")
+    return host
+
+
+def parse_url(url: str) -> tuple[str, str, int]:
+    """``(scheme, canonical host, port)`` of an outbound URL, or ``OutboundRefused``."""
+    raw = (url or "").strip()
+    if _UNSAFE_URL_CHARS.search(raw):
+        raise OutboundRefused("the URL contains whitespace, control characters or backslashes")
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise OutboundRefused("only http(s) URLs with a host can be called")
+    if parts.username or parts.password or "@" in parts.netloc:
+        raise OutboundRefused("URLs must not embed credentials; use a secret reference")
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError as exc:
+        raise OutboundRefused("the URL has an invalid port") from exc
+    return parts.scheme, canonical_host(parts.hostname), port
+
+
+@dataclass(frozen=True)
+class HostEntry:
+    """One parsed allowlist entry."""
+
+    kind: Literal["any", "wildcard", "name", "network"]
+    value: str
+    port: int | None = None
+
+    def matches(self, host: str, port: int) -> Match | None:
+        if self.port is not None and self.port != port:
+            return None
+        if self.kind == "any":
+            return "wildcard"
+        if self.kind == "wildcard":
+            return "wildcard" if host.endswith("." + self.value) else None
+        if self.kind == "name":
+            return "explicit" if host == self.value else None
+        try:
+            return "explicit" if ipaddress.ip_address(host) in ipaddress.ip_network(self.value) else None
+        except ValueError:  # a hostname never matches a network entry: names are allowlisted by name
+            return None
+
+
+def parse_entry(entry: str) -> HostEntry:
+    """``InvalidInput`` for an entry that could never match safely (``*.``, ``*.com.``, bad port...)."""
+    e = (entry or "").strip().lower()
+    port: int | None = None
+    if e.startswith("["):
+        host, _, rest = e[1:].partition("]")
+        if rest:
+            if not rest.startswith(":") or not rest[1:].isdigit():
+                raise InvalidInput(f"allowlist entry {entry!r}: expected [ipv6]:port")
+            port = int(rest[1:])
+        e = host
+    elif e.count(":") == 1:
+        e, _, p = e.partition(":")
+        if not p.isdigit():
+            raise InvalidInput(f"allowlist entry {entry!r}: the port must be a number")
+        port = int(p)
+    if port is not None and not 0 < port < 65536:
+        raise InvalidInput(f"allowlist entry {entry!r}: port out of range")
+    if e.startswith("*.") and not e[2:].strip("."):
+        raise InvalidInput(f"allowlist entry {entry!r}: a wildcard needs a domain (*.example.com)")
+    e = e.rstrip(".")
+    if e == "*":
+        return HostEntry("any", "*", port)
+    try:
+        return HostEntry("network", str(ipaddress.ip_network(e, strict=False)), port)
+    except ValueError:
+        pass
+    wildcard = e.startswith("*.")
+    try:
+        name = canonical_host(e[2:] if wildcard else e)
+    except OutboundRefused as exc:
+        raise InvalidInput(f"allowlist entry {entry!r}: {exc.message}") from None
+    if wildcard and "." not in name:
+        raise InvalidInput(f"allowlist entry {entry!r}: a wildcard needs at least two labels (*.example.com)")
+    return HostEntry("wildcard" if wildcard else "name", name, port)
+
+
+def match_host(host: str, port: int, entries: Iterable[str]) -> Match | None:
+    """Best match of a canonical host against allowlist entries; malformed entries never match."""
+    best: Match | None = None
+    for raw in entries:
+        try:
+            m = parse_entry(raw).matches(host, port)
+        except InvalidInput:
+            continue
+        if m == "explicit":
+            return m
+        best = best or m
+    return best
+
+
+def _never(address: IPAddress) -> bool:
+    return any(a in n for a in [address, *_embedded_ipv4(address)] for n in NEVER_NETWORKS if a.version == n.version)
 
 
 def _embedded_ipv4(address: IPAddress) -> list[ipaddress.IPv4Address]:
@@ -106,28 +247,26 @@ class PinnedTarget:
 
 
 def pin(url: str, *, allowlist: Iterable[str] | None, private_hosts: Iterable[str] = (),
-        resolver: Resolver | None = None) -> PinnedTarget:
-    """Validate ``url`` and resolve it once. ``allowlist`` None means the caller has its own allowlist
-    (an owner-allowed MCP server); an empty allowlist refuses everything."""
-    parts = urlsplit((url or "").strip())
-    hostname = (parts.hostname or "").lower().rstrip(".")
-    if parts.scheme not in ("http", "https") or not hostname:
-        raise OutboundRefused("only http(s) URLs with a host can be called")
-    if parts.username or parts.password:
-        raise OutboundRefused("URLs must not embed credentials; use a secret reference")
-    try:
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-    except ValueError as exc:
-        raise OutboundRefused("the URL has an invalid port") from exc
-    if allowlist is not None and hostname not in {h.strip().lower() for h in allowlist if h.strip()}:
+        resolver: Resolver | None = None, internal_only: bool = False) -> PinnedTarget:
+    """Validate ``url`` and resolve it once. ``allowlist`` None means the caller has checked its own
+    allowlist (the MCP client's platform host allowlist); an empty allowlist refuses everything.
+    ``internal_only`` (air-gapped) refuses public addresses too."""
+    scheme, hostname, port = parse_url(url)
+    if allowlist is not None and match_host(hostname, port, allowlist) is None:
         raise OutboundRefused(f"host {hostname} is not on the outbound allowlist")
     private_hosts = list(private_hosts)
     addresses = (resolver or system_resolver)(hostname, port)
+    never = [str(a) for a in addresses if _never(a)]
+    if never:
+        raise OutboundRefused(f"host {hostname} resolves to a non-public address ({', '.join(never)}) in a link-local or "
+                              "cloud-metadata range, which is never allowed")
     blocked = [str(a) for a in addresses if not address_is_public(a) and not private_allowed(hostname, a, private_hosts)]
     if blocked:
         raise OutboundRefused(f"host {hostname} resolves to a non-public address ({', '.join(blocked)}); an operator "
                               "must list it in outbound_private_hosts to allow it")
-    return PinnedTarget(url=url.strip(), scheme=parts.scheme, hostname=hostname, port=port, address=addresses[0])
+    if internal_only and (public := [str(a) for a in addresses if address_is_public(a)]):
+        raise OutboundRefused(f"air-gapped install: host {hostname} resolves to a public address ({', '.join(public)})")
+    return PinnedTarget(url=url.strip(), scheme=scheme, hostname=hostname, port=port, address=addresses[0])
 
 
 def _check_host(target: PinnedTarget, host: str, port: int | None) -> None:
@@ -184,14 +323,14 @@ def validate_parameters(schema: dict[str, Any] | None, parameters: dict[str, Any
 def call(url: str, *, method: str = "POST", parameters: dict[str, Any] | None = None,
          allowlist: Iterable[str] | None, private_hosts: Iterable[str] = (), timeout: float = DEFAULT_TIMEOUT_SECONDS,
          max_bytes: int = DEFAULT_MAX_BYTES, headers: dict[str, str] | None = None, resolver: Resolver | None = None,
-         transport: Any | None = None) -> dict[str, Any]:
+         transport: Any | None = None, internal_only: bool = False) -> dict[str, Any]:
     """One guarded request. Parameters go in the JSON body (the query string for GET)."""
     import httpx
 
     method = method.upper()
     if method not in METHODS:
         raise InvalidInput(f"HTTP method {method} is not supported")
-    target = pin(url, allowlist=allowlist, private_hosts=private_hosts, resolver=resolver)
+    target = pin(url, allowlist=allowlist, private_hosts=private_hosts, resolver=resolver, internal_only=internal_only)
     parts = urlsplit(target.url)
     pinned_url = parts._replace(netloc=target.netloc).geturl()
     default_port = target.port == (443 if target.scheme == "https" else 80)
@@ -256,7 +395,7 @@ def invoke_manifest(manifest: Any, arguments: dict[str, Any], *, resolver: Resol
     return call(spec["url"], method=spec["method"], parameters=arguments,
                 allowlist=split_hosts(settings.http_tool_allowlist), private_hosts=split_hosts(settings.outbound_private_hosts),
                 timeout=float(settings.http_tool_timeout_seconds), max_bytes=int(settings.http_tool_max_bytes),
-                resolver=resolver, transport=transport)
+                resolver=resolver, transport=transport, internal_only=bool(getattr(settings, "air_gapped", False)))
 
 
 def split_hosts(value: str | Iterable[str] | None) -> list[str]:

@@ -243,8 +243,13 @@ class Settings(BaseSettings):
     http_tool_allowlist: str = ""
     outbound_private_hosts: str = ""
     # MCP servers only: loopback and RFC 1918 ranges are allowed by default (owner decision 2026-09-26) so
-    # in-cluster servers keep working; link-local/metadata and CGNAT stay refused. Set "" to require listing.
+    # in-cluster servers keep working -- for a host the platform MCP allowlist names exactly (P4-X05; a
+    # wildcard match reaches public addresses only); link-local/metadata and CGNAT stay refused.
     mcp_private_hosts: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    # Platform MCP host allowlist (P4-X05), the deployment half; admins extend it at runtime with the
+    # platform setting `outbound.mcp_host_allowlist`. A workspace can register and reach only an MCP server
+    # whose host matches one of the two (entries: see tools/http.py). Empty in both = no MCP server.
+    mcp_host_allowlist: str = ""
     http_tool_timeout_seconds: float = 30.0
     http_tool_max_bytes: int = Field(default=1_000_000, ge=1)
 

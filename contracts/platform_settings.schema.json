@@ -63,6 +63,18 @@
           "title": "Min Relevance",
           "type": "number"
         },
+        "cache_enabled": {
+          "default": true,
+          "title": "Cache Enabled",
+          "type": "boolean"
+        },
+        "cache_ttl_seconds": {
+          "default": 900,
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Cache Ttl Seconds",
+          "type": "integer"
+        },
         "profiles": {
           "additionalProperties": {
             "$ref": "#/$defs/PurposeProfile"
@@ -126,6 +138,18 @@
         "pii_value_sampling": {
           "default": true,
           "title": "Pii Value Sampling",
+          "type": "boolean"
+        },
+        "profile_reuse_hours": {
+          "default": 24,
+          "maximum": 8760,
+          "minimum": 0,
+          "title": "Profile Reuse Hours",
+          "type": "integer"
+        },
+        "profile_on_select": {
+          "default": true,
+          "title": "Profile On Select",
           "type": "boolean"
         }
       },
@@ -434,6 +458,21 @@
       "title": "MonitorSettings",
       "type": "object"
     },
+    "OutboundSettings": {
+      "description": "Where workspace-registered endpoints may point (P4-X05). Platform-level on purpose: a workspace\nowner decides *whether* to use a server, only an administrator decides which hosts exist at all.\nAdded to ANALYSTOS_MCP_HOST_ALLOWLIST; entry syntax in tools/http.py (`*`, `*.example.com`,\n`host[:port]`, IP or CIDR). Only an exact name, IP or CIDR lets a server resolve to a private address.",
+      "properties": {
+        "mcp_host_allowlist": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 500,
+          "title": "Mcp Host Allowlist",
+          "type": "array"
+        }
+      },
+      "title": "OutboundSettings",
+      "type": "object"
+    },
     "PurposeProfile": {
       "description": "What the context compiler (P4-T03) gives one model purpose, and how much of it.\n\n`sections` are filled in order after the mandatory part (the caller's required inputs); each\nsection is cut in whole items and whatever does not fit is listed as omitted, never truncated.\n`referenced_only` restricts the catalog to the tables the objective/question/SQL names (SQL\ngeneration and repair). Budgets are characters of compact JSON (\u2248 3.6 chars per token).",
       "properties": {
@@ -563,6 +602,9 @@
     },
     "features": {
       "$ref": "#/$defs/FeatureFlags"
+    },
+    "outbound": {
+      "$ref": "#/$defs/OutboundSettings"
     },
     "decisions": {
       "$ref": "#/$defs/DecisionSettings"

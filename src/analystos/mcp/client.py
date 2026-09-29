@@ -2,6 +2,10 @@
 
 Security model, in order of what can go wrong:
 
+* **Platform host allowlist (SSRF).** A workspace can register, and connect to, only a server whose
+  host matches the administrator's allowlist (`ANALYSTOS_MCP_HOST_ALLOWLIST` + platform setting
+  `outbound.mcp_host_allowlist`); the host is resolved and every address checked at registration and
+  again on each connection, which is pinned to the vetted address (`_pin`, `tools/http.py`).
 * **Allowlist.** A registered server is inert until a workspace owner (or platform admin) sets
   `allowed`. Nothing — not even `tools/list` — is sent to a server that is not allowed.
 * **Credentials by reference.** `secret_ref` is `env:NAME` / `file:/path`, resolved at call time
@@ -21,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
-import ipaddress
 import re
 import threading
 import time
@@ -101,6 +104,51 @@ def _private_hosts() -> list[str]:
     return outbound.split_hosts(s.outbound_private_hosts) + outbound.split_hosts(s.mcp_private_hosts)
 
 
+def _operator_private_hosts() -> list[str]:
+    from analystos.core.config import get_settings
+
+    return outbound.split_hosts(get_settings().outbound_private_hosts)
+
+
+def _platform_allowlist() -> list[str]:
+    """The platform MCP host allowlist: deployment env plus the admin's runtime setting."""
+    from analystos.core.config import get_settings
+    from analystos.services import platform_settings
+
+    return outbound.split_hosts(get_settings().mcp_host_allowlist) + list(platform_settings.get().outbound.mcp_host_allowlist)
+
+
+def _air_gapped() -> bool:
+    from analystos.core.config import get_settings
+
+    return bool(get_settings().air_gapped)
+
+
+def _pin(url: str, resolver: outbound.Resolver | None = None) -> outbound.PinnedTarget:
+    """P4-X05: the one check behind registration and every connection. The host must match the platform
+    allowlist; a private address is reachable only for an exact (non-wildcard) entry, within the MCP
+    private ranges or a listed network (or the operator's outbound_private_hosts); link-local/metadata
+    never; air-gapped installs reach internal addresses only. Resolved here, connected to that address."""
+    _, host, port = outbound.parse_url(url)
+    entries = _platform_allowlist()
+    match = outbound.match_host(host, port, entries)
+    if match is None:
+        raise outbound.OutboundRefused(f"host {host} (port {port}) is not on the platform MCP host allowlist; a platform "
+                                       "administrator must add it (outbound.mcp_host_allowlist)")
+    private = _operator_private_hosts()
+    if match == "explicit":
+        networks = [e for e in entries if _is_network_entry(e)]
+        private += [h for h in _private_hosts() if h not in private] + networks
+    return outbound.pin(url, allowlist=None, private_hosts=private, resolver=resolver, internal_only=_air_gapped())
+
+
+def _is_network_entry(entry: str) -> bool:
+    try:
+        return outbound.parse_entry(entry).kind == "network"
+    except InvalidInput:
+        return False
+
+
 def _bearer(server: McpServer) -> dict[str, str]:
     from analystos.connectors.secrets import resolve_secret
 
@@ -112,10 +160,10 @@ async def _with_client(server: McpServer, fn: Callable[[Any], Awaitable[T]]) -> 
     import httpx
 
     timeout = float((server.config or {}).get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
-    # P7-11: the owner's `allowed` flag is this server's allowlist; the address must still be public
-    # (or listed by the operator), and every request goes to the address vetted here (no rebinding,
-    # no redirects, no environment proxies).
-    target = outbound.pin(server.url, allowlist=None, private_hosts=_private_hosts())
+    # P7-11 / P4-X05: the owner's `allowed` flag says the workspace uses this server; the platform host
+    # allowlist and the address checks are re-applied on every connection (an admin's removal takes effect
+    # at once), and every request goes to the address vetted here (no rebinding, no redirects, no proxies).
+    target = _pin(server.url)
     from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
 
@@ -271,20 +319,19 @@ def server_by_name(session: Session, workspace_id: str, name: str) -> McpServer:
     return srv
 
 
-def _validate_url(url: str) -> str:
-    parts = urlsplit(url.strip())
+def _validate_url(url: str, resolver: outbound.Resolver | None = None) -> str:
+    """Shape errors are the caller's input (400); host and address refusals are policy (403). The host
+    is resolved now as well as on every connection, so a server that could never be reached is not stored."""
+    parts = urlsplit((url or "").strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise InvalidInput("MCP server url must be an http(s) URL")
-    if parts.username or parts.password:
+    if parts.username or parts.password or "@" in parts.netloc:
         raise InvalidInput("put credentials in secret_ref (env:NAME or file:/path), never in the url")
-    try:  # an address literal is checked now; a hostname is resolved and checked on every call
-        literal = ipaddress.ip_address(parts.hostname.strip("[]"))
-    except ValueError:
-        literal = None
-    if literal is not None and not outbound.address_is_public(literal) and \
-            not outbound.private_allowed(parts.hostname, literal, _private_hosts()):
-        raise InvalidInput(f"MCP server address {literal} is not public; an operator must list it in "
-                           "outbound_private_hosts to allow it")
+    try:
+        outbound.parse_url(url)
+    except outbound.OutboundRefused as exc:
+        raise InvalidInput(f"MCP server url: {exc.message}") from None
+    _pin(url, resolver)
     return url.strip()
 
 
@@ -307,7 +354,14 @@ def register_server(session: Session, user: User, workspace_id: str, *, name: st
     if session.scalar(select(McpServer.id).where(McpServer.workspace_id == workspace_id, McpServer.name == name)):
         raise Conflict(f"an MCP server named {name} is already registered in this workspace")
     cfg = {k: v for k, v in (config or {}).items() if k in ("max_calls_per_run", "timeout_seconds", "result_max_chars", "lift_json_blocks")}
-    srv = McpServer(id=new_id("mcps"), workspace_id=workspace_id, name=name, url=_validate_url(url), transport=transport,
+    try:
+        url = _validate_url(url)
+    except outbound.OutboundRefused as exc:
+        audit(f"user:{user.id}", "mcp.server_refused", workspace_id=workspace_id, target=name, decision="deny",
+              reasons=["mcp_host_not_allowed"], details={"url": (url or "")[:300], "error": exc.message[:300]}, session=session)
+        session.commit()  # the refusal is recorded although the caller sees the failure
+        raise
+    srv = McpServer(id=new_id("mcps"), workspace_id=workspace_id, name=name, url=url, transport=transport,
                     secret_ref=_validate_secret_ref(secret_ref), status="registered", allowed=False, config=cfg,
                     tools=[], classifications={}, created_by=user.id)
     session.add(srv)

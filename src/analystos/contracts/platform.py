@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 LLMMode = Literal["off", "auto", "always"]
 # Cheap first, escalate: which tier answers a chat purpose. never = the small tier only;
@@ -193,6 +193,31 @@ class SourceSettings(BaseModel):
     staged_max_rows: int = Field(1_000_000, ge=1000, le=100_000_000)
 
 
+class OutboundSettings(BaseModel):
+    """Where workspace-registered endpoints may point (P4-X05). Platform-level on purpose: a workspace
+    owner decides *whether* to use a server, only an administrator decides which hosts exist at all.
+    Added to ANALYSTOS_MCP_HOST_ALLOWLIST; entry syntax in tools/http.py (`*`, `*.example.com`,
+    `host[:port]`, IP or CIDR). Only an exact name, IP or CIDR lets a server resolve to a private address."""
+
+    mcp_host_allowlist: list[str] = Field(default_factory=list, max_length=500)
+
+    @field_validator("mcp_host_allowlist")
+    @classmethod
+    def _entries(cls, v: list[str]) -> list[str]:
+        from analystos.core.errors import InvalidInput
+        from analystos.tools.http import parse_entry
+
+        out: list[str] = []
+        for e in v:
+            try:
+                parse_entry(e)
+            except InvalidInput as exc:
+                raise ValueError(exc.message) from None
+            if e.strip().lower() not in out:
+                out.append(e.strip().lower())
+        return out
+
+
 class FeatureFlags(BaseModel):
     jev_decisions: bool = True
     superset_publishing: bool = True
@@ -208,6 +233,7 @@ class PlatformSettings(BaseModel):
     monitors: MonitorSettings = Field(default_factory=MonitorSettings)
     sources: SourceSettings = Field(default_factory=SourceSettings)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
+    outbound: OutboundSettings = Field(default_factory=OutboundSettings)
     decisions: DecisionSettings = Field(default_factory=DecisionSettings)
 
 

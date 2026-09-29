@@ -94,6 +94,45 @@ def test_nothing_is_sent_before_the_allowlist(world, double):
     assert double.calls == [] and double.auth_failures == []
 
 
+def test_platform_host_allowlist_gates_registration_and_connection(world, double, monkeypatch):
+    """P4-X05: only an administrator's allowlist entry makes a host registrable; removing it stops calls."""
+    from analystos.core.config import get_settings
+    from analystos.services import platform_settings
+
+    monkeypatch.setattr(get_settings(), "mcp_host_allowlist", "")
+    platform_settings.invalidate()
+    with session_scope() as s:
+        admin = User(id=new_id("usr"), email=f"admin-{new_id('x')}@t", name="a", password_hash=hash_password("x"),
+                     is_admin=True)
+        s.add(admin)
+        s.flush()
+        admin_id = admin.id
+    try:
+        with session_scope() as s, pytest.raises(PolicyDenied, match="platform MCP host allowlist"):
+            mc.register_server(s, U(world["owner"]), world["ws"], name="bi_double", url=double.url)
+        with session_scope() as s:
+            refused = s.scalars(select(AuditEvent).where(AuditEvent.workspace_id == world["ws"],
+                                                         AuditEvent.action == "mcp.server_refused")).all()
+            assert len(refused) == 1 and refused[0].decision == "deny"
+            assert s.scalar(select(McpServer.id).where(McpServer.workspace_id == world["ws"])) is None
+        with session_scope() as s, pytest.raises(Forbidden):  # a workspace owner cannot extend it
+            platform_settings.update(s, U(world["owner"]), {"outbound": {"mcp_host_allowlist": ["127.0.0.1"]}})
+        with session_scope() as s:
+            platform_settings.update(s, s.get(User, admin_id), {"outbound": {"mcp_host_allowlist": ["127.0.0.1"]}})
+        sid = _registered(world, double)
+        assert double.calls  # registered, allowed and refreshed against the listed host
+        with session_scope() as s:
+            platform_settings.update(s, s.get(User, admin_id), {"outbound": {"mcp_host_allowlist": []}})
+        calls = len(double.calls)
+        with session_scope() as s, pytest.raises(PolicyDenied, match="allowlist"):
+            mc.refresh_tools(s, U(world["owner"]), world["ws"], sid)
+        assert len(double.calls) == calls  # nothing sent once the host left the allowlist
+    finally:
+        with session_scope() as s:
+            platform_settings.update(s, s.get(User, admin_id), {"outbound": {"mcp_host_allowlist": []}})
+        platform_settings.invalidate()
+
+
 def test_tools_import_as_unclassified_write_external_capabilities_with_screening(world, double):
     sid = _registered(world, double)
     with session_scope() as s:
