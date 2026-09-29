@@ -1954,4 +1954,35 @@ class MLScoringRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ------------------------------------------------------------------------------ physical-design advice (N-11)
+class IndexAdvice(Base):
+    """An index / partitioning / clustering recommendation derived from the gateway's query history and dry
+    plans (skills/index_advice.py). Advisory only: `ddl` is text for a person; no status means "applied"
+    because the platform never applies it. Re-analysis updates the row with the same `advice_key`."""
+
+    __tablename__ = "index_advice"
+    __table_args__ = (UniqueConstraint("workspace_id", "advice_key", name="uq_index_advice_key"),
+                      CheckConstraint("status IN ('open', 'acknowledged', 'dismissed', 'superseded')",
+                                      name="ck_index_advice_status"))
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str] = mapped_column(String(40))
+    asset: Mapped[str] = mapped_column(String(330))  # "schema.table" as the gateway sees it
+    kind: Mapped[str] = mapped_column(String(20))  # index | partition | clustering
+    columns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    dialect: Mapped[str] = mapped_column(String(30))
+    ddl: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[str] = mapped_column(String(10))  # high | medium | low
+    estimated_benefit: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # query fingerprints/ids, plan nodes, stats
+    notes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    advice_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    status_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 from analystos.db import column_presence  # noqa: E402,F401  (registers the absent-column filter, P7-20)

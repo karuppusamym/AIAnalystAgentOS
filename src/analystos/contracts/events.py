@@ -59,6 +59,8 @@ EVENT_TYPES = {
     "ml.scoring.refused", "ml.scoring.duplicate",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
+    # Physical-design advice (N-11): index / partitioning / clustering recommendations, never applied
+    "index_advice.generated", "index_advice.reviewed",
 }
 
 RUN_TERMINAL = {"COMPLETED", "FAILED", "REJECTED", "CANCELLED"}

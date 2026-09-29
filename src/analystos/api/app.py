@@ -18,6 +18,7 @@ from analystos.api.routers import data_shape as data_shape_router
 from analystos.api.routers import decisions as decisions_router
 from analystos.api.routers import definitions as definitions_router
 from analystos.api.routers import evidence as evidence_router
+from analystos.api.routers import index_advice as index_advice_router
 from analystos.api.routers import knowledge as knowledge_router
 from analystos.api.routers import mcp as mcp_router
 from analystos.api.routers import ml as ml_router
@@ -104,6 +105,7 @@ app.include_router(ml_router.router)
 app.include_router(pilot_router.router)  # named owners and pilot readiness (P4-09)
 app.include_router(process_router.router)  # process and task mining over event logs
 app.include_router(data_shape_router.router)  # what the selected tables are good for (patterns, next steps)
+app.include_router(index_advice_router.router)  # index / partitioning / clustering advice, never applied (N-11)
 mcp_server.mount(app)  # MCP protocol endpoint at /mcp (P4-X06)
 
 
