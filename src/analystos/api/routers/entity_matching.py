@@ -17,21 +17,21 @@ from analystos.services import entity_matching as svc
 router = APIRouter(prefix="/api", tags=["entity-matching"])
 
 
-class PairDecisionIn(BaseModel):
+class EntityMatchPairDecisionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pair_id: str
     decision: Literal["accept", "reject"]
     note: str | None = Field(default=None, max_length=2000)
 
 
-class ReviewIn(BaseModel):
+class EntityMatchReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    decisions: list[PairDecisionIn] = Field(default_factory=list, max_length=5000)
+    decisions: list[EntityMatchPairDecisionIn] = Field(default_factory=list, max_length=5000)
     accept_band: Literal["match", "review"] | None = None  # every still-undecided pair of the band
     reject_band: Literal["match", "review"] | None = None
 
 
-class ApprovalIn(BaseModel):
+class EntityMatchApprovalIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     approval_id: str | None = None
 
@@ -63,13 +63,13 @@ def list_pairs(workspace_id: str, match_id: str, band: Literal["match", "review"
 
 
 @router.post("/workspaces/{workspace_id}/entity-matches/{match_id}/review")
-def review(workspace_id: str, match_id: str, body: ReviewIn, user: User = Depends(current_user)):
+def review(workspace_id: str, match_id: str, body: EntityMatchReviewIn, user: User = Depends(current_user)):
     return svc.review(user, match_id, workspace_id, decisions=[d.model_dump() for d in body.decisions],
                       accept_band=body.accept_band, reject_band=body.reject_band)
 
 
 @router.post("/workspaces/{workspace_id}/entity-matches/{match_id}/promote")
-def promote(workspace_id: str, match_id: str, body: ApprovalIn, user: User = Depends(current_user)):
+def promote(workspace_id: str, match_id: str, body: EntityMatchApprovalIn, user: User = Depends(current_user)):
     """Without approval_id: request the hash-bound `entity_match.promote` approval (every pair must be decided).
     With it (approved by an approver): load the crosswalk and record the reviewed join keys."""
     return svc.promote(user, match_id, workspace_id, approval_id=body.approval_id)
