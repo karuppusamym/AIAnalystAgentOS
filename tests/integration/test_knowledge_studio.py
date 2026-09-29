@@ -260,3 +260,35 @@ def test_semantic_graph_draws_governed_edges_solid_and_inferred_dashed(api, work
     assert edges("suggests") == {("incident", "sn.incident", False)}
     assert nodes["metric:breach_rate"]["status"] == "proposed"
     assert body["governed"] == 3 and body["inferred"] == sum(1 for e in body["edges"] if not e["governed"])
+
+
+def test_semantic_graph_shows_only_this_workspace(api, workspace):
+    """A retail catalog sees the sales pack's documents mapped to its own tables, never the ticket glossary
+    of another domain nor tables it does not have (documents used to add `incident`, `cmdb_ci`, … nodes)."""
+    from analystos.db.models import Source, SourceAsset, SourceColumn
+
+    owner = _login(api, "admin@analystos.local")
+    with session_scope() as s:
+        src = Source(id=new_id("src"), workspace_id=workspace, kind="postgres", name="shop", config={}, status="ready")
+        s.add(src)
+        s.flush()
+        for name, cols in (("orders", ["order_id", "customer_id", "order_date", "sales_channel", "returned", "unit_price",
+                                       "quantity", "discount"]),
+                           ("customers", ["customer_id", "segment", "region"])):
+            a = SourceAsset(id=new_id("ast"), source_id=src.id, workspace_id=workspace, schema_name="shop", name=name,
+                            source_name=name, selected=True)
+            s.add(a)
+            s.flush()
+            s.add_all([SourceColumn(asset_id=a.id, name=c, data_type="text", ordinal=i)
+                       for i, c in enumerate(cols)])
+    body = api.get(f"/api/workspaces/{workspace}/knowledge/graph", headers=owner).json()
+    tables = {n["label"] for n in body["nodes"] if n["kind"] == "table"}
+    shared = {n["path"] for n in body["nodes"] if n["kind"] == "document" and n["pack_kind"] != "workspace"}
+    assert tables == {"shop.orders", "shop.customers"}
+    assert not any(p.startswith(("domain/itsm/", "platform/term/", "platform/metric/")) for p in shared), shared
+    assert any(p.startswith("domain/sales/") for p in shared), shared
+    ids = {n["id"] for n in body["nodes"]}
+    doc_ids = {n["id"] for n in body["nodes"] if n["kind"] == "document" and n["pack_kind"] != "workspace"}
+    # every shared document is there because it maps one of this workspace's tables
+    mapped = {e["source"] for e in body["edges"] if e["kind"] == "maps" and e["target"] in ids}
+    assert doc_ids <= mapped

@@ -282,7 +282,13 @@ def revisions(session: Session, pack: KnowledgePack, *, path: str | None = None,
 # ------------------------------------------------------------------------------------ graph
 def graph(session: Session, workspace_id: str) -> dict[str, Any]:
     """Nodes (tables, datasets, metrics, documents, pending suggestions) and edges, each edge
-    `governed` (solid) or inferred (dashed), with the reason it is one or the other."""
+    `governed` (solid) or inferred (dashed), with the reason it is one or the other.
+
+    Only this workspace: its tables, joins, model, metrics, suggestions and own documents. A shared
+    (platform or imported) document joins only when it maps a column of a table this workspace has,
+    and not when it comes from a domain pack the workspace does not use (`applicable_domain_packs`),
+    so a retail workspace never shows a ticket glossary or tables it does not have."""
+    from analystos.knowledge.entries import applicable_domain_packs, domain_pack_of
     from analystos.semantic import service as sem
 
     nodes: dict[str, dict[str, Any]] = {}
@@ -305,12 +311,15 @@ def graph(session: Session, workspace_id: str) -> dict[str, Any]:
     def table(a: SourceAsset) -> str:
         return node(f"table:{a.id}", "table", f"{a.schema_name}.{a.name}", selected=a.selected)
 
-    def table_ref(ref: str) -> str | None:
-        """`schema.table` or `source.table.column` -> a table node (a known asset when one matches)."""
+    def table_ref(ref: str, *, known_only: bool = False) -> str | None:
+        """`schema.table` or `source.table.column` -> a table node (a known asset when one matches;
+        with `known_only`, None instead of a node for a table this workspace does not have)."""
         parts = [p for p in ref.lower().split(".") if p]
         for key in (".".join(parts[-3:-1]), parts[-2] if len(parts) >= 2 else "", ".".join(parts[-2:]), parts[-1] if parts else ""):
             if key and key in by_name:
                 return table(by_name[key])
+        if known_only:
+            return None
         return node(f"table:{'.'.join(parts[:-1]) or ref}", "table", ".".join(parts[:-1]) or ref) if len(parts) >= 2 else None
 
     for a in assets.values():
@@ -362,25 +371,35 @@ def graph(session: Session, workspace_id: str) -> dict[str, Any]:
     docs = list(session.scalars(select(KnowledgeDocument).where(KnowledgeDocument.pack_id.in_(list(visible)))))
     doc_by_path = {(d.pack_id, d.path): d for d in docs}
 
+    applicable = applicable_domain_packs(session, workspace_id)
+
     def doc_node(d: KnowledgeDocument) -> str:
         p = visible[d.pack_id]
         return node(f"doc:{d.id}", "document", d.title, pack_id=d.pack_id, pack_kind=p.kind, path=d.path,
                     trust_tier=d.trust_tier, doc_kind=d.kind)
 
+    def other_domain(d: KnowledgeDocument) -> bool:
+        ext = _ext(d.frontmatter or {})
+        pack = domain_pack_of(str(ext.get("origin") or "")) or (str(ext["domain_pack"]) if ext.get("domain_pack") else None)
+        return applicable is not None and pack is not None and pack not in applicable
+
     for d in docs:
-        if visible[d.pack_id].kind == "workspace":
+        own = visible[d.pack_id].kind == "workspace"
+        if not own and other_domain(d):
+            continue
+        if own:
             doc_node(d)
         cols = _ext(d.frontmatter or {}).get("mapped_columns") or []
         reviewed = d.trust_tier == "human-reviewed"
         for col in cols if isinstance(cols, list) else []:
-            t = table_ref(str(col))
+            t = table_ref(str(col), known_only=not own)
             if t:
                 edge(doc_node(d), t, "maps", reviewed, f"document {d.trust_tier}", str(col).split(".")[-1])
     for link in session.scalars(select(KnowledgeLink).where(KnowledgeLink.pack_id.in_(list(visible)),
                                                             KnowledgeLink.kind == "internal", KnowledgeLink.resolved.is_(True))):
         a, b = doc_by_path.get((link.pack_id, link.source_path)), doc_by_path.get((link.pack_id, link.target_path or ""))
-        if a is None or b is None or a.id == b.id:
-            continue
+        if a is None or b is None or a.id == b.id or f"doc:{a.id}" not in nodes or f"doc:{b.id}" not in nodes:
+            continue  # a link never pulls in a document that has nothing to do with this workspace
         edge(doc_node(a), doc_node(b), "links", a.trust_tier == "human-reviewed", f"link in a {a.trust_tier} document")
 
     for s in session.scalars(select(KnowledgeSuggestion).where(KnowledgeSuggestion.workspace_id == workspace_id,
