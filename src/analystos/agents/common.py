@@ -107,7 +107,9 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
     if key in memo:
         return copy.deepcopy(memo[key])
     catalog = []
-    for asset, cols in asset_rows(ctx):
+    rows = asset_rows(ctx)
+    joins = _validated_joins(rows, denied)
+    for asset, cols in rows:
         fq = f"{asset.schema_name}.{asset.name}"
         entries = []
         for c in cols:
@@ -118,6 +120,8 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
             entry: dict[str, Any] = {"name": c.name, "type": c.data_type, "semantic_type": c.semantic_type or p.get("semantic_type")}
             if sem.get("semantic_role"):
                 entry["role"] = sem["semantic_role"]
+            if sem.get("semantic_role") == "flag" and sem.get("flag_true") and not sensitive(c):
+                entry["true_value"] = str(sem["flag_true"])[:20]  # a Yes/No column's encoding, like a boolean type
             # Owner- and user-written text is as untrusted as crawled text here: screened at build (P7-20).
             # A model's unreviewed draft never reaches a prompt (knowledge/suggestions.py).
             draft = not sem.get("reviewed")
@@ -143,7 +147,10 @@ def catalog_for_prompt(ctx: RunContext, *, include_values: bool = True, objectiv
         if capped and llm.compact_prompts and len(entries) > llm.catalog_max_columns_per_table:
             entries.sort(key=lambda e: column_rank(e, tokens))
             entries = entries[:llm.catalog_max_columns_per_table]
-        catalog.append({"asset": fq, **table_facts(asset), "row_count": asset.row_count, "columns": entries})
+        key_cols = [c.name for c in cols if getattr(c, "is_key", False) and f"{fq}.{c.name}" not in denied]
+        catalog.append({"asset": fq, **table_facts(asset), "row_count": asset.row_count,
+                        **({"key": key_cols} if key_cols else {}), **({"joins": joins[aid]} if (aid := getattr(asset, "id", None)) in joins else {}),
+                        "columns": entries})
     if capped and llm.compact_prompts and len(catalog) > llm.catalog_max_tables:
         catalog.sort(key=lambda t: -table_relevance(t, tokens))
         catalog = catalog[:llm.catalog_max_tables]
@@ -172,6 +179,28 @@ def complete_values(profile: dict[str, Any]) -> list[Any] | None:
     if top and isinstance(distinct, int) and distinct <= MAX_PROMPT_VALUES and len(top) >= distinct:
         return top[:MAX_PROMPT_VALUES]
     return None
+
+
+def _validated_joins(rows: list[tuple[Any, list[Any]]], denied: set[str]) -> dict[str, list[dict[str, str]]]:
+    """Per asset id, its validated many-to-one joins to the other tables in `rows` ({column, references}): how a
+    model should join them. Rejected or unvalidated measurements and denied columns are left out."""
+    from analystos.db.models import Relationship
+
+    fq = {a.id: f"{a.schema_name}.{a.name}" for a, _ in rows if getattr(a, "id", None)}
+    workspace_id = next((getattr(a, "workspace_id", None) for a, _ in rows), None)
+    if len(fq) < 2 or not workspace_id:
+        return {}
+    out: dict[str, list[dict[str, str]]] = {}
+    with session_scope() as s:
+        for r in s.scalars(select(Relationship).where(
+                Relationship.workspace_id == workspace_id, Relationship.validated.is_(True),
+                Relationship.from_asset_id.in_(list(fq)), Relationship.to_asset_id.in_(list(fq))).order_by(Relationship.id)):
+            src, dst = fq[r.from_asset_id], fq[r.to_asset_id]
+            if (r.evidence or {}).get("rejected") or f"{src}.{r.from_column}" in denied or f"{dst}.{r.to_column}" in denied:
+                continue
+            out.setdefault(r.from_asset_id, []).append({"column": r.from_column, "references": f"{dst}.{r.to_column}",
+                                                        "cardinality": r.cardinality})
+    return out
 
 
 def table_facts(asset: Any) -> dict[str, Any]:

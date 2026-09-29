@@ -157,12 +157,14 @@ seed, start and a completed local run
 | Outbound HTTP and MCP | `ANALYSTOS_HTTP_TOOL_ALLOWLIST`, `ANALYSTOS_OUTBOUND_PRIVATE_HOSTS`, `ANALYSTOS_MCP_PRIVATE_HOSTS` (default: loopback and RFC 1918 allowed for MCP servers only), `ANALYSTOS_HTTP_TOOL_TIMEOUT_SECONDS`, `ANALYSTOS_HTTP_TOOL_MAX_BYTES` |
 | Isolated compute pools (§5) | `ANALYSTOS_ISOLATED_POOLS`, `ANALYSTOS_ISOLATED_TRANSPORT`, `ANALYSTOS_WORKER_ARTIFACT_URL`, `ANALYSTOS_WORKER_TOKEN_SECRET` (API only; never give it to a worker) |
 | Knowledge embeddings | `ANALYSTOS_KNOWLEDGE_EMBEDDING_PROVIDER`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_MODEL`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_DIM`, `ANALYSTOS_KNOWLEDGE_EMBEDDING_ALLOW_DOWNLOAD` |
+| Postgres without pgvector | `ANALYSTOS_VECTOR_BACKEND` (`pgvector` default, or `array`: `real[]` columns, no extension; [self-hosted runbook](03-self-hosted.md#postgres-without-pgvector)) |
 
 **Tier 3, advanced.** Defaults are right for almost every install.
 
 | Area | Variables |
 |---|---|
 | Local orchestrator (lite) | `ANALYSTOS_LOCAL_WORKERS`, `ANALYSTOS_LOCAL_RESUME`, `ANALYSTOS_LOCAL_SWEEP_SECONDS`, `ANALYSTOS_INPROCESS_SCHEDULER` |
+| Compose containers | `ANALYSTOS_IN_CONTAINER` (set by `compose.yaml`: a `localhost` Redis, Superset, Temporal or mock URL from a host `.env` is read as the compose service of that name, and a URL keeps only its first word, so a note after it in `.env` does no harm) |
 | Spend caps and counters | `ANALYSTOS_SPEND_COUNTER_STORE`, `ANALYSTOS_BUDGET_COUNTER_PREFIX` |
 | Connection pools | `ANALYSTOS_DB_POOL_MODE`, `ANALYSTOS_DB_POOL_SIZE`, `ANALYSTOS_DB_MAX_OVERFLOW`, `ANALYSTOS_DB_POOL_TIMEOUT`, `ANALYSTOS_DB_POOL_RECYCLE`, `ANALYSTOS_ANALYTICS_POOL_MODE`, `ANALYSTOS_ANALYTICS_POOL_SIZE`, `ANALYSTOS_ANALYTICS_MAX_OVERFLOW`, `ANALYSTOS_ANALYTICS_POOL_TIMEOUT`, `ANALYSTOS_LOADER_POOL_MODE`, `ANALYSTOS_LOADER_POOL_SIZE`, `ANALYSTOS_LOADER_MAX_OVERFLOW`, `ANALYSTOS_LOADER_POOL_TIMEOUT`, `ANALYSTOS_DB_TRANSACTION_POOLER` |
 | Analytics roles | `ANALYSTOS_ANALYTICS_WORKSPACE_ROLE_PREFIX`, `ANALYSTOS_ANALYTICS_BUILD_ROLE_PREFIX`, `ANALYSTOS_ANALYTICS_WRITER_ROLE_PREFIX` |

@@ -364,6 +364,8 @@ def _apply_column_description(session: Session, row: KnowledgeSuggestion, fields
     bn = _value(fields, "business_name")
     if bn and c.business_name_origin in (None, "rule", "model"):
         c.business_name, c.business_name_origin = str(bn)[:200], "model"
+    # a person approved it: the model's text is no longer a draft, so prompts may use it (agents/common.py)
+    c.semantics = {**(c.semantics or {}), "reviewed": True}
     return "catalog updated"
 
 

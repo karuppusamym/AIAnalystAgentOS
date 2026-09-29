@@ -8,10 +8,10 @@ from typing import Any
 
 from sqlalchemy import Integer, String, and_, case, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from analystos.core.ids import new_id, stable_hash, utcnow
-from analystos.db.models import AnalysisRun, Artifact, ArtifactVersion, LineageEdge
+from analystos.db.models import AnalysisRun, Artifact, ArtifactVersion, Insight, LineageEdge, QueryExecution
 
 ARTIFACT_TYPES = {"query", "profile", "quality_report", "relationship_map", "context_package", "plan", "dataset",
                   "semantic_model", "metric", "chart", "dashboard", "report", "narrative", "python_script", "ml_model",
@@ -88,38 +88,107 @@ def save_artifact(session: Session, *, workspace_id: str, type_: str, name: str,
     return artifact
 
 
+def node_ref(session: Session, node: tuple[str, str], run_id: str | None = None) -> tuple[str, str]:
+    """The lineage key of a node. A finding is keyed by its id: its code (I-1) restarts every run, so
+    ("insight", "I-1") would join every run's first finding. A code is resolved within `run_id`."""
+    kind, ref = node[0], str(node[1])
+    if kind == "insight" and run_id and not ref.startswith("ins_"):
+        found = session.scalar(select(Insight.id).where(Insight.run_id == run_id, Insight.code == ref))
+        if found:
+            return kind, found
+    return kind, ref
+
+
 def link(session: Session, workspace_id: str, from_: tuple[str, str], relation: str, to: tuple[str, str],
          run_id: str | None = None) -> None:
-    stmt = insert(LineageEdge).values(workspace_id=workspace_id, run_id=run_id, from_type=from_[0], from_id=str(from_[1]),
-                                      relation=relation, to_type=to[0], to_id=str(to[1]))
+    from_, to = node_ref(session, from_, run_id), node_ref(session, to, run_id)
+    stmt = insert(LineageEdge).values(workspace_id=workspace_id, run_id=run_id, from_type=from_[0], from_id=from_[1],
+                                      relation=relation, to_type=to[0], to_id=to[1])
     session.execute(stmt.on_conflict_do_nothing(index_elements=["workspace_id", "from_type", "from_id", "relation",
                                                                  "to_type", "to_id"]))
+
+
+def link_queries(session: Session, workspace_id: str, from_: tuple[str, str], query_ids: list[str], *,
+                 run_id: str | None = None, assets: list[str] | None = None) -> None:
+    """`from_` derived_from each query, and each query reads every table the gateway recorded for it
+    (a join reads two; the spec's asset alone would miss one). `assets` covers a query not recorded."""
+    ids = [str(q) for q in query_ids if q]
+    if not ids:
+        return
+    seen = {q.id: q.referenced_assets or [] for q in session.scalars(select(QueryExecution).where(QueryExecution.id.in_(ids)))}
+    for q in ids:
+        link(session, workspace_id, from_, "derived_from", ("query", q), run_id=run_id)
+        for fq in sorted(set(seen.get(q) or []) | set(assets or [])):
+            link(session, workspace_id, ("query", q), "reads", ("table", fq), run_id=run_id)
+
+
+_FAMILY = (*sorted(ARTIFACT_TYPES), "artifact")
+
+
+def _canonical(t):  # noqa: ANN001, ANN202 - SQL expression
+    """An artifact is one node whether an edge names it ("artifact", id) or (its type, id) (artifact ids are
+    unique): the walk keys every artifact-typed end as ("artifact", id)."""
+    return case((t.in_(_FAMILY), literal("artifact", String)), else_=t)
+
+
+def _is(end_type, end_id, t, i):  # noqa: ANN001, ANN202 - SQL expressions; each branch uses an edge index
+    return or_(and_(t != "artifact", end_type == t, end_id == i), and_(t == "artifact", end_type.in_(_FAMILY), end_id == i))
+
+
+def _edges_named(session: Session, workspace_id: str, where: Any, *, limit: int | None = None) -> list[tuple]:
+    """Edges matching `where`, an ("artifact", id) end named by the artifact's type (one statement)."""
+    e, fa, ta = LineageEdge, aliased(Artifact), aliased(Artifact)
+    stmt = (select(e.id, e.from_type, e.from_id, e.relation, e.to_type, e.to_id, fa.type, ta.type).where(where)
+            .outerjoin(fa, and_(e.from_type == "artifact", fa.id == e.from_id, fa.workspace_id == workspace_id))
+            .outerjoin(ta, and_(e.to_type == "artifact", ta.id == e.to_id, ta.workspace_id == workspace_id))
+            .order_by(e.id))
+    return [((ft or f, fi), rel, (tt or t, ti))
+            for _, f, fi, rel, t, ti, ft, tt in session.execute(stmt.limit(limit) if limit else stmt)]
+
+
+def _graph(anchor: tuple[str, str], edges: list[tuple]) -> dict[str, Any]:
+    if anchor[0] in _FAMILY:  # one name for the anchor artifact: its own type when any edge knows it
+        if anchor[0] == "artifact":
+            anchor = next((n for f, _, t in edges for n in (f, t) if n[1] == anchor[1] and n[0] in ARTIFACT_TYPES), anchor)
+
+        def same(n: tuple[str, str]) -> tuple[str, str]:
+            return anchor if n[1] == anchor[1] and n[0] in _FAMILY else n
+
+        edges = [(same(f), r, same(t)) for f, r, t in edges]
+    nodes = {anchor} | {n for f, _, t in edges for n in (f, t)}
+    return {"nodes": [{"type": t, "id": i} for t, i in sorted(nodes)],
+            "edges": [{"from": list(f), "relation": rel, "to": list(t)} for f, rel, t in edges]}
 
 
 def lineage_for(session: Session, workspace_id: str, node: tuple[str, str], *, depth: int = 6) -> dict[str, Any]:
     """Upstream + downstream provenance around a node: every edge touching a node within `depth - 1`
     hops (either direction), and those edges' ends. One recursive CTE over this workspace's edges
-    (P4-S02); it reads the neighbourhood only, never the whole workspace."""
+    (P4-S02); it reads the neighbourhood only, never the whole workspace. An artifact written as
+    ("artifact", id) is the same node as (its type, id), and the result names it by its type."""
     node = (node[0], str(node[1]))
     if depth <= 0:
         return {"nodes": [{"type": node[0], "id": node[1]}], "edges": []}
     e = LineageEdge
 
     def touches(t, i):  # noqa: ANN001, ANN202 - either end of a workspace edge (both ends are indexed)
-        return and_(e.workspace_id == workspace_id,
-                    or_(and_(e.from_type == t, e.from_id == i), and_(e.to_type == t, e.to_id == i)))
+        return and_(e.workspace_id == workspace_id, or_(_is(e.from_type, e.from_id, t, i), _is(e.to_type, e.to_id, t, i)))
 
-    reach = select(literal(node[0], String).label("t"), literal(node[1], String).label("i"),
+    start = "artifact" if node[0] in _FAMILY else node[0]
+    reach = select(literal(start, String).label("t"), literal(node[1], String).label("i"),
                    literal(0, Integer).label("d")).cte("reach", recursive=True)
-    from_end = and_(e.from_type == reach.c.t, e.from_id == reach.c.i)
-    reach = reach.union(select(case((from_end, e.to_type), else_=e.from_type), case((from_end, e.to_id), else_=e.from_id),
-                               reach.c.d + 1)
+    from_end = _is(e.from_type, e.from_id, reach.c.t, reach.c.i)
+    reach = reach.union(select(case((from_end, _canonical(e.to_type)), else_=_canonical(e.from_type)),
+                               case((from_end, e.to_id), else_=e.from_id), reach.c.d + 1)
                         .join_from(reach, e, touches(reach.c.t, reach.c.i)).where(reach.c.d < depth - 1))
     near = select(reach.c.t, reach.c.i).distinct().subquery("near")
     touching = select(e.id).join_from(near, e, touches(near.c.t, near.c.i))
-    rows = session.execute(select(e.id, e.from_type, e.from_id, e.relation, e.to_type, e.to_id)
-                           .where(e.id.in_(touching)).order_by(e.id)).all()
-    nodes = {node} | {(r.from_type, r.from_id) for r in rows} | {(r.to_type, r.to_id) for r in rows}
-    return {"nodes": [{"type": t, "id": i} for t, i in sorted(nodes)],
-            "edges": [{"from": [r.from_type, r.from_id], "relation": r.relation, "to": [r.to_type, r.to_id]}
-                      for r in rows]}
+    return _graph(node, _edges_named(session, workspace_id, e.id.in_(touching)))
+
+
+def run_lineage(session: Session, workspace_id: str, run_id: str, *, limit: int = 500) -> dict[str, Any]:
+    """Every edge a run recorded (objective, hypotheses, experiments, queries, tables, findings, datasets,
+    charts, reports), shaped like `lineage_for`. A walk from the run node would leave the run through
+    shared tables into other runs; the run's own edges are its lineage."""
+    e = LineageEdge
+    edges = _edges_named(session, workspace_id, and_(e.workspace_id == workspace_id, e.run_id == run_id), limit=limit)
+    return {**_graph(("run", run_id), edges), "truncated": len(edges) >= limit}

@@ -895,6 +895,13 @@ def _ingest_query(s: Session, workspace_id: str, branch: StepBranch, actor: str,
     _record_copy(s, step, ver, verdict="verified" if ver.status == "ok" else "failed_verification", checks=checks,
                  extra=[Dependency("policy", workspace_id, policy)] if policy not in (None, UNKNOWABLE) else [])
     _link(s, workspace_id, ("ask_turn", turn.id), "recorded_as", ("step", step.id))
+    # The answer's provenance: the governed query it ran and every table the gateway saw in it.
+    from analystos.artifacts.registry import link_queries
+
+    link_queries(s, workspace_id, ("ask_turn", turn.id), [res["query_id"]] if res.get("query_id") else [],
+                 assets=list(res.get("referenced_assets") or []))
+    for fq in res.get("referenced_assets") or []:
+        _link(s, workspace_id, ("ask_turn", turn.id), "reads", ("table", fq))
 
 
 def record_quietly(container_type: str, workspace_id: str, container_id: str, user_id: str | None) -> None:

@@ -36,8 +36,9 @@ def graph_settings(monkeypatch):
 
 @pytest.fixture()
 def graph_fixture(control_db):
-    """Two workspaces. A: orders -> customers (declared relationship + a lineage joins_to), a dataset
-    built from orders, a finding about customers, a relationship to an asset outside the workspace.
+    """Two workspaces. A: orders -> customers (validated relationship + a lineage joins_to), a dataset
+    built from orders, a finding about customers, a validated relationship to an asset outside the workspace,
+    and orders -> notes: a lineage joins_to whose relationship was rejected in review (never context).
     B: the same table name with its own dataset (must never appear in A's neighbourhood)."""
     from analystos.artifacts.registry import link
     from analystos.core.ids import new_id
@@ -56,7 +57,7 @@ def graph_fixture(control_db):
             s.add(Source(id=sid, workspace_id=ws, kind="csv", name=f"graph {label}", config={}, status="ready"))
             s.flush()
             ids = {}
-            for name in ("orders", "customers"):
+            for name in ("orders", "customers", "notes"):
                 ids[name] = new_id("ast")
                 s.add(SourceAsset(id=ids[name], source_id=sid, workspace_id=ws, schema_name=schema, name=name,
                                   source_name=name, kind="table", selected=True))
@@ -64,10 +65,16 @@ def graph_fixture(control_db):
             out[label] = {"ws": ws, "schema": schema, "orders": f"{schema}.orders", "customers": f"{schema}.customers", "ids": ids}
         a, b = out["a"], out["b"]
         s.add(Relationship(id=new_id("rel"), workspace_id=a["ws"], from_asset_id=a["ids"]["orders"], from_column="customer_id",
-                           to_asset_id=a["ids"]["customers"], to_column="id", cardinality="many_to_one", confidence=0.9))
+                           to_asset_id=a["ids"]["customers"], to_column="id", cardinality="many_to_one", confidence=0.9,
+                           validated=True))
         s.add(Relationship(id=new_id("rel"), workspace_id=a["ws"], from_asset_id=a["ids"]["orders"], from_column="region_id",
-                           to_asset_id="ast_elsewhere", to_column="id", cardinality="many_to_one", confidence=0.5))
+                           to_asset_id="ast_elsewhere", to_column="id", cardinality="many_to_one", confidence=0.5,
+                           validated=True))
+        s.add(Relationship(id=new_id("rel"), workspace_id=a["ws"], from_asset_id=a["ids"]["orders"], from_column="note_id",
+                           to_asset_id=a["ids"]["notes"], to_column="id", cardinality="many_to_one", confidence=0.95,
+                           validated=False, evidence={"rejected": {"candidate_id": "cand_x"}}))
         link(s, a["ws"], ("table", a["orders"]), "joins_to", ("table", a["customers"]))
+        link(s, a["ws"], ("table", a["orders"]), "joins_to", ("table", f"{a['schema']}.notes"))
         link(s, a["ws"], ("dataset", "ds_a"), "built_from", ("table", a["orders"]))
         link(s, a["ws"], ("insight", "ins_a"), "about", ("table", a["customers"]))
         link(s, a["ws"], ("table", a["orders"]), "described_by", ("artifact", "art_profile_a"))

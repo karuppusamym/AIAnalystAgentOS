@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from analystos.agents.investigator import with_constraints
-from analystos.artifacts.registry import link
+from analystos.artifacts.registry import link, link_queries
 from analystos.contracts.analysis import AnalysisSpec
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
@@ -43,9 +43,8 @@ def test_hypothesis(ctx: RunContext) -> dict:
         row.evidence = [exp.id, *outcome.query_ids]
         row.conclusion = _conclusion(stat, status)
         link(s, ctx.workspace.id, ("hypothesis", h.id), "tested_by", ("experiment", exp.id), run_id=ctx.run.id)
-        for q in outcome.query_ids:
-            link(s, ctx.workspace.id, ("experiment", exp.id), "derived_from", ("query", q), run_id=ctx.run.id)
-            link(s, ctx.workspace.id, ("query", q), "reads", ("table", spec.asset), run_id=ctx.run.id)
+        link_queries(s, ctx.workspace.id, ("experiment", exp.id), list(outcome.query_ids), run_id=ctx.run.id,
+                     assets=[spec.asset] if spec.asset else None)
         emit(ctx.workspace.id, "hypothesis.updated", {"code": h.code, "status": status, "test": stat.get("test"),
                                                       "p_value": stat.get("p_value"), "effect_size": stat.get("effect_size")},
              run_id=ctx.run.id, session=s)

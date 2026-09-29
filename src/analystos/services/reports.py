@@ -117,9 +117,12 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
                         creator_agent="insight" if actor == "system" else None,
                         creator_user=None if actor == "system" else actor.split(":", 1)[-1], status="final")
     session.flush()
-    link(session, run.workspace_id, ("run", run_id), "reported_by", ("artifact", art.id), run_id=run_id)
+    link(session, run.workspace_id, ("run", run_id), "reported_by", (art.type, art.id), run_id=run_id)
     for i in data.insights:
-        link(session, run.workspace_id, ("artifact", art.id), "cites", ("insight", i.code), run_id=run_id)
+        link(session, run.workspace_id, (art.type, art.id), "cites", ("insight", i.code), run_id=run_id)
+    for chart in session.scalars(select(Artifact).where(Artifact.run_id == run_id, Artifact.type == "chart",
+                                                        Artifact.name.in_([c.key for c in data.charts]))):
+        link(session, run.workspace_id, (art.type, art.id), "includes", (chart.type, chart.id), run_id=run_id)
     emit(run.workspace_id, "report.generated", {"artifact_id": art.id, "kind": kind, "formats": list(formats)}, run_id=run_id,
          session=session)
     notify(session, run.workspace_id, kind="report", title=f"Report ready: {data.title}"[:300],
@@ -135,8 +138,13 @@ def generate_report(session: Session, run_id: str, *, kind: str = "executive", f
 def report_file(art: Artifact, fmt: str) -> tuple[bytes, str, str]:
     info = (art.content.get("files") or {}).get(fmt)
     if not info:
-        raise NotFound(f"format {fmt} not generated for this report")
-    content = Path(info["path"]).read_bytes()
+        why = (art.content.get("unavailable_formats") or {}).get(fmt)
+        raise NotFound(f"format {fmt} not generated for this report" + (f": {why}" if why else ""))
+    try:
+        content = Path(info["path"]).read_bytes()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        raise NotFound(f"the stored {fmt} file of this report is missing from the artifact store; generate the report again",
+                       details={"artifact_id": art.id, "format": fmt, "remedy": "regenerate"}) from None
     if hashlib.sha256(content).hexdigest() != info["sha256"]:
         raise InvalidInput("stored report does not match its recorded hash")
     return content, info["mime"], info["ext"]

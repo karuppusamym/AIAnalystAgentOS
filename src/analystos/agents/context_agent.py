@@ -35,7 +35,7 @@ def load_context(ctx: RunContext) -> dict:
     with session_scope() as s:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="context_package",
                             name="Context package", content=package, creator_agent=ctx.agent.id)
-        link(s, ctx.workspace.id, ("run", ctx.run.id), "uses_context", ("artifact", art.id), run_id=ctx.run.id)
+        link(s, ctx.workspace.id, ("run", ctx.run.id), "uses_context", (art.type, art.id), run_id=ctx.run.id)
     ctx.event("context.loaded", {"glossary": len(package["glossary"]), "metrics": len(package["metrics"]),
                                  "graph": len(package["graph"]), "resolved_terms": len(resolved)})
     ctx.say(f"Loaded context: {len(package['glossary'])} glossary entries, {len(package['metrics'])} known metrics, "

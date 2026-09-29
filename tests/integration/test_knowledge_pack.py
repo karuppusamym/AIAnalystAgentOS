@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 
 from analystos.core.errors import ApprovalRequired, Conflict, Forbidden
 from analystos.core.ids import new_id
+from analystos.db import vectors
 from analystos.db.base import session_scope
 from analystos.db.models import KnowledgePack, User
 from analystos.knowledge import bundle, index, store
@@ -25,6 +26,19 @@ pytestmark = pytest.mark.integration
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "okf"
 ATLAS_ZIP = FIXTURES / "atlas-sample.zip"
+
+
+def _vector_index_ok(stats: dict) -> bool:
+    """pgvector: the HNSW cosine index exists; the array backend has none and ranks in-process."""
+    if vectors.uses_pgvector():
+        return "hnsw" in (stats["hnsw_index"] or "") and "vector_cosine_ops" in stats["hnsw_index"]
+    return stats["hnsw_index"] is None and stats["vector_backend"] == "array"
+
+
+def _dims_sql() -> str:
+    return "vector_dims(embedding)" if vectors.uses_pgvector() else "array_length(embedding, 1)"
+
+
 QUERIES = ["SLA breach", "time to restore service", "completed orders", "net revenue after returns",
            "which team resolves incidents", "purchase agreement with a customer", "reassignment"]
 
@@ -63,7 +77,7 @@ def test_seed_builds_a_read_only_platform_pack_indexed_with_hnsw(control_db):
         files = store.revision_files(s, pack)
         assert "index.md" in files and any(p.startswith("domain/itsm/") for p in files)
         stats = index.stats(s)
-        assert stats["knowledge_document"] > 0 and "hnsw" in stats["hnsw_index"] and "vector_cosine_ops" in stats["hnsw_index"]
+        assert stats["knowledge_document"] > 0 and _vector_index_ok(stats)
         assert s.scalar(text("SELECT count(*) FROM context_entry WHERE workspace_id IS NULL")) == 0
         with pytest.raises(Forbidden):
             store.commit(s, pack, {"x.md": b"---\ntype: T\n---\n"}, author="human:x", reason="x", origin="user")
@@ -126,7 +140,7 @@ def test_deleting_the_index_and_reindexing_gives_identical_results(two_workspace
     with session_scope() as s:
         after = {q: index.signature(index.retrieve(s, a, q, limit=10)) for q in QUERIES}
         assert after == before
-        assert "hnsw" in index.stats(s)["hnsw_index"]
+        assert _vector_index_ok(index.stats(s))
 
 
 def test_atlas_bundle_import_export_round_trip_is_lossless(two_workspaces, tmp_path):
@@ -218,12 +232,12 @@ def test_reembed_changes_dimension_and_rebuilds_the_hnsw_index(two_workspaces):
         rep = index.reembed(s, HashingProvider(dim=128))
         assert rep["to"]["dim"] == 128 and rep["sections"] > 0
     with session_scope() as s:
-        assert s.scalar(text("SELECT vector_dims(embedding) FROM knowledge_section LIMIT 1")) == 128
-        assert "hnsw" in index.stats(s)["hnsw_index"]
+        assert s.scalar(text(f"SELECT {_dims_sql()} FROM knowledge_section LIMIT 1")) == 128
+        assert _vector_index_ok(index.stats(s))
         assert index.retrieve(s, a, "SLA breach")
     _write_ws_doc(a, "Late closure", "Closed after the SLA window.")  # a new revision joins the index's space
     with session_scope() as s:
-        assert s.scalar(text("SELECT count(DISTINCT vector_dims(embedding)) FROM knowledge_section")) == 1
+        assert s.scalar(text(f"SELECT count(DISTINCT {_dims_sql()}) FROM knowledge_section")) == 1
         store.commit(s, store.workspace_pack(s, a, create=False), {}, deletes=("glossary/late-closure.md",), merge=True,
                      author="human:test", reason="undo", origin="user")
         index.reembed(s, HashingProvider(dim=256))
@@ -332,7 +346,7 @@ def test_migration_0018_moves_global_entries_and_reverts(control_db):
     engine = create_engine(url)
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)
@@ -348,7 +362,8 @@ def test_migration_0018_moves_global_entries_and_reverts(control_db):
             assert (pack.kind, pack.read_only, pack.head_revision) == ("platform", True, 1)
             files = c.execute(text("SELECT files FROM knowledge_revision WHERE pack_id = :p"), {"p": pack.id}).scalar()
             assert "domain/itsm/sla-breach.md" in files
-            assert c.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_knowledge_section_embedding_hnsw'")).scalar()
+            hnsw = c.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_knowledge_section_embedding_hnsw'")).scalar()
+            assert bool(hnsw) == vectors.uses_pgvector()
         command.downgrade(cfg, "0023")
         with engine.begin() as c:
             row = c.execute(text("SELECT workspace_id, kind, name, synonyms, origin FROM context_entry")).one()

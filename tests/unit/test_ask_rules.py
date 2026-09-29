@@ -262,3 +262,31 @@ def test_a_phrase_that_spells_a_column_name_names_that_column():
     table.columns += [col("from_activity", distinct=12), col("to_activity", distinct=12)]
     p = plan("tickets by from activity", [table])
     assert p is not None and p.status == "answer" and p.dims[0][0] == "from_activity"
+
+
+# ------------------------------------------------------------------------------ one-hop joins
+def _retail():
+    orders = ar.Table(fq="s.orders", source_id="src", dialect="postgres", entity="order", entity_words=frozenset({"order"}),
+                      columns=[col("order_id", "text", "identifier", "id", 6000), col("product_id", "text", "foreign_key", "id", 60),
+                               col("sales_channel", distinct=3), col("quantity", "integer", "measure", "numeric", 4)])
+    products = ar.Table(fq="s.products", source_id="src", dialect="postgres", entity="product",
+                        entity_words=frozenset({"product"}),
+                        columns=[col("product_id", "text", "identifier", "id", 60), col("category", distinct=4)])
+    orders.joins.append(ar.Join(from_column="product_id", to_column="product_id", target=products))
+    return [orders, products]
+
+
+def test_a_grouping_on_a_referenced_table_is_read_through_the_validated_join():
+    p = plan("number of orders by category", _retail())
+    assert p.status == "answer" and p.table.fq == "s.orders" and p.joins == [("j0", "s.products", "product_id", "product_id")]
+    sql = ar.sql_for(p)
+    assert 'LEFT JOIN "s"."products" AS "j0" ON "t"."product_id" = "j0"."product_id"' in sql
+    assert 'GROUP BY "j0"."category"' in sql and "COUNT(*)" in sql
+    top = plan("Which category has the most orders?", _retail())
+    assert top.joins and top.limit == ar.WHICH_TOP_N
+
+
+def test_without_a_validated_join_a_referenced_grouping_is_not_guessed():
+    tables = _retail()
+    tables[0].joins.clear()
+    assert plan("number of orders by category", tables) is None

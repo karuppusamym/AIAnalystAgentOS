@@ -423,6 +423,7 @@ def complete_from_run(run_id: str) -> None:
             baseline = _record_baseline(s, origin, run_id)
             stale = _mark_superseded(s, origin.get("previous_run_id"), run_id)
         _finish(srun_id, "succeeded", {"run_id": run_id, "report_artifact_id": summary.get("report_artifact_id"),
+                                       **({"report_error": summary["report_error"]} if summary.get("report_error") else {}),
                                        "changes": {k: len(changes.get(k, [])) for k in ("new", "persisting", "changed", "resolved", "new_questions")},
                                        **verdict, "baseline": baseline, "stale_narratives": stale})
     else:
@@ -457,7 +458,7 @@ def _mark_superseded(session: Session, previous_run_id: str | None, run_id: str)
     for art in session.scalars(select(Artifact).where(Artifact.run_id == previous_run_id, Artifact.type == "narrative",
                                                       Artifact.status == "final")):
         art.status = "stale"
-        link(session, art.workspace_id, ("artifact", art.id), "superseded_by", ("run", run_id), run_id=run_id)
+        link(session, art.workspace_id, (art.type, art.id), "superseded_by", ("run", run_id), run_id=run_id)
         marked.append(art.id)
     if marked:
         run = session.get(AnalysisRun, run_id)
@@ -510,6 +511,9 @@ def housekeeping() -> dict[str, Any]:
             out["idempotency_purged"] = idempotency.purge_expired(s)
     except Exception:
         log.exception("scheduler housekeeping failed")
+    from analystos.services.stale_work import sweep_quietly
+
+    out["stale_work"] = sweep_quietly()  # Ask turns / ML experiments a dead process left running
     try:  # P6-03 operational alert: a destination whose good version is older than its pipeline's freshness
         from analystos.services.pipelines import check_freshness
 

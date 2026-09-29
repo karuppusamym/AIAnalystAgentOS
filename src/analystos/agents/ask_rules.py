@@ -28,6 +28,10 @@ A time column is chosen the same way: the only one, else the one the question na
 as "opened" or "resolved"), else the one whose name says the record starts (created, opened, start,
 the pack's `event_start` words, or the entity itself: order_date for orders), else clarify.
 
+A grouping the counted table does not have may come from a table it references (one hop, along a validated
+many-to-one relationship in the same source: "orders by category" reads products.category through
+orders.product_id). The join cannot multiply rows, so the counts and aggregates stay those of the base table.
+
 The SQL is built by `skills/sqlbuild.aggregate_query` (quoted identifiers, sqlglot nodes) and runs
 through `QueryGateway.execute`, whose validator checks scope and columns as for any statement.
 """
@@ -227,9 +231,20 @@ class Table:
     columns: list[Column]
     pack_dimensions: list[tuple[str, str]] = field(default_factory=list)  # (label, column) the domain pack declares
     event_start: tuple[str, ...] = ()
+    asset_id: str | None = None
+    joins: list[Join] = field(default_factory=list)
 
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)
+
+
+@dataclass
+class Join:
+    """A validated many-to-one reference from a table to another one in the same source."""
+
+    from_column: str
+    to_column: str
+    target: Table
 
 
 def _words(text: str | None, lex: Any = None) -> frozenset[str]:
@@ -305,8 +320,31 @@ def load_tables(ctx: Any) -> tuple[list[Table], Any]:
             for noun in (spec or {}).get("nouns") or []:
                 ewords |= _words(str(noun))
             tables.append(Table(fq=fq, source_id=source_id, dialect=dialect, entity=entity, entity_words=frozenset(ewords),
-                                columns=cols, pack_dimensions=pack_dims, event_start=tuple(hints.event_start)))
+                                columns=cols, pack_dimensions=pack_dims, event_start=tuple(hints.event_start),
+                                asset_id=asset.id))
+        _attach_joins(s, ctx.workspace.id, tables)
     return tables, lex
+
+
+def _attach_joins(session: Any, workspace_id: str, tables: list[Table]) -> None:
+    """Validated many-to-one relationships between the caller's tables of one source, on visible columns only."""
+    from sqlalchemy import select
+
+    from analystos.db.models import Relationship
+
+    by_id = {t.asset_id: t for t in tables if t.asset_id}
+    if len(by_id) < 2:
+        return
+    for r in session.scalars(select(Relationship).where(
+            Relationship.workspace_id == workspace_id, Relationship.validated.is_(True),
+            Relationship.cardinality.in_(("many_to_one", "one_to_one")), Relationship.from_asset_id.in_(list(by_id)),
+            Relationship.to_asset_id.in_(list(by_id))).order_by(Relationship.id)):
+        base, target = by_id[r.from_asset_id], by_id[r.to_asset_id]
+        if base is target or base.source_id != target.source_id or (r.evidence or {}).get("rejected") \
+                or base.column(r.from_column) is None or target.column(r.to_column) is None:
+            continue
+        if not any(j.from_column == r.from_column and j.target is target for j in base.joins):
+            base.joins.append(Join(from_column=r.from_column, to_column=r.to_column, target=target))
 
 
 # ------------------------------------------------------------------------------ resolution
@@ -321,6 +359,8 @@ class Plan:
     measure: tuple[str, str, Derivation | None, str] | None = None  # (alias, agg, derivation, label)
     order: str = "dimensions"
     limit: int | None = None
+    joins: list[tuple[str, str, str, str]] = field(default_factory=list)  # (alias, target fq, from column, to column)
+    dimension_tables: dict[str, str] = field(default_factory=dict)  # dimension alias -> join alias
     notes: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     ambiguous: dict[str, list[str]] | None = None  # phrase -> candidate columns
@@ -328,7 +368,7 @@ class Plan:
     def summary(self) -> dict[str, Any]:
         return {"status": self.status, "table": self.table.fq if self.table else None,
                 "dimensions": [a for a, _, _ in self.dims], "measure": self.measure[:2] if self.measure else None,
-                "notes": self.notes, "ambiguous": self.ambiguous}
+                "joins": [j[1] for j in self.joins], "notes": self.notes, "ambiguous": self.ambiguous}
 
 
 class _Ambiguous(Exception):
@@ -376,6 +416,16 @@ def _match(phrase: str, columns: list[Column], table: Table, lex: Any) -> Column
         if len(found) > 1:
             raise _Ambiguous(phrase, found)
     return None
+
+
+def _joined_dimension(phrase: str, table: Table, lex: Any) -> tuple[Join, Column] | None:
+    """The one dimension a phrase names on a table this one references (not the join key itself)."""
+    hits = [(j, c) for j in table.joins
+            for c in [_match(phrase, [c for c in j.target.columns if c.is_dimension and c.name != j.to_column], j.target, lex)]
+            if c is not None]
+    if len(hits) > 1:
+        raise _Ambiguous(phrase, [c for _, c in hits])
+    return hits[0] if hits else None
 
 
 def _subject_table(subject: str | None, tables: list[Table], lex: Any) -> Table | None:
@@ -488,11 +538,15 @@ def _resolve(intent: Intent, tables: list[Table], question: str, lex: Any) -> Pl
     plan.table = table
     taken = set(c.name for c in table.columns)
     dim_cols: list[Column] = [subject_column] if subject_column is not None else []
+    joined: dict[int, Join] = {}  # id(column) -> the join it is read through
     for phrase in intent.dims:
         c = _match(phrase, [c for c in table.columns if c.is_dimension], table, lex)
         if c is None:
-            return None
-        if c not in dim_cols:
+            hit = _joined_dimension(phrase, table, lex)
+            if hit is None:
+                return None
+            joined[id(hit[1])], c = hit
+        if not any(c is x for x in dim_cols):
             dim_cols.append(c)
     if len(dim_cols) > MAX_DIMENSIONS:
         return None
@@ -509,8 +563,20 @@ def _resolve(intent: Intent, tables: list[Table], question: str, lex: Any) -> Pl
         plan.suggestions = [_question_for(table, intent, [c.label.lower()]) for c in others[:SUGGESTIONS]]
     if intent.shape == "top" and not dim_cols:
         return None
+    join_alias: dict[int, str] = {}
     for c in dim_cols:
-        plan.dims.append((c.name, Derivation(column=c.name), c.label.lower()))
+        j = joined.get(id(c))
+        if j is None:
+            plan.dims.append((c.name, Derivation(column=c.name), c.label.lower()))
+            continue
+        if id(j) not in join_alias:
+            join_alias[id(j)] = f"j{len(plan.joins)}"
+            plan.joins.append((join_alias[id(j)], j.target.fq, j.from_column, j.to_column))
+        alias = _alias(c.name if c.name not in taken else f"{j.target.entity.replace(' ', '_')}_{c.name}",
+                       taken | {a for a, _, _ in plan.dims})
+        plan.dims.append((alias, Derivation(column=c.name), c.label.lower()))
+        plan.dimension_tables[alias] = join_alias[id(j)]
+        plan.notes.append(f"{c.label.lower()} from {j.target.entity} through {j.from_column}")
     if intent.grain:
         tcol = _time_column(table, intent, question, lex)
         taken_aliases = {a for a, _, _ in plan.dims}
@@ -541,7 +607,8 @@ def sql_for(plan: Plan) -> str:
     assert plan.table is not None and plan.measure is not None
     alias, agg, d, _ = plan.measure
     return aggregate_query(plan.table.fq, plan.table.dialect, dimensions=[(a, dd) for a, dd, _ in plan.dims],
-                           measure=(alias, agg, d), order=plan.order, limit=plan.limit)
+                           measure=(alias, agg, d), order=plan.order, limit=plan.limit, joins=plan.joins or None,
+                           dimension_tables=plan.dimension_tables or None)
 
 
 def explain(plan: Plan) -> str:
@@ -568,9 +635,12 @@ def plan_for(ctx: Any, question: str) -> Plan | None:
     intent = parse(question)
     if intent is None or not getattr(getattr(ctx, "scope", None), "columns", None):
         return None
-    try:
-        tables, lex = load_tables(ctx)
-    except Exception as exc:  # noqa: BLE001 - the rung is optional; generation still runs
-        log.warning("ask rules: catalog unavailable: %s", exc)
-        return None
-    return resolve(intent, tables, question, lex)
+    from analystos.capabilities import packs
+
+    with packs.only(packs.for_scope(ctx.scope, getattr(ctx, "policy", None))):  # only this workspace's domain packs
+        try:
+            tables, lex = load_tables(ctx)
+        except Exception as exc:  # noqa: BLE001 - the rung is optional; generation still runs
+            log.warning("ask rules: catalog unavailable: %s", exc)
+            return None
+        return resolve(intent, tables, question, lex)

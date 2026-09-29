@@ -15,9 +15,17 @@ export function reportFormats(a: Artifact): string[] {
   return known.concat(Object.keys(files).filter((f) => !known.includes(f)));
 }
 
+/** Formats that were asked for but could not be rendered here, each with its reason (e.g. the `reports` extra). */
+export function unavailableFormats(a: Artifact): [string, string][] {
+  return Object.entries((a.content as ReportContent).unavailable_formats ?? {});
+}
+
+const KIND_LABEL: Record<string, string> = { ask_answer: "Ask answer" };
+
 export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: string; report: Artifact; highlighted?: boolean }) {
   const c = a.content as ReportContent;
   const formats = reportFormats(a);
+  const missing = unavailableFormats(a);
   const act = useAction();
   const [preview, setPreview] = useState<string | null>(null);
   const download = async (fmt: string) => {
@@ -38,12 +46,13 @@ export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: stri
   return (
     <section id={`report-${a.id}`} className={`card ${highlighted ? "row-active" : ""}`} aria-label={`Report ${c.title ?? a.name}`}>
       <header className="card-header">
-        <h2 className="card-title">{c.title ?? a.name} <Tag tone="info">{c.kind ?? a.name}</Tag></h2>
+        <h2 className="card-title">{c.title ?? a.name} <Tag tone="info">{KIND_LABEL[c.kind ?? ""] ?? c.kind ?? a.name}</Tag></h2>
         <div className="card-actions small muted">{fmtDate(a.created_at)}</div>
       </header>
       <div className="card-body">
         <div className="chip-row small">
           {a.run_id && <Link to={to.run(wsId, a.run_id)}>Source investigation</Link>}
+          {c.origin?.type === "ask" && c.origin.thread_id && <Link to={`${to.ask(wsId)}?thread=${encodeURIComponent(c.origin.thread_id)}`}>Source question</Link>}
           {typeof c.insights === "number" && <span>{c.insights} findings</span>}
           {typeof c.metrics === "number" && <span>{c.metrics} metrics</span>}
           {typeof c.alerts === "number" && <span>{c.alerts} alerts</span>}
@@ -60,6 +69,11 @@ export function ReportRow({ wsId, report: a, highlighted = false }: { wsId: stri
               {preview !== null ? "Close preview" : "Preview"}</button>
           )}
         </div>
+        {missing.length > 0 && (
+          <ul className="list compact small" aria-label="Formats not generated">
+            {missing.map(([f, why]) => <li key={f} className="muted">{FORMAT_LABEL[f] ?? f} not generated: {why}</li>)}
+          </ul>
+        )}
         <ErrorBox error={act.error} />
         {preview !== null && (
           // The report HTML is rendered in a fully sandboxed frame (no scripts, no same-origin, no forms), never in the page DOM.

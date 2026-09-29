@@ -108,6 +108,12 @@ def table_base(name: str) -> str:
     return f"{head}_{_singular(last)}" if head else _singular(last)
 
 
+_REFERENCE_NAME = re.compile(r"^(?P<stem>[a-z0-9]+(?:_[a-z0-9]+)*?)(?:_id|(?<=[a-z]{3})id|_no|_num|_nbr|_number|_key)$")
+_ID_WORDS = frozenset({"valid", "invalid", "rapid", "liquid", "fluid", "solid", "humid", "acid", "avoid", "void", "hybrid",
+                       "android", "pyramid", "vivid", "lipid", "squid", "candid", "stupid", "timid", "splendid", "grid"})
+_KEY_LIKE = re.compile(r"(?:_id|(?<=[a-z]{3})id|_no|_num|_nbr|_number|_key|_code)$")
+
+
 def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from analystos.capabilities.packs import hints
 
@@ -177,8 +183,11 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if c.get("is_key"):
                 continue
             name = c["name"].lower()
-            if name.endswith("_id") and len(name) > 3:
-                stem = name[:-3]
+            ref = _REFERENCE_NAME.match(name) if name not in _ID_WORDS else None
+            if ref and table_base(ref.group("stem")) == table_base(a["asset"]):
+                continue  # customers.customerid is that table's own key, not a reference to another table
+            if ref:  # customer_id, customerid (a header "CustomerID"), customer_no, customer_number, customer_key
+                stem = ref.group("stem")
                 targets = [t for form in _plural_forms(stem) for t in by_short.get(form, [])]
                 # table-base match: customer_id -> dim_customers, stg_customer (prefix stripped, singular)
                 targets += [t for t in by_base.get(table_base(stem), []) if t not in targets]
@@ -191,7 +200,10 @@ def _candidates(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if t is a:
                     continue
                 tc = cols(t)
-                if name in tc and tc[name].get("is_key"):
+                # the same key-like name on both sides, on the table whose name owns it (orders.cust_no ->
+                # customers.cust_no): files declare no keys, so the name proposes and the measurement decides
+                owner = bool(ref) and table_base(t["asset"]).startswith(ref.group("stem"))  # customers owns cust_no
+                if name in tc and (tc[name].get("is_key") or (owner and _KEY_LIKE.search(name) and name not in _ID_WORDS)):
                     add(a, c, t, tc[name]["name"], "same_name_key")
     return out
 

@@ -120,7 +120,7 @@ def pin(session: Session, user: User, step: AnalysisStep, body: PinIn) -> dict[s
                                                         "origin": {"type": "step", "step_id": step.id, "version": ver.version,
                                                                    "pin_id": p.id}})
         p.target_id = art.id
-        steps_svc._link(session, step.workspace_id, ("step", step.id), "pinned_to", ("artifact", art.id))
+        steps_svc._link(session, step.workspace_id, ("step", step.id), "pinned_to", (art.type, art.id))
     else:
         from analystos.services import pins, schedules
 

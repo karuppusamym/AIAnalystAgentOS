@@ -442,8 +442,8 @@ test.describe("Ask (P4-U02)", () => {
 test.describe("investigation board (P4-U03)", () => {
   test("board → why trust this → reject a finding → redirect by chat", async ({ page, api }) => {
     await signIn(page, `/w/${WS}/investigate/${RUN}`);
-    const supported = page.getByRole("listitem", { name: /Supported/ });
-    await expect(supported.getByText("Network resolves P1s slower")).toBeVisible();
+    await expect(page.getByRole("radio", { name: /Supported \(1\)/ })).toBeVisible();
+    await expect(page.getByRole("article", { name: "Hypothesis H1" }).getByText("Network resolves P1s slower")).toBeVisible();
     // Raw JSON is never on the default path: every .json block sits in a closed Technical details.
     const stray = await page.locator(".json").evaluateAll((els) => els.filter((e) => !e.closest("details[data-technical]:not([open])")).length);
     expect(stray).toBe(0);

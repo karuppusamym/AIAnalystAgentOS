@@ -1,4 +1,5 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useState, type FormEvent } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useId, useState, type FormEvent } from "react";
+import { lazyWithReload } from "../lib/lazyReload";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { to, type DataTab } from "../routes";
 import { api, type CatalogAsset, type CatalogColumn } from "../api";
@@ -10,13 +11,13 @@ import { fmtDate, fmtNumber, fmtPct } from "../lib/format";
 import { useAction, useAsync } from "../lib/hooks";
 
 // The studio's other tabs load on demand (the force-graph renderer among them), keeping the main bundle small.
-const KnowledgeDocs = lazy(() => import("../components/KnowledgeDocs").then((m) => ({ default: m.KnowledgeDocs })));
-const ReviewQueue = lazy(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
-const DefinitionsPanel = lazy(() => import("../components/DefinitionsPanel").then((m) => ({ default: m.DefinitionsPanel })));
-const AnalysisContexts = lazy(() => import("../components/AnalysisContexts").then((m) => ({ default: m.AnalysisContexts })));
-const KnowledgeTransfer = lazy(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
-const BriefPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.BriefPanel })));
-const ReadinessPanel = lazy(() => import("../components/Brief").then((m) => ({ default: m.ReadinessPanel })));
+const KnowledgeDocs = lazyWithReload(() => import("../components/KnowledgeDocs").then((m) => ({ default: m.KnowledgeDocs })));
+const ReviewQueue = lazyWithReload(() => import("../components/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
+const DefinitionsPanel = lazyWithReload(() => import("../components/DefinitionsPanel").then((m) => ({ default: m.DefinitionsPanel })));
+const AnalysisContexts = lazyWithReload(() => import("../components/AnalysisContexts").then((m) => ({ default: m.AnalysisContexts })));
+const KnowledgeTransfer = lazyWithReload(() => import("../components/KnowledgeTransfer").then((m) => ({ default: m.KnowledgeTransfer })));
+const BriefPanel = lazyWithReload(() => import("../components/Brief").then((m) => ({ default: m.BriefPanel })));
+const ReadinessPanel = lazyWithReload(() => import("../components/Brief").then((m) => ({ default: m.ReadinessPanel })));
 
 /** Who wrote a description: the source system, a rule, a model, or a person (a person always wins). */
 export const ORIGIN_LABELS: Record<string, { label: string; tone: string; title: string }> = {

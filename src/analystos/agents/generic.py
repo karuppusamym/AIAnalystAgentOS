@@ -252,7 +252,7 @@ def run_agent(ctx: RunContext, agent: CapabilityManifest) -> dict[str, Any]:
                                 name=spec.output.artifact_name, creator_agent=ctx.agent.id,
                                 content={"agent": agent.ref, "mode": mode, "summary_markdown": summary, "summary_source": source,
                                          "results": state.results, "actions": state.records})
-            link(s, ctx.workspace.id, ("run", ctx.run.id), "produced", ("artifact", art.id), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, ("run", ctx.run.id), "produced", (art.type, art.id), run_id=ctx.run.id)
             artifact_id = art.id
     return {"agent": agent.ref, "mode": mode, "actions": state.records, "results": state.results, "summary": summary,
             "summary_source": source, "usage": dict(ctx.usage), "artifact_id": artifact_id}

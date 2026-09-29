@@ -26,6 +26,8 @@ import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 
+from analystos.db import vectors
+
 pytestmark = pytest.mark.integration
 
 SOURCE_SCHEMA = "p403_shop"
@@ -206,7 +208,7 @@ def test_migration_0030_maps_legacy_badges_and_reverts(control_db):
             "i_draft": ("draft", False, 0.0, {})}
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)

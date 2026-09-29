@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from analystos.core.config import Settings
 from analystos.core.ids import new_id
+from analystos.db import vectors
 
 TEST_DB = os.environ.get("ANALYSTOS_TEST_DP_DB", "analystos_test_dp")  # override per parallel test session
 ADMIN_URL = os.environ.get("ANALYSTOS_TEST_ADMIN_URL", "postgresql+psycopg://analystos:analystos@localhost:5432/analystos")
@@ -77,7 +78,7 @@ def dp_control_url(analytics_plane) -> Iterator[str]:
     url = make_url(ADMIN_URL).set(database=TEST_DB).render_as_string(hide_password=False)
     engine = create_engine(url)
     with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        vectors.ensure_extension(conn)
     import analystos.db.models  # noqa: F401 - register tables
     from analystos.db.base import Base
 

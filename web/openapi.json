@@ -708,7 +708,8 @@
               "metric",
               "monitor",
               "dashboard",
-              "investigate"
+              "investigate",
+              "report"
             ],
             "title": "Target",
             "type": "string"
@@ -9736,7 +9737,7 @@
     },
     "/api/ask/turns/{turn_id}/promote": {
       "post": {
-        "description": "Promote an answer: verified query, metric, monitor, \"Investigate why\" (starts a run), or a\ndashboard chart (202 with an approval request first; again with the approved `approval_id`).",
+        "description": "Promote an answer: verified query, metric, monitor, \"Investigate why\" (starts a run), a report (an\nHTML document of the stored answer, listed in Outputs), or a dashboard chart (202 with an approval\nrequest first; again with the approved `approval_id` publishes it to the approved destination).",
         "operationId": "promote_turn_api_ask_turns__turn_id__promote_post",
         "parameters": [
           {
@@ -21851,6 +21852,7 @@
     },
     "/api/workspaces/{workspace_id}/lineage": {
       "get": {
+        "description": "Provenance around one node (`node_type` + `node_id`), or every edge one run recorded (`run_id`).",
         "operationId": "lineage_api_workspaces__workspace_id__lineage_get",
         "parameters": [
           {
@@ -21865,19 +21867,49 @@
           {
             "in": "query",
             "name": "node_type",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "Node Type",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Type"
             }
           },
           {
             "in": "query",
             "name": "node_id",
-            "required": true,
+            "required": false,
             "schema": {
-              "title": "Node Id",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
             }
           },
           {

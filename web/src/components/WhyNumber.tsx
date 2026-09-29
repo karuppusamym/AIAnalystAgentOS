@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import { api, type VerificationState, type WhyLink, type WhyNumber } from "../api";
+import { api, type ReverifyResult, type VerificationState, type WhyLink, type WhyNumber } from "../api";
 import { fmtDate } from "../lib/format";
-import { useAsync } from "../lib/hooks";
+import { useAction, useAsync } from "../lib/hooks";
 import { Drawer } from "./Drawer";
 import { CodeBlock, EmptyState, ErrorBox, Loading, Notice, StatusBadge, TechnicalDetails } from "./ui";
 
@@ -30,6 +30,34 @@ export function VerificationBadge({ state, showCause = true }: { state: Verifica
       {cause && showCause && <span className="small void-cause"> Why void: {cause}. Re-run the investigation to verify it again.</span>}
     </span>
   );
+}
+
+/**
+ * Re-verify a VOID verdict (POST /verification/{record_id}/reverify): a finding starts a replay run to
+ * follow, a step or an experiment is re-verified at once. The old record stays VOID and readable.
+ */
+export function ReverifyButton({ state, onDone }: { state: VerificationState | null | undefined; onDone?: (r: ReverifyResult) => void }) {
+  const act = useAction();
+  const [done, setDone] = useState<ReverifyResult | null>(null);
+  if (!state?.record_id || state.badge !== "void") return null;
+  const run = async () => {
+    const r = await act.run(() => api.reverify(state.record_id!));
+    if (!r) return;
+    setDone(r);
+    onDone?.(r);
+  };
+  return (
+    <span className="chip-row">
+      {!done && <button type="button" className="btn btn-xs" disabled={act.busy} onClick={() => void run()}>{act.busy ? "Re-verifying…" : "Re-verify"}</button>}
+      {done && <span className="small" role="status">{reverifyText(done)}</span>}
+      <ErrorBox error={act.error} />
+    </span>
+  );
+}
+
+export function reverifyText(r: ReverifyResult): string {
+  if (r.status === "started") return `Re-verification started${r.run_id ? `: replay run ${r.run_id}` : ""} re-tests it on today's data.`;
+  return "Re-verified: a new verdict was recorded; the void one stays readable.";
 }
 
 const STATE_WORDS: Record<string, string> = {
@@ -80,7 +108,7 @@ function LinkDetail({ link }: { link: WhyLink }) {
   );
 }
 
-function NumberTrail({ n }: { n: WhyNumber }) {
+export function NumberTrail({ n }: { n: WhyNumber }) {
   return (
     <section className="why-number" aria-label={`Number ${n.text}`}>
       <h3><span className="why-value">{n.text}</span> <WhyState state={n.state} /></h3>

@@ -112,9 +112,9 @@ def finalize(ctx: RunContext) -> dict:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="narrative",
                             name="Executive summary", content={"markdown": summary_md, "source": source},
                             creator_agent="supervisor", status="final")
-        link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", ("artifact", art.id), run_id=ctx.run.id)
+        link(s, ctx.workspace.id, ("run", ctx.run.id), "summarized_by", (art.type, art.id), run_id=ctx.run.id)
         for i in facts:
-            link(s, ctx.workspace.id, ("artifact", art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, (art.type, art.id), "cites", ("insight", i["code"]), run_id=ctx.run.id)
         from analystos.registries.hypotheses import register_run
 
         registered = register_run(s, run.id)  # the hypothesis registry scheduled re-analysis replays (P4-T05)
@@ -133,17 +133,35 @@ def finalize(ctx: RunContext) -> dict:
         emit(ctx.workspace.id, "analysis.completed", {"verified_insights": len(facts), "published": bool(published)},
              run_id=ctx.run.id, session=s)
         run.finished_at = utcnow()
-    report_id = None
-    report_cfg = (ctx.run.origin or {}).get("report")
-    if report_cfg:
-        from analystos.services.reports import generate_report
+    # every investigation leaves a report in Outputs (a schedule may ask for another kind or formats)
+    report_cfg = (ctx.run.origin or {}).get("report") or DEFAULT_REPORT
+    report_id = _scheduled_report(ctx, report_cfg)
+    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
+            "registered_hypotheses": registered}
 
+
+DEFAULT_REPORT = {"kind": "executive", "formats": ["html", "pdf", "xlsx"]}
+
+
+def _scheduled_report(ctx: RunContext, report_cfg: dict) -> str | None:
+    """The run's report (the one a schedule asked for, else the executive report) is best effort: the summary is already committed, so a disabled
+    feature or a missing PDF/XLSX extra is recorded on the run (`report_error`) and never fails the run."""
+    from analystos.core.logging import get_logger
+    from analystos.services.reports import generate_report
+
+    try:
         with session_scope() as s:
             art = generate_report(s, ctx.run.id, kind=report_cfg.get("kind", "weekly_summary"),
                                   formats=tuple(report_cfg.get("formats", ["html", "pdf", "xlsx"])), actor=f"agent:{ctx.agent.id}",
                                   finalizing=True)
-            report_id = art.id
             run = s.get(AnalysisRun, ctx.run.id)
-            run.summary = {**(run.summary or {}), "report_artifact_id": report_id}
-    return {"verified_insights": len(facts), "published": bool(published), "graph": graph, "report_artifact_id": report_id,
-            "registered_hypotheses": registered}
+            run.summary = {**(run.summary or {}), "report_artifact_id": art.id}
+            return art.id
+    except Exception as exc:  # noqa: BLE001 - recorded and said; the findings stand without the report
+        message = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
+        get_logger(__name__).warning("report for run %s not generated: %s", ctx.run.id, message)
+        with session_scope() as s:
+            run = s.get(AnalysisRun, ctx.run.id)
+            run.summary = {**(run.summary or {}), "report_error": str(message)[:1000]}
+        ctx.say(f"The report was not generated: {str(message)[:300]}. The findings and summary are saved.", kind="decision")
+        return None

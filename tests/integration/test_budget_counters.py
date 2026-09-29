@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import event, select
 
 from analystos.core.ids import new_id
+from analystos.db import vectors
 
 pytestmark = pytest.mark.integration
 
@@ -193,7 +194,7 @@ def test_migration_0012_backfills_the_rung_and_reverts(control_db):
     engine = create_engine(url)
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)

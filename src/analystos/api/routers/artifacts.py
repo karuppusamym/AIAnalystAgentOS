@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from analystos.api.deps import current_user, db
 from analystos.api.serialize import row, rows, with_verification
-from analystos.artifacts.registry import lineage_for
+from analystos.artifacts.registry import lineage_for, run_lineage
 from analystos.contracts.policy import ApprovalSubject, ApprovalView
-from analystos.core.errors import InvalidInput
+from analystos.core.errors import Conflict, InvalidInput
 from analystos.core.ids import utcnow
 from analystos.db.models import (
     AnalysisRun,
@@ -59,8 +59,14 @@ def get_artifact(artifact_id: str, user: User = Depends(current_user), session: 
 
 
 @router.get("/workspaces/{workspace_id}/lineage")
-def lineage(workspace_id: str, node_type: str, node_id: str, user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+def lineage(workspace_id: str, node_type: str | None = None, node_id: str | None = None, run_id: str | None = None,
+            user: User = Depends(current_user), session: Session = Depends(db, scope="function")):
+    """Provenance around one node (`node_type` + `node_id`), or every edge one run recorded (`run_id`)."""
     require_role(session, user, workspace_id, "viewer")
+    if run_id:
+        return run_lineage(session, workspace_id, run_id)
+    if not (node_type and node_id):
+        raise InvalidInput("pass node_type and node_id, or run_id")
     return lineage_for(session, workspace_id, (node_type, node_id))
 
 
@@ -212,10 +218,22 @@ def rollback(publication_id: str, user: User = Depends(current_user), session: S
     from analystos.governance.audit import audit
     from analystos.publishing.base import get_publisher
 
-    pub = load_in_workspace(session, Publication, publication_id, user=user, minimum="editor", label="publication")
+    pub = load_in_workspace(session, Publication, publication_id, user=user, minimum="editor", label="publication",
+                            for_update=True)
+    if pub.status == "rolled_back":
+        raise Conflict(f"publication {pub.id} is already rolled back")
+    if pub.status not in ("succeeded", "partial"):
+        raise Conflict(f"publication {pub.id} is {pub.status}; only a succeeded or partial publication can be rolled back")
     removed = get_publisher(pub.destination, get_settings()).rollback(pub.external_ids)
     pub.status = "rolled_back"
-    for art in session.scalars(select(Artifact).where(Artifact.run_id == pub.run_id, Artifact.status == "published")):
+    if pub.run_id:
+        published = select(Artifact).where(Artifact.run_id == pub.run_id, Artifact.status == "published")
+    else:  # an Ask answer publication: only the charts this publication placed (never every run-less artifact)
+        charts = [str(v) for v in ((pub.external_ids or {}).get("charts") or {}).values()]
+        published = select(Artifact).where(Artifact.workspace_id == pub.workspace_id, Artifact.run_id.is_(None),
+                                           Artifact.platform == pub.destination, Artifact.external_id.in_(charts),
+                                           Artifact.status == "published")
+    for art in session.scalars(published):
         art.status = "rolled_back"
     audit(f"user:{user.id}", "publication.rolled_back", workspace_id=pub.workspace_id, target=pub.id, details={"removed": removed},
           session=session)

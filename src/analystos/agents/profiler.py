@@ -63,7 +63,7 @@ def profile_tables(ctx: RunContext) -> dict:
         with session_scope() as s:
             art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="profile",
                                 name=f"Profile {fq}", content=profile, creator_agent=ctx.agent.id)
-            link(s, ctx.workspace.id, ("table", fq), "profiled_by", ("artifact", art.id), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, ("table", fq), "profiled_by", (art.type, art.id), run_id=ctx.run.id)
         summaries.append({"asset": fq, "artifact_id": art.id, "row_count": profile.get("row_count"),
                           "columns": len(col_profiles), "reused": profile["reused"],
                           "semantic_types": {n: p.get("semantic_type") for n, p in col_profiles.items()}})
@@ -102,7 +102,7 @@ def check_quality(ctx: RunContext) -> dict:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="quality_report",
                             name="Data quality report", content={"issues": issues_all}, creator_agent=ctx.agent.id)
         for fq in ctx.scope.assets:
-            link(s, ctx.workspace.id, ("table", fq), "quality_checked_by", ("artifact", art.id), run_id=ctx.run.id)
+            link(s, ctx.workspace.id, ("table", fq), "quality_checked_by", (art.type, art.id), run_id=ctx.run.id)
     crit = [i for i in issues_all if i.get("severity") == "critical"]
     warn = [i for i in issues_all if i.get("severity") == "warning"]
     ctx.say(f"Data quality: {len(crit)} critical, {len(warn)} warnings, {len(issues_all) - len(crit) - len(warn)} info. "

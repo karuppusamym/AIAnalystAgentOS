@@ -22,6 +22,7 @@ from sqlalchemy import func, select, text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analystos.core.errors import Forbidden  # noqa: E402
 from analystos.core.ids import new_id  # noqa: E402
+from analystos.db import vectors
 from dataplane_fixtures import *  # noqa: E402,F403
 from dataplane_fixtures import reader_as  # noqa: E402
 
@@ -253,7 +254,7 @@ def test_migration_0007_puts_workspace_in_the_lineage_key(dp_control_url):
     engine = create_engine(url)
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)

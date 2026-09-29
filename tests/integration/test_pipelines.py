@@ -26,6 +26,8 @@ import uvicorn
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
+from analystos.db import vectors
+
 pytestmark = pytest.mark.integration
 TABLE = "change_request"
 DEST = "aos_pipe_mart"
@@ -552,7 +554,7 @@ def test_migration_0039_up_down_up_matches_the_models(control_db):
     models = [Pipeline, PipelineRun, WriterDestination, Materialization]
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)

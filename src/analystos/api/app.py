@@ -54,6 +54,9 @@ async def lifespan(_: FastAPI):
 
     settings = get_settings()
     runtime = start_local_runtime()
+    from analystos.services.stale_work import sweep_quietly
+
+    sweep_quietly()  # Ask turns and ML experiments a previous process left "running" end as failed
     scheduler_stop = None
     if settings.run_inprocess_scheduler:
         from analystos.services.schedules import start_inprocess_scheduler

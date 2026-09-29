@@ -116,8 +116,8 @@ Timings are from the live evidence run on a loaded machine: an investigation rea
   **Data: ServiceNow** → point at **Before it starts** (what it reads, the spend cap, what needs a person) and
   **Is the data ready?** (*ready*: every required check passes, including the reviewed grain from the brief) →
   **Start investigation**.
-* **Show:** the **Board** filling in (Proposed → Testing → Supported / Rejected / Inconclusive), then
-  **Live events**.
+* **Show:** the **Hypotheses** tab filling in (the status counts move Proposed → Testing → Supported / Rejected /
+  Inconclusive; click one to filter), then **Live events**.
 * **Say:** "Models propose, code decides. Hypotheses come from a closed analysis vocabulary; each one compiles to
   SQL through the gateway and is tested with real statistics, corrected for multiple comparisons. Nothing a
   model writes reaches a number, a query or an approval without passing that deterministic path. With no model

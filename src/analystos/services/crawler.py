@@ -164,6 +164,7 @@ def persist_profile(s: Session, asset_id: str, profile: dict[str, Any], *, patte
     col_profiles = {c["name"]: c for c in profile.get("columns") or [] if isinstance(c, dict)}
     cols = list(s.scalars(select(SourceColumn).where(SourceColumn.asset_id == asset_id).order_by(SourceColumn.ordinal)))
     sem = a.semantics or {}
+    values_allowed = _samples_allowed(s, a.workspace_id)
     for c in cols:
         p = col_profiles.get(c.name)
         if p is None:
@@ -174,12 +175,17 @@ def persist_profile(s: Session, asset_id: str, profile: dict[str, Any], *, patte
         p = sanitize_column_profile(p, sensitive=sensitive)
         c.profile = {**p, **({"patterns": masks} if masks else {}), **({"references": refs} if refs else {})}
         c.semantic_type = p.get("semantic_type") or c.semantic_type
+        yes = cat.yes_no_flag(c.profile) if not sensitive and cat.normalize_type(c.data_type) == "text" else None
+        if yes is not None and (c.semantics or {}).get("semantic_role") != "flag":
+            c.semantics = {**(c.semantics or {}), "semantic_role": "flag", "flag_true": yes}  # "Returned": Yes / No
         if _column_text_writable(c, a.name, a.source_name) and (c.semantics or {}).get("semantic_role"):
             c.description, c.description_origin = cat.describe_column(
                 c.semantics or {}, profile=c.profile, references=refs, sensitive=sensitive,
-                entity=str(sem.get("entity") or a.name)), "rule"
+                entity=str(sem.get("entity") or a.name), values_allowed=values_allowed), "rule"
     snapshot = a.snapshot or {}
-    a.stats = {**{k: v for k, v in profile.items() if k not in ("columns", "reused")}, "profile_meta": profile_meta(a, profile)}
+    kept = {k: v for k, v in (a.stats or {}).items() if k in ("key_check",)}  # a measured key check outlives a re-profile
+    a.stats = {**kept, **{k: v for k, v in profile.items() if k not in ("columns", "reused")},
+               "profile_meta": profile_meta(a, profile)}
     if profile.get("row_count") is not None:
         a.row_count = int(profile["row_count"])
     if sem:
@@ -218,6 +224,17 @@ def _model_confidence(value: Any) -> float:
         return min(0.9, max(0.0, float(value)))
     except (TypeError, ValueError):
         return 0.5
+
+
+def _samples_allowed(s: Session, workspace_id: str) -> bool:
+    """The workspace lets data values reach models (`send_data_samples_to_models`): stored rule descriptions reach
+    prompts and knowledge documents, so they list a column's values only then."""
+    from analystos.governance.policy import get_workspace, load_policy
+
+    try:
+        return bool(load_policy(s, get_workspace(s, workspace_id)).send_data_samples_to_models)
+    except Exception:  # noqa: BLE001 - no readable policy: the default, no samples
+        return False
 
 
 def _description_writable(origin: str | None, reviewed: bool, current: str | None, table_name: str,
@@ -312,8 +329,16 @@ def run_crawl(crawl_id: str, user_id: str) -> dict[str, Any]:
             log.error("crawl %s cannot start: crawl_run or user %s not found", crawl_id, user_id)
             raise NotFound("crawl or user not found")
         s.expunge_all()
+    from analystos.capabilities import packs
+
     try:
-        stats = _Crawl(run, user).execute()
+        with session_scope() as s:
+            fitting = packs.for_workspace(s, run.workspace_id)  # this workspace's domain, not every installed pack
+    except Exception:  # noqa: BLE001 - unknown: every pack, as before
+        fitting = None
+    try:
+        with packs.only(fitting):
+            stats = _Crawl(run, user).execute()
     except AnalystOSError as exc:
         _fail(crawl_id, f"{exc.code}: {exc.message}")
         raise
@@ -582,6 +607,9 @@ class _Crawl:
                              **({"glossary": col.semantics["glossary"]} if (col.semantics or {}).get("glossary") else {}),
                              **({"polymorphic_reference": col.semantics["polymorphic_reference"]}
                                 if (col.semantics or {}).get("polymorphic_reference") else {}),
+                             # a person's review (an approved description or business name) is what lets that text
+                             # reach prompts (agents/common.py); a re-crawl must not undo it
+                             **({"reviewed": True} if (col.semantics or {}).get("reviewed") else {}),
                              "pii": pii.model_dump() if pii.category else None}
             if col.business_name_origin != "user":
                 source_bn = cat.screen_text(c.business_name, max_chars=120) if c.business_name else None
@@ -841,8 +869,10 @@ class _Crawl:
     def _measure_relationships(self, ids: dict[str, str], touched: set[str]) -> dict[str, Any]:
         """Governed pass over the selected assets (source ready): declared references are measured (containment and
         target uniqueness give the real cardinality) and validated only when the measurement corroborates them;
-        bounded discovery (single-column, and composite for a small selection) queues every other measured join as a
-        pending review candidate. Decided measurements are not queued again (review.record_candidate)."""
+        bounded discovery (single-column, and composite for a small selection) validates a single-column join the
+        measurement corroborates (`agents.metadata.auto_validates`, as an investigation does) and queues every other
+        measured join as a pending review candidate. Decided measurements are not queued again (review.record_candidate)."""
+        from analystos.agents.metadata import auto_validates
         from analystos.governance.policy import resolve_scope
         from analystos.runtime.context import default_gateway
         from analystos.semantic import review
@@ -896,6 +926,26 @@ class _Crawl:
                         rel.validated = True  # declared by the source and corroborated by the measurement
                         validated += 1
                     if corroborated or rel.validated:
+                        continue
+                elif len(c.from_columns) == 1 and auto_validates(c.model_dump()):
+                    # measured, not declared: the same rule as the metadata agent (target measured unique, every value
+                    # found, no fan-out) validates it in code; a join a person rejected is never re-validated
+                    rel = s.scalar(select(Relationship).where(
+                        Relationship.workspace_id == ws, Relationship.from_asset_id == fa, Relationship.from_column == c.from_column,
+                        Relationship.to_asset_id == ta, Relationship.to_column == c.to_column))
+                    if rel is None:
+                        rel = Relationship(id=new_id("rel"), workspace_id=ws, from_asset_id=fa, from_column=c.from_column,
+                                           to_asset_id=ta, to_column=c.to_column, origin="discovered", validated=False)
+                        s.add(rel)
+                    if not (rel.evidence or {}).get("rejected") and rel.origin not in ("user", "review"):
+                        measured += 1
+                        rel.cardinality, rel.confidence = c.cardinality, c.confidence
+                        rel.evidence = {**(rel.evidence or {}), **{k: v for k, v in c.evidence.items() if k != "sql"},
+                                        "assessment": c.assessment.get("outcome"), "measured_by": f"crawl:{self.run.id}",
+                                        "measured_at": utcnow().isoformat(), "validated_by": "measurement"}
+                        if not rel.validated:
+                            rel.validated = True
+                            validated += 1
                         continue
                 row = review.record_candidate(s, ws, c, source_id=src, origin="crawler", proposed_by=self.user.id)
                 queued += int(row.status == "pending")

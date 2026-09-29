@@ -3,7 +3,7 @@ any time with `analystos knowledge reindex`.
 
 * `knowledge_document` — one row per OKF concept document (frontmatter, trust tier, staleness);
 * `knowledge_section` — its top-level sections, each with a generated `tsvector` (GIN) and an
-  embedding (pgvector **HNSW**, cosine);
+  embedding (pgvector **HNSW**, cosine; or `real[]` ranked in-process by the `array` backend, db/vectors.py);
 * `knowledge_link` — the link graph (§6.1), resolved against the same revision.
 
 Identity: document and section ids are derived from (pack, path, anchor), rows are written in
@@ -12,7 +12,7 @@ from the same revisions gives identical retrieval results (tests/integration/tes
 
 Retrieval is hybrid and deterministic: a lexical leg (Okapi BM25 over the sections' `tsvector`
 lexemes, with per-pack corpus statistics kept in the index state; P4-K05) and a vector leg (HNSW
-nearest neighbours), fused by reciprocal rank (k=60), then optionally one hop over the link graph.
+nearest neighbours, or an exact in-process cosine scan without pgvector), fused by reciprocal rank (k=60), then optionally one hop over the link graph.
 The P4-K01 lexical leg (`ts_rank_cd`) stays selectable so the retrieval benchmark can compare them.
 Scope is always the packs a workspace may see.
 """
@@ -29,6 +29,7 @@ from sqlalchemy import delete, event, select, text
 from sqlalchemy.orm import Session
 
 from analystos.core.logging import get_logger
+from analystos.db import vectors
 from analystos.db.models import (
     KnowledgeDocument,
     KnowledgeIndexState,
@@ -92,17 +93,20 @@ def _provider_for_writes(session: Session) -> emb.EmbeddingProvider:
     return p
 
 
-def _column_dim(session: Session) -> int | None:
-    return session.scalar(text("SELECT atttypmod FROM pg_attribute WHERE attrelid = 'knowledge_section'::regclass "
-                               "AND attname = 'embedding'"))
+def _column_type(session: Session) -> str | None:
+    return session.scalar(text("SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                               "WHERE attrelid = 'knowledge_section'::regclass AND attname = 'embedding'"))
 
 
 def _use_provider(session: Session, p: emb.EmbeddingProvider) -> None:
-    """Retype the embedding column (and rebuild its HNSW index) when the dimension changes."""
-    if _column_dim(session) != p.dim:
+    """Retype the embedding column (and rebuild its HNSW index) when the dimension or the vector
+    backend changes; a `real[]` column holds any dimension, so the array backend retypes only on a
+    backend change."""
+    if _column_type(session) != vectors.column_sql(p.dim):
         session.execute(text(f"DROP INDEX IF EXISTS {HNSW_INDEX}"))
-        session.execute(text(f"ALTER TABLE knowledge_section ALTER COLUMN embedding TYPE vector({int(p.dim)}) USING NULL"))
-        session.execute(text(f"CREATE INDEX {HNSW_INDEX} ON knowledge_section USING hnsw (embedding vector_cosine_ops)"))
+        session.execute(text(f"ALTER TABLE knowledge_section ALTER COLUMN embedding TYPE {vectors.column_sql(p.dim)} USING NULL"))
+        if vectors.uses_pgvector():
+            session.execute(text(f"CREATE INDEX {HNSW_INDEX} ON knowledge_section USING hnsw (embedding vector_cosine_ops)"))
         # psycopg prepares repeated statements server-side; a plan prepared against the old column type
         # fails ("cached plan must not change result type") once the type changes, on this connection
         # and on every pooled one. Re-embed is an admin step, so drop the pool once the change commits.
@@ -112,16 +116,13 @@ def _use_provider(session: Session, p: emb.EmbeddingProvider) -> None:
     _set_state(session, EMBEDDING_KEY, emb.describe(p))
 
 
-def _vec(v: list[float]) -> str:
-    return "[" + ",".join(f"{x:.7g}" for x in v) + "]"
-
-
 # ------------------------------------------------------------------------------------ build
-_INSERT_SECTION = text("""
+def _insert_section() -> Any:
+    return text(f"""
 INSERT INTO knowledge_section (id, document_id, pack_id, workspace_id, ordinal, anchor, heading, text, sha256,
                                search_text, embedding, embedding_model)
 VALUES (:id, :document_id, :pack_id, :workspace_id, :ordinal, :anchor, :heading, :text, :sha256,
-        :search_text, CAST(:embedding AS vector), :embedding_model)
+        :search_text, {vectors.cast(":embedding")}, :embedding_model)
 """)
 
 
@@ -180,10 +181,10 @@ def index_pack(session: Session, pack: KnowledgePack, provider: emb.EmbeddingPro
                                        resolved=bool(link.target and link.target in files)))
     session.flush()
     if sections:
-        vectors = provider.embed([s["search_text"] for s in sections])
+        embedded = provider.embed([s["search_text"] for s in sections])
         model = emb.provider_id(provider)
-        session.execute(_INSERT_SECTION, [{**s, "embedding": _vec(v), "embedding_model": model}
-                                          for s, v in zip(sections, vectors, strict=True)])
+        session.execute(_insert_section(), [{**s, "embedding": vectors.literal(v), "embedding_model": model}
+                                          for s, v in zip(sections, embedded, strict=True)])
     session.add_all(links)
     session.flush()
     report = {"pack_id": pack.id, "slug": pack.slug, "revision": rev.number if rev else None,
@@ -269,9 +270,9 @@ def reembed(session: Session, provider: emb.EmbeddingProvider | None = None, *, 
         chunk = ids[i:i + batch]
         rows = session.execute(select(KnowledgeSection.id, KnowledgeSection.search_text)
                                .where(KnowledgeSection.id.in_(chunk)).order_by(KnowledgeSection.id)).all()
-        vectors = provider.embed([r.search_text for r in rows])
-        session.execute(text("UPDATE knowledge_section SET embedding = CAST(:e AS vector), embedding_model = :m WHERE id = :id"),
-                        [{"id": r.id, "e": _vec(v), "m": model} for r, v in zip(rows, vectors, strict=True)])
+        embedded = provider.embed([r.search_text for r in rows])
+        session.execute(text(f"UPDATE knowledge_section SET embedding = {vectors.cast(':e')}, embedding_model = :m WHERE id = :id"),
+                        [{"id": r.id, "e": vectors.literal(v), "m": model} for r, v in zip(rows, embedded, strict=True)])
     session.flush()
     return {"from": before, "to": emb.describe(provider), "sections": len(ids)}
 
@@ -377,7 +378,13 @@ def _vector(session: Session, packs: list[str], query: str, candidates: int) -> 
     provider = emb.from_state(index_embedding(session))
     if provider is None:
         return [], {}
-    qv = _vec(provider.embed([query])[0])
+    query_vector = provider.embed([query])[0]
+    if not vectors.uses_pgvector():
+        rows = session.execute(select(KnowledgeSection.id, KnowledgeSection.embedding).where(
+            KnowledgeSection.pack_id.in_(packs), KnowledgeSection.embedding.is_not(None))).all()
+        ranked = vectors.rank(query_vector, [(r.id, r.embedding) for r in rows], candidates)
+        return [i for i, _ in ranked], {i: round(1.0 - d, 6) for i, d in ranked}
+    qv = vectors.literal(query_vector)
     session.execute(text("SELECT set_config('hnsw.ef_search', :v, true), set_config('hnsw.iterative_scan', 'relaxed_order', true)"),
                     {"v": str(max(64, min(1000, candidates * 4)))})
     rows = session.execute(text("""
@@ -502,4 +509,4 @@ def stats(session: Session) -> dict[str, Any]:
               for t in ("knowledge_document", "knowledge_section", "knowledge_link")}
     hnsw = session.scalar(text("SELECT indexdef FROM pg_indexes WHERE tablename = 'knowledge_section' "
                                "AND indexname = :n"), {"n": HNSW_INDEX})
-    return {**counts, "hnsw_index": hnsw, "embedding": index_embedding(session)}
+    return {**counts, "vector_backend": vectors.backend(), "hnsw_index": hnsw, "embedding": index_embedding(session)}

@@ -20,7 +20,17 @@ LABELS = {"objective": "BusinessObjective", "run": "AnalysisRun", "hypothesis": 
           "agent": "Agent", "tool": "Tool", "user": "User", "approval": "Decision", "publication": "Publication",
           "profile": "Artifact", "quality_report": "Artifact", "context_package": "Artifact", "plan": "Artifact",
           "semantic_model": "SemanticModel", "feedback": "Feedback", "transformation": "Artifact",
-          "build_job": "BuildJob"}
+          "build_job": "BuildJob", "report": "Report", "narrative": "Narrative", "relationship_map": "Artifact",
+          "agent_output": "Artifact", "process_analysis": "Artifact", "ml_spec": "Artifact", "ml_split_manifest": "Artifact",
+          "ml_trials": "Artifact", "ml_evaluation": "Artifact", "ml_model_card": "Artifact",
+          "ml_experiment": "MlExperiment", "ml_model_version": "MlModelVersion", "ml_scoring_run": "MlScoringRun",
+          "recipe": "Recipe", "recipe_run": "RecipeRun", "pipeline": "Pipeline", "pipeline_run": "PipelineRun",
+          "materialization": "Materialization", "step": "Step", "step_branch": "StepBranch", "ask_turn": "AskTurn",
+          "semantic_metric": "SemanticMetric", "semantic_relationship": "SemanticRelationship",
+          "relationship_candidate": "RelationshipCandidate", "data_contract": "DataContract", "definition": "Definition",
+          "schedule": "Schedule", "verified_query": "VerifiedQuery", "registered_hypothesis": "RegisteredHypothesis",
+          "knowledge_document": "KnowledgeDocument", "knowledge_suggestion": "KnowledgeSuggestion",
+          "worker_task": "WorkerTask", "worker_artifact": "WorkerArtifact"}
 
 
 NEIGHBOURHOOD_LIMIT = 200
@@ -55,10 +65,13 @@ def project_workspace(session: Session, workspace_id: str) -> dict:
     edges = list(session.scalars(select(LineageEdge).where(LineageEdge.workspace_id == workspace_id)))
     rels = list(session.scalars(select(Relationship).where(Relationship.workspace_id == workspace_id)))
     assets = {a.id: f"{a.schema_name}.{a.name}" for a in session.scalars(select(SourceAsset).where(SourceAsset.workspace_id == workspace_id))}
+    # A table-to-table JOINS_TO is the relationship row's edge (columns, cardinality, validation), never a second,
+    # property-less edge from lineage: a rejected or unvalidated join stays visible as such and is filtered on read.
     rows = [{"ft": e.from_type, "fid": e.from_id, "fl": LABELS.get(e.from_type, "Artifact"), "rel": e.relation.upper(),
-             "tt": e.to_type, "tid": e.to_id, "tl": LABELS.get(e.to_type, "Artifact")} for e in edges]
+             "tt": e.to_type, "tid": e.to_id, "tl": LABELS.get(e.to_type, "Artifact")} for e in edges if not _is_join(e)]
     rel_rows = [{"a": assets.get(r.from_asset_id, r.from_asset_id), "ac": r.from_column, "b": assets.get(r.to_asset_id, r.to_asset_id),
-                 "bc": r.to_column, "card": r.cardinality, "conf": r.confidence} for r in rels]
+                 "bc": r.to_column, "card": r.cardinality, "conf": r.confidence, "validated": bool(r.validated),
+                 "rejected": bool((r.evidence or {}).get("rejected"))} for r in rels]
     try:
         with _driver().session() as g:
             ensure_schema(g)
@@ -69,9 +82,11 @@ def project_workspace(session: Session, workspace_id: str) -> dict:
                 g.run(f"UNWIND $rows AS r MERGE (a:AOS {{workspace_id: $ws, type: r.ft, id: r.fid}}) SET a:{fl} "
                       f"MERGE (b:AOS {{workspace_id: $ws, type: r.tt, id: r.tid}}) SET b:{tl} "
                       f"MERGE (a)-[:{rel}]->(b)", rows=batch, ws=workspace_id)
+            g.run("MATCH (:AOS {workspace_id: $ws})-[j:JOINS_TO]->() WHERE j.from_column IS NULL DELETE j", ws=workspace_id)
             g.run("UNWIND $rows AS r MERGE (a:AOS {workspace_id: $ws, type:'table', id:r.a}) SET a:Table "
                   "MERGE (b:AOS {workspace_id: $ws, type:'table', id:r.b}) SET b:Table "
-                  "MERGE (a)-[j:JOINS_TO {from_column:r.ac, to_column:r.bc}]->(b) SET j.cardinality=r.card, j.confidence=r.conf",
+                  "MERGE (a)-[j:JOINS_TO {from_column:r.ac, to_column:r.bc}]->(b) SET j.cardinality=r.card, j.confidence=r.conf, "
+                  "j.validated=r.validated, j.rejected=r.rejected",
                   rows=rel_rows, ws=workspace_id)
         return {"ok": True, "edges": len(rows), "relationships": len(rel_rows)}
     except Exception as exc:  # projection is best effort; Postgres stays authoritative
@@ -97,9 +112,10 @@ def neighborhood(tables: list[str], workspace_id: str, session: Session | None =
 
 def neo4j_neighborhood(tables: list[str], workspace_id: str) -> list[dict]:
     with _driver().session() as g:
-        # Both ends are pinned to the workspace, so a stray cross-workspace edge is never followed.
+        # Both ends are pinned to the workspace, so a stray cross-workspace edge is never followed; a join is
+        # context only when validated (a rejected or unreviewed candidate is no path to join on).
         result = g.run("MATCH (t:AOS {workspace_id: $ws, type:'table'})-[r]-(n:AOS {workspace_id: $ws}) "
-                       "WHERE t.id IN $tables "
+                       "WHERE t.id IN $tables AND (type(r) <> 'JOINS_TO' OR coalesce(r.validated, false)) "
                        "RETURN DISTINCT t.id AS table, type(r) AS rel, n.type AS type, n.id AS id "
                        "ORDER BY table, rel, type, id LIMIT $limit",
                        tables=tables, ws=workspace_id, limit=NEIGHBOURHOOD_LIMIT)
@@ -109,7 +125,9 @@ def neo4j_neighborhood(tables: list[str], workspace_id: str) -> list[dict]:
 def pg_neighborhood(session: Session, tables: list[str], workspace_id: str) -> list[dict]:
     """One hop from each table over the same edges the projection writes, workspace-filtered:
     lineage edges in either direction (relation upper-cased, as the projection labels it) and
-    table relationships as JOINS_TO. Same rows, order and limit as the Neo4j query."""
+    table relationships as JOINS_TO. Same rows, order and limit as the Neo4j query. A join between two
+    tables is a validated relationship row (the projection writes JOINS_TO from those rows only), so a
+    candidate rejected in review, or never validated, never reaches an agent's context."""
     if not tables:
         return []
     e = LineageEdge
@@ -124,11 +142,15 @@ def pg_neighborhood(session: Session, tables: list[str], workspace_id: str) -> l
     joined = (select(a.label("a"), b.label("b")).select_from(Relationship)
               .outerjoin(fa, and_(fa.id == Relationship.from_asset_id, fa.workspace_id == workspace_id))
               .outerjoin(ta, and_(ta.id == Relationship.to_asset_id, ta.workspace_id == workspace_id))
-              .where(Relationship.workspace_id == workspace_id)).subquery()
-    rows: set[tuple[str, str, str, str]] = {tuple(r) for q in (out, inc) for r in session.execute(q)}
+              .where(Relationship.workspace_id == workspace_id, Relationship.validated.is_(True))).subquery()
+    valid: set[tuple[str, str]] = set()
     for ra, rb in session.execute(select(joined.c.a, joined.c.b).where(joined.c.a.in_(tables) | joined.c.b.in_(tables))):
-        if ra in tables:
-            rows.add((ra, "JOINS_TO", "table", rb))
-        if rb in tables:
-            rows.add((rb, "JOINS_TO", "table", ra))
+        valid |= {(ra, rb), (rb, ra)}
+    rows: set[tuple[str, str, str, str]] = {tuple(r) for q in (out, inc) for r in session.execute(q)}
+    rows = {r for r in rows if not (r[1] == "JOINS_TO" and r[2] == "table")} | {(t, "JOINS_TO", "table", o)
+                                                                               for t, o in valid if t in tables}
     return [{"table": t, "rel": r, "type": ty, "id": i} for t, r, ty, i in sorted(rows)[:NEIGHBOURHOOD_LIMIT]]
+
+
+def _is_join(edge: LineageEdge) -> bool:
+    return edge.relation == "joins_to" and edge.from_type == "table" and edge.to_type == "table"

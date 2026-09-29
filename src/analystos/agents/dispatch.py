@@ -4,7 +4,7 @@ or the generic propose -> validate -> execute runtime for a declarative agent. T
 and no fallback: a task the playbook does not declare is an error."""
 from __future__ import annotations
 
-from analystos.capabilities import registry
+from analystos.capabilities import packs, registry
 from analystos.capabilities.agents import GENERIC_ENTRY, entry_for
 from analystos.capabilities.binding import resolve, run_playbook
 from analystos.core.errors import NotFound
@@ -26,10 +26,12 @@ def dispatch(ctx: RunContext) -> dict:
     entry = entry_for(manifest, behaviour)
     if side_effect:
         ctx.check_control()  # a cancel that arrived while waiting for approval stops the side effect
-    if entry == GENERIC_ENTRY:
-        from analystos.agents.generic import run_agent
-
-        return run_agent(ctx, manifest)
     if entry is None:
         raise NotFound(f"{manifest.ref} has no behaviour to run for task {key}")
-    return registry.resolve_python(entry)(ctx)
+    # domain-pack hints (keys, entities, event words) of the packs that fit this run's data only
+    with packs.only(packs.for_scope(ctx.scope, ctx.policy)):
+        if entry == GENERIC_ENTRY:
+            from analystos.agents.generic import run_agent
+
+            return run_agent(ctx, manifest)
+        return registry.resolve_python(entry)(ctx)

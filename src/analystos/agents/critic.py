@@ -18,7 +18,7 @@ from analystos import methods
 from analystos.agents.common import ModelOutcome, compact_json, llm_json, llm_json_batch, task_output
 from analystos.agents.insight import template_text
 from analystos.agents.investigator import with_constraints
-from analystos.artifacts.registry import link
+from analystos.artifacts.registry import link, link_queries
 from analystos.contracts.analysis import AnalysisSpec, StatResult
 from analystos.contracts.evidence import DataManifest, Fact
 from analystos.core.errors import AnalystOSError
@@ -332,6 +332,8 @@ def verify_insights(ctx: RunContext) -> dict:
                                   query_ids=list(second.query_ids), role="verification")
                 s.add(vexp)
                 link(s, ctx.workspace.id, ("insight", ins.id), "verified_by", ("experiment", vexp.id), run_id=ctx.run.id)
+                link_queries(s, ctx.workspace.id, ("experiment", vexp.id), list(second.query_ids), run_id=ctx.run.id,
+                             assets=[spec.asset] if spec.asset else None)
             if not deterministic_ok:
                 h = s.get(Hypothesis, ins.hypothesis_id)
                 h.status = "inconclusive"

@@ -37,6 +37,7 @@ from analystos.core.errors import (
     PolicyDenied,
 )
 from analystos.core.ids import new_id, stable_hash, utcnow
+from analystos.core.logging import get_logger
 from analystos.db.base import session_scope
 from analystos.db.models import (
     AnalysisRun,
@@ -57,6 +58,7 @@ from analystos.governance.audit import audit
 from analystos.governance.policy import load_in_workspace, require_role, resolve_scope, scoped_loader
 from analystos.ml.store import MLStore, snapshots
 
+log = get_logger(__name__)
 SUBJECT = "ml_experiment"
 VERIFIER = "ml.v1"
 PROMOTE, ROLLBACK, SCORE = "ml.promote", "ml.rollback", "ml.score"
@@ -286,6 +288,14 @@ def start_experiment(user: User, workspace_id: str, definition: Any, *, run_id: 
                     event="ml.experiment.refused" if refused else "ml.experiment.failed", error=exc.message[:4000])
         exc.details = {**(exc.details or {}), "experiment_id": exp_id}
         raise
+    except Exception as exc:  # noqa: BLE001 - an unexpected failure still ends the experiment; never left "running"
+        log.exception("ML experiment %s failed unexpectedly", exp_id)
+        with session_scope() as s:
+            status = s.get(MLExperiment, exp_id).status
+        if status == "running":
+            _finish(exp_id, "failed", event="ml.experiment.failed",
+                    error="the experiment stopped because of an unexpected error; see the server log")
+        raise AnalystOSError("the experiment stopped because of an unexpected error", details={"experiment_id": exp_id}) from exc
 
 
 def _evidence_bundle(spec: MLSpec, result: dict[str, Any], snap: dict[str, Any], card: dict[str, Any]) -> dict[str, Any]:

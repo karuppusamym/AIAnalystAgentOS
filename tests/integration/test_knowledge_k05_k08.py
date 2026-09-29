@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from analystos.core.ids import new_id
+from analystos.db import vectors
 from analystos.db.base import session_scope
 from analystos.db.models import KnowledgeIndexState, KnowledgeSuggestion, LineageEdge, User
 from analystos.knowledge import index, okf, store
@@ -509,7 +510,7 @@ def test_migration_0024_applies_and_reverts(control_db):
     engine = create_engine(url)
     try:
         with engine.begin() as c:
-            c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            vectors.ensure_extension(c)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
         cfg.set_main_option("sqlalchemy.url", url)

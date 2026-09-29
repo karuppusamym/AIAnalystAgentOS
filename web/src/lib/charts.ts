@@ -25,7 +25,7 @@ export interface ChartPalette {
 }
 
 export const LIGHT: ChartPalette = {
-  series: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
+  series: ["#1e5a96", "#e0a800", "#1a8a7a", "#d71e28", "#5a469b", "#e0701f", "#d6518a", "#6b665f"],
   sequential: ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
   text: "#0b0b0b",
   textMuted: "#52514e",
@@ -35,7 +35,7 @@ export const LIGHT: ChartPalette = {
 };
 
 export const DARK: ChartPalette = {
-  series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+  series: ["#6da7ec", "#ffcd41", "#2fb8a4", "#ff5c63", "#9f8ae6", "#f08a3c", "#e878a8", "#b1aca4"],
   sequential: ["#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"],
   text: "#ffffff",
   textMuted: "#c3c2b7",
