@@ -57,6 +57,9 @@ EVENT_TYPES = {
     "ml.experiment.started", "ml.experiment.completed", "ml.experiment.refused", "ml.experiment.failed",
     "ml.model.registered", "ml.model.promoted", "ml.model.rolled_back", "ml.scoring.planned", "ml.scoring.completed",
     "ml.scoring.refused", "ml.scoring.duplicate",
+    # General entity matching (INT-004, N-7): proposals, review, the approved crosswalk
+    "entity_match.started", "entity_match.proposed", "entity_match.failed", "entity_match.reviewed",
+    "entity_match.promotion_requested", "entity_match.promoted",
     # Controlled pilot (P4-09): named business and technical owners of a workspace and of a source
     "workspace.owners_changed", "source.owners_changed",
 }

@@ -1954,4 +1954,58 @@ class MLScoringRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class EntityMatchRun(Base):
+    """One deterministic record-linkage run between two tables (INT-004, N-7). Its pairs are proposals;
+    only the accepted ones, promoted under a hash-bound approval, become the reviewed crosswalk table
+    (`crosswalk_table` in the managed output source) and the join keys analysis may use (`join_keys`).
+    No PII value is stored here: `left_version`/`right_version` are digests of the compared features."""
+
+    __tablename__ = "entity_match_run"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    left_asset: Mapped[str] = mapped_column(String(300))
+    right_asset: Mapped[str] = mapped_column(String(300))
+    left_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    right_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    left_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    right_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pii_fields: Mapped[list[str]] = mapped_column(JSON, default=list)  # field labels compared as keyed digests
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|proposed|awaiting_approval|promoted|failed
+    stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    query_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    approval_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    crosswalk_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    crosswalk_source_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    crosswalk_table: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    join_keys: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = _ts()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EntityMatchPair(Base):
+    """One proposed link: the two record keys, the score, its band (`match` or `review`) and the per-field
+    similarities (numbers only). `decision` is a person's: proposed until accepted or rejected."""
+
+    __tablename__ = "entity_match_pair"
+    __table_args__ = (UniqueConstraint("run_id", "left_key", "right_key", name="uq_entity_match_pair"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("entity_match_run.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    left_key: Mapped[str] = mapped_column(String(300))
+    right_key: Mapped[str] = mapped_column(String(300))
+    score: Mapped[float] = mapped_column(Float)
+    band: Mapped[str] = mapped_column(String(10))  # match | review
+    fields: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    decision: Mapped[str] = mapped_column(String(10), default="proposed")  # proposed | accepted | rejected
+    decided_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 from analystos.db import column_presence  # noqa: E402,F401  (registers the absent-column filter, P7-20)
