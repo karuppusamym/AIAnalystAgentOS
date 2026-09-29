@@ -2357,6 +2357,85 @@
         "title": "Filter",
         "type": "object"
       },
+      "FilterOverride": {
+        "additionalProperties": false,
+        "description": "A threshold change: the query's filter on `field` takes `value` (and `op`, if given). The query is\nre-measured through the gateway; its numbers answer a changed definition, so they are simulated.",
+        "properties": {
+          "field": {
+            "maxLength": 241,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+            "title": "Field",
+            "type": "string"
+          },
+          "op": {
+            "anyOf": [
+              {
+                "enum": [
+                  "=",
+                  "!=",
+                  "<",
+                  "<=",
+                  ">",
+                  ">=",
+                  "in",
+                  "not_in",
+                  "is_null",
+                  "is_not_null"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Op"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "FilterOverride",
+        "type": "object"
+      },
       "FindingOutcomeIn": {
         "properties": {
           "reason": {
@@ -5370,6 +5449,164 @@
         "title": "RunIn",
         "type": "object"
       },
+      "ScenarioAdjustment": {
+        "additionalProperties": false,
+        "description": "One change to a requested metric: `scale` by `percent`, `shift` by `amount`, or `set` to `amount`.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "kind": {
+            "enum": [
+              "scale",
+              "shift",
+              "set"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "metric": {
+            "maxLength": 120,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "title": "Metric",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": -100.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "segment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScenarioSegment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "metric"
+        ],
+        "title": "ScenarioAdjustment",
+        "type": "object"
+      },
+      "ScenarioSegment": {
+        "additionalProperties": false,
+        "description": "Restrict a change to result rows whose requested dimension holds one of `values`.",
+        "properties": {
+          "dimension": {
+            "maxLength": 241,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+            "title": "Dimension",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "title": "ScenarioSegment",
+        "type": "object"
+      },
+      "ScenarioSpec": {
+        "additionalProperties": false,
+        "description": "What the person asks: the governed query, the changes, and the assumptions in their own words.",
+        "properties": {
+          "adjustments": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioAdjustment"
+            },
+            "maxItems": 10,
+            "title": "Adjustments",
+            "type": "array"
+          },
+          "ask_turn_id": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ask Turn Id"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "filter_overrides": {
+            "items": {
+              "$ref": "#/components/schemas/FilterOverride"
+            },
+            "maxItems": 5,
+            "title": "Filter Overrides",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "semantic_query": {
+            "$ref": "#/components/schemas/SemanticQuery"
+          }
+        },
+        "required": [
+          "name",
+          "semantic_query"
+        ],
+        "title": "ScenarioSpec",
+        "type": "object"
+      },
       "ScheduleIn": {
         "properties": {
           "config": {
@@ -5751,6 +5988,224 @@
           "expressions"
         ],
         "title": "SemanticField",
+        "type": "object"
+      },
+      "SemanticFilter": {
+        "additionalProperties": false,
+        "description": "One predicate on a model field. Values become literals in the compiler, never SQL text.",
+        "properties": {
+          "field": {
+            "maxLength": 241,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+            "title": "Field",
+            "type": "string"
+          },
+          "op": {
+            "default": "=",
+            "enum": [
+              "=",
+              "!=",
+              "<",
+              "<=",
+              ">",
+              ">=",
+              "in",
+              "not_in",
+              "is_null",
+              "is_not_null"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "SemanticFilter",
+        "type": "object"
+      },
+      "SemanticOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "default": "asc",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "field": {
+            "maxLength": 241,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "SemanticOrder",
+        "type": "object"
+      },
+      "SemanticQuery": {
+        "additionalProperties": false,
+        "description": "ADR-0019 IR. Names only: metrics, model fields and literal values. SQL comes from the approved\ndefinitions and the compiler (`semantic/compiler.py`), never from whoever chose the query.",
+        "properties": {
+          "dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticFilter"
+            },
+            "maxItems": 20,
+            "title": "Filters",
+            "type": "array"
+          },
+          "limit": {
+            "default": 500,
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Metrics",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticOrder"
+            },
+            "maxItems": 10,
+            "title": "Order",
+            "type": "array"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemanticTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "metrics"
+        ],
+        "title": "SemanticQuery",
+        "type": "object"
+      },
+      "SemanticTime": {
+        "additionalProperties": false,
+        "description": "A time dimension, its grain (a truncation that becomes a group) and an absolute window [start, end).",
+        "properties": {
+          "dimension": {
+            "maxLength": 241,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+            "title": "Dimension",
+            "type": "string"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "grain": {
+            "anyOf": [
+              {
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "quarter",
+                  "year"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grain"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          }
+        },
+        "required": [
+          "dimension"
+        ],
+        "title": "SemanticTime",
         "type": "object"
       },
       "ServerIn": {
@@ -27836,6 +28291,270 @@
         "summary": "Create Report",
         "tags": [
           "continuous"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/scenarios": {
+      "get": {
+        "description": "The caller's own scenarios in this workspace (optionally those made from one Ask answer), newest first.",
+        "operationId": "list_scenarios_api_workspaces__workspace_id__scenarios_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ask_turn_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 40,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ask Turn Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Scenarios",
+        "tags": [
+          "scenarios"
+        ]
+      },
+      "post": {
+        "description": "Compute and record a scenario: the observed baseline, the simulated values, assumptions and hashes.",
+        "operationId": "run_scenario_api_workspaces__workspace_id__scenarios_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}/scenarios/{scenario_id}": {
+      "get": {
+        "operationId": "get_scenario_api_workspaces__workspace_id__scenarios__scenario_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scenario_id",
+            "required": true,
+            "schema": {
+              "title": "Scenario Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-correlation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Scenario",
+        "tags": [
+          "scenarios"
         ]
       }
     },

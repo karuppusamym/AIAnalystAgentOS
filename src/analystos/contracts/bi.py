@@ -58,6 +58,8 @@ class ChartSpec(BaseModel):
     governance: Literal["governed", "ad_hoc"] = "ad_hoc"
     semantic_model_version: int | None = None
     compiler_version: str | None = None
+    # N-9: a what-if chart draws simulated numbers; PublishBundle refuses it (never published as observed).
+    value_basis: Literal["observed", "simulated"] = "observed"
 
     @model_validator(mode="after")
     def _governed_carries_versions(self) -> ChartSpec:
@@ -73,6 +75,8 @@ class ChartSpec(BaseModel):
         if self.governance == "ad_hoc" and self.semantic_model_version is None and self.compiler_version is None:
             for key in ("governance", "semantic_model_version", "compiler_version"):
                 data.pop(key, None)
+        if self.value_basis == "observed":
+            data.pop("value_basis", None)
         return data
 
 
@@ -96,6 +100,13 @@ class PublishBundle(BaseModel):
     metrics: list[MetricDef]
     charts: list[ChartSpec]
     dashboards: list[DashboardSpec]
+
+    @model_validator(mode="after")
+    def _observed_only(self) -> PublishBundle:
+        simulated = [c.key for c in self.charts if c.value_basis != "observed"]
+        if simulated:
+            raise ValueError(f"simulated (what-if) charts cannot be published: {', '.join(simulated)}")
+        return self
 
 
 class PublishResult(BaseModel):

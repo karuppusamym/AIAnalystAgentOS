@@ -26,6 +26,7 @@ from analystos.api.routers import pipelines as pipelines_router
 from analystos.api.routers import process as process_router
 from analystos.api.routers import recipes as recipes_router
 from analystos.api.routers import registries as registries_router
+from analystos.api.routers import scenarios as scenarios_router
 from analystos.api.routers import semantic as semantic_router
 from analystos.api.routers import steps as steps_router
 from analystos.api.routers import work_orders as work_orders_router
@@ -90,6 +91,7 @@ app.include_router(mcp_router.router)
 app.include_router(decisions_router.router)
 app.include_router(builds_router.router)
 app.include_router(ask_router.router)
+app.include_router(scenarios_router.router)  # what-if scenarios (N-9)
 app.include_router(knowledge_router.router)
 app.include_router(context_export_router.router)  # download and inspect the workspace context (Stream D)
 app.include_router(evidence_router.router)

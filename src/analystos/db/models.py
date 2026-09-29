@@ -1954,4 +1954,28 @@ class MLScoringRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+
+class WhatIfScenario(Base):
+    """A what-if scenario (N-9): a governed `SemanticQuery`, the declared changes and assumptions (hashed),
+    the observed baseline's receipt and the labelled result. Private to its author, like an Ask thread;
+    never a publishable artifact (every scenario number is labelled simulated)."""
+
+    __tablename__ = "what_if_scenario"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    ask_turn_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    assumptions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    assumptions_hash: Mapped[str] = mapped_column(String(64))
+    baseline: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result_hash: Mapped[str] = mapped_column(String(64))
+    semantic_model_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    compiler_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    scenario_version: Mapped[str] = mapped_column(String(20))
+    created_by: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = _ts()
+
 from analystos.db import column_presence  # noqa: E402,F401  (registers the absent-column filter, P7-20)

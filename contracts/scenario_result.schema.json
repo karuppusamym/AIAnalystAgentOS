@@ -1,0 +1,244 @@
+{
+  "$defs": {
+    "LabelledValue": {
+      "additionalProperties": false,
+      "description": "A number and the one thing a reader must know about it: observed or simulated.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "basis": {
+          "enum": [
+            "observed",
+            "simulated"
+          ],
+          "title": "Basis",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "basis"
+      ],
+      "title": "LabelledValue",
+      "type": "object"
+    },
+    "ScenarioCell": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "observed": {
+          "$ref": "#/$defs/LabelledValue"
+        },
+        "simulated": {
+          "$ref": "#/$defs/LabelledValue"
+        },
+        "change": {
+          "$ref": "#/$defs/LabelledValue"
+        },
+        "change_pct": {
+          "$ref": "#/$defs/LabelledValue"
+        },
+        "adjusted_by": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Adjusted By",
+          "type": "array"
+        }
+      },
+      "required": [
+        "metric",
+        "observed",
+        "simulated",
+        "change",
+        "change_pct"
+      ],
+      "title": "ScenarioCell",
+      "type": "object"
+    },
+    "ScenarioRow": {
+      "properties": {
+        "key": {
+          "additionalProperties": true,
+          "title": "Key",
+          "type": "object"
+        },
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/ScenarioCell"
+          },
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "cells"
+      ],
+      "title": "ScenarioRow",
+      "type": "object"
+    }
+  },
+  "description": "The recorded scenario. `publishable` is always False: a simulated number is not a published number.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "workspace_id": {
+      "title": "Workspace Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "scenario_version": {
+      "default": "whatif.v1",
+      "title": "Scenario Version",
+      "type": "string"
+    },
+    "label": {
+      "const": "simulated",
+      "default": "simulated",
+      "title": "Label",
+      "type": "string"
+    },
+    "publishable": {
+      "const": false,
+      "default": false,
+      "title": "Publishable",
+      "type": "boolean"
+    },
+    "spec": {
+      "additionalProperties": true,
+      "title": "Spec",
+      "type": "object"
+    },
+    "spec_hash": {
+      "title": "Spec Hash",
+      "type": "string"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "assumptions_hash": {
+      "title": "Assumptions Hash",
+      "type": "string"
+    },
+    "baseline": {
+      "additionalProperties": true,
+      "title": "Baseline",
+      "type": "object"
+    },
+    "remeasured": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remeasured"
+    },
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/ScenarioRow"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "totals": {
+      "items": {
+        "$ref": "#/$defs/ScenarioCell"
+      },
+      "title": "Totals",
+      "type": "array"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "guard": {
+      "additionalProperties": true,
+      "title": "Guard",
+      "type": "object"
+    },
+    "result_hash": {
+      "title": "Result Hash",
+      "type": "string"
+    },
+    "ask_turn_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ask Turn Id"
+    },
+    "created_by": {
+      "title": "Created By",
+      "type": "string"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    }
+  },
+  "required": [
+    "id",
+    "workspace_id",
+    "name",
+    "spec",
+    "spec_hash",
+    "assumptions",
+    "assumptions_hash",
+    "baseline",
+    "columns",
+    "rows",
+    "summary",
+    "guard",
+    "result_hash",
+    "created_by"
+  ],
+  "title": "ScenarioResult",
+  "type": "object"
+}

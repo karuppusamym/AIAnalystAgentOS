@@ -167,6 +167,15 @@
           ],
           "default": null,
           "title": "Compiler Version"
+        },
+        "value_basis": {
+          "default": "observed",
+          "enum": [
+            "observed",
+            "simulated"
+          ],
+          "title": "Value Basis",
+          "type": "string"
         }
       },
       "required": [
