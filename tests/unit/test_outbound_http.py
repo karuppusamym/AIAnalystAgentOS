@@ -260,7 +260,8 @@ def test_mcp_client_refuses_a_non_public_server_before_any_request(address: str,
     from analystos.mcp import client as mc
 
     monkeypatch.setattr(outbound, "system_resolver", resolver(address))
-    monkeypatch.setattr(mc, "_private_hosts", lambda: [])
+    monkeypatch.setattr(mc, "_platform_allowlist", lambda: ["*.example.com"])
+    monkeypatch.setattr(mc, "_operator_private_hosts", lambda: [])
     server = SimpleNamespace(name="bi", url="https://mcp.example.com/mcp", secret_ref=None, config={})
     with pytest.raises(OutboundRefused, match="non-public"):
         mc._call_remote(server, lambda client: pytest.fail("no MCP request may be made"))
@@ -269,13 +270,13 @@ def test_mcp_client_refuses_a_non_public_server_before_any_request(address: str,
 def test_mcp_registration_refuses_a_non_public_address_literal(monkeypatch) -> None:  # noqa: ANN001
     from analystos.mcp import client as mc
 
-    monkeypatch.setattr(mc, "_private_hosts", lambda: [])
+    monkeypatch.setattr(mc, "_platform_allowlist", lambda: ["*", "127.0.0.1"])
+    monkeypatch.setattr(mc, "_operator_private_hosts", lambda: [])
     for url in ("http://169.254.169.254/mcp", "http://100.64.1.1:8080/mcp", "http://[::1]/mcp"):
-        with pytest.raises(InvalidInput, match="not public"):
+        with pytest.raises(OutboundRefused, match="non-public"):
             mc._validate_url(url)
-    assert mc._validate_url("https://mcp.example.com/mcp") == "https://mcp.example.com/mcp"
-    monkeypatch.setattr(mc, "_private_hosts", lambda: ["127.0.0.1"])
-    assert mc._validate_url("http://127.0.0.1:9000/mcp")
+    assert mc._validate_url("https://mcp.example.com/mcp", resolver("93.184.216.34")) == "https://mcp.example.com/mcp"
+    assert mc._validate_url("http://127.0.0.1:9000/mcp")  # an exact entry reaches the MCP private ranges
 
 
 def test_mcp_default_allows_loopback_and_private_ranges_but_not_metadata_or_cgnat(monkeypatch) -> None:  # noqa: ANN001

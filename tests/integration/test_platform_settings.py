@@ -83,3 +83,29 @@ def test_writer_never_merges_onto_a_stale_cached_copy(users):
     ps.invalidate()
     assert ps.get().analysis.sample_rows == 1234 and ps.get().analysis.max_charts == 6
 
+
+def test_mcp_host_allowlist_is_admin_controlled_and_read_by_the_mcp_client(users, monkeypatch):
+    """P4-X05: the platform MCP host allowlist lives here; malformed entries never get stored."""
+    import ipaddress
+
+    from analystos.core.config import get_settings
+    from analystos.mcp import client as mc
+    from analystos.tools.http import OutboundRefused
+
+    monkeypatch.setattr(get_settings(), "mcp_host_allowlist", "")
+    public = lambda host, port: [ipaddress.ip_address("93.184.216.34")]  # noqa: E731
+    with pytest.raises(OutboundRefused, match="platform MCP host allowlist"):
+        mc._validate_url("https://mcp.example.com/mcp", public)
+    with session_scope() as s, pytest.raises(Forbidden):
+        ps.update(s, s.get(User, users["plain"]), {"outbound": {"mcp_host_allowlist": ["*"]}})
+    for bad in (["*.com"], ["0x7f000001"], ["host:99999"]):
+        with session_scope() as s, pytest.raises(InvalidInput):
+            ps.update(s, s.get(User, users["admin"]), {"outbound": {"mcp_host_allowlist": bad}})
+    with session_scope() as s:
+        r = ps.update(s, s.get(User, users["admin"]), {"outbound": {"mcp_host_allowlist": ["MCP.example.com"]}})
+    assert [c["path"] for c in r["changes"]] == ["outbound.mcp_host_allowlist"]
+    assert mc._platform_allowlist() == ["mcp.example.com"]
+    assert mc._validate_url("https://mcp.example.com/mcp", public)
+    with pytest.raises(OutboundRefused, match="allowlist"):
+        mc._validate_url("https://other.example.com/mcp", public)
+

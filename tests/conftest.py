@@ -25,6 +25,8 @@ os.environ.setdefault("ANALYSTOS_BUDGET_COUNTER_PREFIX", f"aostest:{TEST_SUFFIX 
 # The MCP test doubles listen on 127.0.0.1; outbound calls to non-public addresses need the operator's
 # explicit listing (P7-11), which a test session gives for loopback only.
 os.environ.setdefault("ANALYSTOS_OUTBOUND_PRIVATE_HOSTS", "127.0.0.1")
+# ...and an MCP server's host must be on the platform MCP host allowlist (P4-X05).
+os.environ.setdefault("ANALYSTOS_MCP_HOST_ALLOWLIST", "127.0.0.1")
 ANALYTICS_DB = f"{_DP_DB}_analytics"
 _HOSTPORT = TEST_DB.split("@", 1)[1].rsplit("/", 1)[0]
 os.environ["ANALYSTOS_ANALYTICS_LOADER_URL"] = f"postgresql+psycopg://{ROLE_PREFIX}loader:loader@{_HOSTPORT}/{ANALYTICS_DB}"
