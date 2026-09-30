@@ -17,11 +17,11 @@ needs_helm = pytest.mark.skipif(not HELM, reason="helm binary not available (set
 
 
 def _values(name: str = "values.yaml") -> dict:
-    return yaml.safe_load((CHART / name).read_text())
+    return yaml.safe_load((CHART / name).read_text(encoding="utf-8"))
 
 
 def test_every_task_queue_has_a_worker_pool():
-    queues = set(yaml.safe_load((ROOT / "config" / "task_queues.yaml").read_text())["queues"])
+    queues = set(yaml.safe_load((ROOT / "config" / "task_queues.yaml").read_text(encoding="utf-8"))["queues"])
     for name in ("values.yaml", "values-ha.yaml"):
         pools = _values(name)["workers"]
         served = {q.strip() for p in pools.values() for q in p["queues"].split(",")}
@@ -29,7 +29,7 @@ def test_every_task_queue_has_a_worker_pool():
 
 
 def test_values_never_carry_credentials():
-    text = "\n".join((CHART / f).read_text() for f in ("values.yaml", "values-ha.yaml", "values-airgapped.yaml"))
+    text = "\n".join((CHART / f).read_text(encoding="utf-8") for f in ("values.yaml", "values-ha.yaml", "values-airgapped.yaml"))
     for marker in (" sk-", "\"sk-", "password:", "PASSWORD=", "postgresql://", "postgresql+psycopg://"):
         assert marker not in text, marker
     assert _values()["secrets"]["existingSecret"]
@@ -114,11 +114,11 @@ def test_defaults_keep_governance_boundaries():
     values = _values()
     mapping = yaml.safe_load(values["oidc"]["mapping"])
     assert not [a for a in mapping.get("attributes") or {} if platform_controlled(a)]
-    assert "ANALYSTOS_ANALYTICS_BUILDER_URL" in (CHART / "values.yaml").read_text()
+    assert "ANALYSTOS_ANALYTICS_BUILDER_URL" in (CHART / "values.yaml").read_text(encoding="utf-8")
     assert values["config"]["sandboxIsolation"] == "process"
     assert _values("values-airgapped.yaml")["config"]["sandboxIsolation"] != "off"
     assert values["workers"]["elt"]["replicas"] == 0  # dbt is not in the app image
-    notes = (CHART / "templates" / "NOTES.txt").read_text()  # `off` is called out, and where to check status
+    notes = (CHART / "templates" / "NOTES.txt").read_text(encoding="utf-8")  # `off` is called out, and where to check status
     assert "WITH the pod's network" in notes and "checks.sandbox" in notes
 
 

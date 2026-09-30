@@ -110,7 +110,7 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 @lru_cache
 def load_local_model(path: Path = LOCAL_MODEL_PATH) -> dict[str, Any]:
-    return (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+    return (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.exists() else {}
 
 
 def _features(state: dict) -> list[str]:

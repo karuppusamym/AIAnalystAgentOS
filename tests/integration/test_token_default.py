@@ -159,7 +159,7 @@ def test_standard_run_default_preset_chat_calls(control_db, servicenow_url, monk
     result = measure_standard_run(servicenow_url, monkeypatch)
     target = os.environ.get("ANALYSTOS_TOKEN_EVIDENCE_OUT")
     if target:
-        Path(target).write_text(json.dumps(result, indent=2, sort_keys=True))
+        Path(target).write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     from scripts import cost_gate
 
     if os.environ.get("ANALYSTOS_COST_FIXTURE_RECORD"):  # refresh the cost-gate recording from this run
@@ -171,6 +171,6 @@ def test_standard_run_default_preset_chat_calls(control_db, servicenow_url, monk
     assert result["chat_calls"] <= MAX_CHAT_CALLS_PER_RUN, result
     # P4-T10 on the live pipeline: a new model call site in agent code shows up here even before the
     # recording is refreshed.
-    baseline = json.loads(cost_gate.BASELINE.read_text())
+    baseline = json.loads(cost_gate.BASELINE.read_text(encoding="utf-8"))
     live = {"standard_run": {"calls": result["chat_calls"] + result["decision_calls"], "tokens": result["tokens_used"]}}
     assert cost_gate.compare(live, baseline) == [], (live, baseline)

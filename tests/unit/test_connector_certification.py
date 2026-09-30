@@ -13,7 +13,7 @@ def _evidence(folder, kind="mysql", day="20260925", *, result="pass", suffix="",
     meta = {"kind": kind, "date": f"{day[:4]}-{day[4:6]}-{day[6:]}", "engine": "MySQL 8.4 (docker mysql:8.4)",
             "test": "tests/integration/test_generic_sources.py -k mysql", "result": result, **over}
     body = "---\n" + "\n".join(f"{k}: {v}" for k, v in meta.items() if v is not None) + "\n---\n# evidence\n"
-    (folder / f"connector-{kind}-{day}{suffix}.md").write_text(body)
+    (folder / f"connector-{kind}-{day}{suffix}.md").write_text(body, encoding="utf-8")
 
 
 def test_certified_flag_flips_only_when_the_evidence_file_exists(tmp_path):
@@ -30,10 +30,10 @@ def test_invalid_evidence_does_not_certify(tmp_path):
     _evidence(tmp_path, result="fail")
     _evidence(tmp_path, day="20260926", engine=None)  # frontmatter incomplete
     _evidence(tmp_path, day="20260927", suffix="-x", kind="mysql", date="2026-01-01")  # date mismatch
-    (tmp_path / "connector-mysql-2026.md").write_text("---\nkind: mysql\n---\n")  # not a dated name
-    (tmp_path / "connector-oracle-20260925.md").write_text("no frontmatter")
+    (tmp_path / "connector-mysql-2026.md").write_text("---\nkind: mysql\n---\n", encoding="utf-8")  # not a dated name
+    (tmp_path / "connector-oracle-20260925.md").write_text("no frontmatter", encoding="utf-8")
     (tmp_path / "connector-postgres-20260925.md").write_text(
-        "---\nkind: mysql\ndate: 2026-09-25\nengine: x\ntest: y\nresult: pass\n---\n")  # names another kind
+        "---\nkind: mysql\ndate: 2026-09-25\nengine: x\ntest: y\nresult: pass\n---\n", encoding="utf-8")  # names another kind
     s = cert.statuses(tmp_path)
     assert {k for k, v in s.items() if v["status"] == "certified"} == set()
     ok, why = cert.parse_evidence(tmp_path / "connector-mysql-20260925.md", "mysql")

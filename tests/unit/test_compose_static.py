@@ -13,7 +13,7 @@ import yaml
 from analystos.core.config import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE = yaml.safe_load((ROOT / "compose.yaml").read_text())
+COMPOSE = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
 SERVICES: dict = COMPOSE["services"]
 # Variables the app reads outside Settings (worker entry points, source secret_refs, the provider key).
 NOT_SETTINGS = {"ANALYSTOS_WORKER_QUEUES", "ANALYSTOS_PG_POOLER", "ANALYSTOS_API_EXTRAS"}
@@ -66,7 +66,7 @@ def test_every_analystos_variable_is_a_setting():
     for svc in SERVICES.values():
         names |= {k for k in _env(svc) if k.startswith("ANALYSTOS_")}
     for env_file in (ROOT / "deploy/compose").glob("*.env"):
-        names |= {line.split("=", 1)[0] for line in env_file.read_text().splitlines() if line.startswith("ANALYSTOS_")}
+        names |= {line.split("=", 1)[0] for line in env_file.read_text(encoding="utf-8").splitlines() if line.startswith("ANALYSTOS_")}
     unknown = sorted(names - fields - NOT_SETTINGS)
     assert not unknown, f"compose sets variables no setting reads: {unknown}"
 
@@ -74,7 +74,7 @@ def test_every_analystos_variable_is_a_setting():
 def test_profile_env_files_name_real_profiles_and_services():
     profiles = {p for svc in SERVICES.values() for p in svc.get("profiles") or []}
     for env_file in (ROOT / "deploy/compose").glob("*.env"):
-        for line in env_file.read_text().splitlines():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
             if line.startswith("COMPOSE_PROFILES="):
                 assert set(line.split("=", 1)[1].split(",")) <= profiles, env_file.name
             m = re.match(r"ANALYSTOS_\w+_URL=https?://([\w-]+):", line)
@@ -86,7 +86,7 @@ def test_lite_is_postgres_api_web_and_the_runbook_profiles_exist():
     default = {name for name, svc in SERVICES.items() if not svc.get("profiles")}
     assert default == {"postgres", "api", "web"}
     assert _env(SERVICES["api"])["ANALYSTOS_PROFILE"] == "${ANALYSTOS_PROFILE:-lite}"
-    runbook = (ROOT / "docs/30-runbooks/04-lite-and-profiles.md").read_text()
+    runbook = (ROOT / "docs/30-runbooks/04-lite-and-profiles.md").read_text(encoding="utf-8")
     profiles = {p for svc in SERVICES.values() for p in svc.get("profiles") or []}
     for profile in ("standard", "scale", "bi", "graph", "demo", "sandbox", "pooled", "isolated"):
         assert profile in profiles and f"`{profile}`" in runbook, profile
@@ -95,6 +95,6 @@ def test_lite_is_postgres_api_web_and_the_runbook_profiles_exist():
 @pytest.mark.parametrize("script", ["deploy/superset/bootstrap.sh", "deploy/postgres/02-extensions.sh", "scripts/demo.sh"])
 def test_shell_scripts_run_in_linux_containers_from_a_windows_checkout(script):
     """A Windows checkout with core.autocrlf would give `bash\\r: not found`: .gitattributes pins LF."""
-    attrs = (ROOT / ".gitattributes").read_text()
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert re.search(r"^\*\.sh\s+text\s+eol=lf", attrs, re.M)
     assert b"\r\n" not in (ROOT / script).read_bytes()

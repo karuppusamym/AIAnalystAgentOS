@@ -88,7 +88,7 @@ class Snapshot:
 
 # ------------------------------------------------------------------------------------ loading
 def _read_yaml(path: Path) -> list[dict[str, Any]]:
-    docs = [d for d in yaml.safe_load_all(path.read_text()) if d is not None]
+    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d is not None]
     out: list[dict[str, Any]] = []
     for d in docs:
         out.extend(d if isinstance(d, list) else [d])

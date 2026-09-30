@@ -144,7 +144,7 @@ def test_key_rotation_refreshes_the_jwks_once(idp):
 
 def test_static_jwks_file_needs_no_jwks_endpoint(idp, tmp_path):
     path = tmp_path / "jwks.json"
-    path.write_text(json.dumps(idp.jwks))
+    path.write_text(json.dumps(idp.jwks), encoding="utf-8")
     p = _provider(idp, jwks_file=path)
     assert p.validate_id_token(idp.id_token({"sub": "u", "nonce": "n"}), nonce="n")["sub"] == "u"
     assert idp.jwks_fetches == 0
@@ -208,7 +208,7 @@ def test_idp_claims_never_grant_pii_clearance(claim, tmp_path):
 @pytest.mark.parametrize("attr", ["pii_clearance", "PII_Clearance", "data_clearance", "sso_managed", "is_admin"])
 def test_mapping_file_refuses_platform_controlled_attributes(tmp_path, attr):
     path = tmp_path / "oidc.yaml"
-    path.write_text(f"attributes: {{department: department, {attr}: some_claim}}\n")
+    path.write_text(f"attributes: {{department: department, {attr}: some_claim}}\n", encoding="utf-8")
     with pytest.raises(Exception, match="platform-controlled"):
         oidc.load_mapping(path)
     assert oidc.platform_controlled(attr) and not oidc.platform_controlled("department")
@@ -227,7 +227,7 @@ def test_unmapped_users_can_be_refused_and_email_is_required():
 
 def test_mapping_file_rejects_unknown_roles(tmp_path):
     path = tmp_path / "oidc.yaml"
-    path.write_text("workspace_roles: [{group: g, workspace: w, role: superuser}]\n")
+    path.write_text("workspace_roles: [{group: g, workspace: w, role: superuser}]\n", encoding="utf-8")
     with pytest.raises(Exception, match="unknown role"):
         oidc.load_mapping(path)
     assert oidc.load_mapping(oidc.get_settings().oidc_mapping_file).attributes  # the shipped file parses

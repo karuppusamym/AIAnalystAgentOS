@@ -48,7 +48,7 @@ def test_sales_benchmark_end_to_end_without_models(control_db, monkeypatch):
     get_settings.cache_clear()
     default_router.cache_clear()
     upload = Path(get_settings().upload_dir)
-    bench = yaml.safe_load((PACK / "benchmark" / "benchmark.yaml").read_text())
+    bench = yaml.safe_load((PACK / "benchmark" / "benchmark.yaml").read_text(encoding="utf-8"))
     try:
         from analystos.db.base import session_scope
         from analystos.db.models import AgentMessage, Hypothesis, Insight, User

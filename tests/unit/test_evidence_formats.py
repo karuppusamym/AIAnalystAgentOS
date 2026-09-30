@@ -30,18 +30,18 @@ NOW = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 
 
 def test_pinned_schema_files_match_their_provenance():
-    prov = yaml.safe_load((SCHEMA_DIR / "PROVENANCE.yaml").read_text())
+    prov = yaml.safe_load((SCHEMA_DIR / "PROVENANCE.yaml").read_text(encoding="utf-8"))
     pinned = {k: v for k, v in prov.items() if isinstance(v, dict) and "sha256" in v}
     assert len(pinned) == 8
     for rel, meta in pinned.items():
-        assert hashlib.sha256((SCHEMA_DIR / rel).read_bytes()).hexdigest() == meta["sha256"], rel
+        assert hashlib.sha256((SCHEMA_DIR / rel).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == meta["sha256"], rel
     assert set(facet_schema_urls()) == {"SQLJobFacet", "JobTypeJobFacet", "SchemaDatasetFacet", "ParentRunFacet",
                                         "ErrorMessageRunFacet", "ColumnLineageDatasetFacet"}
 
 
 # ------------------------------------------------------------------------------------ ODCS
 def test_official_odcs_example_validates_and_a_broken_one_does_not():
-    official = yaml.safe_load((FIXTURES / "odcs" / "official-full-example-v3.2.0.odcs.yaml").read_text())
+    official = yaml.safe_load((FIXTURES / "odcs" / "official-full-example-v3.2.0.odcs.yaml").read_text(encoding="utf-8"))
     assert validate_odcs(official) == []
     broken = {**official, "kind": "Contract"}
     broken.pop("apiVersion")

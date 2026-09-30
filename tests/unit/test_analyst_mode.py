@@ -384,7 +384,7 @@ def test_the_new_purposes_are_rules_first_and_have_prompts():
     from analystos.agents.prompts import prompt
     from analystos.contracts.platform import DETERMINISTIC_CAPABLE
 
-    cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "models.yaml").read_text())
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "models.yaml").read_text(encoding="utf-8"))
     for purpose in (analyst.PLANNING_PURPOSE, analyst.SYNTHESIS_PURPOSE):
         ladder = cfg["ladders"][purpose]
         assert ladder.index("rules") < ladder.index("llm_small") and purpose in DETERMINISTIC_CAPABLE

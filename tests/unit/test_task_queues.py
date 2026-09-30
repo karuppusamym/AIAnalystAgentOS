@@ -36,10 +36,10 @@ def test_repo_config_loads_and_keeps_engine_tasks_within_the_claim_ttl():
 
 def test_config_rejects_unknown_workloads_and_bad_timeouts(tmp_path):
     bad = tmp_path / "q.yaml"
-    bad.write_text("queues:\n  gpu: {max_concurrent: 1}\n")
+    bad.write_text("queues:\n  gpu: {max_concurrent: 1}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="unknown workload"):
         queues.load_config(bad)
-    bad.write_text("queues:\n  compute: {heartbeat_seconds: 900, start_to_close_seconds: 600}\n")
+    bad.write_text("queues:\n  compute: {heartbeat_seconds: 900, start_to_close_seconds: 600}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="heartbeat_seconds"):
         queues.load_config(bad)
 

@@ -34,7 +34,7 @@ def sso(control_db, monkeypatch, tmp_path):
         "platform_admin_groups: [aos-admins]\n"
         f"workspace_roles:\n  - {{group: itsm-viewers, workspace: '{ws_name}', role: viewer}}\n"
         f"  - {{group: itsm-analysts, workspace: {ws_id}, role: analyst}}\n"
-        "attributes: {department: department}\n")
+        "attributes: {department: department}\n", encoding="utf-8")
     idp = FakeIdP()
     for key, value in {"ANALYSTOS_OIDC_ISSUER": ISSUER, "ANALYSTOS_OIDC_CLIENT_ID": CLIENT_ID,
                        "ANALYSTOS_OIDC_REDIRECT_URI": "http://testserver/api/auth/oidc/callback",

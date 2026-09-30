@@ -84,7 +84,7 @@ def test_table_documents_split_wide_tables_and_resolve_links():
 
 # ------------------------------------------------------------------------------------ dbt
 def _manifest() -> dict:
-    return json.loads((FIXTURES / "dbt" / "manifest_v12_incidents.json").read_text())
+    return json.loads((FIXTURES / "dbt" / "manifest_v12_incidents.json").read_text(encoding="utf-8"))
 
 
 def test_dbt_manifest_nodes_tests_and_lineage():

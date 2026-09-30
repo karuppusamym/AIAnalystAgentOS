@@ -170,7 +170,7 @@ def test_os_metadata_is_ignored_and_listed():
 # ------------------------------------------------------------------------------------ providers
 def test_the_recorded_atlas_mcp_result_parses_into_items_with_receipts():
     """Against the MOCK fixture (see tests/fixtures/okf/README.md): proves the parser, not Atlas."""
-    fixture = json.loads((FIXTURES / "atlas-mcp-get-knowledge-context.mock.json").read_text())
+    fixture = json.loads((FIXTURES / "atlas-mcp-get-knowledge-context.mock.json").read_text(encoding="utf-8"))
     assert fixture["_fixture"]["label"].startswith("MOCK")
     screened = {"is_error": False, "text": "\n".join(c["text"] for c in fixture["content"]), "structured": None}
     res = parse_atlas_context(screened)

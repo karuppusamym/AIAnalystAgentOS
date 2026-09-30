@@ -76,7 +76,7 @@ def load_config(path: Path | None = None) -> tuple[dict[str, QueueSpec], int]:
     from analystos.core.config import DATA_ROOT
 
     path = path or DATA_ROOT / "config" / "task_queues.yaml"
-    raw: dict[str, Any] = yaml.safe_load(path.read_text()) if path.exists() else {}
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
     specs = dict(DEFAULT_SPECS)
     for name, cfg in (raw.get("queues") or {}).items():
         if name not in WORKLOADS + ISOLATED_POOLS:

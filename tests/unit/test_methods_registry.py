@@ -209,7 +209,7 @@ def test_a_pack_cannot_declare_a_python_method(tmp_path):
     pack = tmp_path / "packs" / "evil"
     pack.mkdir(parents=True)
     (pack / "m.yaml").write_text("apiVersion: analystos/v1\nkind: Method\nid: method.evil\nsummary: s\n"
-                                 "entry: python:os:getcwd\nside_effect: none\n")
+                                 "entry: python:os:getcwd\nside_effect: none\n", encoding="utf-8")
     snap = cap_registry.load(packs_dir=tmp_path / "packs", entry_points=False, legacy=False, connectors=False, strict=False)
     assert "method.evil" in snap.manifests  # the capability is visible ...
     original = cap_registry.PACKS_DIR

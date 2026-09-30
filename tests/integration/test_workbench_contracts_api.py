@@ -389,8 +389,8 @@ def pin_pack(tmp_path, monkeypatch):
     root = tmp_path / "packs"
     shutil.copytree(registry.PACKS_DIR, root)
     (root / "pin_notes").mkdir()
-    (root / "pin_notes" / "agent.yaml").write_text(yaml.safe_dump(AGENT))
-    (root / "pin_notes" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK))
+    (root / "pin_notes" / "agent.yaml").write_text(yaml.safe_dump(AGENT), encoding="utf-8")
+    (root / "pin_notes" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK), encoding="utf-8")
     registry.current()
     monkeypatch.setattr(registry, "PACKS_DIR", root)
     yield root
@@ -425,7 +425,7 @@ def test_a_pack_upgrade_shows_upgrade_available_and_the_next_fire_keeps_the_pinn
     assert sch.json()["pins"]["revision"] == 1 and "agent.pin_notes@0.1.0" in sch.json()["pins"]["refs"]
 
     bumped = {**AGENT, "version": "0.2.0", "spec": {**AGENT["spec"], "budget": {"llm_calls": 0}}}
-    (pin_pack / "pin_notes" / "agent.yaml").write_text(yaml.safe_dump(bumped))
+    (pin_pack / "pin_notes" / "agent.yaml").write_text(yaml.safe_dump(bumped), encoding="utf-8")
     reload = api.post("/api/admin/capabilities/reload", headers=admin)
     assert reload.status_code == 200 and reload.json()["pinned_schedules"].get("upgrade_available", 0) >= 1
     detail = api.get(f"/api/workspaces/{ws}/schedules/{sid}", headers=analyst).json()

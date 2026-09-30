@@ -62,7 +62,7 @@ def ctx(monkeypatch):
 
 
 def test_the_purpose_is_configured_rules_first():
-    cfg = yaml.safe_load((ROOT / "config" / "models.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "config" / "models.yaml").read_text(encoding="utf-8"))
     ladder = cfg["ladders"]["semantic_query"]
     assert ladder.index("rules") < ladder.index("llm_small") and cfg["routing"]["semantic_query"] == "low_cost"
     assert "semantic_query" in DETERMINISTIC_CAPABLE

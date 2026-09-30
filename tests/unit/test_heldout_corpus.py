@@ -224,7 +224,7 @@ def test_the_heldout_gate_is_a_non_blocking_report(monkeypatch):
 def test_the_paired_baseline_summary(tmp_path):
     codes = B.assign_codes(["HO-A", "HO-B"], seed=4)
     assert len(set(codes.values())) == 4 and codes == B.assign_codes(["HO-A", "HO-B"], seed=4)
-    header = B.TEMPLATE.read_text().splitlines()[0]
+    header = B.TEMPLATE.read_text(encoding="utf-8").splitlines()[0]
     rows = [
         "HO-A,analystos,op1,B001,,,5,4,1,1,,,s1,accepted,,0.01,",
         "HO-A,practitioner,p1,B002,,,50,10,0,0,,,s1,accepted,,,",
@@ -232,7 +232,7 @@ def test_the_paired_baseline_summary(tmp_path):
         "HO-B,practitioner,p2,B004,,,30,5,0,0,,,s1,confident_wrong,claimed an effect,,",
     ]
     path = tmp_path / "results.csv"
-    path.write_text("\n".join([header, *rows]) + "\n")
+    path.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
     loaded = B.load(path)
     assert B.problems(loaded) == []
     s = B.paired_summary(loaded)

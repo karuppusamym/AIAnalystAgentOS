@@ -294,7 +294,7 @@ def _execute(code: str, *, backend: str, inputs: dict | None = None, timeout_s: 
         body["rlimits"] = rlimits
         body["env"] = sandbox_env("/scratch")
         argv = isolation.container_argv(settings, container, memory_mb=memory_mb, scratch_mb=scratch_mb,
-                                        env=sandbox_env("/scratch"), harness_source=HARNESS.read_text())
+                                        env=sandbox_env("/scratch"), harness_source=HARNESS.read_text(encoding="utf-8"))
         # the docker client itself is not limited; the container has cgroup limits plus the harness rlimits
         popen: dict[str, Any] = {"cwd": workdir,
                                  "env": {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "DOCKER_HOST")}}

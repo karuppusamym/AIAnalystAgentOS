@@ -36,7 +36,7 @@ def _record(key: str) -> None:
 
 def calls(probe_dir: Path) -> list[dict]:
     path = probe_dir / "calls.jsonl"
-    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+    return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
 
 
 @activity.defn(name="plan_run")

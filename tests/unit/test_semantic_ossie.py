@@ -23,12 +23,12 @@ DBT_DOC = FIXTURES / "dbt_1_12_0_osi_document.json"
 
 
 def _load(name: str) -> dict:
-    return ossie.parse_text((FIXTURES / name).read_text())
+    return ossie.parse_text((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def test_pinned_schema_is_the_upstream_file():
-    pins = yaml.safe_load((ossie.SCHEMA_PATH.parent / "PROVENANCE.yaml").read_text())
-    assert hashlib.sha256(ossie.SCHEMA_PATH.read_bytes()).hexdigest() == pins["ossie-0.1.1.json"]["sha256"]
+    pins = yaml.safe_load((ossie.SCHEMA_PATH.parent / "PROVENANCE.yaml").read_text(encoding="utf-8"))
+    assert hashlib.sha256(ossie.SCHEMA_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == pins["ossie-0.1.1.json"]["sha256"]
     assert ossie.schema()["properties"]["version"]["const"] == ossie.OSSIE_VERSION == "0.1.1"
 
 
@@ -57,7 +57,7 @@ def test_documents_round_trip_losslessly(name):
 
 
 def test_real_dbt_osi_document_imports_and_flags_the_broken_derived_metric():
-    models, issues = dbt.import_osi_document(DBT_DOC.read_text())
+    models, issues = dbt.import_osi_document(DBT_DOC.read_text(encoding="utf-8"))
     (model,) = models
     assert model.name == "semantic_model"
     assert [d.name for d in model.datasets] == ["orders", "customers"]
@@ -70,7 +70,7 @@ def test_real_dbt_osi_document_imports_and_flags_the_broken_derived_metric():
 
 
 def test_dbt_round_trip_import_export_reimport_is_equal():
-    models, _ = dbt.import_osi_document(DBT_DOC.read_text())
+    models, _ = dbt.import_osi_document(DBT_DOC.read_text(encoding="utf-8"))
     files, issues = dbt.export_osi_folder(models)
     assert list(files) == ["osi/semantic_model.json"]
     exported = json.loads(files["osi/semantic_model.json"])
@@ -84,17 +84,17 @@ def test_dbt_round_trip_import_export_reimport_is_equal():
 def test_dbt_export_is_the_file_real_dbt_parsed():
     """Pins the export shape `dbt parse` (dbt-core 1.12.0) accepted: unquoted database.schema.alias
     sources and key columns named by field (dbt's importer matches field names)."""
-    models, _ = dbt.import_osi_document(DBT_DOC.read_text())
+    models, _ = dbt.import_osi_document(DBT_DOC.read_text(encoding="utf-8"))
     models[0].metrics = [m for m in models[0].metrics if m.name != "average_order_value"]
     files, _ = dbt.export_osi_folder(models)
-    assert json.loads(files["osi/semantic_model.json"]) == json.loads((FIXTURES / "dbt_1_12_0_parsed_our_export.json").read_text())
+    assert json.loads(files["osi/semantic_model.json"]) == json.loads((FIXTURES / "dbt_1_12_0_parsed_our_export.json").read_text(encoding="utf-8"))
     customers = next(d for d in models[0].datasets if d.name == "customers")
     assert customers.source == "shop.main.dim_customers" and customers.primary_key == ["customer"]
 
 
 def test_dbt_reemission_of_our_export_is_equal_up_to_dbts_documented_losses():
-    ours, _ = dbt.import_osi_document((FIXTURES / "dbt_1_12_0_parsed_our_export.json").read_text())
-    back, _ = dbt.import_osi_document((FIXTURES / "dbt_1_12_0_reemitted_our_export.json").read_text())
+    ours, _ = dbt.import_osi_document((FIXTURES / "dbt_1_12_0_parsed_our_export.json").read_text(encoding="utf-8"))
+    back, _ = dbt.import_osi_document((FIXTURES / "dbt_1_12_0_reemitted_our_export.json").read_text(encoding="utf-8"))
     assert [d.name for d in back[0].datasets] == [d.name for d in ours[0].datasets]
     assert back[0].relationships == ours[0].relationships
     theirs = {m.name: ossie.normalize_expression(m.expression) for m in back[0].metrics}
@@ -112,7 +112,7 @@ def test_dbt_export_warns_about_metricflows_dot_truncation():
 
 def test_dbt_import_conforms_newer_metricflow_output():
     """Newer metricflow (0.2-style) writes `datatype` and new dialects; 0.1.1 has no slot for them."""
-    doc = json.loads(DBT_DOC.read_text())
+    doc = json.loads(DBT_DOC.read_text(encoding="utf-8"))
     sm = doc["semantic_model"][0]
     sm["metrics"][0]["datatype"] = "Decimal"
     sm["datasets"][0]["fields"][0]["datatype"] = "Integer"
@@ -125,7 +125,7 @@ def test_dbt_import_conforms_newer_metricflow_output():
 
 
 def test_dbt_import_refuses_versions_dbt_refuses():
-    doc = json.loads(DBT_DOC.read_text())
+    doc = json.loads(DBT_DOC.read_text(encoding="utf-8"))
     with pytest.raises(ossie.OssieError, match="unsupported Ossie version"):
         dbt.import_osi_document({**doc, "version": "0.2.0.dev0"})
     models, issues = dbt.import_osi_document({**doc, "version": "0.1.0"})

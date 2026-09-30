@@ -98,6 +98,6 @@ def test_no_session_level_role_switch_on_pooled_planes():
     on a server connection a transaction-mode pooler hands to the next client."""
     src = Path(__file__).resolve().parents[2] / "src" / "analystos"
     offenders = [f"{p.relative_to(src)}:{i}" for p in src.rglob("*.py")
-                 for i, line in enumerate(p.read_text().splitlines(), 1)
+                 for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
                  if re.search(r"execute\(.*[\"']SET (SESSION )?ROLE\b", line)]
     assert offenders == []

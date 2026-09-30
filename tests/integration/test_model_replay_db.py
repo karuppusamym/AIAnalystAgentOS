@@ -62,7 +62,7 @@ def test_run_model_calls_are_stored_and_replay_offline(control_db, capsys, tmp_p
 
     out = tmp_path / "replay.json"
     assert main(["replay-run", run_id, "--check", "--out", str(out)]) == 0
-    saved = json.loads(out.read_text())
+    saved = json.loads(out.read_text(encoding="utf-8"))
     assert saved["run_id"] == run_id and len(saved["calls"]) == 3
     assert "2/2 calls reproduced offline" in capsys.readouterr().err
 

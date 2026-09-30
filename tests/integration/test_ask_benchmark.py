@@ -28,7 +28,7 @@ def _gate(tier: str, run) -> None:
         Path(out).mkdir(parents=True, exist_ok=True)
         (Path(out) / f"{tier}.json").write_text(json.dumps({
             "config": {"version": gates.version, "sha256": gates.digest}, "tier": tier, "metrics": metrics,
-            "failures": failures, "status": "failed" if failures else "passed"}, indent=1, default=str) + "\n")
+            "failures": failures, "status": "failed" if failures else "passed"}, indent=1, default=str) + "\n", encoding="utf-8")
     assert not failures, failures
 
 

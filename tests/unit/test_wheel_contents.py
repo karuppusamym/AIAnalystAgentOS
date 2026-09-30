@@ -82,7 +82,7 @@ def test_the_built_wheel_contains_the_runtime_data(tmp_path):
 
 
 def test_the_image_installs_the_wheel_built_from_every_bundled_source():
-    dockerfile = (ROOT / "deploy" / "docker" / "Dockerfile").read_text()
+    dockerfile = (ROOT / "deploy" / "docker" / "Dockerfile").read_text(encoding="utf-8")
     copied = {p for line in dockerfile.splitlines() if line.startswith("COPY ") and "--from" not in line
               for p in line.split()[1:-1]}
     assert {"hatch_build.py", "alembic.ini", "src", "config", "migrations", "packs", "docs/60-delivery/evidence"} <= copied

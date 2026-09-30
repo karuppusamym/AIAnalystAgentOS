@@ -186,7 +186,7 @@ def test_federated_validation_rules() -> None:
 
 def test_federation_engine_is_sandboxed(tmp_path: Path) -> None:
     """Defence in depth: even SQL that never passed the validator cannot read files or unlock settings."""
-    (tmp_path / "secret.csv").write_text("x\n42\n")
+    (tmp_path / "secret.csv").write_text("x\n42\n", encoding="utf-8")
     engine = DuckDBEngine()
     raw = SimpleNamespace(executable_sql=f"SELECT * FROM read_csv('{tmp_path / 'secret.csv'}')")
     with pytest.raises(Forbidden):

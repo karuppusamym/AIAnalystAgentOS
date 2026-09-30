@@ -19,7 +19,7 @@ def runs():
 
 @pytest.fixture
 def baseline():
-    return json.loads(cost_gate.BASELINE.read_text())
+    return json.loads(cost_gate.BASELINE.read_text(encoding="utf-8"))
 
 
 def test_committed_runs_are_within_the_baseline(runs, baseline):
@@ -38,8 +38,8 @@ def test_a_deliberately_added_call_fails_the_gate(runs, baseline, tmp_path, caps
     assert any(f.startswith("standard_run: calls 8 > baseline 7") for f in failures), failures
     # The CLI exits non-zero on the same input (what fails the CI step).
     for run in [standard, *[r for r in runs if r["name"] != "standard_run"]]:
-        (tmp_path / f"{run['name']}.json").write_text(json.dumps(run))
-    (tmp_path / "baseline.json").write_text(json.dumps(baseline))
+        (tmp_path / f"{run['name']}.json").write_text(json.dumps(run), encoding="utf-8")
+    (tmp_path / "baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
     assert cost_gate.main(["--fixtures", str(tmp_path)]) == 1
     assert "COST GATE FAILED: standard_run: calls" in capsys.readouterr().err
 

@@ -31,7 +31,7 @@ CONFIGS = ("index_ts_rank_cd", "index_bm25", "index_bm25_hop", "compiler_t03", "
 
 
 def load(path: Path = CONTEXT_SET) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def render(doc: dict[str, Any]) -> bytes:
@@ -139,7 +139,7 @@ def paraphrase_run(session: Session, workspace_id: str, platform_pack_id: str, p
     from analystos.db.models import KnowledgeDocument
     from analystos.knowledge.index import retrieve
 
-    labelled = json.loads(path.read_text())["questions"]
+    labelled = json.loads(path.read_text(encoding="utf-8"))["questions"]
     titles = {d.path: d.title for d in session.query(KnowledgeDocument).filter(KnowledgeDocument.pack_id == platform_pack_id)}
     out: dict[str, Any] = {"questions": len(labelled)}
     for name, kw in (("index_ts_rank_cd", {"lexical": "ts_rank_cd"}), ("index_bm25", {})):

@@ -31,7 +31,7 @@ def _fresh_registry():
 def _pack(tmp_path: Path, body: str, name: str = "demo") -> Path:
     d = tmp_path / "packs" / name
     d.mkdir(parents=True)
-    (d / "m.yaml").write_text(body)
+    (d / "m.yaml").write_text(body, encoding="utf-8")
     return tmp_path / "packs"
 
 
@@ -76,12 +76,12 @@ def test_old_agent_files_are_still_read_and_validated(tmp_path):
     agents = tmp_path / "agents"
     shutil.copytree(get_settings().agents_dir, agents)
     (agents / "legacy.yaml").write_text(yaml.safe_dump({"agent": {"id": "legacy", "name": "Legacy", "description": "old format",
-                                                                  "skills": ["dataset_profile"], "tools": ["profile.table"]}}))
+                                                                  "skills": ["dataset_profile"], "tools": ["profile.table"]}}), encoding="utf-8")
     snap = reg.load(packs_dir=None, entry_points=False, agents_dir=agents)
     legacy = snap.get("agent.legacy")
     assert legacy.spec["capabilities"] == ["skill.dataset_profile"] and legacy.certification.status == "certified"
     (agents / "legacy.yaml").write_text(yaml.safe_dump({"agent": {"id": "legacy", "name": "Legacy", "description": "old",
-                                                                  "skills": ["root_cause_analysis"]}}))
+                                                                  "skills": ["root_cause_analysis"]}}), encoding="utf-8")
     with pytest.raises(reg.CapabilityLoadError, match="unknown capability skill.root_cause_analysis"):
         reg.load(packs_dir=None, entry_points=False, agents_dir=agents)
 
@@ -104,12 +104,12 @@ def _install_plugin(tmp_path: Path) -> Path:
         "def manifests():\n"
         "    return [{'kind': 'Method', 'id': 'method.cohort_demo', 'version': '0.3.0', 'summary': 'Cohort retention',\n"
         "             'side_effect': 'read_source', 'cost_class': 'query', 'requires': ['skill.run_analysis'],\n"
-        "             'certification': {'status': 'tested', 'evidence': 'tests/test_cohort.py'}}]\n")
+        "             'certification': {'status': 'tested', 'evidence': 'tests/test_cohort.py'}}]\n", encoding="utf-8")
     dist = site / "analystos_demo_plugin-0.3.0.dist-info"
     dist.mkdir()
-    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: analystos-demo-plugin\nVersion: 0.3.0\n")
-    (dist / "entry_points.txt").write_text("[analystos.capabilities]\ndemo = analystos_demo_plugin:manifests\n")
-    (dist / "RECORD").write_text("")
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: analystos-demo-plugin\nVersion: 0.3.0\n", encoding="utf-8")
+    (dist / "entry_points.txt").write_text("[analystos.capabilities]\ndemo = analystos_demo_plugin:manifests\n", encoding="utf-8")
+    (dist / "RECORD").write_text("", encoding="utf-8")
     return site
 
 
@@ -233,9 +233,9 @@ def test_a_run_in_flight_keeps_its_bound_versions_across_a_reload(sqlite_db, tmp
 
     agents = tmp_path / "agents"
     shutil.copytree(get_settings().agents_dir, agents)
-    doc = yaml.safe_load((agents / "data_dictionary.yaml").read_text())
+    doc = yaml.safe_load((agents / "data_dictionary.yaml").read_text(encoding="utf-8"))
     doc["version"], doc["spec"]["budget"] = "1.1.0", {"llm_calls": 9, "queries": 5}
-    (agents / "data_dictionary.yaml").write_text(yaml.safe_dump(doc))
+    (agents / "data_dictionary.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
     reg.reload(entry_points=False, agents_dir=agents)
     assert reg.current().get("agent.data_dictionary").version == "1.1.0"
 

@@ -34,7 +34,7 @@ def test_legacy_capabilities_are_discoverable_and_resolve():
 def _pack(tmp_path: Path, body: str) -> Path:
     d = tmp_path / "packs" / "demo"
     d.mkdir(parents=True)
-    (d / "m.yaml").write_text(body)
+    (d / "m.yaml").write_text(body, encoding="utf-8")
     return tmp_path / "packs"
 
 

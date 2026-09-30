@@ -74,7 +74,7 @@ def sso(control_db, local_idp, monkeypatch, tmp_path):
     mapping.write_text(f"workspace_roles:\n  - {{group: pilot-viewers, workspace: '{ws_name}', role: viewer}}\n"
                        f"  - {{group: pilot-analysts, workspace: {ws_id}, role: analyst}}\n"
                        "  - {group: pilot-analysts, workspace: 'Workspace that was never created', role: editor}\n"
-                       "attributes: {department: department}\n")
+                       "attributes: {department: department}\n", encoding="utf-8")
     for key, value in {"ANALYSTOS_OIDC_ISSUER": issuer, "ANALYSTOS_OIDC_CLIENT_ID": CLIENT_ID,
                        "ANALYSTOS_OIDC_REDIRECT_URI": "http://testserver/api/auth/oidc/callback",
                        "ANALYSTOS_OIDC_MAPPING_FILE": str(mapping), "ANALYSTOS_WEB_URL": "http://web.test"}.items():

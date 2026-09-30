@@ -254,7 +254,7 @@ def test_keys_are_never_part_of_a_models_config():
     with pytest.raises(ValueError):
         ProviderConfig(kind="chat", base_url="https://openrouter.ai/api/v1", api_key="sk-live-123")
     for path in CONFIG.glob("models*.yaml"):
-        for name, provider in (yaml.safe_load(path.read_text()).get("providers") or {}).items():
+        for name, provider in (yaml.safe_load(path.read_text(encoding="utf-8")).get("providers") or {}).items():
             assert "api_key" not in provider, (path.name, name)
 
 

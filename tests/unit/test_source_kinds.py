@@ -49,7 +49,7 @@ def test_every_kind_is_well_formed(kind: str) -> None:
 
 
 def test_pip_extras_exist_in_pyproject() -> None:
-    extras = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    extras = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
     for spec in kinds.list_kinds():
         if spec.driver.extra:
             assert spec.driver.extra in extras, spec.kind

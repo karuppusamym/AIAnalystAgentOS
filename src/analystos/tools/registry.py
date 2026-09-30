@@ -78,7 +78,7 @@ def load_agent_specs(directory: Path | None = None) -> list[AgentSpec]:
 
     specs = []
     for path in sorted((directory or get_settings().agents_dir).glob("*.yaml")):
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
         raw = from_legacy(data["agent"]) if "agent" in data else data
         specs.append(to_agent_spec(CapabilityManifest.model_validate(raw)))
     return specs

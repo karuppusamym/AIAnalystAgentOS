@@ -97,7 +97,7 @@ def test_dispatch_resolves_every_v1_task_to_the_v1_behaviour(investigate):
 def test_engine_and_dispatch_hold_no_step_keys():
     src = Path(__file__).resolve().parents[2] / "src" / "analystos"
     for path in (src / "runtime" / "engine.py", src / "agents" / "dispatch.py", src / "runtime" / "plan.py"):
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for key in ("plan_approval", "publish_request", "publish", "hypotheses", "verify", "dataset", "finalize",
                     "test:", "followups:"):
             assert not re.search(rf"[\"']{re.escape(key)}[\"']", text), f"{path.name} still names step {key!r}"
@@ -153,7 +153,7 @@ spec:
   steps:
     - {key: a, use: agent.nobody, title: A}
     - {key: b, use: agent.metadata, behaviour: no_such_behaviour, title: B}
-""")
+""", encoding="utf-8")
     with pytest.raises(registry.CapabilityLoadError) as err:
         registry.load(packs_dir=tmp_path / "packs", entry_points=False)
     assert "step a uses agent.nobody, which is not a registered agent" in str(err.value)

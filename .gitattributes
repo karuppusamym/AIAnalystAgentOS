@@ -1,1 +1,7 @@
 *.sh text eol=lf
+# Pinned upstream files are verified by sha256 (PROVENANCE.yaml): they must be byte-identical on every host.
+src/analystos/evidence/schema/** text eol=lf
+src/analystos/semantic/schema/** text eol=lf
+tests/fixtures/dbt/** text eol=lf
+tests/fixtures/odcs/** text eol=lf
+tests/fixtures/ossie/** text eol=lf

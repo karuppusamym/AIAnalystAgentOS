@@ -104,7 +104,7 @@ def world(api, servicenow_url, runtime, tmp_path, monkeypatch):
     root = tmp_path / "packs"
     shutil.copytree(registry.PACKS_DIR, root)
     (root / "lite_probe").mkdir()
-    (root / "lite_probe" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK))
+    (root / "lite_probe" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK), encoding="utf-8")
     monkeypatch.setattr(registry, "PACKS_DIR", root)
     registry.reload()
     analyst, approver = _login(api, "analyst@analystos.local"), _login(api, "approver@analystos.local")

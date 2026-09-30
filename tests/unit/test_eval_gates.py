@@ -28,9 +28,9 @@ def test_the_gates_file_is_versioned_and_every_ci_tier_has_a_runner():
 
 def test_a_version_without_a_changelog_entry_is_refused(tmp_path):
     current = G.load().version
-    raw = G.GATES_FILE.read_text().replace(f"version: {current}\n", f"version: {current + 1}\n", 1)
+    raw = G.GATES_FILE.read_text(encoding="utf-8").replace(f"version: {current}\n", f"version: {current + 1}\n", 1)
     path = tmp_path / "eval_gates.yaml"
-    path.write_text(raw)
+    path.write_text(raw, encoding="utf-8")
     with pytest.raises(ValueError, match=f"version {current + 1} has no changelog entry"):
         G.load(path)
 
@@ -109,7 +109,7 @@ def test_the_cli_exits_non_zero_on_a_seeded_regression(monkeypatch, tmp_path, ca
     monkeypatch.setitem(G.RUNNERS, "cost", lambda: {"max_rise": 0.4, "missing_baseline": 0})
     out = tmp_path / "gate.json"
     assert cli.main(["--tiers", "cost", "--out", str(out)]) == 1
-    result = json.loads(out.read_text())
+    result = json.loads(out.read_text(encoding="utf-8"))
     assert result["passed"] is False and result["config"]["version"] == G.load().version
     assert "EVAL GATE FAILED: cost: max_rise 0.4 > 0.1" in capsys.readouterr().err
     monkeypatch.setitem(G.RUNNERS, "cost", lambda: {"max_rise": 0.0, "missing_baseline": 0})
