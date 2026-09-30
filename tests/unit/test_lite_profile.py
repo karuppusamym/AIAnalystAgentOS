@@ -186,7 +186,7 @@ def test_core_methods_import_no_ml_library():
     root = Path(__file__).resolve().parents[2] / "src" / "analystos"
     offenders = []
     for path in [*sorted((root / "methods").glob("*.py")), root / "skills" / "stats.py"]:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
                 [node.module or ""] if isinstance(node, ast.ImportFrom) else []
@@ -231,7 +231,7 @@ def test_every_setting_is_documented_in_a_tier():
     """P7-17: the environment is documented in three tiers; a new setting must be placed in one."""
     from pathlib import Path
 
-    doc = (Path(__file__).resolve().parents[2] / "docs" / "30-runbooks" / "04-lite-and-profiles.md").read_text()
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "30-runbooks" / "04-lite-and-profiles.md").read_text(encoding="utf-8")
     missing = [f"ANALYSTOS_{name.upper()}" for name in Settings.model_fields if f"`ANALYSTOS_{name.upper()}`" not in doc]
     assert not missing, missing
     tier1 = doc.split("**Tier 1, required (3).**", 1)[1].split("**Tier 2", 1)[0]

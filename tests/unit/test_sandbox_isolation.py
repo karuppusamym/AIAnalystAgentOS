@@ -27,6 +27,8 @@ from analystos.core.config import Settings, get_settings
 from analystos.sandbox import isolation, runner
 from analystos.sandbox.isolation import IsolationStatus
 
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="the Python sandbox needs POSIX resource limits (resource/rlimits, preexec_fn)")
+
 PROCESS_OK = isolation.status(Settings(_env_file=None, sandbox_isolation="process")).available
 
 
@@ -55,7 +57,7 @@ BACKENDS = [
 @pytest.fixture(params=BACKENDS)
 def sbx(request, tmp_path):
     secret_file = tmp_path / "worker-secret.env"
-    secret_file.write_text("OPENROUTER_API_KEY=sk-or-probe-secret\n")
+    secret_file.write_text("OPENROUTER_API_KEY=sk-or-probe-secret\n", encoding="utf-8")
     settings = Settings(_env_file=None, sandbox_isolation=request.param, sandbox_container_image=IMAGE or "none",
                         sandbox_pids_limit=32, sandbox_scratch_mb=8,
                         sandbox_masked_paths=[str(secret_file), str(tmp_path)])
@@ -194,7 +196,7 @@ def test_fork_bomb_is_bounded_and_leaves_nothing_behind(sbx):
 
 def _uid_of(pid: str) -> str | None:
     try:
-        return next(line.split()[1] for line in Path(f"/proc/{pid}/status").read_text().splitlines() if line.startswith("Uid:"))
+        return next(line.split()[1] for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines() if line.startswith("Uid:"))
     except (OSError, StopIteration):
         return None
 
@@ -304,6 +306,7 @@ def test_auto_prefers_the_container_then_the_process_backend(gate):
     assert gate("process").backend == "process"  # an explicit mode never switches backend
 
 
+@posix_only
 def test_off_is_development_only_and_reported_unisolated(gate):
     st = gate("off")
     assert st.available is True and st.isolated is False and "DEVELOPMENT ONLY" in st.detail

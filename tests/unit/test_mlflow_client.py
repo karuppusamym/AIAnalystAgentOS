@@ -86,7 +86,7 @@ def test_the_export_opens_with_a_real_mlflow_client(tmp_path):
         (export / path).write_bytes(data)
     # the model's input is the platform model matrix (the signature: numeric/boolean/datetime as double)
     matrix, _ = model_matrix(D.frame(cols, rows[:12]), out["package"]["schema"])
-    (tmp_path / "rows.json").write_text(matrix.to_json(orient="records"))
+    (tmp_path / "rows.json").write_text(matrix.to_json(orient="records"), encoding="utf-8")
     env = {**os.environ, "MLFLOW_ALLOW_FILE_STORE": "true", "MLFLOW_DISABLE_AGENT_HINT": "1",
            "MLFLOW_TRACKING_URI": "file:mlruns"}
     proc = subprocess.run([python, "-c", CHECK, str(tmp_path / "rows.json")], cwd=export, env=env, capture_output=True,

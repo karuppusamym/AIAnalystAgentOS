@@ -43,7 +43,7 @@ print(json.dumps({"loaded": sorted(m for m in BLOCKED | {"polars"} if m in sys.m
 def _core_only(tmp_path: Path) -> dict:
     env_clear = {k: v for k, v in os.environ.items() if not k.startswith("ANALYSTOS_")}
     script = tmp_path / "core_only.py"
-    script.write_text(_CORE_ONLY)
+    script.write_text(_CORE_ONLY, encoding="utf-8")
     out = subprocess.run([sys.executable, str(script), ",".join(EXTRA_MODULES)], capture_output=True, text=True, cwd=tmp_path,
                          env={**env_clear, "PYTHONPATH": str(ROOT / "src")}, timeout=300)
     assert out.returncode == 0, out.stderr[-2000:]
@@ -70,7 +70,7 @@ def test_the_temporal_default_needs_the_extra_or_an_explicit_choice(monkeypatch)
 
 # ------------------------------------------------------------------------------------ deploy consistency
 def _extras() -> dict[str, list[str]]:
-    return tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
 
 
 def _names(spec: str) -> set[str]:
@@ -90,17 +90,17 @@ def _expand(extras: dict[str, list[str]], names: set[str]) -> set[str]:
 
 
 def _env_file(name: str) -> dict[str, str]:
-    lines = (ROOT / "deploy" / "compose" / name).read_text().splitlines()
+    lines = (ROOT / "deploy" / "compose" / name).read_text(encoding="utf-8").splitlines()
     return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
 
 
 def test_image_extras_agree_across_compose_dockerfile_and_helm():
     extras = _extras()
-    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
     services = compose["services"]
     default = re.fullmatch(r"\$\{ANALYSTOS_API_EXTRAS:-([^}]*)\}", services["api"]["build"]["args"]["EXTRAS"]).group(1)
-    dockerfile = (ROOT / "deploy" / "docker" / "Dockerfile").read_text()
-    assert re.search(r"^ARG EXTRAS=(\S*)$", dockerfile, re.M).group(1) == default == "reports"
+    dockerfile = (ROOT / "deploy" / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^ARG EXTRAS=(\S*)$", dockerfile, re.M).group(1) == default == "reports,ml"
 
     named = {"api(lite)": _names(default)}
     for name, svc in services.items():
@@ -114,8 +114,9 @@ def test_image_extras_agree_across_compose_dockerfile_and_helm():
     for where, names in named.items():
         assert names <= set(extras), f"{where} names an extra pyproject does not define: {names - set(extras)}"
 
-    # lite: the API image has no Temporal, ML or graph library, and compose defaults to the lite profile.
-    assert not _expand(extras, named["api(lite)"]) & {"temporal", "ml", "graph"}
+    # lite: the API image has no Temporal or graph library (it carries ml since dc2e4e4: experiments train in the API),
+    # and compose defaults to the lite profile.
+    assert not _expand(extras, named["api(lite)"]) & {"temporal", "graph"}
     assert compose["x-app-env"]["ANALYSTOS_PROFILE"] == "${ANALYSTOS_PROFILE:-lite}"
     # Every env file that selects Temporal builds its API with the temporal extra.
     for env in sorted((ROOT / "deploy" / "compose").glob("*.env")):
@@ -130,9 +131,9 @@ def test_image_extras_agree_across_compose_dockerfile_and_helm():
 
     # Helm small: one image for every pod, Temporal in the API and the compute queue in the `all` worker,
     # so the overlay documents the standard image; no isolated pools.
-    small_text = (ROOT / "deploy" / "helm" / "analystos" / "values-small.yaml").read_text()
+    small_text = (ROOT / "deploy" / "helm" / "analystos" / "values-small.yaml").read_text(encoding="utf-8")
     small = yaml.safe_load(small_text)
-    base = yaml.safe_load((ROOT / "deploy" / "helm" / "analystos" / "values.yaml").read_text())
+    base = yaml.safe_load((ROOT / "deploy" / "helm" / "analystos" / "values.yaml").read_text(encoding="utf-8"))
     assert small["config"]["extra"]["ANALYSTOS_PROFILE"] == "standard"
     assert small["config"].get("orchestrator", base["config"]["orchestrator"]) == "temporal"
     assert "EXTRAS=standard" in small_text

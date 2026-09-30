@@ -168,7 +168,7 @@ def test_registry_builds_every_catalog_kind(monkeypatch, tmp_path) -> None:
     sample = {"host": "h", "database": "d", "username": "u", "account": "a", "project": "p", "http_path": "/x",
               "catalog": "c", "path": "db.file"}
     settings = SimpleNamespace(upload_dir=str(tmp_path), servicenow_mock_url="http://mock")
-    (tmp_path / "a.csv").write_text("x\n1\n")
+    (tmp_path / "a.csv").write_text("x\n1\n", encoding="utf-8")
     for spec in kinds.list_kinds():
         config = {"path": "a.csv"} if spec.kind == "csv" else ({"username": "u"} if spec.kind == "servicenow" else sample)
         con = build_connector(SimpleNamespace(kind=spec.kind, config=config, secret_ref=None), settings)

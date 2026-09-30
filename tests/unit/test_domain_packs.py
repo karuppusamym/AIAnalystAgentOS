@@ -120,9 +120,9 @@ def test_a_broken_pack_is_skipped_not_fatal(tmp_path):
     good.mkdir()
     bad.mkdir()
     manifest = "apiVersion: analystos/v1\nkind: KnowledgePack\nid: pack.{n}\nsummary: s\nside_effect: none\nspec: {{templates: {f}}}\n"
-    (good / "pack.yaml").write_text(manifest.format(n="good", f="t.yaml"))
-    (good / "t.yaml").write_text("templates: []\n")
-    (bad / "pack.yaml").write_text(manifest.format(n="bad", f="missing.yaml"))
+    (good / "pack.yaml").write_text(manifest.format(n="good", f="t.yaml"), encoding="utf-8")
+    (good / "t.yaml").write_text("templates: []\n", encoding="utf-8")
+    (bad / "pack.yaml").write_text(manifest.format(n="bad", f="missing.yaml"), encoding="utf-8")
     loaded = packs.load_packs(tmp_path, entry_points=False)
     assert [p.id for p in loaded] == ["pack.good"]
 

@@ -22,7 +22,7 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "semantic" / "sales
 
 @pytest.fixture
 def doc():
-    return yaml.safe_load(FIXTURE.read_text())
+    return yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
 
 
 def _ext(obj: dict) -> dict:
@@ -80,7 +80,7 @@ def test_fan_out_without_pre_aggregation_and_unvalidated_joins_are_problems(doc)
 
 
 def test_a_non_ossie_file_named_explicitly_fails_and_directories_skip_it(tmp_path):
-    (tmp_path / "notes.yaml").write_text("hello: world\n")
+    (tmp_path / "notes.yaml").write_text("hello: world\n", encoding="utf-8")
     assert check_paths([str(tmp_path)]) == {}
     assert check_paths([str(tmp_path / "notes.yaml")])[str(tmp_path / "notes.yaml")]
     assert cli(["check-semantics", str(tmp_path / "notes.yaml")]) == 1

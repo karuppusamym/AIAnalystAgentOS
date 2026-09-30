@@ -150,10 +150,10 @@ def export_contracts(out_dir: str | None = None) -> None:
               "pipeline": work.PipelineSpec, "task_envelope": worker.TaskEnvelope,
               "task_dispatch": worker.TaskDispatch, "task_result": worker.TaskResult, "artifact_ref": worker.ArtifactRef}
     for name, model in models.items():
-        (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n")
+        (out / f"{name}.schema.json").write_text(json.dumps(model.model_json_schema(), indent=2) + "\n", encoding="utf-8")
     from analystos.contracts.events import EVENT_TYPES
 
-    (out / "events.json").write_text(json.dumps(sorted(EVENT_TYPES), indent=2) + "\n")
+    (out / "events.json").write_text(json.dumps(sorted(EVENT_TYPES), indent=2) + "\n", encoding="utf-8")
     print(f"wrote {len(models) + 1} contract files to {out}")
 
 
@@ -167,7 +167,7 @@ def replay_run(run_id: str, *, check: bool, out: str | None) -> int:
     if out:
         from pathlib import Path
 
-        Path(out).write_text(text + "\n")
+        Path(out).write_text(text + "\n", encoding="utf-8")
         print(f"wrote {report['summary']['calls']} model calls of run {run_id} to {out}")
     else:
         print(text)

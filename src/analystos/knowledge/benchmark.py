@@ -33,7 +33,7 @@ def corpus() -> list[tuple[str, str]]:
 
 
 def run(provider: emb.EmbeddingProvider, questions: Path = QUESTIONS) -> dict[str, Any]:
-    labelled = json.loads(questions.read_text())["questions"]
+    labelled = json.loads(questions.read_text(encoding="utf-8"))["questions"]
     docs = corpus()
     started = time.perf_counter()
     dvecs = provider.embed([t for _, t in docs])

@@ -22,9 +22,9 @@ def files(tmp_path):
     out["csv"] = tmp_path / "orders.csv"
     df.write_csv(out["csv"])
     out["json"] = tmp_path / "orders.json"
-    out["json"].write_text(json.dumps(ROWS))
+    out["json"].write_text(json.dumps(ROWS), encoding="utf-8")
     out["ndjson"] = tmp_path / "orders.ndjson"
-    out["ndjson"].write_text("\n".join(json.dumps(r) for r in ROWS) + "\n")
+    out["ndjson"].write_text("\n".join(json.dumps(r) for r in ROWS) + "\n", encoding="utf-8")
     out["parquet"] = tmp_path / "orders.parquet"
     df.write_parquet(out["parquet"])
     pytest.importorskip("openpyxl")
@@ -51,7 +51,7 @@ def test_every_format_reads_the_same_rows(files, kind):
 
 def test_a_json_file_must_be_an_array_or_ndjson(tmp_path):
     bad = tmp_path / "x.json"
-    bad.write_text('"just a string"')
+    bad.write_text('"just a string"', encoding="utf-8")
     with pytest.raises(InvalidInput, match="neither a JSON array"):
         read_file(bad, "json")
     with pytest.raises(InvalidInput, match="cannot tell the format"):

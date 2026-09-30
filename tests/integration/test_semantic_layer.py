@@ -62,7 +62,7 @@ def test_dbt_import_approval_sod_conflicts_and_round_trip(api, people):
     base = f"/api/workspaces/{ws}/semantic"
 
     # dbt 1.12 osi_document.json (real dbt output): structure lands, every metric is only a proposal
-    report = api.post(f"{base}/import/dbt", headers=analyst, json=json.loads(DBT_DOC.read_text()))
+    report = api.post(f"{base}/import/dbt", headers=analyst, json=json.loads(DBT_DOC.read_text(encoding="utf-8")))
     assert report.status_code == 200, report.text
     report = report.json()
     assert report["datasets"] == 2 and len(report["proposed"]) == 6

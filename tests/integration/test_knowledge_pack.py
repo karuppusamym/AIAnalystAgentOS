@@ -265,7 +265,7 @@ def _atlas_double(token: str):
     from mcp.server.mcpserver import MCPServer
     from mcp.server.transport_security import TransportSecuritySettings
 
-    recorded = json.loads((FIXTURES / "atlas-mcp-get-knowledge-context.mock.json").read_text())
+    recorded = json.loads((FIXTURES / "atlas-mcp-get-knowledge-context.mock.json").read_text(encoding="utf-8"))
     srv = MCPServer("atlas_mock")
     calls: list[dict] = []
 

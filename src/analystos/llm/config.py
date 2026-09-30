@@ -218,7 +218,7 @@ def family(model: str) -> str:
 def _read(path: Path) -> dict[str, Any]:
     """A models file may `extends: <file>` (relative to itself): its top-level sections replace the
     base's wholesale, so an air-gapped or Azure variant restates only providers, models and profiles."""
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     base = data.pop("extends", None)
     if base:
         return {**_read((path.parent / base).resolve()), **data}

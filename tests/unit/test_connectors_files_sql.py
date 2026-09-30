@@ -31,7 +31,7 @@ def test_resolve_secret_env(monkeypatch) -> None:
 
 def test_resolve_secret_file(tmp_path: Path) -> None:
     f = tmp_path / "pw"
-    f.write_text("s3cret\n")
+    f.write_text("s3cret\n", encoding="utf-8")
     assert resolve_secret(f"file:{f}") == "s3cret"
 
 
@@ -83,13 +83,13 @@ def upload_dir(tmp_path: Path) -> Path:
     (d / "Sales Data 2026.csv").write_text(
         "Order ID,Order Date,Amount,Region,Is Returned\n"
         "1,2026-01-05,10.5,EMEA,true\n2,2026-01-06,20,APAC,false\n3,2026-02-01,,EMEA,false\n"
-    )
+    , encoding="utf-8")
     pa_table = pa.table({"id": [1, 2], "label": ["a", "b"]})
     import pyarrow.parquet as pq
 
     pq.write_table(pa_table, d / "labels.parquet")
     (d / "notes.xlsx").write_bytes(b"not really excel")
-    (d / "readme.md").write_text("ignored")
+    (d / "readme.md").write_text("ignored", encoding="utf-8")
     return d
 
 
@@ -130,7 +130,7 @@ def test_file_path_must_stay_in_upload_dir(upload_dir: Path, path: str) -> None:
 
 def test_symlink_escape_rejected(upload_dir: Path, tmp_path: Path) -> None:
     secret = tmp_path / "secret.csv"
-    secret.write_text("a\n1\n")
+    secret.write_text("a\n1\n", encoding="utf-8")
     os.symlink(secret, upload_dir / "link.csv")
     with pytest.raises(InvalidInput):
         CSVFileConnector({"path": "link.csv"}, allowed_dir=upload_dir)
@@ -229,7 +229,7 @@ def test_registry_builds_by_kind(tmp_path: Path) -> None:
     assert isinstance(ms, SQLServerConnector)
     sn = build_connector(SimpleNamespace(kind="servicenow", config={"username": "admin"}, secret_ref=None), settings)
     assert isinstance(sn, ServiceNowConnector) and sn.instance_url == "http://mock:8090"
-    (tmp_path / "a.csv").write_text("x\n1\n")
+    (tmp_path / "a.csv").write_text("x\n1\n", encoding="utf-8")
     f = build_connector(SimpleNamespace(kind="csv", config={"path": "a.csv"}, secret_ref=None), settings)
     assert isinstance(f, CSVFileConnector)
     with pytest.raises(InvalidInput):

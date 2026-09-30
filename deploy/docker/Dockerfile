@@ -25,7 +25,7 @@ RUN --mount=type=secret,id=pipcert,required=false \
     pip wheel --no-cache-dir --no-deps --wheel-dir /dist .
 
 FROM python:3.11-slim
-ARG EXTRAS=reports
+ARG EXTRAS=reports,ml
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 # Operators select a models file by path (Helm: ANALYSTOS_MODELS_CONFIG=/app/config/models*.yaml); the same

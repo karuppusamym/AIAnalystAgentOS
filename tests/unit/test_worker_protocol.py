@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -15,6 +16,8 @@ import pytest
 
 from analystos.core import errors
 from analystos.workers import tokens
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX resource limits: the resource module does not exist on Windows")
 
 
 # ------------------------------------------------------------------------------------ tokens
@@ -95,8 +98,11 @@ for target in [("127.0.0.1", {other_port}), ("10.1.2.3", 5432)]:
         socket.create_connection(target, timeout=2); out.append("connected")
     except EgressRefused:
         out.append("refused")
-for call in [lambda: socket.getaddrinfo("example.com", 443), lambda: socket.socket(socket.AF_UNIX).connect("/tmp/x"),
-             lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("8.8.8.8", 53))]:
+calls = [lambda: socket.getaddrinfo("example.com", 443),
+         lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("8.8.8.8", 53))]
+if hasattr(socket, "AF_UNIX"):  # Windows has no unix sockets to refuse
+    calls.insert(1, lambda: socket.socket(socket.AF_UNIX).connect("/tmp/x"))
+for call in calls:
     try:
         call(); out.append("allowed")
     except EgressRefused:
@@ -111,15 +117,17 @@ print(",".join(out))
     src = str(Path(__file__).resolve().parents[2] / "src")
     try:
         r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
-                           env={"PYTHONPATH": src, "PATH": "/usr/bin:/bin"})
+                           env={"PYTHONPATH": src, "PATH": "/usr/bin:/bin",
+                                **{k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ}})  # winsock needs it
     finally:
         stop.set()
         listener.close()
         other.close()
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "refused,refused,refused,refused,refused,refused"
+    assert r.stdout.strip() == ",".join(["refused"] * (6 if hasattr(socket, "AF_UNIX") else 5))
 
 
+@posix_only
 def test_job_rlimits_follow_the_budget():
     import resource
 
@@ -240,18 +248,18 @@ def test_a_pure_ml_job_plugs_in_through_the_pure_adapter(tmp_path, monkeypatch):
 
     mod = tmp_path / "fake_ml_jobs.py"
     mod.write_text("def run_ml_job(job):\n    return {'rows': len(open(job['inputs']['wa_x']).read().split()),"
-                   " 'seed': job['seed']}\n")
+                   " 'seed': job['seed']}\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setitem(handlers.HANDLERS, "ml.job", handlers.Handler("ml.job", "fake_ml_jobs:run_ml_job",
                                                                       ("compute-ml",), adapter="pure"))
     (tmp_path / "in").mkdir()
     (tmp_path / "out").mkdir()
-    (tmp_path / "in" / "wa_x").write_text("a b c")
+    (tmp_path / "in" / "wa_x").write_text("a b c", encoding="utf-8")
     body = child.run({"task_id": "t", "pool": "compute-ml", "kind": "ml.job", "spec": {"kind": "ml.job", "job": {"seed": 7}},
                       "inputs": {"wa_x": str(tmp_path / "in" / "wa_x")}, "out_dir": str(tmp_path / "out"),
                       "outputs": ["result"], "budget": {}, "envelope": {}, "scratch": str(tmp_path)})
     assert body["result"] == {"rows": 3, "seed": 7}
-    assert json.loads((tmp_path / "out" / "result").read_text()) == {"rows": 3, "seed": 7}
+    assert json.loads((tmp_path / "out" / "result").read_text(encoding="utf-8")) == {"rows": 3, "seed": 7}
     assert body["outputs"]["result"]["media_type"] == "application/json"
 
 

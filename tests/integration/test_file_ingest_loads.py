@@ -34,7 +34,7 @@ def world(control_db):
         s.flush()
         folder = Path(get_settings().upload_dir) / ws.id
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "placeholder.csv").write_text("a\n1\n")
+        (folder / "placeholder.csv").write_text("a\n1\n", encoding="utf-8")
         src = register_source(s, owner, ws.id, kind="csv", name="uploads", config={"path": ws.id}, secret_ref=None)
         s.flush()
         ids = {"ws": ws.id, "src": src.id, "folder": folder}
@@ -130,8 +130,8 @@ def test_null_keys_repeated_keys_and_column_mismatches_are_refused_with_the_colu
 
 def test_json_excel_and_parquet(world):
     rows = [{"id": 1, "tags": "a", "when": "2024-04-01"}, {"id": 2, "tags": "b", "when": "2024-04-02"}]
-    (world["folder"] / "events.json").write_text(json.dumps(rows))
-    (world["folder"] / "events.ndjson").write_text("\n".join(json.dumps(r) for r in rows[:1]))
+    (world["folder"] / "events.json").write_text(json.dumps(rows), encoding="utf-8")
+    (world["folder"] / "events.ndjson").write_text("\n".join(json.dumps(r) for r in rows[:1]), encoding="utf-8")
     pl.DataFrame(rows).write_parquet(world["folder"] / "events.parquet")
     mapping = [{"source": "id", "type": "integer"}, {"source": "tags"}, {"source": "when", "target": "event_date",
                                                                           "type": "date"}]

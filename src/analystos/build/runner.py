@@ -69,7 +69,7 @@ def write_profile(profiles_dir: Path, conn: Connection | None, *, schema: str) -
         output.update(host=conn.host, port=conn.port, user=conn.user, dbname=conn.dbname, role=conn.role)
     profiles_dir.mkdir(parents=True, exist_ok=True)
     path = profiles_dir / "profiles.yml"
-    path.write_text(yaml.safe_dump({PROFILE_NAME: {"target": "build", "outputs": {"build": output}}}, sort_keys=True))
+    path.write_text(yaml.safe_dump({PROFILE_NAME: {"target": "build", "outputs": {"build": output}}}, sort_keys=True), encoding="utf-8")
     return path
 
 
@@ -81,11 +81,11 @@ def write_project(project_dir: Path, files: dict[str, str]) -> None:
         if project_dir.resolve() not in path.parents:
             raise InvalidInput(f"project path {rel} escapes the job directory")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
 
 
 def read_project(project_dir: Path, paths: list[str]) -> dict[str, str]:
-    return {rel: (project_dir / rel).read_text() for rel in paths}
+    return {rel: (project_dir / rel).read_text(encoding="utf-8") for rel in paths}
 
 
 class DbtCoreRunner:
@@ -150,6 +150,6 @@ def _env(home: Path, password: str) -> dict[str, str]:
 
 def _json(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}

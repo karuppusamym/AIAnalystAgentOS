@@ -84,8 +84,8 @@ def packs(tmp_path, monkeypatch):
     root = tmp_path / "packs"
     shutil.copytree(registry.PACKS_DIR, root)
     (root / "table_notes").mkdir()
-    (root / "table_notes" / "agent.yaml").write_text(yaml.safe_dump(AGENT))
-    (root / "table_notes" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK))
+    (root / "table_notes" / "agent.yaml").write_text(yaml.safe_dump(AGENT), encoding="utf-8")
+    (root / "table_notes" / "playbook.yaml").write_text(yaml.safe_dump(PLAYBOOK), encoding="utf-8")
     registry.current()  # the process registry as it was before the pack was dropped in
     monkeypatch.setattr(registry, "PACKS_DIR", root)
     yield root
@@ -207,7 +207,7 @@ def test_a_yaml_only_agent_runs_in_a_playbook_and_a_run_keeps_its_versions(api, 
 
     # A new version arrives while the run is in flight: the run keeps 0.1.0.
     bumped = {**AGENT, "version": "0.2.0", "spec": {**AGENT["spec"], "budget": {"llm_calls": 0}}}
-    (packs / "table_notes" / "agent.yaml").write_text(yaml.safe_dump(bumped))
+    (packs / "table_notes" / "agent.yaml").write_text(yaml.safe_dump(bumped), encoding="utf-8")
     assert api.post("/api/admin/capabilities/reload", headers=admin).status_code == 200
     assert _capabilities(api, analyst, ws, "Agent")["agent.table_notes"]["version"] == "0.2.0"
 
@@ -263,7 +263,7 @@ def test_a_failed_reload_keeps_the_registry(api, world, packs):
     admin = world["admin"]
     good = api.get("/api/capabilities", headers=admin).json()["digest"]
     bad = {**AGENT, "id": "agent.broken", "spec": {**AGENT["spec"], "capabilities": ["skill.no_such_skill"]}}
-    (Path(packs) / "table_notes" / "broken.yaml").write_text(yaml.safe_dump(bad))
+    (Path(packs) / "table_notes" / "broken.yaml").write_text(yaml.safe_dump(bad), encoding="utf-8")
     r = api.post("/api/admin/capabilities/reload", headers=admin)
     assert r.status_code == 422 and "agent.broken: unknown capability skill.no_such_skill" in r.json()["error"]["message"]
     assert api.get("/api/capabilities", headers=admin).json()["digest"] == good

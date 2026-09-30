@@ -5,11 +5,15 @@ Runs on the process backend where this host allows namespaces, else on `off` (rl
 isolation itself is probed in test_sandbox_isolation.py."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from analystos.core.config import Settings, get_settings
 from analystos.sandbox import isolation, runner
 from analystos.sandbox.runner import check_code, run_python, sandbox_env
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="the Python sandbox needs POSIX resource limits (resource/rlimits, preexec_fn)")
 
 _PROCESS = isolation.status(Settings(_env_file=None, sandbox_isolation="process")).available
 BACKEND = "process" if _PROCESS else "none"
@@ -24,6 +28,7 @@ def _backend(monkeypatch):
     get_settings.cache_clear()
 
 
+@posix_only
 def test_allowed_numeric_code_with_inputs():
     code = """
 import numpy as np
@@ -46,6 +51,7 @@ result = {"mean": df.x.mean(), "median": statistics.median(df.x), "p": t.pvalue,
     assert r.duration_ms > 0 and r.exit_code == 0
 
 
+@posix_only
 def test_sklearn_and_statsmodels_allowed():
     code = """
 import numpy as np
@@ -92,6 +98,7 @@ def test_forbidden_code_rejected(code, needle):
     assert r.ok is False and r.error.startswith("rejected by sandbox policy") and r.exit_code is None
 
 
+@posix_only
 def test_runtime_import_hook_is_second_layer(monkeypatch):
     """Even if the static check were bypassed, the child refuses non-allow-listed imports."""
     monkeypatch.setattr(runner, "check_code", lambda code, allowed: [])
@@ -101,12 +108,14 @@ def test_runtime_import_hook_is_second_layer(monkeypatch):
     assert r.ok is False and "NameError" in r.error
 
 
+@posix_only
 def test_timeout_kills_process_group():
     r = run_python("while True:\n    pass", timeout_s=1)
     assert r.ok is False and r.timed_out and "timeout" in r.error
     assert r.duration_ms < 5000
 
 
+@posix_only
 def test_memory_limit_enforced():
     r = run_python("x = bytearray(3 * 1024 ** 3)\nresult = 1", memory_mb=512)
     assert r.ok is False and "MemoryError" in r.error
@@ -114,6 +123,7 @@ def test_memory_limit_enforced():
     assert r.ok is False and "MemoryError" in r.error
 
 
+@posix_only
 def test_environment_is_stripped(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-secret")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/db")
@@ -131,6 +141,7 @@ def test_environment_is_stripped(monkeypatch):
     assert r.result["cwd"].split("/")[-1].startswith("aos-sbx-") and r.result["files"] == []
 
 
+@posix_only
 def test_result_errors_are_reported():
     r = run_python("result = 1 / 0")
     assert r.ok is False and "ZeroDivisionError" in r.error
@@ -143,6 +154,7 @@ def test_result_errors_are_reported():
     assert r.ok is False and r.error == "result too large"
 
 
+@posix_only
 def test_results_record_the_backend():
     r = run_python("result = 1")
     assert r.ok and r.isolation == BACKEND

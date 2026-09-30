@@ -4,6 +4,8 @@ a connection library, and are killed on a resource bomb; a cell edit voids and r
 it; executions are versioned."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 from tests.unit.step_fixtures import WS, FakeRuntime, world  # noqa: F401
 
@@ -15,6 +17,8 @@ from analystos.db.models import AnalysisStep, Notebook, VerificationRecord
 from analystos.sandbox import isolation
 from analystos.services import notebooks
 from analystos.services import steps as steps_svc
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="the Python sandbox needs POSIX resource limits (resource/rlimits, preexec_fn)")
 
 _PROCESS = isolation.status(Settings(_env_file=None, sandbox_isolation="process")).available
 
@@ -45,6 +49,7 @@ def nb(world):  # noqa: F811
 SUM_CODE = "import pandas as pd\nresult = {'total': float(pd.DataFrame(inputs['cell1'])['n'].sum())}"
 
 
+@posix_only
 def test_cells_are_steps_and_python_reads_only_upstream_results(nb):
     rt = SandboxRuntime([("FROM sales.orders", ["state", "n"], [["Closed", 60], ["Open", 40]])])
     sql = notebooks.add_cell(nb["analyst"], WS, nb["id"], CellIn(cell="sql", source="SELECT state, COUNT(*) AS n FROM sales.orders "
@@ -63,6 +68,7 @@ def test_cells_are_steps_and_python_reads_only_upstream_results(nb):
     assert result["rows"] == [[100.0]]
 
 
+@posix_only
 def test_editing_a_cell_voids_and_reruns_the_cells_that_read_it(nb):
     rt = SandboxRuntime([("WHERE state = 'Open'", ["state", "n"], [["Open", 40]]),
                          ("FROM sales.orders", ["state", "n"], [["Closed", 60], ["Open", 40]])])
@@ -91,6 +97,7 @@ def test_python_cells_cannot_open_connections(nb):
             notebooks.add_cell(nb["analyst"], WS, nb["id"], CellIn(cell="python", source=code), runtime=rt)
 
 
+@posix_only
 def test_a_resource_bomb_is_killed_and_recorded_as_a_failed_version(nb):
     rt = SandboxRuntime([])
     spin = notebooks.add_cell(nb["analyst"], WS, nb["id"], CellIn(cell="python", source="while True:\n    pass",

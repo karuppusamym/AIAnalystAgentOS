@@ -11,6 +11,6 @@ API = Path(__file__).resolve().parents[2] / "src" / "analystos" / "api"
 
 def test_every_db_dependency_is_function_scoped():
     unscoped = [f"{p.relative_to(API)}:{n}" for p in API.rglob("*.py")
-                for n, line in enumerate(p.read_text().splitlines(), 1)
+                for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
                 if re.search(r"Depends\(db\s*(\)|,(?![^)]*scope=\"function\"))", line)]
     assert not unscoped, "Depends(db) must be scope=\"function\": " + ", ".join(unscoped)

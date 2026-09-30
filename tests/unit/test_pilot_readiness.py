@@ -38,9 +38,9 @@ def world(sqlite_db):
 def _evidence(tmp_path, *, drill: str | None = "PASSED", kinds=("csv",)):
     for kind in kinds:
         (tmp_path / f"connector-{kind}-20260927.md").write_text(
-            f"---\nkind: {kind}\ndate: 2026-09-27\nengine: test engine\ntest: tests/x.py\nresult: pass\n---\n# evidence\n")
+            f"---\nkind: {kind}\ndate: 2026-09-27\nengine: test engine\ntest: tests/x.py\nresult: pass\n---\n# evidence\n", encoding="utf-8")
     if drill:
-        (tmp_path / "2026-09-27-recovery-drill.md").write_text(f"# Recovery drill\n\n**Result: {drill}** — backup\n")
+        (tmp_path / "2026-09-27-recovery-drill.md").write_text(f"# Recovery drill\n\n**Result: {drill}** — backup\n", encoding="utf-8")
     return tmp_path
 
 
@@ -113,7 +113,7 @@ def test_readiness_is_ready_only_when_nothing_is_missing(world, tmp_path, monkey
         src.status, src.last_error = "discovered", None
         src.last_discovered_at = __import__("analystos.core.ids", fromlist=["utcnow"]).utcnow()
     mapping = tmp_path / "oidc.yaml"
-    mapping.write_text(f"workspace_roles:\n  - {{group: pilot-analysts, workspace: '{ws.name}', role: analyst}}\n")
+    mapping.write_text(f"workspace_roles:\n  - {{group: pilot-analysts, workspace: '{ws.name}', role: analyst}}\n", encoding="utf-8")
     for k, v in {"ANALYSTOS_OIDC_ISSUER": "https://idp.test", "ANALYSTOS_OIDC_CLIENT_ID": "aos",
                  "ANALYSTOS_OIDC_MAPPING_FILE": str(mapping)}.items():
         monkeypatch.setenv(k, v)
@@ -123,7 +123,7 @@ def test_readiness_is_ready_only_when_nothing_is_missing(world, tmp_path, monkey
         r = pilot.readiness(s, owner, ws.id, evidence_dir=evidence)
         assert r.verdict == "ready", [c for c in r.checks if c.status != "pass"]
         assert "pilot-analysts -> analyst" in next(c for c in r.checks if c.check == "identity.sso").reason
-        (evidence / "2026-09-28-recovery-drill.md").write_text("# Recovery drill\n\n**Result: FAILED**\n")
+        (evidence / "2026-09-28-recovery-drill.md").write_text("# Recovery drill\n\n**Result: FAILED**\n", encoding="utf-8")
         again = pilot.readiness(s, owner, ws.id, evidence_dir=evidence)
         drill = next(c for c in again.checks if c.check == "recovery.drill")
         assert again.verdict == "not_ready" and drill.status == "fail"  # the newest drill decides

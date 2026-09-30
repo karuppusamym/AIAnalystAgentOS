@@ -74,7 +74,7 @@ class Mapping:
 
 def load_mapping(path: Path | None = None) -> Mapping:
     path = path or get_settings().oidc_mapping_file
-    data = yaml.safe_load(path.read_text()) if path and Path(path).exists() else {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path and Path(path).exists() else {}
     data = data or {}
     grants = []
     for g in data.get("workspace_roles") or []:
@@ -177,7 +177,7 @@ class OidcProvider:
 
     def jwks(self, *, refresh: bool = False) -> dict[str, Any]:
         if self.jwks_file is not None:
-            return json.loads(Path(self.jwks_file).read_text())
+            return json.loads(Path(self.jwks_file).read_text(encoding="utf-8"))
         # Refresh at most every 60 s: an unknown `kid` (key rotation) triggers one reload, not a flood.
         if self._jwks is None or (refresh and time.monotonic() - self._jwks_at > 60):
             uri = self.metadata().get("jwks_uri")

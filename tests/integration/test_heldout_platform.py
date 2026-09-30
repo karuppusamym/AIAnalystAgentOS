@@ -38,8 +38,8 @@ def test_heldout_platform_tier(control_db):
         runs = {"component": R.run("component", only=subset, corpus=corpus), "platform": platform}
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render(runs, corpus))
-        path.with_suffix(".json").write_text(json.dumps({t: R.as_dict(r) for t, r in runs.items()}, indent=1, default=str) + "\n")
+        path.write_text(render(runs, corpus), encoding="utf-8")
+        path.with_suffix(".json").write_text(json.dumps({t: R.as_dict(r) for t, r in runs.items()}, indent=1, default=str) + "\n", encoding="utf-8")
     # The full corpus is a measurement (the non-blocking `heldout` report): only harness health is asserted.
     assert platform.lock_ok, platform.lock_mismatches
     assert o["errors"] == 0, [(x.id, x.reason) for x in platform.results if x.status == "error"]
