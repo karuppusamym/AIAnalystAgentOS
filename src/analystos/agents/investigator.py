@@ -7,6 +7,7 @@ when no model is available or too few proposals survive. JEV scores priority.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from pydantic import ValidationError
@@ -27,12 +28,37 @@ from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
 from analystos.services.platform_settings import get as platform
 from analystos.skills import hypothesis_templates as tmpl
+from analystos.skills import lookups as lk
 from analystos.skills.lexicon import canonical_tokens
+from analystos.skills.lookups import Lookup
 
 
 # ---------------------------------------------------------------------------------- validation
 def _semantic(ctx_types: dict[str, dict[str, str]], asset: str, column: str) -> str | None:
     return ctx_types.get(asset, {}).get(column)
+
+
+def _join_errors(spec: AnalysisSpec, scope, lookups: Iterable[Lookup]) -> list[str]:
+    """A join is admitted only as a validated many-to-one lookup between in-scope tables of one source, on
+    visible key columns: then it keeps every base row exactly once and reads nothing the scope withholds."""
+    errors: list[str] = []
+    allowed = {(x.from_asset, x.from_column, x.to_asset, x.to_column) for x in lookups}
+    sources = getattr(scope, "asset_sources", None) or {}
+    denied = set(scope.denied_columns)
+    for j in spec.joins:
+        if j.asset not in scope.assets:
+            errors.append(f"joined table {j.asset} is not in the authorized scope")
+            continue
+        if sources.get(j.asset) != sources.get(spec.asset):
+            errors.append(f"joined table {j.asset} is in another source than {spec.asset}")
+        for asset, c in ((spec.asset, j.from_column), (j.asset, j.to_column)):
+            if c not in set(scope.columns.get(asset, [])):
+                errors.append(f"unknown join column {asset}.{c}")
+            elif f"{asset}.{c}" in denied or f"*.{c}" in denied:
+                errors.append(f"restricted join column {asset}.{c}")
+        if (spec.asset, j.from_column, j.asset, j.to_column) not in allowed:
+            errors.append(f"join {spec.asset}.{j.from_column} -> {j.asset}.{j.to_column} is not a validated many-to-one relationship")
+    return errors
 
 
 def _method_unavailable(method: str) -> str | None:
@@ -47,33 +73,45 @@ def _method_unavailable(method: str) -> str | None:
     return f"method {method} is unavailable on this installation: {reason}" if reason else None
 
 
-def validate_spec(spec: AnalysisSpec, scope, types: dict[str, dict[str, str]]) -> list[str]:
+def validate_spec(spec: AnalysisSpec, scope, types: dict[str, dict[str, str]], lookups: Iterable[Lookup] = ()) -> list[str]:
+    """Scope, columns, denied columns, joins (`lookups`: the validated many-to-one relationships a spec may
+    join through; none by default) and method/type fit. A joined column is checked against its own table."""
     errors: list[str] = []
     if spec.asset not in scope.assets:
         return [f"asset {spec.asset} is not in the authorized scope"]
     unavailable = _method_unavailable(spec.method)
     if unavailable:
         return [unavailable]
-    cols = set(scope.columns.get(spec.asset, []))
+    errors = _join_errors(spec, scope, lookups)
+    if errors:
+        return errors
     denied = set(scope.denied_columns)
-    derivs = [d for d in (spec.outcome, spec.segment, spec.time, *spec.drivers) if d is not None]
+    derivs = spec.derivations()
     for d in derivs:
+        asset = spec.table_of(d)
+        cols = set(scope.columns.get(asset, []))
         for c in d.columns():
             if c not in cols:
-                errors.append(f"unknown column {spec.asset}.{c}")
-            elif f"{spec.asset}.{c}" in denied or f"*.{c}" in denied:
+                errors.append(f"unknown column {asset}.{c}")
+            elif f"{asset}.{c}" in denied or f"*.{c}" in denied:
                 errors.append(f"restricted column {c}")
     for f in spec.filters:
-        if f.column not in cols:
-            errors.append(f"unknown filter column {f.column}")
-        elif f"{spec.asset}.{f.column}" in denied:
+        asset = spec.table_of(f)
+        if f.column not in set(scope.columns.get(asset, [])):
+            errors.append(f"unknown filter column {f.column}" if asset == spec.asset else f"unknown filter column {asset}.{f.column}")
+        elif f"{asset}.{f.column}" in denied or (f.via and f"*.{f.column}" in denied):
             errors.append(f"restricted filter column {f.column}")
     if errors:
         return errors
 
     def sem(d: Derivation) -> str | None:
-        return _semantic(types, spec.asset, d.column)
+        return _semantic(types, spec.table_of(d), d.column)
 
+    for d in derivs:
+        if d.type == "later_than":
+            not_dates = [c for c in d.columns() if (_semantic(types, spec.table_of(d), c) or "datetime") != "datetime"]
+            if not_dates:
+                errors.append(f"later_than compares two dates; {', '.join(not_dates)} is not a date/time column")
     errors += methods.get(spec.method).validate(spec, sem)
     if spec.segment is not None and spec.segment.type == "column":
         st = sem(spec.segment)
@@ -101,8 +139,8 @@ def with_constraints(spec: AnalysisSpec, constraints: dict[str, Any]) -> Analysi
              for f in constraints.get("filters", []) if f.get("asset") in (None, spec.asset)]
     if not extra:
         return spec
-    existing = {(f.column, f.op, str(f.value)) for f in spec.filters}
-    return spec.model_copy(update={"filters": spec.filters + [f for f in extra if (f.column, f.op, str(f.value)) not in existing]})
+    existing = {(f.via, f.column, f.op, str(f.value)) for f in spec.filters}  # a joined filter is not the user's base one
+    return spec.model_copy(update={"filters": spec.filters + [f for f in extra if (f.via, f.column, f.op, str(f.value)) not in existing]})
 
 
 # ---------------------------------------------------------------------------------- heuristics
@@ -133,11 +171,19 @@ def table_columns(asset, cols, types: dict[str, dict[str, str]], denied: list[st
     fq = f"{asset.schema_name}.{asset.name}"
     deny = set(denied)
     return [tmpl.Col(name=c.name, semantic_type=types.get(fq, {}).get(c.name), role=(c.semantics or {}).get("semantic_role"),
-                     profile=c.profile or {}) for c in cols if f"{fq}.{c.name}" not in deny]
+                     profile=c.profile or {}, flag_true=_flag_true(c)) for c in cols
+            if f"{fq}.{c.name}" not in deny and f"*.{c.name}" not in deny]
 
 
-def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list) -> list[dict[str, Any]]:
-    """Templates of every enabled pack first (in pack order), then the core role-driven playbook."""
+def _flag_true(column) -> str | None:
+    sem = column.semantics or {}
+    return str(sem["flag_true"]) if sem.get("semantic_role") == "flag" and sem.get("flag_true") is not None else None
+
+
+def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list,
+                        related: Iterable[tuple[Lookup, list[tmpl.Col]]] = ()) -> list[dict[str, Any]]:
+    """Templates of every enabled pack first (in pack order), then the core role-driven playbook. `related`:
+    the tables this one references through a validated many-to-one lookup, with their visible columns."""
     acronyms = pack_registry.hints().acronyms
     proposals: list[dict[str, Any]] = []
     for pack in packs:
@@ -148,37 +194,113 @@ def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list) -> list[dict
     datetimes = [c for c in st if st[c] == "datetime"]
     covered = {(p["spec"].get("outcome") or {}).get("column") for p in proposals}
     has_trend = any(_method_attr(p["spec"], "playbook") == "volume_trend" for p in proposals)
-    return proposals + _role_proposals(fq, cols, st, categorical, datetimes, has_trend=has_trend, covered=covered)
+    joined = lk.joined_dimensions([r for r in related if r[0].from_asset == fq and r[0].to_asset != fq], acronyms=acronyms)
+    return proposals + _role_proposals(fq, cols, st, categorical, datetimes, has_trend=has_trend, covered=covered, joined=joined)
+
+
+def related_tables(ctx: RunContext, types: dict[str, dict[str, str]]) -> dict[str, list[tuple[Lookup, list[tmpl.Col]]]]:
+    """Per selected table, the tables it references through a validated lookup, with their visible columns."""
+    rows = {f"{a.schema_name}.{a.name}": (a, cols) for a, cols in asset_rows(ctx)}
+    out: dict[str, list[tuple[Lookup, list[tmpl.Col]]]] = {}
+    for x in validated_lookups(ctx):
+        if x.to_asset in rows:
+            out.setdefault(x.from_asset, []).append((x, table_columns(*rows[x.to_asset], types, ctx.scope.denied_columns)))
+    return out
 
 
 def heuristic_proposals(ctx: RunContext, types: dict[str, dict[str, str]], packs: list | None = None) -> list[dict[str, Any]]:
     """Rule-based playbook over the largest selected table first (the next one when it yields nothing)."""
     packs = pack_registry.for_scope(ctx.scope, ctx.policy) if packs is None else packs
     rows = sorted(asset_rows(ctx), key=lambda ac: -(ac[0].row_count or 0))
+    related = related_tables(ctx, types)
     for asset, cols in rows[:2]:
         fq = f"{asset.schema_name}.{asset.name}"
-        proposals = proposals_for_table(fq, table_columns(asset, cols, types, ctx.scope.denied_columns), packs)
+        proposals = proposals_for_table(fq, table_columns(asset, cols, types, ctx.scope.denied_columns), packs,
+                                        related=related.get(fq, []))
         if proposals:
             return proposals
     return []
 
 
+def validated_lookups(ctx: RunContext) -> list[Lookup]:
+    """The many-to-one lookups a spec of this run may join through (P8-16): validated (or measured user-declared)
+    relationships whose tables are both in scope and in one source, on visible, non-denied key columns.
+    Once per step (memoised on the context)."""
+    from analystos.agents.common import _memo
+    from analystos.db.models import Relationship
+    from analystos.services.relationship_safety import admissible
+
+    memo = _memo(ctx, "_aos_lookups")
+    if "v" in memo:
+        return list(memo["v"])
+    scope = ctx.scope
+    rows = {a.id: a for a, _ in asset_rows(ctx) if getattr(a, "id", None)}
+    fq = {aid: f"{a.schema_name}.{a.name}" for aid, a in rows.items()}
+    denied = set(scope.denied_columns)
+    sources = getattr(scope, "asset_sources", None) or {}
+    out: list[Lookup] = []
+    if len(fq) >= 2:
+        with session_scope() as s:
+            rels = list(s.scalars(select(Relationship).where(
+                Relationship.workspace_id == ctx.workspace.id,
+                Relationship.validated.is_(True) | (Relationship.origin == "user"),
+                Relationship.cardinality.in_(("many_to_one", "one_to_one")),
+                Relationship.from_asset_id.in_(list(fq)), Relationship.to_asset_id.in_(list(fq))).order_by(Relationship.id)))
+            rels = [r for r in rels if admissible(s, r, rows[r.to_asset_id])]
+        for r in rels:
+            src, dst = fq[r.from_asset_id], fq[r.to_asset_id]
+            if (r.evidence or {}).get("rejected") or src == dst or sources.get(src) != sources.get(dst):
+                continue
+            keys = ((src, r.from_column), (dst, r.to_column))
+            if any(c not in set(scope.columns.get(a, [])) or f"{a}.{c}" in denied or f"*.{c}" in denied for a, c in keys):
+                continue
+            x = Lookup(src, r.from_column, dst, r.to_column)
+            if x not in out:
+                out.append(x)
+    # `via` names one table: a reference column that points at several (polymorphic) is left out.
+    targets: dict[tuple[str, str], int] = {}
+    for x in out:
+        targets[(x.from_asset, x.from_column)] = targets.get((x.from_asset, x.from_column), 0) + 1
+    out = [x for x in out if targets[(x.from_asset, x.from_column)] == 1]
+    memo["v"] = out
+    return list(out)
+
+
 _MEASURE_ROLES = ("amount", "measure", "duration", "percent")
 
 
+def _rate_proposal(fq: str, method: str, outcome: Derivation, seg: Derivation, priority: str,
+                   joins: list[dict[str, str]] = ()) -> dict[str, Any]:
+    spec = {"method": method, "asset": fq, "outcome": outcome.model_dump(), "segment": seg.model_dump()}
+    if joins:
+        spec["joins"] = list(joins)
+    return {"question": f"Does the rate of {outcome.label} vary by {seg.label}?",
+            "statement": f"The rate of {outcome.label} differs materially across {seg.label}.", "priority": priority, "spec": spec}
+
+
 def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None], categorical: list[str], datetimes: list[str], *,
-                    has_trend: bool, covered: set[str | None] = frozenset()) -> list[dict[str, Any]]:
+                    has_trend: bool, covered: set[str | None] = frozenset(),
+                    joined: list[tuple[Derivation, Lookup]] = ()) -> list[dict[str, Any]]:
     """Domain-neutral playbook from crawler column roles (skills/catalog): measures and the first flag by
-    segments, and a trend on the first event timestamp. Lets any database get rule-based hypotheses
-    without a model or a domain pack; outcomes a pack template already covers are left to the pack.
-    Each role is filled by the registered method that declares it (`Method.playbook`). Names are read through the
-    multilingual lexicon (a German `anzahl_` column is a count like `_count`), and up to five segments are crossed
-    with each outcome, so the same table renamed or reordered yields the same set of hypotheses."""
+    segments, a trend on the first event timestamp, and (P8-16) a "later than" outcome for planned vs actual
+    dates. Lets any database get rule-based hypotheses without a model or a domain pack; outcomes a pack
+    template already covers are left to the pack. Each role is filled by the registered method that declares
+    it (`Method.playbook`). Names are read through the multilingual lexicon (a German `anzahl_` column is a
+    count like `_count`), and up to five segments are crossed with each outcome, so the same table renamed or
+    reordered yields the same set of hypotheses.
+
+    Rates are tested across the table's own dimensions and across `joined` ones (a related table's attribute,
+    read through a validated lookup). A rate by a related entity's attribute (customer region, product
+    category) is ranked high: the fact table's own low-cardinality columns are mostly operational (channel,
+    status), while the entity attributes an outcome concentrates in live one join away. Rate proposals are
+    interleaved across outcomes, so the round-1 cap (`diverse_top`) keeps several outcomes and dimensions."""
     by_segment, flag_rate, volume_trend = (methods.for_playbook(r) for r in ("measure_by_segment", "flag_by_segment", "volume_trend"))
+    acronyms = pack_registry.hints().acronyms
     roles = {c.name: c.role for c in visible}
+    yes = {c.name: c.flag_true for c in visible if c.flag_true is not None and c.role == "flag"}
     measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and not _counted(c)] if by_segment else []
-    flags = [c for c in st if st[c] == "boolean" and c not in covered] if flag_rate else []
-    segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:_SEGMENTS]
+    flags = [c for c in st if (st[c] == "boolean" or c in yes) and c not in covered] if flag_rate else []
+    segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key") and c not in yes][:_SEGMENTS]
     out: list[dict[str, Any]] = []
     for group in (segs[:_LEAD_SEGMENTS], segs[_LEAD_SEGMENTS:]):
         for m in measures[:3]:
@@ -188,13 +310,19 @@ def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None],
                             "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.",
                             "priority": "medium", "spec": {"method": by_segment.name, "asset": fq, "outcome": outcome.model_dump(),
                                                            "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
-        for f in flags[:1]:
-            outcome = Derivation(type="is_true", column=f, label=tmpl.flag_label(f, False, None, pack_registry.hints().acronyms))
-            for seg in group:
-                out.append({"question": f"Does the rate of {outcome.label} vary by {humanize(seg)}?",
-                            "statement": f"The rate of {outcome.label} differs materially across {humanize(seg)}.",
-                            "priority": "medium", "spec": {"method": flag_rate.name, "asset": fq, "outcome": outcome.model_dump(),
-                                                           "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
+    rates: list[Derivation] = []
+    for f in flags[:1]:
+        label = tmpl.flag_label(f, False, None, acronyms)
+        rates.append(Derivation(type="equals", column=f, value=yes[f], label=label) if f in yes
+                     else Derivation(type="is_true", column=f, label=label))
+    pairs = lk.planned_actual_pairs(datetimes) if flag_rate else []
+    rates += [Derivation(type="later_than", column=p, end_column=a, label=lk.later_than_label(p, a, acronyms))
+              for p, a in pairs if p not in covered]
+    base = [(Derivation(type="column", column=seg, label=humanize(seg)), None) for seg in segs]
+    ranked = [(d, x, "high") for d, x in joined] + [(d, x, "medium") for d, x in base]
+    for seg, x, priority in ranked:  # interleaved: every outcome by the first dimension, then by the next
+        for outcome in rates:
+            out.append(_rate_proposal(fq, flag_rate.name, outcome, seg, priority, [x.join()] if x is not None else []))
     times = [c for c in datetimes if roles.get(c) in ("timestamp", "date")] or datetimes
     if times and not has_trend and volume_trend:
         out.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
@@ -237,13 +365,19 @@ def _next_code(session, run_id: str) -> int:
 
 def _accept(ctx: RunContext, proposals: list[dict[str, Any]], types, *, origin: str, seen: set[str]) -> tuple[list[dict], list[dict]]:
     accepted, rejected = [], []
+    lookups = validated_lookups(ctx)
+    acronyms = pack_registry.hints().acronyms
     for p in proposals:
+        raw, join_errors = lk.complete_joins(p.get("spec") or {}, lookups, acronyms)
+        if join_errors:
+            rejected.append({"statement": p.get("statement"), "reason": "; ".join(join_errors[:3])})
+            continue
         try:
-            spec = AnalysisSpec.model_validate(p.get("spec") or {})
+            spec = AnalysisSpec.model_validate(raw)
         except ValidationError as exc:
             rejected.append({"statement": p.get("statement"), "reason": f"invalid spec: {exc.errors()[0].get('msg')}"})
             continue
-        errors = validate_spec(spec, ctx.scope, types)
+        errors = validate_spec(spec, ctx.scope, types, lookups)
         if errors:
             rejected.append({"statement": p.get("statement"), "reason": "; ".join(errors[:3])})
             continue
@@ -362,6 +496,9 @@ def generate_hypotheses(ctx: RunContext) -> dict:
                 "constraints": ctx.run.constraints,
                 # the context agent's resolved terms reach the prompt as the compiler's glossary section (with receipts)
                 "known_quality_issues": [q.get("message") for q in quality if q.get("severity") in ("warning", "critical")][:10]}
+    related = [r for rel in related_tables(ctx, types).values() for r in rel]
+    if related:  # attributes one join away, usable with `via` (the join itself is added by code)
+        required["related_tables"] = lk.for_prompt(related)
     seen: set[str] = set()
     packs = pack_registry.for_scope(ctx.scope, ctx.policy)
     # Recurring analysis: re-test every previously verified claim with the identical spec first, so
@@ -584,7 +721,8 @@ def follow_ups(ctx: RunContext) -> dict:
     # dimensions it has not been broken down by yet (an analyst's KPI x dimension matrix).
     roles = {f"{a.schema_name}.{a.name}.{c.name}": (c.semantics or {}).get("semantic_role") for a, cols in asset_rows(ctx) for c in cols}
     display = [p.templates["display_name"] for p in pack_registry.for_scope(ctx.scope, ctx.policy) if p.templates.get("display_name")]
-    drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles)
+    joined = {fq: lk.joined_dimensions(rel, acronyms=pack_registry.hints().acronyms) for fq, rel in related_tables(ctx, types).items()}
+    drill = _drilldowns(supported, types, display) + _matrix_continuations(results, types, ctx.scope.denied_columns, roles, joined)
     payload = defer_compile(ctx, "follow_up_generation", {"objective": ctx.run.objective, "results": results_for_prompt(results),
                                                           "constraints": ctx.run.constraints})
     data, model = (llm_json(ctx, "follow_up_generation", "follow_up_generation.v1", payload,
@@ -632,24 +770,47 @@ def _drilldowns(supported: list[dict], types, display_patterns: list[str] = ()) 
         seg = spec.get("segment") or {}
         if not _method_attr(spec, "drill_down") or top is None or seg.get("type") != "column":
             continue
-        cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c != seg.get("column")]
+        via = seg.get("via")  # a related table's attribute: the filter reads it through the same join
+        own = {(spec.get("outcome") or {}).get("column")} | (set() if via else {seg.get("column")})
+        cats = [c for c, t in types.get(spec["asset"], {}).items() if t == "categorical" and c not in own]
         cats = tmpl.prefer_display(cats, display_patterns)
+        name = (seg.get("label") or seg["column"]) if via else seg["column"]
         for other in cats[:1]:
             out.append({"question": f"Within {seg.get('label') or seg['column']} = {top}, does the outcome vary by {other}?",
-                        "statement": f"Within {seg['column']} = {top}, the outcome rate differs across {other}.",
+                        "statement": f"Within {name} = {top}, the outcome rate differs across {other}.",
                         "priority": "medium", "parent": r["code"],
                         "spec": {**spec, "segment": {"type": "column", "column": other, "label": other.replace('_', ' ')},
-                                 "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=", "value": top}]}})
+                                 "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=", "value": top,
+                                                                             **({"via": via} if via else {})}]}})
+        if (spec.get("outcome") or {}).get("type") == "later_than":
+            excluded = {(spec.get("outcome") or {}).get("column"), (spec.get("outcome") or {}).get("end_column")}
+            dates = [c for c, t in types.get(spec["asset"], {}).items() if t == "datetime" and c not in excluded]
+            event_date = next((c for c in dates if any(w in c for w in ("order", "created", "opened", "start"))),
+                              dates[0] if dates else None)
+            if event_date:
+                label = seg.get("label") or seg["column"]
+                out.append({"question": f"Within {label} = {top}, did the late rate change by month?",
+                            "statement": f"Within {label} = {top}, the late rate differs across months.",
+                            "priority": "high", "parent": r["code"],
+                            "spec": {**spec, "segment": {"type": "date_trunc", "column": event_date, "grain": "month",
+                                                          "label": f"{event_date.replace('_', ' ')} month"},
+                                     "filters": (spec.get("filters") or []) + [{"column": seg["column"], "op": "=",
+                                                                               "value": top,
+                                                                               **({"via": via} if via else {})}]}})
     return out
 
 
 _ROLE_WEIGHT = {"amount": 3, "duration": 3, "percent": 2, "flag": 2, "measure": 1}
 
 
-def _matrix_continuations(results: list[dict], types, denied: list[str], roles: dict[str, str | None] | None = None) -> list[dict]:
-    """For each outcome tested by segment, propose it by the next dimension it was not yet broken down by.
+def _matrix_continuations(results: list[dict], types, denied: list[str], roles: dict[str, str | None] | None = None,
+                          joined: dict[str, list[tuple[Derivation, Lookup]]] | None = None) -> list[dict]:
+    """For each outcome tested by segment, propose it by the next dimension it was not yet broken down by (the
+    table's own dimensions, then `joined`: related tables' attributes through validated lookups).
     One per outcome per round, least-explored outcomes first and business measures (amounts, durations,
     rates) before plain counts. Every test still goes through BH correction, so breadth adds no false positives."""
+    from analystos.methods.base import ref_name
+
     roles = roles or {}
     tested: dict[tuple[str, str], set[str]] = {}
     template: dict[tuple[str, str], dict] = {}
@@ -659,24 +820,30 @@ def _matrix_continuations(results: list[dict], types, denied: list[str], roles: 
             continue
         out = spec.get("outcome") or {}
         key = (spec["asset"], stable_hash(out))
-        tested.setdefault(key, set()).add((spec.get("segment") or {}).get("column"))
+        tested.setdefault(key, set()).add(ref_name(spec.get("segment") or {}))
         template.setdefault(key, spec)
     proposals = []
     for key, spec in template.items():
         asset = spec["asset"]
-        dims = [c for c, t in types.get(asset, {}).items()
-                if t == "categorical" and c not in tested[key] and f"{asset}.{c}" not in set(denied) and not _TEXTY.search(c)]
+        own = {(spec.get("outcome") or {}).get("column")}
+        dims: list[tuple[Derivation, Lookup | None]] = [
+            (Derivation(type="column", column=c, label=humanize(c)), None) for c, t in types.get(asset, {}).items()
+            if t == "categorical" and c not in tested[key] and c not in own and f"{asset}.{c}" not in set(denied)
+            and not _TEXTY.search(c)]
+        dims += [(d, x) for d, x in (joined or {}).get(asset, []) if ref_name(d.model_dump()) not in tested[key]]
         if not dims:
             continue
-        nxt = dims[0]
+        nxt, lookup = dims[0]
         outcome_col = (spec.get("outcome") or {}).get("column") or ""
         label = (spec.get("outcome") or {}).get("label") or humanize(outcome_col or "outcome")
         weight = _ROLE_WEIGHT.get(roles.get(f"{asset}.{outcome_col}") or "", 1)
+        body = {k: v for k, v in spec.items() if k != "segment"}
+        if lookup is not None and not any(j.get("from_column") == lookup.from_column for j in body.get("joins") or []):
+            body["joins"] = [*(body.get("joins") or []), lookup.join()]
         proposals.append({"_order": (len(tested[key]), -weight),
-                          "question": f"Does {label} differ by {humanize(nxt)}?",
-                          "statement": f"{label[:1].upper() + label[1:]} differs materially across {humanize(nxt)}.",
+                          "question": f"Does {label} differ by {nxt.label}?",
+                          "statement": f"{label[:1].upper() + label[1:]} differs materially across {nxt.label}.",
                           "priority": "medium",
-                          "spec": {**{k: v for k, v in spec.items() if k != "segment"},
-                                   "segment": {"type": "column", "column": nxt, "label": humanize(nxt)}}})
+                          "spec": {**body, "segment": nxt.model_dump(exclude_none=True, exclude={"start_hour", "end_hour"})}})
     proposals.sort(key=lambda p: p.pop("_order"))
     return proposals

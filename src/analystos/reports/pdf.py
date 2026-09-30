@@ -1,9 +1,10 @@
-"""PDF rendering of ReportData with fpdf2 and the bundled DejaVu fonts (N-6-font; no network).
+"""PDF rendering of ReportData with fpdf2 and the bundled DejaVu and Noto CJK fonts (N-6-font; no network).
 
 DejaVu Sans (Bitstream Vera licence, `fonts/LICENSE_DEJAVU`) is embedded as a subset, so Latin,
-Latin-extended, Greek, Cyrillic, typography (→ ≥ … “ ” —) and most symbols print as written. A
-character the fonts lack (CJK, Indic scripts, emoji) passes through `pdf_text`, which maps it to an
-ASCII look-alike, folds accents or prints '?', so no text silently vanishes as an empty glyph box.
+Latin-extended, Greek, Cyrillic, typography (→ ≥ … “ ” —) and most symbols print as written. Noto Sans
+CJK SC (SIL OFL 1.1, `fonts/OFL.txt`) is the fallback for what DejaVu lacks, so Chinese, Japanese and
+Korean print too. A character neither font has (Indic scripts, emoji) passes through `pdf_text`, which
+maps it to an ASCII look-alike, folds accents or prints '?', so no text vanishes as an empty glyph box.
 The creation date comes from ReportData.generated_at, so the same input yields the same bytes.
 """
 from __future__ import annotations
@@ -37,13 +38,23 @@ FONT_DIR = Path(__file__).parent / "fonts"
 FONT, MONO = "DejaVu", "DejaVuMono"
 FONT_FILES = {(FONT, ""): "DejaVuSans.ttf", (FONT, "B"): "DejaVuSans-Bold.ttf", (FONT, "I"): "DejaVuSans-Oblique.ttf",
               (MONO, ""): "DejaVuSansMono.ttf"}
+CJK, CJK_FILE = "NotoSansCJK", "NotoSansCJKsc-VF.ttf"  # fallback for every style (fpdf2 fakes no bold/italic)
 
 
 @cache
 def font_coverage(family: str = FONT) -> frozenset[int]:
     """Code points every style of `family` has a glyph for (a style missing one would print a blank box)."""
     maps = [set(TTFont(FONT_DIR / f, lazy=True).getBestCmap()) for (fam, _), f in FONT_FILES.items() if fam == family]
-    return frozenset(set.intersection(*maps))
+    return frozenset(set.intersection(*maps)) | _cjk_coverage()
+
+
+@cache
+def _cjk_coverage() -> frozenset[int]:
+    font = TTFont(FONT_DIR / CJK_FILE, lazy=True)
+    try:
+        return frozenset(font.getBestCmap())
+    finally:
+        font.close()
 
 
 def pdf_text(v: object, family: str = FONT) -> str:
@@ -80,6 +91,8 @@ class _ReportPDF(FPDF):
         self.data = data
         for (family, style), file in FONT_FILES.items():
             self.add_font(family, style, FONT_DIR / file)
+        self.add_font(CJK, "", FONT_DIR / CJK_FILE)
+        self.set_fallback_fonts([CJK], exact_match=False)
         self.set_margins(16, 16, 16)
         self.set_auto_page_break(auto=True, margin=20)
         self.alias_nb_pages()

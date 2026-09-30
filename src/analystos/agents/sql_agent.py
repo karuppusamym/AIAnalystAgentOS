@@ -42,11 +42,19 @@ def slug(text: str, n: int = 40) -> str:
 
 
 def derivation_alias(d: Derivation) -> str:
-    if d.type == "column":
+    """The dataset column a derivation becomes; a related table's column is prefixed with the entity it is read
+    through (`customer_region`), so it never collides with the base table's own columns."""
+    if d.type == "column" and not d.via:
         return d.column
-    base = {"duration_hours": f"{d.column}_to_{d.end_column}_hours", "after_hours": f"{d.column}_after_hours",
+    base = {"column": d.column, "duration_hours": f"{d.column}_to_{d.end_column}_hours", "after_hours": f"{d.column}_after_hours",
+            "later_than": f"{d.end_column}_after_{d.column}",
             "bucket": f"{d.column}_bucket", "equals": f"{d.column}_is_{slug(str(d.value), 20)}", "is_true": f"{d.column}_true",
             "date_trunc": f"{d.column}_{d.grain}", "hour_of_day": f"{d.column}_hour", "day_of_week": f"{d.column}_dow"}[d.type]
+    if d.via:
+        from analystos.skills.lookups import ref_stem
+
+        stem = ref_stem(d.via)
+        base = base if base.startswith(f"{stem}_") else f"{stem}_{base}"
     return slug(base, 60)
 
 
@@ -61,7 +69,7 @@ def primary_asset(ctx: RunContext, verified_specs: list[AnalysisSpec]) -> str:
 
 
 def build_dataset(ctx: RunContext) -> dict:
-    from analystos.skills.sqlbuild import render_derivation, render_filter
+    from analystos.skills.sqlbuild import join_alias, render_derivation, render_filter
 
     with session_scope() as s:
         specs = [AnalysisSpec.model_validate(h.spec) for h in s.scalars(
@@ -74,10 +82,19 @@ def build_dataset(ctx: RunContext) -> dict:
     raw_cols = [c for c in ctx.scope.columns[asset] if f"{asset}.{c}" not in denied]
     derived: dict[str, Derivation] = {}
     types = {c.name: c.semantic_type for a, cols in asset_rows(ctx) if f"{a.schema_name}.{a.name}" == asset for c in cols}
+    spec_joins: dict[str, Any] = {}  # via -> Join: related-table attributes the verified findings are broken down by
     for spec in (sp for sp in specs if sp.asset == asset):
-        for d in (spec.outcome, spec.segment, spec.time, *spec.drivers):
-            if d is not None and d.type != "column":
-                derived.setdefault(derivation_alias(d), d)
+        joined_filters = [Derivation(type="column", column=f.column, via=f.via) for f in spec.filters if f.via]
+        for d in (spec.outcome, spec.segment, spec.time, *spec.drivers, *joined_filters):
+            if d is None or (d.type == "column" and not d.via):
+                continue
+            j = spec.join(d.via)
+            if d.via and (j is None or j.asset not in ctx.scope.assets or ctx.scope.asset_sources.get(j.asset) != source_id
+                          or any(f"{j.asset}.{c}" in denied or f"*.{c}" in denied for c in d.columns())):
+                continue
+            derived.setdefault(derivation_alias(d), d)
+            if j is not None:
+                spec_joins.setdefault(d.via, j)
     hints = pack_registry.hints()
     start_words = "|".join(map(re.escape, ("created", "start", *hints.event_start)))
     time_col = next((c for c in raw_cols if types.get(c) == "datetime" and re.search(start_words, c)), None) or \
@@ -110,6 +127,8 @@ def build_dataset(ctx: RunContext) -> dict:
         alias = f"j{i}"
         joins.append(f'LEFT JOIN {tfq} {alias} ON t."{r.from_column}" = {alias}."{r.to_column}"')
         join_parts.append(f'{alias}."{name_col}" AS "{slug(r.from_column + "_" + name_col)}"')
+    for via, j in spec_joins.items():  # the verified specs' own joins (validated many-to-one), under their spec alias
+        joins.append(f'LEFT JOIN {j.asset} "{join_alias(via)}" ON t."{via}" = "{join_alias(via)}"."{j.to_column}"')
     filters = [Filter(column=f["column"], op=f["op"], value=f.get("value"), origin="user_redirect")
                for f in ctx.run.constraints.get("filters", []) if f.get("asset") in (None, asset)]
     where = (" WHERE " + " AND ".join(render_filter(f, dialect, table_alias="t") for f in filters)) if filters else ""
@@ -119,15 +138,15 @@ def build_dataset(ctx: RunContext) -> dict:
     count = ctx.tools().invoke("sql.execute", {"purpose": "dataset.validate"},
                                lambda: run_sql(f"SELECT COUNT(*) AS n FROM ({sql}) d", purpose="dataset.validate"))
     sample = run_sql(f"SELECT * FROM ({sql}) d", purpose="dataset.sample", max_rows=5)
-    columns = [{"name": c, "semantic_type": ("boolean" if derived.get(c) and derived[c].type in ("equals", "is_true", "after_hours")
+    columns = [{"name": c, "semantic_type": ("boolean" if derived.get(c) and derived[c].type in ("equals", "is_true", "after_hours", "later_than")
                                               else "numeric" if derived.get(c) and derived[c].type in ("duration_hours", "hour_of_day", "day_of_week")
-                                              else "categorical" if derived.get(c) and derived[c].type == "bucket"
+                                              else "categorical" if derived.get(c) and derived[c].type in ("bucket", "column")
                                               else "datetime" if derived.get(c) and derived[c].type == "date_trunc" else types.get(c)),
                 "derived": c in derived, "label": derived[c].label if c in derived else None} for c in sample.columns]
     name = f"aos_{slug(ctx.run.objective, 30)}_{ctx.run.id[-6:]}"
     ds = DatasetDef(name=name, description=f"Analytical dataset for: {ctx.run.objective[:200]}", sql=sql, columns=columns,
                     time_column=derivation_alias(Derivation(type="date_trunc", column=time_col, grain="month")) if time_col else None,
-                    source_assets=[asset] + [f"{t.schema_name}.{t.name}" for t in targets.values() if t], row_count=int(count.rows[0][0]))
+                    source_assets=list(dict.fromkeys([asset] + [f"{t.schema_name}.{t.name}" for t in targets.values() if t] + [j.asset for j in spec_joins.values()])), row_count=int(count.rows[0][0]))
     with session_scope() as s:
         art = save_artifact(s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, type_="dataset", name=name,
                             content={**ds.model_dump(), "raw_time_column": time_col, "dialect": dialect, "source_id": source_id},

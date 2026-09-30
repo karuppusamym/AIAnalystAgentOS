@@ -156,7 +156,7 @@ is kept for history: its diff was noisy, which led to carrying claims and KPI de
 |---|---|---|---|---|
 | Scheduler | `services/schedules.py` | validation, timezone, idempotent claim, run-now path | ✅ | no back-fill of missed slots |
 | Re-analysis diff | `services/changes.py`, investigator carry-forward, semantic carry-forward | claim identity unit tests; same-data integration assertion (0 resolved / 0 not re-tested / equal KPIs) | ✅ | diff granularity is per claim, not per group value |
-| Reports | `reports/*`, `services/reports.py` | 63 renderer tests (escaping, formula injection, determinism) + integration download | ✅ | core PDF font |
+| Reports | `reports/*`, `services/reports.py` | renderer tests (escaping, formula injection, determinism, CJK/Unicode PDF extraction) + integration download | ✅ | bundled Noto Sans CJK SC under SIL OFL 1.1; unsupported glyphs shown as `?` |
 | Monitors + alerts | `services/monitors.py` | drift/threshold/change-point unit tests; integration (alert, de-dup, DQ baseline, auto-investigation) | ✅ | DQ monitor re-profiles each run (cost grows with columns) |
 | Notifications | `services/notifications.py` | integration | ✅ | in-app only |
 | Phase-3 UI | `web/src/pages/{Schedules,Monitoring,Reports}.tsx` | 23 new vitest tests | smoke | monitor config not editable after creation |
@@ -292,7 +292,7 @@ Suites at merge: 1,197 unit, 102 integration, 114 vitest, 21 Playwright.
 | Replan supersedes artifacts | `artifact.plan_version` | `test_e2e_local_run.py` redirect test | ✅ | — |
 | Population of staged snapshots | `connectors/sampling.py`, `staging/snapshots.py`, critic `representative_population` | `test_snapshot_sampling.py`, `test_snapshot_population.py` | — | ServiceNow/files: `full` and `first_n` only |
 | Capability manifests and registry | `contracts/capability.py`, `capabilities/registry.py` | `test_capability_registry.py` | — | Enablement, certification gating and plan-hash binding pending (X01) |
-| MCP client | `mcp/client.py` | `test_mcp_client.py` (SDK-built test double) | — | Not registered against a real Superset/dbt MCP server; no host allowlist |
+| MCP client | `mcp/client.py`, `core/config.py` | `test_mcp_logic.py`, `test_outbound_http.py`; `test_mcp_client.py` (SDK-built test double, optional MCP extra) | — | Exact platform host allowlist at registration, workspace allow, and call time; DNS/IP pinning. Not registered against a real Superset/dbt MCP server |
 | MCP server | `mcp/server.py`, `mcp/grants.py` | `test_mcp_server.py` | — | No per-client OpenAPI, no MCP prompts, no OAuth yet |
 | Domain packs | `packs/{itsm,sales}`, `skills/hypothesis_templates.py` | grep test, pack benchmarks (3/3 planted each) | ✅ via demo | Pack KPIs not yet read by the semantic agent |
 | Connector certification from evidence | `connectors/certification.py`, `scripts/certify_connectors.py` | `test_connector_certification.py` | postgres, mysql, sqlite, duckdb | Warehouses remain `tested` |
@@ -608,6 +608,19 @@ against a live API, worker and database built from the merged tree.
 | Row | Code | Coverage | Measured / limits |
 |---|---|---|---|
 | P8-15 holdout + strength | `skills/sqlbuild.py` (`Partition` predicate), `contracts/analysis.py` (`Partition`), `contracts/evidence.py` (`Strength`, `HoldoutCheck`), `evidence/{holdout,strength,confirmation,bundle}.py`, `agents/{data_scientist,insight,critic,supervisor}.py`, `api/serialize.py`, `contracts/platform.py` (`analysis.holdout_fraction`), `web/src/lib/standing.ts`, `InvestigationBoard.tsx`, ADR-0008 amendment | `test_holdout_confirmation.py` (187), `standing.test.tsx` (2); integration `test_holdout_p815.py`, `test_typed_evidence_p403.py` (4 passed on local Postgres, own test databases) | Retail generator in process: random-status price difference not confirmed (rejected on discovery rows by Order ID; weak + not confirmed by whole row); planted Marketplace returns confirmed on held-out rows (n 900, one-sided p 0.019). Governed Postgres run: one held-out test per verified claim, lock before access, no other query reads held-out rows. Numbers describe discovery rows; a whole-table fluke can still pass the holdout (strength flags it); live journey re-run not done |
+
+## 2026-09-28 — P8-16 Causes one join away
+
+| Row | Code | Coverage | Measured / limits |
+|---|---|---|---|
+| P8-16 joined segments and `later_than` | `contracts/analysis.py` (`Join`, `via`, `later_than`, `tolerance_hours`; compat serializer keeps old spec hashes), `skills/sqlbuild.py` (`base_select` joins for every method, `later_than` per dialect), `skills/lookups.py` (lookups, `complete_joins`, joined dimensions, planned/actual pairs), `agents/investigator.py` (`validated_lookups`, `validate_spec` joins, playbook, drill-downs, matrix continuations, `related_tables` in the prompt), `agents/prompts.py`, `agents/sql_agent.py` (dataset joins, aliases), `methods/{base,rate_by_segment,driver_model,contribution_decomposition}.py` | `test_joined_segments.py` (49), integration `test_joined_segments_pg.py` (2: Postgres engine in its own database; catalog-backed lookups on the test control database) | Retail journey data in process (same generator and seed): round 1 (8 hypotheses) finds late delivery by customer region = West (14.8% vs 7.6%) and returns by product category = Electronics (10.1% vs 6.3%), both verified and BH-significant; no-effect joined segments rejected; the drill-down into Electronics finds Marketplace. Joins keep row counts (6000 of 6000 on duckdb, T-SQL and Postgres). Limits: data-version check on the base table only; notebook steps are not join-validated (gateway still checks scope and columns); live journey re-run pending |
+| P8-16 joined evidence follow-up (2026-09-28) | `agents/{insight,critic,investigator,sql_agent,visualization}.py`, `evidence/{manifest,bundle,verification,why}.py`, `services/{steps,relationship_safety}.py` | `test_evidence_p403.py` (joined-table version change and bundle staleness), `test_verification_p701.py`, `test_joined_segments.py` (joined chart filter, retail West monthly follow-up, sampled/stale user-key refusal), `test_joined_segments_pg.py`, `test_steps.py` | Every joined table is in the run manifest, REV stability check, finding bundle and version dependencies; a changed lookup table voids or marks the finding stale and appears in "Why this number?". Notebook method steps require a reviewed many-to-one relationship and depend on all tables read. A joined drill-down projects and filters the related attribute in the dataset; a planned-versus-actual finding gets a within-segment monthly test. An unvalidated user-declared join requires a current, complete profile proving target-key uniqueness. Remaining: full-journey live re-run. |
+
+2026-09-28 live addendum: the rebuilt Compose stack completed `scripts/e2e_full_journey.py`
+with 69/69 checks in `ws_272b2ca5401b`, including joined West/Electronics findings and a PDF
+download. This closes P8-16's live journey gap.
+
+The 2026-09-28 N-2 (`services/existing_dashboard.py`) and N-3 (`services/external_delivery.py`) implementations from a parallel session were superseded on 2026-09-29 by the close-out versions (`services/existing_dashboards.py`, `services/deliveries.py`), recorded below; their modules and tests were removed.
 
 ## 2026-09-29 — Close-out of the buildable open rows (branch `closeout-2026-09-28`)
 

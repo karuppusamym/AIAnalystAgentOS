@@ -176,8 +176,14 @@ def assemble(*, spec: Mapping[str, Any], stat: Mapping[str, Any], second: Mappin
     method = method_dimensions(spec, stat, second, family_size=family_size, alpha=alpha, origin=origin,
                                iteration=iteration, parent=parent)
     method["has_p_value"] = stat.get("p_value") is not None
+    from analystos.evidence.manifest import spec_assets
+
+    used = set(spec_assets(spec))
+    entries = [e for e in (manifest or {}).get("entries") or [] if e.get("asset") in used]
+    if not entries and entry:
+        entries = [entry.model_dump(mode="json")]
     data = {"asset": spec.get("asset"), "queries": list(receipts), "filters": list(spec.get("filters") or []),
-            "manifest": {"version": (manifest or {}).get("version"), "entries": [entry.model_dump(mode="json")] if entry else []},
+            "manifest": {"version": (manifest or {}).get("version"), "entries": entries},
             "entry": entry.model_dump(mode="json") if entry else None, "population": dict(population or {}) or None,
             "excluded_rows": {k: v for k, v in (stat.get("details") or {}).items() if k.startswith("excluded_")} or None}
     claim = {**claim_meta, "facts": [f.model_dump(mode="json") for f in facts], "binding": binding.model_dump(mode="json")}

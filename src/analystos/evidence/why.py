@@ -139,22 +139,28 @@ def _receipt_link(session: Session, ins: Any, fact: Fact | None) -> dict[str, An
 def _data_link(session: Session, ins: Any) -> dict[str, Any]:
     from analystos.evidence.manifest import changed, current_entry
 
-    rec = ((ins.evidence_bundle or {}).get("data") or {}).get("entry")
-    if not rec:
+    data = (ins.evidence_bundle or {}).get("data") or {}
+    records = (data.get("manifest") or {}).get("entries") or ([data["entry"]] if data.get("entry") else [])
+    if not records:
         return _link("data_version", "broken", "no data-version manifest entry was recorded (legacy finding)")
-    entry = ManifestEntry.model_validate(rec)
-    now = current_entry(session, entry.asset, entry.source_id)
-    detail = {"asset": entry.asset, "source_id": entry.source_id, "mode": entry.mode, "recorded_version": entry.version,
-              "current_version": now.version, "recorded_rows": entry.rows, "current_rows": now.rows,
-              "version_basis": entry.version_basis, "staged_at": entry.staged_at, "observed_at": entry.observed_at}
-    if entry.mode != "staged" or not entry.version:
-        return _link("data_version", "unknown", "pushdown or unversioned source: replay is best effort", **detail)
-    why = changed(entry, now)
-    if why:
-        return _link("data_version", "changed", why, **detail)
-    if now.mode != "staged" or not now.version:
-        return _link("data_version", "unknown", "the snapshot has no fixed version now", **detail)
-    return _link("data_version", "ok", **detail)
+    details, changed_assets, unknown = [], [], []
+    for rec in records:
+        entry = ManifestEntry.model_validate(rec)
+        now = current_entry(session, entry.asset, entry.source_id)
+        detail = {"asset": entry.asset, "source_id": entry.source_id, "mode": entry.mode, "recorded_version": entry.version,
+                  "current_version": now.version, "recorded_rows": entry.rows, "current_rows": now.rows,
+                  "version_basis": entry.version_basis, "staged_at": entry.staged_at, "observed_at": entry.observed_at}
+        details.append(detail)
+        if reason := changed(entry, now):
+            changed_assets.append(reason)
+        elif entry.mode != "staged" or not entry.version or now.mode != "staged" or not now.version:
+            unknown.append(entry.asset)
+    payload = details[0] if len(details) == 1 else {"assets": details}
+    if changed_assets:
+        return _link("data_version", "changed", "; ".join(changed_assets), **payload)
+    if unknown:
+        return _link("data_version", "unknown", "pushdown or unversioned source: " + ", ".join(unknown), **payload)
+    return _link("data_version", "ok", **payload)
 
 
 def _semantic_link(session: Session, record: Any | None, *,

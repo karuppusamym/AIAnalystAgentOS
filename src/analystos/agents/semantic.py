@@ -18,6 +18,12 @@ from analystos.runtime.context import RunContext
 AGGS = (exp.Count, exp.Avg, exp.Sum, exp.Min, exp.Max, exp.PercentileCont, exp.Median, exp.Stddev)
 
 
+def _rate_expr(name: str) -> str:
+    """Share of records where a derived flag holds. A flag compiles to a boolean or to 1/0 (the rate
+    methods sum it, P8-16); CAST(... AS INT) = 1 reads both, and a NULL still counts as not holding."""
+    return f'AVG(CASE WHEN CAST("{name}" AS INT) = 1 THEN 1.0 ELSE 0.0 END)'
+
+
 def default_metrics(ds) -> list[MetricDef]:
     cols = {c["name"]: c for c in ds.columns}
     out = [MetricDef(name="record_count", display_name="Record volume", definition="Number of records in the analytical dataset.",
@@ -27,7 +33,7 @@ def default_metrics(ds) -> list[MetricDef]:
             label = c.get("label") or name
             out.append(MetricDef(name=f"{name}_rate", display_name=f"{label[:1].upper() + label[1:]} rate",
                                  definition=f"Share of records where {label}.",
-                                 sql_expression=f'AVG(CASE WHEN "{name}" THEN 1.0 ELSE 0.0 END)', format="percent", grain="record",
+                                 sql_expression=_rate_expr(name), format="percent", grain="record",
                                  source_columns=[name]))
         if c.get("derived") and name.endswith("_hours"):
             label = c.get("label") or name

@@ -66,6 +66,27 @@ def build(entries: Iterable[ManifestEntry], *, built_at: str | None = None) -> D
     return DataManifest(version=version, built_at=built_at or utcnow().isoformat(), entries=ordered)
 
 
+def spec_assets(spec: Mapping[str, Any]) -> list[str]:
+    """Every table read by an analysis, including its validated lookup tables."""
+    return sorted({asset for asset in [spec.get("asset"),
+                                      *(j.get("asset") for j in spec.get("joins") or [])] if asset})
+
+
+def changed_for_spec(manifest: DataManifest | None, spec: Mapping[str, Any],
+                     current: Mapping[str, ManifestEntry]) -> list[str]:
+    """Missing manifest entries fail closed; staged version changes name the affected table."""
+    reasons = []
+    for asset in spec_assets(spec):
+        recorded = manifest.entry(asset) if manifest else None
+        if recorded is None:
+            reasons.append(f"no data-version manifest recorded for {asset}")
+        elif asset not in current:
+            reasons.append(f"current data version unavailable for {asset}")
+        elif reason := changed(recorded, current[asset]):
+            reasons.append(reason)
+    return reasons
+
+
 def current_entry(session: Session, asset: str, source_id: str | None) -> ManifestEntry:
     """The asset's current version, from its source and snapshot records."""
     from analystos.db.models import Source, SourceAsset

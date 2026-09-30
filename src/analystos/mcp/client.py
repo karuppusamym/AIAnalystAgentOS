@@ -375,6 +375,10 @@ def set_allowed(session: Session, user: User, workspace_id: str, server_id: str,
     """The allowlist decision. Revoking also stops every invocation immediately."""
     require_role(session, user, workspace_id, "owner")
     srv = _server(session, workspace_id, server_id)
+    if allowed:  # re-enabling needs the host on the platform allowlist today, not only when it was registered
+        _, host, port = outbound.parse_url(srv.url)
+        if outbound.match_host(host, port, _platform_allowlist()) is None:
+            raise PolicyDenied(f"MCP host {host} is not on the platform MCP host allowlist")
     srv.allowed, srv.allowed_by = bool(allowed), user.id
     audit(f"user:{user.id}", "mcp.server_allowed" if allowed else "mcp.server_disallowed", workspace_id=workspace_id,
           target=srv.id, decision="allow" if allowed else "deny", details={"name": srv.name, "url": srv.url}, session=session)

@@ -139,6 +139,27 @@ class GatewayRuntime:
 
         self._gate()
         a = AnalysisSpec.model_validate(spec)
+        if a.joins:
+            from analystos.agents.investigator import _join_errors
+            from analystos.db.models import Relationship, SourceAsset
+            from analystos.services.relationship_safety import admissible
+            from analystos.skills.lookups import Lookup
+
+            # Notebook methods use the same reviewed relationships as investigations. A syntactically
+            # valid SQL join can still multiply rows, so the gateway's scope check is insufficient.
+            with session_scope() as s:
+                assets = list(s.scalars(select(SourceAsset).where(SourceAsset.workspace_id == self.workspace_id)))
+                by_id = {row.id: row for row in assets}
+                names = {row.id: f"{row.schema_name}.{row.name}" for row in assets}
+                rels = s.scalars(select(Relationship).where(Relationship.workspace_id == self.workspace_id,
+                    Relationship.validated.is_(True) | (Relationship.origin == "user"),
+                    Relationship.cardinality.in_(("many_to_one", "one_to_one"))))
+                lookups = [Lookup(names[r.from_asset_id], r.from_column, names[r.to_asset_id], r.to_column)
+                           for r in rels if r.from_asset_id in names and r.to_asset_id in names
+                           and not (r.evidence or {}).get("rejected") and admissible(s, r, by_id[r.to_asset_id])]
+            errors = _join_errors(a, self.ctx.scope, lookups)
+            if errors:
+                raise InvalidInput("analysis join is not approved: " + "; ".join(errors[:3]))
         runner = self.ctx.services.gateway.run_sql_for(self.ctx.scope, actor=self._actor, task_id=step_id,
                                                        source_id=self.ctx.scope.asset_sources.get(a.asset))
         out = run_analysis(a, runner, alpha=self.ctx.policy.alpha)
@@ -593,7 +614,9 @@ def _dispatch(step: AnalysisStep, ver: AnalysisStepVersion, rt: Runtime, out: _O
     elif step.kind == "method" and spec.get("analysis_spec"):
         res = rt.analysis(spec["analysis_spec"], step_id=step.id)
         stat = res["stat"]
-        out.method, out.assets = str(spec["analysis_spec"].get("method")), [res["asset"]]
+        from analystos.evidence.manifest import spec_assets
+
+        out.method, out.assets = str(spec["analysis_spec"].get("method")), spec_assets(spec["analysis_spec"])
         out.table = {"columns": list((res.get("table") or {}).get("columns") or []),
                      "rows": list((res.get("table") or {}).get("rows") or [])[:SNAPSHOT_ROWS],
                      "row_count": int(stat.get("n") or 0), "stat": stat}

@@ -72,13 +72,27 @@ def test_non_latin_text_renders_as_written():
 
 def test_uncovered_characters_fall_back_instead_of_blank_boxes():
     cov = font_coverage()
-    assert all(ord(c) in cov for c in "ЖΩЁ→≥…€")
-    assert ord("日") not in cov and ord("🚀") not in cov
-    assert pdf_text("a → b 日本語 🚀\tz\x07​") == "a → b ??? ?    z"
+    assert all(ord(c) in cov for c in "ЖΩЁ→≥…€日한")
+    assert ord("🚀") not in cov and ord("த") not in cov
+    assert pdf_text("a → b 日本語 🚀\tz\x07​") == "a → b 日本語 ?    z"
     assert pdf_text("a → b", "DejaVuMono") == "a → b"
     b = render_pdf(ReportData(title="報告 🚀", workspace_name="ws", objective="Ω\x00", run_id="r",
                               generated_at="2026-09-21T08:30:00+02:00"))
-    assert b.startswith(b"%PDF-") and "?? ?" in _text(b)
+    assert b.startswith(b"%PDF-") and "報告 ?" in _text(b)
+
+
+def test_cjk_falls_back_to_the_bundled_noto_font():
+    d = ReportData(title="Отчёт 報告 → ≥ …", workspace_name="東京 Zürich", objective="한국어 中文 日本語 Ω",
+                   run_id="r", generated_at="2026-09-21T08:30:00+02:00",
+                   insights=[ReportInsight(code="Ж", title="χ²", finding="√ 中文 日本語 한국어", confidence=0.5,
+                                           verified=True, caveats=["€"])])
+    b = render_pdf(d)
+    txt = _text(b)
+    for phrase in ("Отчёт 報告 → ≥ …", "東京 Zürich", "한국어 中文 日本語 Ω", "√ 中文 日本語 한국어"):
+        assert phrase in txt, phrase
+    assert re.search(rb"/BaseFont /[A-Z]{6}\+NotoSansCJK", b) and re.search(rb"/BaseFont /[A-Z]{6}\+DejaVuSans", b)
+    assert "SIL OPEN FONT LICENSE" in (FONT_DIR / "OFL.txt").read_text(encoding="utf-8").upper()
+    assert render_pdf(d) == b  # still deterministic with the fallback font
 
 
 def test_pdf_is_deterministic_and_dispatch():

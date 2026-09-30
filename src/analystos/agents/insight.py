@@ -219,7 +219,9 @@ def build_insights(ctx: RunContext) -> dict:
     from analystos.evidence.facts import bind_finding
     from analystos.evidence.manifest import ensure_run_manifest
 
-    manifest = ensure_run_manifest(ctx.run.id, ctx.scope.asset_sources, {c[3].get("asset") for c in candidates if c[3].get("asset")}) \
+    manifest = ensure_run_manifest(ctx.run.id, ctx.scope.asset_sources,
+                                   {asset for c in candidates for asset in
+                                    ([c[3].get("asset")] + [j.get("asset") for j in c[3].get("joins") or []]) if asset}) \
         if candidates else None
     prepared = []
     for hid, code, statement, spec, stat, eid, qids, _ in candidates:

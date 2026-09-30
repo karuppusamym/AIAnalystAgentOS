@@ -308,7 +308,8 @@ def narrative_calls(session: Session, run_id: str, narrative_source: str | None)
 
 
 def insight_dependencies(session: Session, *, workspace_id: str, run_id: str, hypothesis_id: str | None,
-                         spec: Mapping[str, Any], entry: Any | None, narrative_source: str | None) -> list[Dependency]:
+                         spec: Mapping[str, Any], entry: Any | None, narrative_source: str | None,
+                         manifest: Mapping[str, Any] | None = None) -> list[Dependency]:
     """Every dependency of a finding's verdict, at the versions REV saw. A dependency whose version
     cannot be resolved now is left out (it could never be compared later)."""
     wanted: list[tuple[str, str]] = []
@@ -322,9 +323,16 @@ def insight_dependencies(session: Session, *, workspace_id: str, run_id: str, hy
     wanted += [("context", cid) for cid in cited_context(session, run_id, spec, calls)]
     wanted += [("model_call", str(c.id)) for c in calls]
     deps = []
-    if entry is not None:  # the data version the claim was computed on (the run's manifest), not today's
-        deps.append(Dependency("data", f"{entry.source_id or ''}/{entry.asset}",
-                               entry.version or f"unversioned:{entry.mode}"))
+    from analystos.contracts.evidence import ManifestEntry
+    from analystos.evidence.manifest import spec_assets
+
+    recorded = [ManifestEntry.model_validate(e) for e in (manifest or {}).get("entries") or []
+                if e.get("asset") in spec_assets(spec)]
+    if not recorded and entry is not None:
+        recorded = [entry]
+    for e in recorded:  # the versions the claim read, not today's versions
+        deps.append(Dependency("data", f"{e.source_id or ''}/{e.asset}",
+                               e.version or f"unversioned:{e.mode}"))
     for kind, ref in dict.fromkeys(wanted):
         v = current_version(session, kind, ref)
         if v is not None and v != UNKNOWABLE:

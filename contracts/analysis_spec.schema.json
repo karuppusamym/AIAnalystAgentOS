@@ -1,13 +1,14 @@
 {
   "$defs": {
     "Derivation": {
-      "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)",
+      "description": "A column or a safe derived expression over one column (or two for durations).\n\ntype:\n  column          -> the raw column\n  duration_hours  -> (end - start) in hours; `column` is start, `end_column` is end\n  later_than      -> TRUE when `end_column` is later than `column` by more than `tolerance_hours`\n                     (delivered after promised, resolved after due); NULL when either is NULL\n  after_hours     -> TRUE when hour(column) outside [start_hour, end_hour) or weekend\n  bucket          -> numeric column bucketed by `edges` (labels like \"0\", \"1\", \"2\", \"3+\")\n  equals          -> TRUE when column = value (boolean outcome from a categorical)\n  is_true         -> column interpreted as boolean\n  date_trunc      -> date_trunc(grain, column)\n  hour_of_day     -> extract(hour from column)\n  day_of_week     -> extract(dow from column)\n\nvia: the column(s) live in a related table, reached through the spec's join whose `from_column`\nis `via` (customer region through `customer_id`); None reads the spec's own asset.",
       "properties": {
         "type": {
           "default": "column",
           "enum": [
             "column",
             "duration_hours",
+            "later_than",
             "after_hours",
             "bucket",
             "equals",
@@ -82,6 +83,24 @@
           "title": "End Hour",
           "type": "integer"
         },
+        "tolerance_hours": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Tolerance Hours",
+          "type": "number"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Via"
+        },
         "label": {
           "anyOf": [
             {
@@ -136,6 +155,18 @@
           ],
           "title": "Origin",
           "type": "string"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Via"
         }
       },
       "required": [
@@ -143,6 +174,30 @@
         "op"
       ],
       "title": "Filter",
+      "type": "object"
+    },
+    "Join": {
+      "description": "A many-to-one lookup from the spec's asset: `from_column` references the unique `to_column` of\n`asset`. Compiled as a LEFT JOIN, so every base row is kept exactly once; validation accepts only a\nvalidated (or user-declared) relationship between in-scope tables of one source. Derivations and\nfilters name it by `via` = `from_column`.",
+      "properties": {
+        "from_column": {
+          "title": "From Column",
+          "type": "string"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "to_column": {
+          "title": "To Column",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_column",
+        "asset",
+        "to_column"
+      ],
+      "title": "Join",
       "type": "object"
     }
   },
@@ -212,6 +267,13 @@
         "$ref": "#/$defs/Filter"
       },
       "title": "Filters",
+      "type": "array"
+    },
+    "joins": {
+      "items": {
+        "$ref": "#/$defs/Join"
+      },
+      "title": "Joins",
       "type": "array"
     },
     "min_group_size": {

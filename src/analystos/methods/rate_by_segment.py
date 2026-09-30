@@ -34,7 +34,7 @@ from analystos.methods.base import (
 from analystos.skills import sqlbuild as sb
 from analystos.skills import stats as st
 
-BOOLEAN_OUT = {"equals", "is_true", "after_hours"}
+BOOLEAN_OUT = {"equals", "is_true", "after_hours", "later_than"}
 
 
 def rate_groups(rows: list[dict[str, Any]], spec: AnalysisSpec) -> tuple[list[dict], dict]:
@@ -49,7 +49,7 @@ def rate_groups(rows: list[dict[str, Any]], spec: AnalysisSpec) -> tuple[list[di
 
 class RateBySegment(AnalysisMethod):
     name = "rate_by_segment"
-    vocabulary = "boolean outcome rate across groups of `segment`. outcome.type in [equals, is_true, after_hours]."
+    vocabulary = "boolean outcome rate across groups of `segment`. outcome.type in [equals, is_true, after_hours, later_than]."
     playbook = "flag_by_segment"
     drill_down = True
     segment_matrix = True
@@ -61,7 +61,7 @@ class RateBySegment(AnalysisMethod):
         if spec.segment is None:
             errors.append(f"{self.name} needs a segment")
         if spec.outcome is None or spec.outcome.type not in BOOLEAN_OUT:
-            errors.append(f"{self.name} needs a boolean outcome (equals/is_true/after_hours)")
+            errors.append(f"{self.name} needs a boolean outcome (equals/is_true/after_hours/later_than)")
         return errors
 
     def compile(self, spec: AnalysisSpec, dialect: str, *, purpose: str = "primary", sample_rows: int = 50000) -> sb.CompiledQuery:

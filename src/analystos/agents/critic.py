@@ -27,7 +27,7 @@ from analystos.agents.investigator import with_constraints
 from analystos.artifacts.registry import link, link_queries
 from analystos.contracts.analysis import AnalysisSpec, StatResult
 from analystos.contracts.evidence import DataManifest, Fact, HoldoutCheck
-from analystos.core.errors import AnalystOSError
+from analystos.core.errors import AnalystOSError, OutputContractViolation
 from analystos.core.ids import new_id
 from analystos.db.base import session_scope
 from analystos.db.models import AnalysisRun, Experiment, Hypothesis, Insight, QueryExecution, by_code
@@ -38,8 +38,7 @@ from analystos.evidence.confirmation import evaluate as confirm
 from analystos.evidence.confirmation import is_replication, prior_claim
 from analystos.evidence.facts import bind_finding
 from analystos.evidence.holdout import from_record, lock_claim, not_evaluated, test_on_holdout
-from analystos.evidence.manifest import changed as manifest_changed
-from analystos.evidence.manifest import current_entry
+from analystos.evidence.manifest import changed_for_spec, current_entry, spec_assets
 from analystos.evidence.strength import grade, qualify
 from analystos.evidence.verification import insight_dependencies, record_verdict
 from analystos.knowledge.attested import sql_hash
@@ -136,6 +135,16 @@ def independent_reviews(ctx: RunContext, states: list[dict]) -> dict[str, tuple[
     return out
 
 
+def _bound_allows_holdout(ctx: RunContext) -> bool:
+    """A run keeps the agent manifests it was bound with. One bound to a critic from before P8-15 declares
+    no held-out experiment, so the step is skipped for it (and says so) instead of failing verification."""
+    try:
+        ctx.check_output("experiment", {"method": "rate_by_segment", "params": {}, "result": {}, "query_ids": [], "role": "holdout"})
+        return True
+    except OutputContractViolation:
+        return False
+
+
 def confirm_on_holdout(ctx: RunContext, st: dict, top: Any, direction: str | None) -> HoldoutCheck:
     """Lock the verified claim, then run its test once on the held-out rows (P8-15). A repeated review of
     the same hypothesis in this run reuses the first answer: the held-out rows are never read twice."""
@@ -143,6 +152,8 @@ def confirm_on_holdout(ctx: RunContext, st: dict, top: Any, direction: str | Non
     part = (stat_d.get("details") or {}).get("partition") or {}
     if st["discovery"] is None:
         return not_evaluated(part.get("reason") or "the test read every row (it ran before held-out confirmation existed)")
+    if not _bound_allows_holdout(ctx):
+        return not_evaluated("this run is bound to a critic version without the held-out step")
     with session_scope() as s:
         done = s.scalar(select(Experiment).where(Experiment.run_id == ctx.run.id, Experiment.hypothesis_id == st["hypothesis_id"],
                                                  Experiment.role == "holdout"))
@@ -251,13 +262,17 @@ def verify_insights(ctx: RunContext) -> dict:
         checks.append({"check": "fact_binding", "passed": bool(facts) and binding.ok,
                        "detail": ((f"{len(binding.mentions)} number(s) bound to {len(facts)} facts" if binding.ok
                                    else "; ".join(binding.problems[:4])) if facts else "no typed facts recorded")})
+        assets = spec_assets(spec_d)
         with session_scope() as s:
-            entry = current_entry(s, spec.asset, ctx.scope.asset_sources.get(spec.asset))
-        recorded = DataManifest.model_validate(recorded_manifest).entry(spec.asset) if recorded_manifest else None
-        moved = manifest_changed(recorded, entry) if recorded is not None else None
-        checks.append({"check": "data_version_stable", "passed": recorded is not None and moved is None,
-                       "detail": moved or ("no data-version manifest recorded for this run" if recorded is None else
-                                           f"{entry.mode} {entry.version_basis} version {(entry.version or 'unversioned')[:12]}")})
+            entries = {asset: current_entry(s, asset, ctx.scope.asset_sources.get(asset)) for asset in assets}
+        entry = entries[spec.asset]
+        manifest = DataManifest.model_validate(recorded_manifest) if recorded_manifest else None
+        recorded = manifest.entry(spec.asset) if manifest else None
+        moved = changed_for_spec(manifest, spec_d, entries)
+        checks.append({"check": "data_version_stable", "passed": not moved,
+                       "detail": "; ".join(moved) if moved else
+                       "; ".join(f"{asset}: {e.mode} {e.version_basis} version {(e.version or 'unversioned')[:12]}"
+                                 for asset, e in entries.items())})
         dq = [q.get("message") for q in quality if q.get("severity") in ("warning", "critical") and
               any(c in str(q.get("column") or "") for c in [d.get("column") for d in (spec_d.get("outcome") or {}, spec_d.get("segment") or {}) if d])]
         # ---- Verify: reproducibility
@@ -426,7 +441,7 @@ def verify_insights(ctx: RunContext) -> dict:
                 verifier=bundle.verifier_version, question_hash=spec_hash(spec_d), evidence_bundle=ins.evidence_bundle,
                 dependencies=insight_dependencies(
                     s, workspace_id=ctx.workspace.id, run_id=ctx.run.id, hypothesis_id=ins.hypothesis_id, spec=spec_d,
-                    entry=recorded or entry, narrative_source=narrative_source))
+                    entry=recorded or entry, narrative_source=narrative_source, manifest=recorded_manifest))
             if cited is not None:
                 record_citations(s, cited, workspace_id=ctx.workspace.id, run_id=ctx.run.id)
             emit(ctx.workspace.id, "insight.verified", {"code": code, "verified": deterministic_ok, "confidence": ins.confidence,

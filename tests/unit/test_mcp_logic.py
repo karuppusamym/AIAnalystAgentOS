@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from analystos.capabilities import registry
-from analystos.core.errors import Forbidden, InvalidInput
+from analystos.core.errors import Forbidden, InvalidInput, PolicyDenied
 from analystos.db.models import McpServer
 from analystos.mcp import client as mc
 from analystos.mcp import grants as G
@@ -74,6 +74,20 @@ def test_url_and_secret_ref_validation():
     assert mc._validate_secret_ref("env:SUPERSET_MCP_TOKEN") == "env:SUPERSET_MCP_TOKEN"
     with pytest.raises(InvalidInput):
         mc._validate_secret_ref("sk-live-abcdef")
+
+
+def test_re_allowing_a_server_needs_its_host_on_the_platform_allowlist_today(monkeypatch):
+    srv = SimpleNamespace(id="mcp_1", name="bi", url="https://mcp.example.org/mcp", allowed=False, allowed_by=None)
+    monkeypatch.setattr(mc, "require_role", lambda *a, **k: None)
+    monkeypatch.setattr(mc, "_server", lambda *a: srv)
+    monkeypatch.setattr(mc, "audit", lambda *a, **k: None)
+    user = SimpleNamespace(id="u1")
+    monkeypatch.setattr(mc, "_platform_allowlist", lambda: ["mcp.example.org"])
+    assert mc.set_allowed(None, user, "ws", "mcp_1", True).allowed is True
+    monkeypatch.setattr(mc, "_platform_allowlist", lambda: ["other.example.org"])
+    with pytest.raises(PolicyDenied):
+        mc.set_allowed(None, user, "ws", "mcp_1", True)
+    assert mc.set_allowed(None, user, "ws", "mcp_1", False).allowed is False  # revoking never needs the allowlist
 
 
 def test_overlay_adds_workspace_capabilities_without_replacing_builtins():
