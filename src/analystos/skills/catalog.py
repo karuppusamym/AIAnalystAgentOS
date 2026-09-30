@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from analystos.connectors.base import DiscoveredAsset, DiscoveredColumn
 from analystos.security.injection import is_injection
+from analystos.skills.lexicon import canonical_tokens, raw_tokens
 
 TableRole = Literal["fact", "dimension", "bridge", "event", "reference", "staging", "audit", "unknown"]
 ColumnRole = Literal["identifier", "foreign_key", "measure", "dimension", "timestamp", "date", "flag", "code", "name",
@@ -67,20 +68,17 @@ IRREGULAR = {"people": "person", "children": "child", "men": "man", "women": "wo
              "addresses": "address", "statuses": "status", "analyses": "analysis", "indices": "index",
              "matrices": "matrix", "criteria": "criterion"}
 
-_CAMEL = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 _TYPE_PARAMS = re.compile(r"\(.*\)")
 
 
 def split_tokens(name: str) -> list[str]:
     """snake_case, kebab, dotted and camelCase/PascalCase names -> lower-case tokens.
 
-    ``SLADueDate`` -> ``[sla, due, date]``; ``customerID`` -> ``[customer, id]``.
+    ``SLADueDate`` -> ``[sla, due, date]``; ``customerID`` -> ``[customer, id]``. Non-ASCII names are folded
+    (``Überfällig`` -> ``[ueberfaellig]``) and other scripts kept whole (skills/lexicon); rules that classify
+    read ``canonical_tokens`` instead, the same tokens in English.
     """
-    out: list[str] = []
-    for part in re.split(r"[^A-Za-z0-9]+", name or ""):
-        if part:
-            out.extend(t.lower() for t in _CAMEL.findall(part))
-    return out
+    return raw_tokens(name)
 
 
 def singularize(word: str) -> str:
@@ -317,12 +315,12 @@ def _target_entity(references: str) -> str:
 
 def infer_column_semantics(column: DiscoveredColumn, asset: DiscoveredAsset | None = None) -> ColumnSemantics:
     """Semantic role, unit and a template description for one column from name tokens, type and references."""
-    toks = split_tokens(column.name)
+    toks = canonical_tokens(column.name)
     tset = set(toks)
     first, last = (toks[0], toks[-1]) if toks else ("", "")
     dtype = normalize_type(column.data_type)
     numeric = dtype in NUMERIC_TYPES
-    bn = column.business_name or humanize(toks) or column.name
+    bn = column.business_name or humanize(split_tokens(column.name)) or column.name
     table_entity = _entity_from_table(asset.name) if asset is not None else ""
     ev: list[str] = [f"type {dtype}"]
     role: str = "unknown"
@@ -340,7 +338,8 @@ def infer_column_semantics(column: DiscoveredColumn, asset: DiscoveredAsset | No
         # so customer_account_map.account_id stays a reference
         if singularize(head[-1]) != table_entity.split(" ")[-1] or asset is None:
             return False
-        first_id = next((c.name for c in asset.columns if split_tokens(c.name)[-1:] and split_tokens(c.name)[-1] in _ID_TAIL), None)
+        first_id = next((c.name for c in asset.columns if canonical_tokens(c.name)[-1:] and canonical_tokens(c.name)[-1] in _ID_TAIL),
+                        None)
         return first_id == column.name
 
     if column.references:
@@ -538,7 +537,7 @@ def _structural_role(sem: list[ColumnSemantics], cols: list[DiscoveredColumn], n
     names_codes = [s for s in sem if s.semantic_role in {"name", "code"}]
     other = [s for s in sem if s.semantic_role not in {"foreign_key", "identifier", "timestamp", "date", "flag"}]
     ev = [f"{len(fk)} foreign keys, {len(measures)} measures, {len(times)} time columns, {len(idents)} identifiers"]
-    col_tokens = {t for c in cols for t in split_tokens(c.name)}
+    col_tokens = {t for c in cols for t in canonical_tokens(c.name)}
     if len(fk) >= 2 and not measures and len(other) <= 1:
         return "bridge", 0.75, ev + ["only references (plus at most one attribute)"]
     fk_stems = {s.name.lower() for s in fk} | {re.sub(r"_(id|key|sk)$", "", s.name.lower()) for s in fk}
@@ -598,7 +597,8 @@ def _domain(name_tokens: list[str], cols: list[DiscoveredColumn],
     tset = {singularize(t) for t in name_tokens} | set(name_tokens)
     col_tokens: set[str] = set()
     for c in cols:
-        col_tokens |= {singularize(t) for t in split_tokens(c.name)} | set(split_tokens(c.name))
+        toks = canonical_tokens(c.name)
+        col_tokens |= {singularize(t) for t in toks} | set(toks)
     reviewed_keywords = reviewed_keywords or {}
     vocabulary = domain_keywords()
     for dom, kws in vocabulary.items():
@@ -887,7 +887,7 @@ def infer_table_semantics(asset: DiscoveredAsset, *, all_assets: list[Discovered
     business_name = asset.business_name or humanize(bn_tokens)
     if asset.business_name:
         evidence.append("business name declared by the source")
-    domain, d_conf, d_ev = _domain(rest, asset.columns, reviewed_keywords)
+    domain, d_conf, d_ev = _domain(_strip_table_prefix(canonical_tokens(asset.name))[0], asset.columns, reviewed_keywords)
     evidence.extend(d_ev)
     grain, g_conf = _grain(role, entity, sem, asset.columns, name_set)
     evidence.append(f"grain confidence {g_conf}")
@@ -1103,7 +1103,7 @@ def classify_pii(name: str, data_type: str, sample_values: list[str] | None = No
     addresses, a notes column containing a card number) but never downgrade a name-based one.
     Reasons describe counts and patterns only; sample values are never echoed.
     """
-    tokens = split_tokens(name)
+    tokens = canonical_tokens(name)
     dtype = normalize_type(data_type)
     cat = _pii_from_name(tokens)
     person_reference = cat is None and dtype == "text" and not references and _names_a_person(tokens)

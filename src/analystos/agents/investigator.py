@@ -27,6 +27,7 @@ from analystos.runtime.context import RunContext
 from analystos.runtime.engine import add_task
 from analystos.services.platform_settings import get as platform
 from analystos.skills import hypothesis_templates as tmpl
+from analystos.skills.lexicon import canonical_tokens
 
 
 # ---------------------------------------------------------------------------------- validation
@@ -109,6 +110,18 @@ def with_constraints(spec: AnalysisSpec, constraints: dict[str, Any]) -> Analysi
 # (packs/<name>/templates.yaml, skills/hypothesis_templates); only the domain-neutral, role-driven
 # playbook below lives here.
 _TEXTY = tmpl.TEXTY
+_TEXT_WORDS = frozenset({"description", "comment", "note", "summary", "title", "text", "message", "remarks"})
+# Categorical segments the role playbook crosses with each outcome: the first three lead (a run's round-1 budget
+# picks from the front), the rest follow, so a table's every low-cardinality segment is proposed whatever its position.
+_LEAD_SEGMENTS, _SEGMENTS = 3, 5
+
+
+def _texty(column: str) -> bool:
+    return bool(_TEXTY.search(column) or _TEXT_WORDS & set(canonical_tokens(column)))
+
+
+def _counted(column: str) -> bool:
+    return "count" in column or "count" in canonical_tokens(column)
 
 
 def humanize(column: str) -> str:
@@ -131,7 +144,7 @@ def proposals_for_table(fq: str, cols: list[tmpl.Col], packs: list) -> list[dict
         proposals += [{**p, "pack": pack.id} for p in tmpl.propose(fq, cols, pack.templates, acronyms)]
     st = {c.name: c.semantic_type for c in cols}
     prof = {c.name: c.profile for c in cols}
-    categorical = [c for c in st if st[c] == "categorical" and 2 <= (prof[c].get("distinct") or 0) <= 30 and not _TEXTY.search(c)]
+    categorical = [c for c in st if st[c] == "categorical" and 2 <= (prof[c].get("distinct") or 0) <= 30 and not _texty(c)]
     datetimes = [c for c in st if st[c] == "datetime"]
     covered = {(p["spec"].get("outcome") or {}).get("column") for p in proposals}
     has_trend = any(_method_attr(p["spec"], "playbook") == "volume_trend" for p in proposals)
@@ -158,27 +171,30 @@ def _role_proposals(fq: str, visible: list[tmpl.Col], st: dict[str, str | None],
     """Domain-neutral playbook from crawler column roles (skills/catalog): measures and the first flag by
     segments, and a trend on the first event timestamp. Lets any database get rule-based hypotheses
     without a model or a domain pack; outcomes a pack template already covers are left to the pack.
-    Each role is filled by the registered method that declares it (`Method.playbook`)."""
+    Each role is filled by the registered method that declares it (`Method.playbook`). Names are read through the
+    multilingual lexicon (a German `anzahl_` column is a count like `_count`), and up to five segments are crossed
+    with each outcome, so the same table renamed or reordered yields the same set of hypotheses."""
     by_segment, flag_rate, volume_trend = (methods.for_playbook(r) for r in ("measure_by_segment", "flag_by_segment", "volume_trend"))
     roles = {c.name: c.role for c in visible}
-    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and "count" not in c] if by_segment else []
+    measures = [c for c in st if st[c] == "numeric" and roles.get(c) in _MEASURE_ROLES and not _counted(c)] if by_segment else []
     flags = [c for c in st if st[c] == "boolean" and c not in covered] if flag_rate else []
-    segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:3]
+    segs = [c for c in categorical if roles.get(c) not in ("identifier", "foreign_key")][:_SEGMENTS]
     out: list[dict[str, Any]] = []
-    for m in measures[:3]:
-        outcome = Derivation(type="column", column=m, label=humanize(m))
-        for seg in segs:
-            out.append({"question": f"Does {outcome.label} differ by {humanize(seg)}?",
-                        "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.", "priority": "medium",
-                        "spec": {"method": by_segment.name, "asset": fq, "outcome": outcome.model_dump(),
-                                 "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
-    for f in flags[:1]:
-        outcome = Derivation(type="is_true", column=f, label=tmpl.flag_label(f, False, None, pack_registry.hints().acronyms))
-        for seg in segs:
-            out.append({"question": f"Does the rate of {outcome.label} vary by {humanize(seg)}?",
-                        "statement": f"The rate of {outcome.label} differs materially across {humanize(seg)}.", "priority": "medium",
-                        "spec": {"method": flag_rate.name, "asset": fq, "outcome": outcome.model_dump(),
-                                 "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
+    for group in (segs[:_LEAD_SEGMENTS], segs[_LEAD_SEGMENTS:]):
+        for m in measures[:3]:
+            outcome = Derivation(type="column", column=m, label=humanize(m))
+            for seg in group:
+                out.append({"question": f"Does {outcome.label} differ by {humanize(seg)}?",
+                            "statement": f"{outcome.label.capitalize()} differs materially across {humanize(seg)}.",
+                            "priority": "medium", "spec": {"method": by_segment.name, "asset": fq, "outcome": outcome.model_dump(),
+                                                           "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
+        for f in flags[:1]:
+            outcome = Derivation(type="is_true", column=f, label=tmpl.flag_label(f, False, None, pack_registry.hints().acronyms))
+            for seg in group:
+                out.append({"question": f"Does the rate of {outcome.label} vary by {humanize(seg)}?",
+                            "statement": f"The rate of {outcome.label} differs materially across {humanize(seg)}.",
+                            "priority": "medium", "spec": {"method": flag_rate.name, "asset": fq, "outcome": outcome.model_dump(),
+                                                           "segment": Derivation(type="column", column=seg, label=humanize(seg)).model_dump()}})
     times = [c for c in datetimes if roles.get(c) in ("timestamp", "date")] or datetimes
     if times and not has_trend and volume_trend:
         out.append({"question": "How has volume trended over time?", "statement": "Volume shows a significant trend or change point.",
