@@ -139,7 +139,8 @@ def _bound_allows_holdout(ctx: RunContext) -> bool:
     """A run keeps the agent manifests it was bound with. One bound to a critic from before P8-15 declares
     no held-out experiment, so the step is skipped for it (and says so) instead of failing verification."""
     try:
-        ctx.check_output("experiment", {"method": "rate_by_segment", "params": {}, "result": {}, "query_ids": [], "role": "holdout"})
+        probe = methods.for_playbook("flag_by_segment").name  # any registered method; the role is what is checked
+        ctx.check_output("experiment", {"method": probe, "params": {}, "result": {}, "query_ids": [], "role": "holdout"})
         return True
     except OutputContractViolation:
         return False
