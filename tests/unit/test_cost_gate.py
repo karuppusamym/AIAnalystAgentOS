@@ -9,6 +9,8 @@ from scripts import cost_gate
 from analystos.contracts.platform import LLMSettings, PlatformSettings
 from analystos.llm.config import load_models_config
 
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
+
 
 @pytest.fixture
 def runs():

@@ -9,6 +9,7 @@ suffix) never share roles or staged schemas, and the shared ``analytics`` databa
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 TEST_DB = os.environ.get("ANALYSTOS_TEST_DATABASE_URL", "postgresql+psycopg://analystos:analystos@localhost:5432/analystos_test")
 os.environ["ANALYSTOS_DATABASE_URL"] = TEST_DB
@@ -44,6 +45,22 @@ os.environ.setdefault("ANALYSTOS_BUILD_DIR", os.path.join(__import__("tempfile")
 os.environ["ANALYSTOS_SUPERSET_ANALYTICS_SQLALCHEMY_URI"] = f"postgresql+psycopg2://{ROLE_PREFIX}reader:reader@postgres:5432/{ANALYTICS_DB}"
 
 import pytest  # noqa: E402
+
+PINNED_MODELS = Path(__file__).parent / "fixtures" / "models" / "pinned-2026-09-25.yaml"
+
+
+@pytest.fixture
+def pinned_models_config(monkeypatch):
+    """Router, escalation and cost tests assert behaviour of a known model table (tiers, prices, cache
+    flags), not whichever models an operator has configured today; config/models.yaml itself is checked
+    by `test_models_yaml.py`."""
+    from analystos.core.config import get_settings
+    from analystos.llm.config import load_models_config
+
+    monkeypatch.setattr(get_settings(), "models_config", PINNED_MODELS)
+    load_models_config.cache_clear()
+    yield
+    load_models_config.cache_clear()
 
 
 def _admin_url() -> str:

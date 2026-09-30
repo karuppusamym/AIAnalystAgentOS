@@ -13,6 +13,8 @@ from analystos.llm.jev import JevDecisions
 from analystos.llm.router import ModelRouter, ladder_for_mode, mode_of
 from analystos.runtime.budget_counters import BudgetCounters
 
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
+
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 
 

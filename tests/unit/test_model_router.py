@@ -5,6 +5,8 @@ from analystos.core.errors import ModelRouteUnavailable, UpstreamUnavailable
 from analystos.llm.jev import JevDecisions
 from analystos.llm.router import CallContext, ModelRouter, parse_json_text
 
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
+
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 
 

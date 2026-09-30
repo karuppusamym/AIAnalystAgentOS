@@ -1,5 +1,6 @@
 """P4-T04 prompt-cache-stable layout (request shape per model capability, cached-token accounting)
 and P4-T06 knowledge version in the L0 response-cache key."""
+import pytest
 from tests.fakes import FakeTransport
 
 from analystos.contracts.platform import LLMSettings, PlatformSettings
@@ -7,6 +8,8 @@ from analystos.llm.cache import ResponseCache
 from analystos.llm.config import load_models_config
 from analystos.llm.replay import chat_key
 from analystos.llm.router import CallContext, ModelRouter, cached_prompt_tokens, normalize_messages, wire_messages
+
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
 
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 LAYOUT = [{"role": "system", "content": "static system text", "cache": True},

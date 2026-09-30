@@ -18,6 +18,8 @@ from analystos.llm.config import load_models_config
 from analystos.llm.router import CallContext, ModelRouter
 from analystos.runtime.budget_counters import BudgetCounters, CapExceeded, CapSpec, CountersUnavailable
 
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
+
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 SMALL, LARGE = "openai/gpt-5.4-mini", "anthropic/claude-sonnet-5"
 

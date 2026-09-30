@@ -12,6 +12,8 @@ from analystos.llm.cache import ResponseCache
 from analystos.llm.config import ModelMeta, load_models_config
 from analystos.llm.router import CallContext, ModelRouter
 
+pytestmark = pytest.mark.usefixtures("pinned_models_config")
+
 KEY = {"OPENROUTER_API_KEY": "sk-test-000000000000000000000000"}
 
 
