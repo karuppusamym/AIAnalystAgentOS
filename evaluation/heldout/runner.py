@@ -154,7 +154,7 @@ def task_digest(task: Task) -> str:
     h.update(json.dumps({"rubric": task.rubric, "objective": task.objective}, sort_keys=True, default=str).encode())
     if task.family == "analysis":
         ds = analysis_dataset(task)
-        h.update(ds.frame.to_csv(index=False).encode())
+        h.update(ds.frame.to_csv(index=False, lineterminator="\n").encode())  # the same digest on every OS
     elif task.family == "engineering":
         tables, spec, ref = G.engineering(task.generator, task.seed, task.variant or "clean")
         h.update(json.dumps({"tables": tables, "spec": spec, "ref": ref}, sort_keys=True, default=str).encode())

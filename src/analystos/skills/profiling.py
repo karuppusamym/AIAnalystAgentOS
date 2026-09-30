@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from sqlglot import exp
 
 from analystos.skills.base import RunSQL
+from analystos.skills.lexicon import canonical_tokens
 from analystos.skills.sqlbuild import (
     _check_dialect,
     case,
@@ -135,16 +136,35 @@ def type_family(data_type: str) -> str:
     return "text"
 
 
+_ID_WORDS = frozenset({"id", "key", "uuid", "guid", "no"})
+_INTEGRAL = re.compile(r"(int|serial|long)|^(number|numeric|decimal)\(\s*\d+\s*,\s*0\s*\)$", re.I)
+
+
+def surrogate_key_shape(data_type: str | None, *, non_null: int, distinct: int, min_value: Any, max_value: Any) -> bool:
+    """An integer column whose every value is distinct and which fills most of its own range (1..n, 800001..805000)
+    is a generated key whatever it is called; a unique integer measure spreads over a range far wider than its count."""
+    lo, hi = _num(min_value), _num(max_value)
+    if non_null < 20 or distinct != non_null or lo is None or hi is None or not _INTEGRAL.search(str(data_type or "")):
+        return False
+    return float(lo).is_integer() and float(hi).is_integer() and hi - lo + 1 <= 2 * distinct
+
+
 def infer_semantic_type(name: str, family: str, *, row_count: int, non_null: int, distinct: int,
                         avg_length: float | None = None, min_value: Any = None, max_value: Any = None,
-                        is_key: bool = False, references: bool = False, max_length: int | None = None) -> str:
+                        is_key: bool = False, references: bool = False, max_length: int | None = None,
+                        data_type: str | None = None) -> str:
     """Rule-based semantic type from name, physical type family and profile statistics.
 
     Declared keys and reference (foreign-key) columns are `id`; so are id-named columns that are
-    (nearly) unique or end in `_id`, and fixed-width 32-character text (a GUID-shaped surrogate key).
+    (nearly) unique or end in `_id`, fixed-width 32-character text (a GUID-shaped surrogate key), and
+    integer columns with the shape of a generated key (`surrogate_key_shape`), so a key named in another
+    language (`forderung_nr`, `oid`, `வாடிக்கையாளர்_எண்`) is not analysed as a measure. Names are read through
+    the multilingual lexicon (skills/lexicon): `kunden_nr` and `numero_cliente` are id-named like `customer_no`.
     """
     ratio = distinct / non_null if non_null else 0.0
-    idname = bool(ID_NAME.search(name))
+    toks = canonical_tokens(name)
+    idname = bool(ID_NAME.search(name)) or bool(toks and toks[-1] in _ID_WORDS)
+    own_id = name.lower().endswith("_id") or bool(len(toks) > 1 and toks[-1] == "id")
     if family == "boolean":
         return "boolean"
     if family == "datetime":
@@ -154,11 +174,13 @@ def infer_semantic_type(name: str, family: str, *, row_count: int, non_null: int
     if family == "numeric":
         if distinct <= 2 and non_null > 0 and _num(min_value) in (0, 1, None) and _num(max_value) in (0, 1, None):
             return "boolean"
-        if idname and (ratio >= 0.9 or name.lower().endswith("_id")):
+        if idname and (ratio >= 0.9 or own_id):
+            return "id"
+        if surrogate_key_shape(data_type, non_null=non_null, distinct=distinct, min_value=min_value, max_value=max_value):
             return "id"
         return "numeric"
     # text
-    if idname and (ratio >= 0.9 or name.lower().endswith("_id")):
+    if idname and (ratio >= 0.9 or own_id):
         return "id"
     if non_null >= 20 and ratio >= 0.95 and (avg_length or 0) <= 40:
         return "id"
@@ -279,7 +301,8 @@ def profile_asset(run_sql: RunSQL, asset: str, columns: list[dict[str, Any]], *,
         cp.has_blanks = cp.null_count > 0 or bool(cp.blank_count)
         cp.semantic_type = infer_semantic_type(name, fam, row_count=n, non_null=nn, distinct=nd, avg_length=cp.avg_length,
                                                min_value=cp.min, max_value=cp.max, is_key=cp.is_key,
-                                               references=bool(c.get("references")), max_length=cp.max_length)
+                                               references=bool(c.get("references")), max_length=cp.max_length,
+                                               data_type=cp.data_type)
         profs.append(cp)
     by_name = {p.name: p for p in profs}
     sensitive_names = {c["name"] for c in columns if c.get("sensitive")}
