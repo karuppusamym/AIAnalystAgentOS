@@ -73,9 +73,9 @@ def load_config(path: Path | None = None) -> tuple[dict[str, QueueSpec], int]:
     """Queue specs from `config/task_queues.yaml`, over the defaults above."""
     import yaml
 
-    from analystos.core.config import REPO_ROOT
+    from analystos.core.config import DATA_ROOT
 
-    path = path or REPO_ROOT / "config" / "task_queues.yaml"
+    path = path or DATA_ROOT / "config" / "task_queues.yaml"
     raw: dict[str, Any] = yaml.safe_load(path.read_text()) if path.exists() else {}
     specs = dict(DEFAULT_SPECS)
     for name, cfg in (raw.get("queues") or {}).items():

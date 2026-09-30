@@ -4,16 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from analystos.core.config import REPO_ROOT, get_settings
+from analystos.core.config import DATA_ROOT, STATE_ROOT, get_settings
 
 
 def migrate() -> None:
     from alembic import command
     from alembic.config import Config
 
-    cfg = Config(str(REPO_ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    cfg = Config(str(DATA_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(DATA_ROOT / "migrations"))
     cfg.set_main_option("sqlalchemy.url", get_settings().database_url)
     command.upgrade(cfg, "head")
     provision_analytics_roles()
@@ -109,7 +110,7 @@ def list_packs() -> None:
               f"{len(p.kpis):2} KPIs  applies_when={p.applies_when}  {p.summary}")
 
 
-def export_contracts() -> None:
+def export_contracts(out_dir: str | None = None) -> None:
     from analystos.capabilities.agents import AgentBody
     from analystos.contracts import (
         analysis,
@@ -130,8 +131,8 @@ def export_contracts() -> None:
         worker,
     )
 
-    out = REPO_ROOT / "contracts"
-    out.mkdir(exist_ok=True)
+    out = Path(out_dir) if out_dir else STATE_ROOT / "contracts"
+    out.mkdir(parents=True, exist_ok=True)
     models = {"agent": registry.AgentSpec, "agent_manifest": AgentBody, "tool": registry.ToolSpec, "skill": registry.SkillSpec, "policy": policy.WorkspacePolicyDoc,
               "data_scope": policy.DataScope, "policy_decision": policy.PolicyDecision, "analysis_spec": analysis.AnalysisSpec,
               "stat_result": analysis.StatResult, "partition": analysis.Partition, "chart": bi.ChartSpec, "dashboard": bi.DashboardSpec, "metric": bi.MetricDef,
@@ -251,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
                              "schedules: `analystos schedules disable-demo [--all] [--workspace W] [--dry-run]`")
     parser.add_argument("run_id", nargs="?", help="replay-run: the analysis run id")
     parser.add_argument("--check", action="store_true", help="replay-run: re-execute recorded calls offline and compare")
-    parser.add_argument("--out", help="replay-run: write the JSON report to this file")
+    parser.add_argument("--out", help="replay-run: write the JSON report to this file; export-contracts: the directory")
     parser.add_argument("--queues", help="worker: comma-separated workloads to serve (analysis, compute, publish, crawl, elt; "
                                          "default ANALYSTOS_WORKER_QUEUES or all). The isolated pools compute-py and "
                                          "compute-ml (ADR-0022) are named alone and run without credentials")
@@ -287,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
 
         uvicorn.run("analystos.api.app:app", host="0.0.0.0", port=8000)
     elif args.command == "export-contracts":
-        export_contracts()
+        export_contracts(args.out)
     elif args.command == "packs":
         list_packs()
     elif args.command == "bi-sync":

@@ -30,10 +30,10 @@ from typing import Any
 import httpx
 import yaml
 
-from analystos.core.config import REPO_ROOT
+from analystos.core.config import DATA_ROOT
 
-DEMO_FILE = REPO_ROOT / "packs" / "itsm" / "demo.yaml"
-PROCESS_DEMO_FILE = REPO_ROOT / "packs" / "itsm" / "process_mining_demo.yaml"
+DEMO_FILE = DATA_ROOT / "packs" / "itsm" / "demo.yaml"
+PROCESS_DEMO_FILE = DATA_ROOT / "packs" / "itsm" / "process_mining_demo.yaml"
 DONE, ACTIVE = ("COMPLETED",), ("NEW", "PLANNED", "RUNNING", "WAITING_USER", "PAUSED")
 
 

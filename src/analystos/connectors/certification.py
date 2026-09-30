@@ -21,9 +21,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
-from analystos.core.config import REPO_ROOT
+from analystos.core.config import DATA_ROOT
 
-EVIDENCE_DIR = REPO_ROOT / "docs" / "60-delivery" / "evidence"
+EVIDENCE_DIR = DATA_ROOT / "docs" / "60-delivery" / "evidence"
 UNIT_EVIDENCE = "tests/unit/test_source_kinds.py"
 FILE_NAME = re.compile(r"^connector-(?P<kind>[a-z0-9_]+)-(?P<date>\d{8})(?:-[A-Za-z0-9_.-]+)?\.md$")
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
@@ -57,7 +57,7 @@ def parse_evidence(path: Path, kind: str) -> tuple[Evidence | None, str | None]:
     if str(meta["result"]).lower() != "pass":
         return None, f"{path.name}: result is {meta['result']!r}, not pass"
     try:
-        rel = str(path.resolve().relative_to(REPO_ROOT))
+        rel = str(path.resolve().relative_to(DATA_ROOT))
     except ValueError:
         rel = str(path)
     return Evidence(kind=kind, date=day, path=rel, engine=str(meta["engine"]), test=str(meta["test"])), None

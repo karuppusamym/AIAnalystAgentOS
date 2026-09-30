@@ -6,23 +6,36 @@
 # checked there before they are dispatched (compose default; ADR-0022's isolated compute-ml pool is opt-in). Built
 # without it (EXTRAS=reports) the driver model, experiments and Holt-Winters forecasts report "unavailable".
 # The ServiceNow demo mock has its own small image (Dockerfile.mock).
+#
+# P7-17: the package is installed from a non-editable wheel, so modules arrive byte-compiled (an editable install
+# under PYTHONDONTWRITEBYTECODE recompiled every module on every start) and the runtime data the code reads
+# (config, migrations, packs, connector evidence) travels inside it (hatch_build.py, core/config.py DATA_ROOT).
+
+# Optional build secret `pipcert` (both stages): CA bundle for TLS-inspecting proxies.
+FROM python:3.11-slim AS wheel
+WORKDIR /build
+COPY pyproject.toml README.md alembic.ini hatch_build.py ./
+COPY src ./src
+COPY config ./config
+COPY migrations ./migrations
+COPY packs ./packs
+COPY docs/60-delivery/evidence ./docs/60-delivery/evidence
+RUN --mount=type=secret,id=pipcert,required=false \
+    if [ -f /run/secrets/pipcert ]; then export PIP_CERT=/run/secrets/pipcert; fi; \
+    pip wheel --no-cache-dir --no-deps --wheel-dir /dist .
+
 FROM python:3.11-slim
 ARG EXTRAS=reports
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-COPY pyproject.toml README.md alembic.ini ./
-COPY src ./src
+# Operators select a models file by path (Helm: ANALYSTOS_MODELS_CONFIG=/app/config/models*.yaml); the same
+# files are the wheel's defaults. var/ (artifacts, uploads, builds) is written below the working directory.
 COPY config ./config
-COPY migrations ./migrations
-# Domain packs (glossary, hints, hypothesis templates) and the connector certification evidence the
-# API derives `certified` from.
-COPY packs ./packs
-COPY docs/60-delivery/evidence ./docs/60-delivery/evidence
-# Optional build secret `pipcert`: CA bundle for TLS-inspecting proxies.
 RUN --mount=type=secret,id=pipcert,required=false \
+    --mount=type=bind,from=wheel,source=/dist,target=/dist \
     if [ -f /run/secrets/pipcert ]; then export PIP_CERT=/run/secrets/pipcert; fi; \
-    if [ -n "$EXTRAS" ]; then target=".[$EXTRAS]"; else target="."; fi; \
-    pip install --no-cache-dir -e "$target" && useradd --create-home --uid 10001 analystos && mkdir -p /app/var && chown -R analystos /app/var
+    whl=$(ls /dist/analystos-*.whl); if [ -n "$EXTRAS" ]; then target="$whl[$EXTRAS]"; else target="$whl"; fi; \
+    pip install --no-cache-dir "$target" && useradd --create-home --uid 10001 analystos && mkdir -p /app/var && chown -R analystos /app/var
 USER analystos
 EXPOSE 8000
 CMD ["uvicorn", "analystos.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
