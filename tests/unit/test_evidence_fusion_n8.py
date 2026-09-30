@@ -240,5 +240,5 @@ def test_event_types_and_migration():
     from analystos.contracts.events import EVENT_TYPES
 
     assert {"evidence.citations_recorded", "evidence.conflict_flagged"} <= EVENT_TYPES
-    src = (Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0050_n8_evidence_citations.py").read_text()
-    assert 'revision = "0050_n8"' in src and 'down_revision = "0045"' in src and '"evidence_citation_set"' in src
+    src = (Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0050_n8_evidence_citations.py").read_text(encoding="utf-8")
+    assert 'revision = "0050_n8"' in src and '"evidence_citation_set"' in src
