@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from analystos.core.config import REPO_ROOT
+from analystos.core.config import DATA_ROOT
 from analystos.core.errors import AnalystOSError
 from analystos.decisions.rules import RULES
 from analystos.decisions.types import BackendError, Proposal, Question
@@ -104,7 +104,7 @@ class JevBackend:
 
 
 # ----------------------------------------------------------------------------- local classifier
-LOCAL_MODEL_PATH = REPO_ROOT / "config" / "decisions" / "local_classifier.yaml"
+LOCAL_MODEL_PATH = DATA_ROOT / "config" / "decisions" / "local_classifier.yaml"
 _WORD = re.compile(r"[a-z0-9]+")
 
 

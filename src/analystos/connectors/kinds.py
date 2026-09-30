@@ -27,10 +27,10 @@ from urllib.parse import quote
 import yaml
 from pydantic import BaseModel, Field
 
-from analystos.core.config import REPO_ROOT
+from analystos.core.config import DATA_ROOT
 from analystos.core.errors import InvalidInput
 
-CATALOG_PATH = REPO_ROOT / "config" / "source_kinds.yaml"
+CATALOG_PATH = DATA_ROOT / "config" / "source_kinds.yaml"
 # Validator dialects (gateway/dialects.py) that the analysis compiler also emits (skills/sqlbuild.DIALECTS);
 # tests/unit/test_source_kinds.py keeps the three lists in step.
 PUSHDOWN_DIALECTS = frozenset({"postgres", "tsql", "duckdb"})

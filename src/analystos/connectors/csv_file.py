@@ -19,7 +19,7 @@ import pyarrow as pa
 from analystos.connectors import sampling
 from analystos.connectors.base import ConnectionTest, DiscoveredAsset, DiscoveredColumn
 from analystos.connectors.naming import sanitize_identifier, unique_identifiers
-from analystos.core.config import REPO_ROOT
+from analystos.core.config import STATE_ROOT
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.logging import get_logger
 
@@ -33,7 +33,7 @@ _log = get_logger(__name__)
 
 def default_upload_dir(settings: Any | None = None) -> Path:
     configured = getattr(settings, "upload_dir", None) if settings is not None else None
-    return Path(configured) if configured else REPO_ROOT / "var" / "uploads"
+    return Path(configured) if configured else STATE_ROOT / "var" / "uploads"
 
 
 def excel_engine() -> str | None:

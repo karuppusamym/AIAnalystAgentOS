@@ -34,14 +34,14 @@ from pydantic import ValidationError
 
 from analystos.contracts.capability import CapabilityManifest
 from analystos.contracts.worker import ISOLATED_POOLS
+from analystos.core.config import DATA_ROOT
 from analystos.core.errors import InvalidInput, NotFound
 from analystos.core.ids import stable_hash
 from analystos.core.profiles import EXTRAS, FEATURES, requirement_reason
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
 METHODS_DIR = Path(__file__).resolve().parents[1] / "methods"
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PACKS_DIR = REPO_ROOT / "packs"
+PACKS_DIR = DATA_ROOT / "packs"
 ENTRY_POINT_GROUP = "analystos.capabilities"
 
 

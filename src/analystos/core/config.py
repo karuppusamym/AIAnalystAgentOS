@@ -13,7 +13,14 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = PACKAGE_DIR.parents[1]
+# A source checkout (editable install, tests, the dev image) reads config/, migrations/, packs/ from the repo; an
+# installed wheel reads the copies bundled under analystos/_data (pyproject `sources`) and writes var/ and
+# exported contracts below the working directory, never inside site-packages.
+SOURCE_CHECKOUT = (REPO_ROOT / "pyproject.toml").is_file() and (REPO_ROOT / "config" / "models.yaml").is_file()
+DATA_ROOT = REPO_ROOT if SOURCE_CHECKOUT else PACKAGE_DIR / "_data"
+STATE_ROOT = REPO_ROOT if SOURCE_CHECKOUT else Path.cwd()
 
 
 def _installed(module: str) -> bool:
@@ -88,7 +95,7 @@ class Settings(BaseSettings):
     # The customer's dbt runner (P4-E04): a dbt Core executable run as a separate process (its own
     # venv or container image), never imported in-process. Projects and job logs live under build_dir.
     dbt_executable: str = "dbt"
-    build_dir: Path = REPO_ROOT / "var" / "builds"
+    build_dir: Path = STATE_ROOT / "var" / "builds"
     build_timeout_seconds: int = 1800
     # Connection pools per plane (P4-S05; db/pools.py). Per process: control <= size + overflow;
     # analytics and loader the same per URL. `none` = no client-side pool (behind PgBouncer).
@@ -179,7 +186,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = "admin@analystos.local"
     bootstrap_admin_password: str = "ChangeMe123!"
 
-    models_config: Path = REPO_ROOT / "config" / "models.yaml"
+    models_config: Path = DATA_ROOT / "config" / "models.yaml"
     # Air-gapped install (P4-S04, spec v3 §8): only providers declared `egress: internal` in the models
     # config are routed to, the model transport refuses every other host, and the DecisionService runs
     # on `rules` / `local_classifier` only. Pair with ANALYSTOS_MODELS_CONFIG=config/models.airgapped.yaml.
@@ -193,15 +200,15 @@ class Settings(BaseSettings):
     oidc_redirect_uri: str = "http://localhost:8000/api/auth/oidc/callback"
     oidc_scopes: str = "openid email profile groups"
     oidc_groups_claim: str = "groups"
-    oidc_mapping_file: Path = REPO_ROOT / "config" / "oidc.yaml"
+    oidc_mapping_file: Path = DATA_ROOT / "config" / "oidc.yaml"
     oidc_jwks_file: Path | None = None  # static JWKS (air-gapped IdP mirrors, tests); else the discovery jwks_uri
     oidc_discovery_url: str | None = None  # defaults to <issuer>/.well-known/openid-configuration
     oidc_provider_name: str = "Single sign-on"
     password_login: bool = True  # local accounts stay available (break-glass admin) unless turned off
     web_url: str = "http://localhost:5173"  # where the OIDC callback returns the browser
-    agents_dir: Path = REPO_ROOT / "config" / "agents"
-    artifact_dir: Path = REPO_ROOT / "var" / "artifacts"
-    upload_dir: Path = REPO_ROOT / "var" / "uploads"  # CSV/Parquet sources may only read below this directory
+    agents_dir: Path = DATA_ROOT / "config" / "agents"
+    artifact_dir: Path = STATE_ROOT / "var" / "artifacts"
+    upload_dir: Path = STATE_ROOT / "var" / "uploads"  # CSV/Parquet sources may only read below this directory
 
     # Gateway defaults (workspace policy may tighten, never loosen beyond these ceilings).
     query_timeout_seconds: int = 30
@@ -231,7 +238,7 @@ class Settings(BaseSettings):
     # Hidden from process-mode children (secrets on the worker's filesystem); /run/secrets and
     # /var/run/secrets (service-account tokens) are always masked.
     sandbox_masked_paths: list[str] = Field(default_factory=lambda: [
-        "/root", "/etc/analystos", "/etc/ssl/private", str(REPO_ROOT / ".env"), str(REPO_ROOT / "var")])
+        "/root", "/etc/analystos", "/etc/ssl/private", str(STATE_ROOT / ".env"), str(STATE_ROOT / "var")])
 
     servicenow_mock_url: str = "http://localhost:8090"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
