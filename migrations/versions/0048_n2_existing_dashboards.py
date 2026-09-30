@@ -5,14 +5,14 @@
   proposal changed in the BI tool (`applied`).
 
 Revision ID: 0048_n2
-Revises: 0045
+Revises: 0047_n3
 Create Date: 2026-09-28 12:00:00
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0048_n2"
-down_revision = "0045"
+down_revision = "0047_n3"
 branch_labels = None
 depends_on = None
 

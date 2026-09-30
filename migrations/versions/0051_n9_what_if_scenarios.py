@@ -5,14 +5,14 @@
   compiler versions it was computed against. Private to `created_by`; never a publishable artifact.
 
 Revision ID: 0051_n9
-Revises: 0045
+Revises: 0050_n8
 Create Date: 2026-09-28 16:00:00
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0051_n9"
-down_revision = "0045"
+down_revision = "0050_n8"
 branch_labels = None
 depends_on = None
 

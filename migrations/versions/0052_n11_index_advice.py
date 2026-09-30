@@ -5,7 +5,7 @@
   (open | acknowledged | dismissed | superseded). Nothing here is ever executed by the platform.
 
 Revision ID: 0052_n11
-Revises: 0045
+Revises: 0051_n9
 Create Date: 2026-09-28 12:00:00
 """
 import sqlalchemy as sa
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0052_n11"
-down_revision = "0045"
+down_revision = "0051_n9"
 branch_labels = None
 depends_on = None
 

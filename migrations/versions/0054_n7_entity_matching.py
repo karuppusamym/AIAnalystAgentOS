@@ -6,7 +6,7 @@ compared features, stats, the approval and, once promoted, the crosswalk table a
 stored in either table.
 
 Revision ID: 0054_n7
-Revises: 0045
+Revises: 0052_n11
 Create Date: 2026-09-28 12:00:00
 
 Hand-written; parallel streams: the integrator re-chains `down_revision` on merge.
@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0054_n7"
-down_revision = "0045"
+down_revision = "0052_n11"
 branch_labels = None
 depends_on = None
 

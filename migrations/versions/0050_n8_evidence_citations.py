@@ -6,7 +6,7 @@
   and measured data), counts for listing, and the cited document ids.
 
 Revision ID: 0050_n8
-Revises: 0045
+Revises: 0048_n2
 Create Date: 2026-09-28 12:00:00
 """
 import sqlalchemy as sa
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0050_n8"
-down_revision = "0045"
+down_revision = "0048_n2"
 branch_labels = None
 depends_on = None
 
